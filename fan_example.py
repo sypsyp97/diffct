@@ -68,14 +68,16 @@ def main():
         angles, source_distance, isocenter_distance, step_size
     )
 
-    max_reco = reco.max()
-    if max_reco > 1e-12:
-        reco /= max_reco
-    reco = np.clip(reco, 0.0, 1.0)
+    # Uncomment to normalize the reconstruction to be in [0, 1]
+
+    # mx = reco.max()
+    # if mx > 1e-12:
+    #     reco /= mx
+    # reco = np.clip(reco, 0.0, 1.0) 
 
     plt.figure(figsize=(12, 4))
     plt.subplot(1, 3, 1)
-    plt.imshow(phantom, cmap='gray', vmin=0, vmax=1)
+    plt.imshow(phantom, cmap='gray')
     plt.axis('off')
     plt.title("Phantom")
 
@@ -85,7 +87,7 @@ def main():
     plt.title("Fan Beam Sinogram")
 
     plt.subplot(1, 3, 3)
-    plt.imshow(reco, cmap='gray', vmin=0, vmax=1)
+    plt.imshow(reco, cmap='gray')
     plt.axis('off')
     plt.title("Fan Beam Reconstruction")
     plt.tight_layout()
