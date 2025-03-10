@@ -1,6 +1,7 @@
 # Differentiable Computed Tomography Reconstruction with CUDA
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
+[![DOI](https://zenodo.org/badge/945931443.svg)](https://doi.org/10.5281/zenodo.14999333)
 
 An CUDA-based library for computed tomography (CT) projection and reconstruction with differentiable operators.
 
