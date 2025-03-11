@@ -70,13 +70,6 @@ def main():
 
     reco = reco / num_views  # Normalize by number of angles
 
-    # Uncomment to normalize the reconstruction to be in [0, 1]
-
-    # mx = reco.max()
-    # if mx > 1e-12:
-    #     reco /= mx
-    # reco = np.clip(reco, 0.0, 1.0) 
-
     plt.figure(figsize=(12, 4))
     plt.subplot(1, 3, 1)
     plt.imshow(phantom, cmap='gray')

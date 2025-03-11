@@ -92,13 +92,6 @@ def main():
 
     reco = reco / num_views  # Normalize by number of angles
 
-    # Uncomment to normalize the reconstruction to be in [0, 1]
-
-    # mxp = reco.max()
-    # if mxp > 1e-12:
-    #     reco /= mxp
-    # reco = np.clip(reco, 0, 1)
-
     midz = Nz // 2
 
     plt.figure(figsize=(12,4))
