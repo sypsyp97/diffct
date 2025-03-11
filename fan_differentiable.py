@@ -382,15 +382,17 @@ def shepp_logan_2d(Nx, Ny):
     phantom = np.clip(phantom, 0.0, 1.0)
     return phantom
 
-def ramp_filter(sinogram):
-    num_views, num_det = sinogram.shape
-    freqs = np.fft.fftfreq(num_det)
-    omega = 2.0 * np.pi * freqs
-    ramp = np.abs(omega)
+def ramp_filter(sinogram_tensor):
+    device = sinogram_tensor.device
+    num_views, num_det = sinogram_tensor.shape
+    freqs = torch.fft.fftfreq(num_det, device=device)
+    omega = 2.0 * torch.pi * freqs
+    ramp = torch.abs(omega)
     ramp_2d = ramp.reshape(1, num_det)
-    sino_fft = np.fft.fft(sinogram, axis=1)
+    sino_fft = torch.fft.fft(sinogram_tensor, dim=1)
     filtered_fft = sino_fft * ramp_2d
-    filtered = np.real(np.fft.ifft(filtered_fft, axis=1))
+    filtered = torch.real(torch.fft.ifft(filtered_fft, dim=1))
+    
     return filtered
 
 def example_fan_pipeline():
@@ -401,7 +403,7 @@ def example_fan_pipeline():
 
     num_detectors = 512
     detector_spacing = 1.0
-    step_size = 0.5
+    step_size = 1.0
     source_distance = 800.0
     isocenter_distance = 500.0
 
@@ -412,8 +414,7 @@ def example_fan_pipeline():
     sinogram = FanProjectorFunction.apply(image_torch, angles_torch, num_detectors,
                                           detector_spacing, step_size, source_distance, isocenter_distance)
 
-    sinogram_filt = ramp_filter(sinogram.detach().cpu().numpy())
-    sinogram_filt = torch.tensor(sinogram_filt, device=device).contiguous()
+    sinogram_filt = ramp_filter(sinogram).detach().requires_grad_(True).contiguous()
 
     reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                     detector_spacing, step_size, Nx, Ny,

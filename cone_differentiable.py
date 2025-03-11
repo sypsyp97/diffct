@@ -466,22 +466,24 @@ def shepp_logan_3d(shape):
     shepp_logan = np.clip(shepp_logan, 0, 1)
     return shepp_logan
 
-def ramp_filter_3d(sinogram):
-    num_views, num_det_u, num_det_v = sinogram.shape
-    freqs = np.fft.fftfreq(num_det_u)
-    omega = 2.0 * np.pi * freqs
-    ramp = np.abs(omega)
-    ramp_2d = ramp.reshape(1, num_det_u, 1)
-    sino_fft = np.fft.fft(sinogram, axis=1)
-    filtered_fft = sino_fft * ramp_2d
-    filtered = np.real(np.fft.ifft(filtered_fft, axis=1))
+def ramp_filter_3d(sinogram_tensor):
+    device = sinogram_tensor.device
+    num_views, num_det_u, num_det_v = sinogram_tensor.shape
+    freqs = torch.fft.fftfreq(num_det_u, device=device)
+    omega = 2.0 * torch.pi * freqs
+    ramp = torch.abs(omega)
+    ramp_3d = ramp.reshape(1, num_det_u, 1)
+    sino_fft = torch.fft.fft(sinogram_tensor, dim=1)
+    filtered_fft = sino_fft * ramp_3d
+    filtered = torch.real(torch.fft.ifft(filtered_fft, dim=1))
+    
     return filtered
 
 def example_cone_pipeline():
     Nx, Ny, Nz = 128, 128, 128
     phantom_np = shepp_logan_3d((Nx, Ny, Nz))
 
-    num_views = 180
+    num_views = 360
     angles_np = np.linspace(0, 2*math.pi, num_views, endpoint=False).astype(np.float32)
 
     det_u, det_v = 256, 256
@@ -498,9 +500,7 @@ def example_cone_pipeline():
                                            det_u, det_v, du, dv, step_size,
                                            source_distance, isocenter_distance)
 
-    sinogram_np = sinogram.detach().cpu().numpy()
-    sinogram_filt = ramp_filter_3d(sinogram_np)
-    sinogram_filt = torch.tensor(sinogram_filt, device=device).contiguous()
+    sinogram_filt = ramp_filter_3d(sinogram).detach().requires_grad_(True).contiguous()
 
     reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                      Nx, Ny, Nz, det_u, det_v, du, dv,
@@ -518,6 +518,7 @@ def example_cone_pipeline():
 
     reconstruction_cpu = reconstruction.detach().cpu().numpy()
     phantom_cpu = phantom_np
+    sinogram_cpu = sinogram.detach().cpu().numpy()
     mid_slice = Nz // 2
 
     plt.figure(figsize=(12,4))
@@ -526,7 +527,7 @@ def example_cone_pipeline():
     plt.title("Phantom mid-slice")
     plt.axis('off')
     plt.subplot(1,3,2)
-    plt.imshow(sinogram_np[num_views//2], cmap='gray')
+    plt.imshow(sinogram_cpu[num_views//2], cmap='gray')
     plt.title("Sinogram mid-view")
     plt.axis('off')
     plt.subplot(1,3,3)
