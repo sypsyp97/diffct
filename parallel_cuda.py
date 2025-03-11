@@ -14,8 +14,8 @@ def forward_parallel_2d_kernel(
         sin_a = math.sin(angle)
         u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
 
-        t_min = -float(Nx + Ny)
-        t_max = float(Nx + Ny)
+        t_min = -math.sqrt(Nx*Nx + Ny*Ny)
+        t_max = math.sqrt(Nx*Nx + Ny*Ny)
         total_val = 0.0
         t = t_min
         while t < t_max:
@@ -53,8 +53,8 @@ def back_parallel_2d_kernel(
         sin_a = math.sin(angle)
         u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
 
-        t_min = -float(Nx + Ny)
-        t_max = float(Nx + Ny)
+        t_min = -math.sqrt(Nx*Nx + Ny*Ny)
+        t_max = math.sqrt(Nx*Nx + Ny*Ny)
         t = t_min
 
         while t < t_max:
