@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 [![DOI](https://zenodo.org/badge/945931443.svg)](https://doi.org/10.5281/zenodo.14999333)
 
-A high-performance, CUDA-accelerated library for CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
+A high-performance, CUDA-accelerated library for circular orbits CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
 
 ⭐ **Please star this project if you find it useful!**
 
