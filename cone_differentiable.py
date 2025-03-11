@@ -481,7 +481,7 @@ def ramp_filter_3d(sinogram_tensor):
 
 def example_cone_pipeline():
     Nx, Ny, Nz = 128, 128, 128
-    phantom_np = shepp_logan_3d((Nx, Ny, Nz))
+    phantom_cpu = shepp_logan_3d((Nx, Ny, Nz))
 
     num_views = 360
     angles_np = np.linspace(0, 2*math.pi, num_views, endpoint=False).astype(np.float32)
@@ -493,7 +493,7 @@ def example_cone_pipeline():
     isocenter_distance = 400.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    phantom_torch = torch.tensor(phantom_np, device=device, requires_grad=True)
+    phantom_torch = torch.tensor(phantom_cpu, device=device, requires_grad=True)
     angles_torch = torch.tensor(angles_np, device=device)
 
     sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch, Nx, Ny, Nz,
@@ -517,7 +517,6 @@ def example_cone_pipeline():
     print("Reconstruction shape:", reconstruction.shape)
 
     reconstruction_cpu = reconstruction.detach().cpu().numpy()
-    phantom_cpu = phantom_np
     sinogram_cpu = sinogram.detach().cpu().numpy()
     mid_slice = Nz // 2
 
