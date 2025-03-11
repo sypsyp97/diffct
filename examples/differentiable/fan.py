@@ -1,7 +1,6 @@
 import math
 import numpy as np
 import torch
-from numba import cuda
 import matplotlib.pyplot as plt
 from diffct.differentiable import FanProjectorFunction, FanBackprojectorFunction
 
