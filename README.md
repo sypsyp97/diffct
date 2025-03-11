@@ -108,6 +108,20 @@ loss = torch.mean((reconstruction - phantom_tensor)**2)
 loss.backward()
 ```
 
+## Additional Information
+
+For proper HU calibration:
+
+1. **With original image:**
+    - Normalize image before forward projection
+    - Apply inverse transformation to restore HU range
+    - Consider histogram matching if needed
+
+2. **With sinogram only:**
+    - Reconstruct to get raw values
+    - Calibrate using reference points (air ≈ -1000 HU, water ≈ 0 HU)
+    - Or use calibration markers with known attenuation coefficients
+
 ## License
 
 This project is licensed under the Apache 2.0 - see the [LICENSE](LICENSE) file for details.

@@ -338,7 +338,7 @@ def ramp_filter(sinogram):
 def example_parallel_pipeline():
     Nx, Ny = 256, 256
     phantom = shepp_logan_2d(Nx, Ny)
-    num_angles = 360
+    num_angles = 1080
     angles_np = np.linspace(0, 2*np.pi, num_angles, endpoint=False).astype(np.float32)
 
     num_detectors = 512
@@ -357,6 +357,8 @@ def example_parallel_pipeline():
 
     reconstruction = ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                          detector_spacing, step_size, Nx, Ny)
+    
+    reconstruction = reconstruction / num_angles # Normalize by number of angles
 
     loss = torch.mean((reconstruction - image_torch)**2)
     loss.backward()

@@ -58,6 +58,8 @@ def main():
     sino_filt = ramp_filter(sinogram).contiguous().numpy()
     reco = back_parallel_2d(sino_filt, Nx, Ny, detector_spacing, angles, step)
 
+    reco = reco / num_views  # Normalize by number of angles
+
     # Uncomment to normalize the reconstruction to be in [0, 1]
 
     # mx = reco.max()

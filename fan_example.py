@@ -68,6 +68,8 @@ def main():
         angles, source_distance, isocenter_distance, step_size
     )
 
+    reco = reco / num_views  # Normalize by number of angles
+
     # Uncomment to normalize the reconstruction to be in [0, 1]
 
     # mx = reco.max()

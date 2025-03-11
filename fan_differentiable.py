@@ -418,6 +418,8 @@ def example_fan_pipeline():
     reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                     detector_spacing, step_size, Nx, Ny,
                                                     source_distance, isocenter_distance)
+    
+    reconstruction = reconstruction / num_angles # Normalize by number of angles
 
     loss = torch.mean((reconstruction - image_torch)**2)
     loss.backward()

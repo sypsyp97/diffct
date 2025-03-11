@@ -505,6 +505,8 @@ def example_cone_pipeline():
     reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                      Nx, Ny, Nz, det_u, det_v, du, dv,
                                                      step_size, source_distance, isocenter_distance)
+    
+    reconstruction = reconstruction / num_views # Normalize
 
     loss = torch.mean((reconstruction - phantom_torch)**2)
     loss.backward()
