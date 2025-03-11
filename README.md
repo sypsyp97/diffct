@@ -1,131 +1,178 @@
-# Differentiable Computed Tomography Reconstruction with CUDA
+# DiffCT: Differentiable Computed Tomography Reconstruction
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 [![DOI](https://zenodo.org/badge/945931443.svg)](https://doi.org/10.5281/zenodo.14999333)
 
-An CUDA-based library for computed tomography (CT) projection and reconstruction with differentiable operators.
+A high-performance, CUDA-accelerated library for CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
 
-Please star this project if you use this repository in your research. Thank you!
+⭐ **Please star this project if you find it useful!**
 
-## Overview
+## ✨ Features
 
-This library provides GPU-accelerated implementations of CT geometry with circular trajectories. The following geometries are supported:
+- **Fast:** CUDA-accelerated projection and backprojection operations
+- **Differentiable:** End-to-end gradient propagation for deep learning workflows
 
-- Parallel beam (2D)
-- Fan beam (2D)
-- Cone beam (3D)
+## 📐 Supported Geometries
 
-Each geometry includes:
+- **Parallel Beam:** 2D parallel-beam geometry
+- **Fan Beam:** 2D fan-beam geometry
+- **Cone Beam:** 3D cone-beam geometry
 
-- Forward projection operators (ray-tracing)
-- Backprojection operators
-- Differentiable versions of both operators for gradient-based optimization
-- GPU acceleration for high-performance computation
-
-## Code Structure
+## 🧩 Code Structure
 
 ```bash
-├── parallel_cuda.py           # CUDA implementation of parallel beam CT
-├── parallel_differentiable.py # Differentiable parallel beam CT and example
-├── parallel_example.py        # Usage example for parallel beam CT
-├── fan_cuda.py                # CUDA implementation of fan beam CT
-├── fan_differentiable.py      # Differentiable fan beam CT and example
-├── fan_example.py             # Usage example for fan beam CT
-├── cone_cuda.py               # CUDA implementation of cone beam CT
-├── cone_differentiable.py     # Differentiable cone beam CT and example
-├── cone_example.py            # Usage example for cone beam CT
+differentiable-ct-reconstruction/
+├── diffct/
+│   ├── __init__.py            # Package initialization
+│   ├── non_differentiable.py  # CUDA implementation
+│   ├── differentiable.py      # Differentiable implementation
+├── examples/                  # Example usages
+│   ├── cuda                   # Non-differentiable examples
+│   │   ├── parallel.py        
+│   │   ├── fan.py             
+│   │   ├── cone.py            
+│   ├── differentiable         # Differentiable examples
+│   │   ├── parallel.py        
+│   │   ├── fan.py             
+│   │   ├── cone.py            
+├── setup.py                   # Installation script
+├── README.md                  # README
+├── LICENSE                    # License
+├── requirements.txt           # Dependencies
 ```
 
-## Requirements
+## 🚀 Quick Start
+
+### Prerequisites
 
 - CUDA-capable GPU
 - Python 3.10+
-- NumPy
-- PyTorch
-- Numba with CUDA support
-- Matplotlib (for examples)
-
-## Usage Examples
+- PyTorch, NumPy, Numba with CUDA support
 
 ### Installation
 
 ```bash
+# Create and activate environment
+conda create -n diffct python=3.10
+conda activate diffct
+
+# Clone and install
+git clone https://github.com/sypsyp97/differentiable-ct-reconstruction
+cd differentiable-ct-reconstruction
 pip install -r requirements.txt
+pip install .
 ```
 
-### Standard CUDA Implementation
+## 📚 Usage Examples
+
+### Non-Differentiable CUDA Implementation
 
 ```python
+import torch
 import numpy as np
-from parallel_cuda import forward_parallel_2d, back_parallel_2d
+from diffct.non_differentiable import forward_parallel_2d, back_parallel_2d
 
 # Create phantom
 phantom = shepp_logan_2d(256, 256)
 
+# Configure geometry
+angles = np.linspace(0, 2*np.pi, 360, endpoint=False)
+
 # Forward projection
 sinogram = forward_parallel_2d(
-    phantom, num_views=180, num_detectors=512, 
-    detector_spacing=1.0, angles=angles, step_size=0.5
+    phantom, 
+    num_views=360,
+    num_detectors=512, 
+    detector_spacing=1.0, 
+    angles=angles, 
+    step=0.5
 )
 
-# Filter sinogram
-sinogram_filtered = ramp_filter(sinogram)
-
-# Backprojection (reconstruction)
+# Reconstruction
+sinogram_filtered = ramp_filter(torch.from_numpy(sinogram)).numpy()
 reconstruction = back_parallel_2d(
-    sinogram_filtered, Nx=256, Ny=256, 
-    detector_spacing=1.0, angles=angles, step_size=0.5
-)
+    sinogram_filtered, 
+    Nx=256, Ny=256,
+    detector_spacing=1.0, 
+    angles=angles, 
+    step=0.5
+) / 360  # Normalize by number of angles
 ```
 
 ### Differentiable Implementation
 
 ```python
 import torch
-from parallel_differentiable import ParallelProjectorFunction, ParallelBackprojectorFunction
+from diffct.differentiable import ParallelProjectorFunction, ParallelBackprojectorFunction
 
-# Convert phantom to PyTorch tensor
-phantom_tensor = torch.tensor(phantom, device='cuda', requires_grad=True)
-angles_tensor = torch.tensor(angles, device='cuda')
+# Setup device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Create phantom tensor with gradient tracking
+phantom = torch.tensor(shepp_logan_2d(256, 256), device=device, requires_grad=True)
+angles = torch.linspace(0, 2*np.pi, 360, device=device)
 
 # Forward projection
 sinogram = ParallelProjectorFunction.apply(
-    phantom_tensor, angles_tensor, num_detectors=512, 
-    detector_spacing=1.0, step_size=0.5
+    phantom, 
+    angles, 
+    num_detectors=512, 
+    detector_spacing=1.0, 
+    step_size=0.5
 )
 
-# Filter sinogram on GPU
-sinogram_filtered = ramp_filter(sinogram)
-
-# Backprojection
+# Filtered backprojection
+sinogram_filtered = ramp_filter(sinogram).requires_grad_(True)
 reconstruction = ParallelBackprojectorFunction.apply(
-    sinogram_filtered, angles_tensor, detector_spacing=1.0, 
-    step_size=0.5, Nx=256, Ny=256
-)
+    sinogram_filtered,
+    angles, 
+    detector_spacing=1.0, 
+    step_size=0.5, 
+    Nx=256, Ny=256
+) / 360  # Normalize
 
-# Gradient computation
-loss = torch.mean((reconstruction - phantom_tensor)**2)
-loss.backward()
+# Compute loss and gradients
+loss = torch.mean((reconstruction - phantom)**2)
+loss.backward()  # Gradients flow through the entire pipeline
 ```
 
-## Additional Information
+## 📊 HU Calibration
 
-For proper HU calibration:
-
-1. **With original image:**
+1. **With Original Image:**
     - Normalize image before forward projection
     - Apply inverse transformation to restore HU range
     - Consider histogram matching if needed
 
-2. **With sinogram only:**
+2. **With Sinogram Only:**
     - Reconstruct to get raw values
     - Calibrate using reference points (air ≈ -1000 HU, water ≈ 0 HU)
     - Or use calibration markers with known attenuation coefficients
 
-## License
+## 📝 Citation
+
+If you use this library in your research, please cite:
+
+```bibtex
+@software{DiffCT2025,
+  author       = {Yipeng Sun},
+  title        = {DiffCT: Differentiable Computed Tomography 
+                 Reconstruction with CUDA},
+  year         = 2025,
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.14999333},
+  url          = {https://doi.org/10.5281/zenodo.14999333}
+}
+```
+
+## 📄 License
 
 This project is licensed under the Apache 2.0 - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgements
+## 🙏 Acknowledgements
 
-This project was highly inspired by the [PYRO-NN](https://github.com/csyben/PYRO-NN) and [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT) repositories.
+This project was highly inspired by:
+
+- [PYRO-NN](https://github.com/csyben/PYRO-NN)
+- [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT)
+
+Issues and contributions are welcome!

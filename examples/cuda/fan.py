@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from fan_cuda import forward_fan_2d, back_fan_2d
+from diffct.non_differentiable import forward_fan_2d, back_fan_2d
 
 def shepp_logan_2d(Nx, Ny):
     Nx = int(Nx)
@@ -53,8 +53,7 @@ def main():
     angles = np.linspace(0, 2*np.pi, num_views, endpoint=False).astype(np.float64)
     source_distance = 800.0
     isocenter_distance = 500.0
-    step_size = 0.5
-
+    step_size = 1.0
     sino = forward_fan_2d(
         phantom, num_views, num_detectors, detector_spacing,
         angles, source_distance, isocenter_distance, step_size

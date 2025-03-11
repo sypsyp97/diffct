@@ -1,11 +1,12 @@
+import math
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from cone_cuda import forward_cone_3d, back_cone_3d
+from diffct.differentiable import ConeProjectorFunction, ConeBackprojectorFunction
 
 def shepp_logan_3d(shape):
     shepp_logan = np.zeros(shape, dtype=np.float32)
-    zz, yy, xx = np.mgrid[:shape[0], :shape[1], :shape[2]]
+    zz, yy, xx = np.mgrid[: shape[0], : shape[1], : shape[2]]
     xx = (xx - (shape[2] - 1) / 2) / ((shape[2] - 1) / 2)
     yy = (yy - (shape[1] - 1) / 2) / ((shape[1] - 1) / 2)
     zz = (zz - (shape[0] - 1) / 2) / ((shape[0] - 1) / 2)
@@ -21,7 +22,6 @@ def shepp_logan_3d(shape):
         [0, -0.605, 0, 0.023, 0.023, 0.02, 0, 0, 0, 0.1],
         [0.06, -0.605, 0, 0.023, 0.046, 0.02, 0, 0, 0, 0.1],
     ])
-
     for i in range(el_params.shape[0]):
         x_pos = el_params[i][0]
         y_pos = el_params[i][1]
@@ -40,14 +40,8 @@ def shepp_logan_3d(shape):
         xp = xc*Rz_phi[0,0] + yc*Rz_phi[0,1] + zc*Rz_phi[0,2]
         yp = xc*Rz_phi[1,0] + yc*Rz_phi[1,1] + zc*Rz_phi[1,2]
         zp = xc*Rz_phi[2,0] + yc*Rz_phi[2,1] + zc*Rz_phi[2,2]
-        mask = (
-            (xp**2)/(a_axis*a_axis)
-            + (yp**2)/(b_axis*b_axis)
-            + (zp**2)/(c_axis*c_axis)
-            <= 1.0
-        )
+        mask = (xp**2)/(a_axis*a_axis) + (yp**2)/(b_axis*b_axis) + (zp**2)/(c_axis*c_axis) <= 1.0
         shepp_logan[mask] += val
-
     shepp_logan = np.clip(shepp_logan, 0, 1)
     return shepp_logan
 
@@ -64,53 +58,62 @@ def ramp_filter_3d(sinogram_tensor):
     
     return filtered
 
-def main():
-    Nx, Ny, Nz = 256, 256, 256
-    phantom = shepp_logan_3d((Nx, Ny, Nz))
-    num_views = 180
-    num_det_u = 512
-    num_det_v = 512
-    du = 1.0
-    dv = 1.0
-    angles = np.linspace(0, 2*np.pi, num_views, endpoint=False)
+def example_cone_pipeline():
+    Nx, Ny, Nz = 128, 128, 128
+    phantom_cpu = shepp_logan_3d((Nx, Ny, Nz))
+
+    num_views = 360
+    angles_np = np.linspace(0, 2*math.pi, num_views, endpoint=False).astype(np.float32)
+
+    det_u, det_v = 256, 256
+    du, dv = 1.0, 1.0
+    step_size = 1.0
     source_distance = 600.0
     isocenter_distance = 400.0
-    step_size = 1.0
 
-    sinogram = forward_cone_3d(
-        phantom, num_views, num_det_u, num_det_v, du, dv,
-        angles, source_distance, isocenter_distance, step_size
-    )
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    phantom_torch = torch.tensor(phantom_cpu, device=device, requires_grad=True)
+    angles_torch = torch.tensor(angles_np, device=device)
 
-    sino = torch.from_numpy(sinogram)
-    sino_filt = ramp_filter_3d(sino).contiguous().numpy()
+    sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch, Nx, Ny, Nz,
+                                           det_u, det_v, du, dv, step_size,
+                                           source_distance, isocenter_distance)
 
-    reco = back_cone_3d(
-        sino_filt, Nx, Ny, Nz, du, dv, angles,
-        source_distance, isocenter_distance, step_size
-    )
+    sinogram_filt = ramp_filter_3d(sinogram).detach().requires_grad_(True).contiguous()
 
-    reco = reco / num_views  # Normalize by number of angles
+    reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch,
+                                                     Nx, Ny, Nz, det_u, det_v, du, dv,
+                                                     step_size, source_distance, isocenter_distance)
+    
+    reconstruction = reconstruction / num_views # Normalize
 
-    midz = Nz // 2
+    loss = torch.mean((reconstruction - phantom_torch)**2)
+    loss.backward()
+
+    print("Cone Beam Example with user-defined geometry:")
+    print("Loss:", loss.item())
+    print("Volume center voxel gradient:", phantom_torch.grad[Nx//2, Ny//2, Nz//2].item())
+    print("Reconstruction shape:", reconstruction.shape)
+
+    reconstruction_cpu = reconstruction.detach().cpu().numpy()
+    sinogram_cpu = sinogram.detach().cpu().numpy()
+    mid_slice = Nz // 2
 
     plt.figure(figsize=(12,4))
     plt.subplot(1,3,1)
-    plt.imshow(phantom[:,:,midz], cmap='gray')
+    plt.imshow(phantom_cpu[:,:,mid_slice], cmap='gray')
+    plt.title("Phantom mid-slice")
     plt.axis('off')
-    plt.title("Phantom (Mid-Z)")
-
     plt.subplot(1,3,2)
-    plt.imshow(sinogram[num_views//2], cmap='gray')
+    plt.imshow(sinogram_cpu[num_views//2], cmap='gray')
+    plt.title("Sinogram mid-view")
     plt.axis('off')
-    plt.title("Sinogram (Slice)")
-
     plt.subplot(1,3,3)
-    plt.imshow(reco[:,:,midz], cmap='gray')
+    plt.imshow(reconstruction_cpu[:,:,mid_slice], cmap='gray')
+    plt.title("Recon mid-slice")
     plt.axis('off')
-    plt.title("Reconstruction (Mid-Z)")
     plt.tight_layout()
     plt.show()
 
 if __name__ == "__main__":
-    main()
+    example_cone_pipeline()

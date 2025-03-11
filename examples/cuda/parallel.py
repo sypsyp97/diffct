@@ -2,7 +2,7 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from parallel_cuda import forward_parallel_2d, back_parallel_2d
+from diffct.non_differentiable import forward_parallel_2d, back_parallel_2d
 
 def shepp_logan_2d(Nx, Ny):
     Nx = int(Nx)
@@ -51,7 +51,7 @@ def main():
     num_views = 360
     num_detectors = 512
     detector_spacing = 1.0
-    step = 0.5
+    step = 1.0
     angles = np.linspace(0, 2 * np.pi, num_views, endpoint=False)
     sinogram = forward_parallel_2d(phantom, num_views, num_detectors, detector_spacing, angles, step)
     sinogram = torch.from_numpy(sinogram)
