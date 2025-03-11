@@ -15,7 +15,6 @@ class ParallelProjectorFunction(torch.autograd.Function):
         Nx, Ny = image.shape
         num_angles = angles.shape[0]
 
-        diag = int(math.ceil(math.sqrt(Nx*Nx + Ny*Ny)))
         d_image = cuda.to_device(image.detach().cpu().numpy())
         d_angles = cuda.to_device(angles.detach().cpu().numpy())
         d_sinogram = cuda.device_array((num_angles, num_detectors), dtype=np.float32)
