@@ -1,4 +1,4 @@
-# DiffCT: Differentiable Computed Tomography Reconstruction Operators
+# DiffCT: Differentiable Computed Tomography Operators
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 [![DOI](https://zenodo.org/badge/945931443.svg)](https://doi.org/10.5281/zenodo.14999333)
