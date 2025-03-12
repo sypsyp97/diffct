@@ -21,7 +21,7 @@ A high-performance, CUDA-accelerated library for circular orbits CT reconstructi
 ## 🧩 Code Structure
 
 ```bash
-differentiable-ct-reconstruction/
+diffct/
 ├── diffct/
 │   ├── __init__.py            # Package initialization
 │   ├── non_differentiable.py  # CUDA implementation
@@ -58,7 +58,7 @@ conda activate diffct
 
 # Clone and install
 git clone https://github.com/sypsyp97/diffct
-cd differentiable-ct-reconstruction
+cd diffct
 pip install -r requirements.txt
 pip install .
 ```
