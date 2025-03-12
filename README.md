@@ -27,7 +27,7 @@ differentiable-ct-reconstruction/
 │   ├── non_differentiable.py  # CUDA implementation
 │   ├── differentiable.py      # Differentiable implementation
 ├── examples/                  # Example usages
-│   ├── cuda                   # Non-differentiable examples
+│   ├── non_differentiable     # Non-differentiable examples
 │   │   ├── parallel.py        
 │   │   ├── fan.py             
 │   │   ├── cone.py            
