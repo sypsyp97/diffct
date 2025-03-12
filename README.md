@@ -1,4 +1,4 @@
-# DiffCT: Differentiable Computed Tomography Reconstruction
+# DiffCT: Differentiable Computed Tomography Reconstruction Operators
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 [![DOI](https://zenodo.org/badge/945931443.svg)](https://doi.org/10.5281/zenodo.14999333)
@@ -57,7 +57,7 @@ conda create -n diffct python=3.10
 conda activate diffct
 
 # Clone and install
-git clone https://github.com/sypsyp97/differentiable-ct-reconstruction
+git clone https://github.com/sypsyp97/diffct
 cd differentiable-ct-reconstruction
 pip install -r requirements.txt
 pip install .
