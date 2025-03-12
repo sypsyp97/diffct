@@ -39,7 +39,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         return sinogram
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _forward_kernel(d_image, Nx, Ny,
                         d_sinogram, num_angles, num_detectors,
                         detector_spacing, d_angles, step_size,
@@ -116,7 +116,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         return grad_image, None, None, None, None
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _backward_kernel(d_grad_sino, num_angles, num_detectors,
                          Nx, Ny, d_image_grad,
                          detector_spacing, d_angles, step_size,
@@ -191,7 +191,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         return reco
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _forward_kernel(d_sino, num_angles, num_detectors,
                         Nx, Ny, d_image,
                         detector_spacing, d_angles, step_size,
@@ -260,7 +260,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         return grad_sino, None, None, None, None, None
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _backward_kernel(d_grad_out, num_angles, num_detectors,
                          Nx, Ny, d_sino_grad,
                          detector_spacing, d_angles, step_size,
@@ -334,7 +334,7 @@ class FanProjectorFunction(torch.autograd.Function):
         return sinogram
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _forward_kernel(d_image, Nx, Ny,
                         d_sinogram, num_angles, num_detectors,
                         det_spacing, d_angles,
@@ -423,7 +423,7 @@ class FanProjectorFunction(torch.autograd.Function):
         return grad_image, None, None, None, None, None, None
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _backward_kernel(d_grad_sino, num_angles, num_detectors,
                          Nx, Ny, d_image_grad,
                          det_spacing, d_angles,
@@ -514,7 +514,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         return reco
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _forward_kernel(d_sino, num_angles, num_detectors,
                         Nx, Ny, d_image,
                         det_spacing, d_angles,
@@ -599,7 +599,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         return grad_sino, None, None, None, None, None, None, None
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _backward_kernel(d_grad_out, num_angles, num_detectors,
                          Nx, Ny, d_sino_grad,
                          det_spacing, d_angles, step_size,
@@ -685,7 +685,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         return sinogram
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _forward_kernel(d_volume, Nx, Ny, Nz,
                         d_sino, num_views, det_u, det_v,
                         du, dv, d_angles,
@@ -796,7 +796,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         return grad_volume, None, None, None, None, None, None, None, None, None, None, None
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _backward_kernel(d_grad_sino, num_views, det_u, det_v,
                          Nx, Ny, Nz, d_vol_grad,
                          du, dv, d_angles, step_size,
@@ -899,7 +899,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         return volume
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _forward_kernel(d_sino, num_views, det_u, det_v,
                         Nx, Ny, Nz, d_reco,
                         du, dv, d_angles,
@@ -1002,7 +1002,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         return grad_sino, None, None, None, None, None, None, None, None, None, None, None
 
     @staticmethod
-    @cuda.jit
+    @cuda.jit(fastmath=True)
     def _backward_kernel(d_grad_out, num_views, det_u, det_v,
                          Nx, Ny, Nz,
                          d_sino_grad,

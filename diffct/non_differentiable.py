@@ -2,7 +2,7 @@ import math
 import numpy as np
 from numba import cuda
 
-@cuda.jit
+@cuda.jit(fastmath=True)
 def forward_parallel_2d_kernel(
     d_image, Nx, Ny, d_sinogram, num_views, num_detectors,
     detector_spacing, d_angles, step_size, cx, cy
@@ -40,7 +40,7 @@ def forward_parallel_2d_kernel(
 
         d_sinogram[iview, idet] = total_val
 
-@cuda.jit
+@cuda.jit(fastmath=True)
 def back_parallel_2d_kernel(
     d_sinogram, Nx, Ny, d_reco, num_views, num_detectors,
     detector_spacing, d_angles, step_size, cx, cy
@@ -121,7 +121,7 @@ def back_parallel_2d(
     )
     return d_reco.copy_to_host()
 
-@cuda.jit
+@cuda.jit(fastmath=True)
 def forward_fan_2d_kernel(
     d_image, Nx, Ny, d_sinogram, num_views, num_detectors,
     detector_spacing, d_angles, source_distance, isocenter_distance,
@@ -183,7 +183,7 @@ def forward_fan_2d_kernel(
 
         d_sinogram[iview, idet] = total_val
 
-@cuda.jit
+@cuda.jit(fastmath=True)
 def back_fan_2d_kernel(
     d_sinogram, num_views, num_detectors, Nx, Ny, d_reco,
     detector_spacing, d_angles, source_distance, isocenter_distance,
@@ -288,7 +288,7 @@ def back_fan_2d(
     )
     return d_reco.copy_to_host()
 
-@cuda.jit
+@cuda.jit(fastmath=True)
 def forward_cone_3d_kernel(
     d_volume, Nx, Ny, Nz, d_sinogram, num_views, num_det_u, num_det_v,
     du, dv, d_angles, source_distance, isocenter_distance, step_size,
@@ -364,7 +364,7 @@ def forward_cone_3d_kernel(
 
         d_sinogram[iview, iu, iv] = total_val
 
-@cuda.jit
+@cuda.jit(fastmath=True)
 def back_cone_3d_kernel(
     d_sinogram, num_views, num_det_u, num_det_v, Nx, Ny, Nz,
     d_reco, du, dv, d_angles, source_distance, isocenter_distance,
