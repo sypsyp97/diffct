@@ -7,7 +7,7 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="Yipeng Sun",
-    author_email="yipeng.sun@fau.de",  # Replace with actual email if available
+    author_email="yipeng.sun@fau.de",
     url="https://github.com/sypsyp97/differentiable-ct-reconstruction",
     packages=find_packages(),
     install_requires=[
