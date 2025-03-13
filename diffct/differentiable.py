@@ -315,15 +315,15 @@ class FanProjectorFunction(torch.autograd.Function):
         blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
         blockspergrid = (blockspergrid_x, blockspergrid_y)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
 
         FanProjectorFunction._forward_kernel[blockspergrid, threadsperblock](
             d_image, Nx, Ny,
             d_sinogram, num_angles, num_detectors,
             detector_spacing, d_angles,
             step_size,
-            source_distance, 
+            source_distance,
             isocenter_distance,
             cx, cy
         )
@@ -348,42 +348,46 @@ class FanProjectorFunction(torch.autograd.Function):
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
 
-            u = (idet - (num_detectors - 1)*0.5)*det_spacing
+            u = (idet - (num_detectors - 1) * 0.5) * det_spacing
             sx = -isocenter_distance * sin_a
-            sy =  isocenter_distance  * cos_a
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
+            sy = isocenter_distance * cos_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
 
             rx = dx - sx
             ry = dy - sy
-            length = math.sqrt(rx*rx + ry*ry)
+            length = math.sqrt(rx * rx + ry * ry)
             rx /= length
             ry /= length
+
+            # Cosine weighting
+            sd_minus_iso = source_distance - isocenter_distance
+            cos_gamma = sd_minus_iso / math.sqrt(u**2 + sd_minus_iso**2)
 
             total_val = 0.0
             t_min = 0.0
             t_max = length
             t = t_min
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
+                x = sx + t * rx
+                y = sy + t * ry
                 ix = x + cx
                 iy = y + cy
                 ix0 = int(math.floor(ix))
                 iy0 = int(math.floor(iy))
-                if (ix0 >= 0 and ix0 < Nx-1 and
-                    iy0 >= 0 and iy0 < Ny-1):
+                if (ix0 >= 0 and ix0 < Nx - 1 and
+                    iy0 >= 0 and iy0 < Ny - 1):
                     dx2 = ix - ix0
                     dy2 = iy - iy0
                     c00 = d_image[ix0, iy0]
-                    c10 = d_image[ix0+1, iy0]
-                    c01 = d_image[ix0,   iy0+1]
-                    c11 = d_image[ix0+1, iy0+1]
-                    val = (c00*(1-dx2)*(1-dy2) +
-                           c10*dx2*(1-dy2) +
-                           c01*(1-dx2)*dy2 +
-                           c11*dx2*dy2)
-                    total_val += val*step_size
+                    c10 = d_image[ix0 + 1, iy0]
+                    c01 = d_image[ix0, iy0 + 1]
+                    c11 = d_image[ix0 + 1, iy0 + 1]
+                    val = (c00 * (1 - dx2) * (1 - dy2) +
+                           c10 * dx2 * (1 - dy2) +
+                           c01 * (1 - dx2) * dy2 +
+                           c11 * dx2 * dy2)
+                    total_val += val * step_size * cos_gamma  # Apply cosine weighting
                 t += step_size
 
             d_sinogram[iang, idet] = total_val
@@ -406,15 +410,15 @@ class FanProjectorFunction(torch.autograd.Function):
         blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
         blockspergrid = (blockspergrid_x, blockspergrid_y)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
 
         FanProjectorFunction._backward_kernel[blockspergrid, threadsperblock](
             d_grad_sino, num_angles, num_detectors,
             Nx, Ny, d_image_grad,
             det_spacing, d_angles,
             step_size,
-            source_distance, 
+            source_distance,
             isocenter_distance,
             cx, cy
         )
@@ -428,7 +432,7 @@ class FanProjectorFunction(torch.autograd.Function):
                          Nx, Ny, d_image_grad,
                          det_spacing, d_angles,
                          step_size,
-                         source_distance, 
+                         source_distance,
                          isocenter_distance,
                          cx, cy):
         iang, idet = cuda.grid(2)
@@ -437,41 +441,40 @@ class FanProjectorFunction(torch.autograd.Function):
             angle = d_angles[iang]
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
-
-            u = (idet - (num_detectors - 1)*0.5)*det_spacing
+            u = (idet - (num_detectors - 1) * 0.5) * det_spacing
             sx = -isocenter_distance * sin_a
-            sy =  isocenter_distance  * cos_a
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
-
+            sy = isocenter_distance * cos_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
             rx = dx - sx
             ry = dy - sy
-            length = math.sqrt(rx*rx + ry*ry)
+            length = math.sqrt(rx * rx + ry * ry)
             rx /= length
             ry /= length
-
+            # Compute cosine term (cos_gamma)
+            sd_minus_iso = source_distance - isocenter_distance
+            distance_to_detector = math.sqrt(u**2 + sd_minus_iso**2)
+            cos_gamma = sd_minus_iso / (distance_to_detector + 1e-8)
             t_min = 0.0
             t_max = length
             t = t_min
-
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
+                x = sx + t * rx
+                y = sy + t * ry
                 ix = x + cx
                 iy = y + cy
                 ix0 = int(math.floor(ix))
                 iy0 = int(math.floor(iy))
-
-                if (ix0 >= 0 and ix0 < Nx-1 and
-                    iy0 >= 0 and iy0 < Ny-1):
-                    dx2 = ix - ix0
-                    dy2 = iy - iy0
-                    cval = grad_val*step_size
-                    cuda.atomic.add(d_image_grad, (ix0,   iy0),   cval*(1-dx2)*(1-dy2))
-                    cuda.atomic.add(d_image_grad, (ix0+1, iy0),   cval*dx2*(1-dy2))
-                    cuda.atomic.add(d_image_grad, (ix0,   iy0+1), cval*(1-dx2)*dy2)
-                    cuda.atomic.add(d_image_grad, (ix0+1, iy0+1), cval*dx2*dy2)
-
+                if (ix0 >= 0 and ix0 < Nx - 1 and
+                    iy0 >= 0 and iy0 < Ny - 1):
+                    dx = ix - ix0
+                    dy = iy - iy0
+                    # Multiply by cos_gamma here
+                    cval = grad_val * step_size * cos_gamma
+                    cuda.atomic.add(d_image_grad, (ix0, iy0), cval * (1 - dx) * (1 - dy))
+                    cuda.atomic.add(d_image_grad, (ix0 + 1, iy0), cval * dx * (1 - dy))
+                    cuda.atomic.add(d_image_grad, (ix0, iy0 + 1), cval * (1 - dx) * dy)
+                    cuda.atomic.add(d_image_grad, (ix0 + 1, iy0 + 1), cval * dx * dy)
                 t += step_size
 
 ############################################################################
@@ -495,23 +498,23 @@ class FanBackprojectorFunction(torch.autograd.Function):
         blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
         blockspergrid = (blockspergrid_x, blockspergrid_y)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
 
         FanBackprojectorFunction._forward_kernel[blockspergrid, threadsperblock](
             d_sino, num_angles, num_detectors,
             Nx, Ny, d_image,
             detector_spacing, d_angles,
             step_size,
-            source_distance, 
+            source_distance,
             isocenter_distance,
             cx, cy
         )
 
-        reco = torch.tensor(d_image.copy_to_host(), device=device)
+        image = torch.tensor(d_image.copy_to_host(), device=device)
         ctx.save_for_backward(sinogram, angles)
         ctx.intermediate = (Nx, Ny, detector_spacing, step_size, source_distance, isocenter_distance)
-        return reco
+        return image
 
     @staticmethod
     @cuda.jit(fastmath=True)
@@ -528,40 +531,47 @@ class FanBackprojectorFunction(torch.autograd.Function):
             angle = d_angles[iang]
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
-
-            u = (idet - (num_detectors - 1)*0.5)*det_spacing
+            u = (idet - (num_detectors - 1) * 0.5) * det_spacing
             sx = -isocenter_distance * sin_a
-            sy =  isocenter_distance  * cos_a
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
+            sy = isocenter_distance * cos_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
+            detector_pos_u = (idet - (num_detectors - 1) / 2.0) * det_spacing
+
+            # Cosine weighting
+            sd_minus_iso = source_distance - isocenter_distance
+            denominator = math.sqrt(detector_pos_u**2 + sd_minus_iso**2)
+            cos_gamma = sd_minus_iso / denominator
 
             rx = dx - sx
             ry = dy - sy
-            length = math.sqrt(rx*rx + ry*ry)
+            length = math.sqrt(rx * rx + ry * ry)
             rx /= length
             ry /= length
-
             t_min = 0.0
             t_max = length
             t = t_min
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
+                x = sx + t * rx
+                y = sy + t * ry
                 ix = x + cx
                 iy = y + cy
                 ix0 = int(math.floor(ix))
                 iy0 = int(math.floor(iy))
-
-                if (ix0 >= 0 and ix0 < Nx-1 and
-                    iy0 >= 0 and iy0 < Ny-1):
-                    dx2 = ix - ix0
-                    dy2 = iy - iy0
-                    cval = val*step_size
-                    cuda.atomic.add(d_image, (ix0,   iy0),   cval*(1-dx2)*(1-dy2))
-                    cuda.atomic.add(d_image, (ix0+1, iy0),   cval*dx2*(1-dy2))
-                    cuda.atomic.add(d_image, (ix0,   iy0+1), cval*(1-dx2)*dy2)
-                    cuda.atomic.add(d_image, (ix0+1, iy0+1), cval*dx2*dy2)
-
+                if (ix0 >= 0 and ix0 < Nx - 1 and
+                    iy0 >= 0 and iy0 < Ny - 1):
+                    dx = ix - ix0
+                    dy = iy - iy0
+                    # Calculate distance from source to voxel
+                    dx_source = x - sx
+                    dy_source = y - sy
+                    distance_from_source = math.sqrt(dx_source**2 + dy_source**2)
+                    weight = (source_distance**2 / (distance_from_source**2 + 1e-8))  # Distance weighting only
+                    cval = val * step_size * weight * cos_gamma
+                    cuda.atomic.add(d_image, (ix0, iy0), cval * (1 - dx) * (1 - dy))
+                    cuda.atomic.add(d_image, (ix0 + 1, iy0), cval * dx * (1 - dy))
+                    cuda.atomic.add(d_image, (ix0, iy0 + 1), cval * (1 - dx) * dy)
+                    cuda.atomic.add(d_image, (ix0 + 1, iy0 + 1), cval * dx * dy)
                 t += step_size
 
     @staticmethod
@@ -583,14 +593,14 @@ class FanBackprojectorFunction(torch.autograd.Function):
         blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
         blockspergrid = (blockspergrid_x, blockspergrid_y)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
 
         FanBackprojectorFunction._backward_kernel[blockspergrid, threadsperblock](
             d_grad_out, num_angles, num_detectors,
             Nx, Ny, d_sino_grad,
             det_spacing, d_angles, step_size,
-            source_distance, 
+            source_distance,
             isocenter_distance,
             cx, cy
         )
@@ -611,15 +621,19 @@ class FanBackprojectorFunction(torch.autograd.Function):
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
 
-            u = (idet - (num_detectors - 1)*0.5)*det_spacing
-            sx = -isocenter_distance*sin_a
-            sy =  isocenter_distance*cos_a
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
+            u = (idet - (num_detectors - 1) * 0.5) * det_spacing
+            sx = -isocenter_distance * sin_a
+            sy = isocenter_distance * cos_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
+
+            # Cosine weighting
+            sd_minus_iso = source_distance - isocenter_distance
+            cos_gamma = sd_minus_iso / math.sqrt(u**2 + sd_minus_iso**2)
 
             rx = dx - sx
             ry = dy - sy
-            length = math.sqrt(rx*rx + ry*ry)
+            length = math.sqrt(rx * rx + ry * ry)
             rx /= length
             ry /= length
 
@@ -627,21 +641,30 @@ class FanBackprojectorFunction(torch.autograd.Function):
             t_max = length
             t = t_min
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
+                x = sx + t * rx
+                y = sy + t * ry
                 ix = x + cx
                 iy = y + cy
                 ix0 = int(math.floor(ix))
                 iy0 = int(math.floor(iy))
 
-                if (ix0 >= 0 and ix0 < Nx-1 and
-                    iy0 >= 0 and iy0 < Ny-1):
+                if (ix0 >= 0 and ix0 < Nx - 1 and
+                    iy0 >= 0 and iy0 < Ny - 1):
                     dx2 = ix - ix0
                     dy2 = iy - iy0
-                    cval = (d_grad_out[ix0, iy0] * (1-dx2)*(1-dy2) +
-                            d_grad_out[ix0+1, iy0] * dx2*(1-dy2) +
-                            d_grad_out[ix0, iy0+1] * (1-dx2)*dy2 +
-                            d_grad_out[ix0+1, iy0+1] * dx2*dy2) * step_size
+
+                    # Calculate distance from source to voxel
+                    dx_source = x - sx
+                    dy_source = y - sy
+                    distance_from_source = math.sqrt(dx_source**2 + dy_source**2)
+                    # Updated weight calculation (cos_gamma removed)
+                    weight = (source_distance**2 / (distance_from_source**2 + 1e-8))
+
+                    cval = (d_grad_out[ix0, iy0] * (1 - dx2) * (1 - dy2) +
+                            d_grad_out[ix0 + 1, iy0] * dx2 * (1 - dy2) +
+                            d_grad_out[ix0, iy0 + 1] * (1 - dx2) * dy2 +
+                            d_grad_out[ix0 + 1, iy0 + 1] * dx2 * dy2) * step_size * weight * cos_gamma
+
                     cuda.atomic.add(d_sino_grad, (iang, idet), cval)
                 t += step_size
 
@@ -665,9 +688,9 @@ class ConeProjectorFunction(torch.autograd.Function):
         blockspergrid_z = math.ceil(det_v / threadsperblock[2])
         blockspergrid = (blockspergrid_x, blockspergrid_y, blockspergrid_z)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
-        cz = (Nz - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
+        cz = (Nz - 1) * 0.5
 
         ConeProjectorFunction._forward_kernel[blockspergrid, threadsperblock](
             d_volume, Nx, Ny, Nz,
@@ -699,21 +722,21 @@ class ConeProjectorFunction(torch.autograd.Function):
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
 
-            u = (iu - (det_u - 1)*0.5)*du
-            v = (ivz - (det_v - 1)*0.5)*dv
+            u = (iu - (det_u - 1) * 0.5) * du
+            v = (ivz - (det_v - 1) * 0.5) * dv
 
-            sx = -isocenter_distance*sin_a
-            sy =  isocenter_distance*cos_a
-            sz =  0.0
+            sx = -isocenter_distance * sin_a
+            sy = isocenter_distance * cos_a
+            sz = 0.0
 
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
             dz = v
 
             rx = dx - sx
             ry = dy - sy
             rz = dz - sz
-            length = math.sqrt(rx*rx + ry*ry + rz*rz)
+            length = math.sqrt(rx * rx + ry * ry + rz * rz)
             rx /= length
             ry /= length
             rz /= length
@@ -723,9 +746,9 @@ class ConeProjectorFunction(torch.autograd.Function):
             t_max = length
             t = t_min
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
-                z = sz + t*rz
+                x = sx + t * rx
+                y = sy + t * ry
+                z = sz + t * rz
 
                 ix = x + cx
                 iy = y + cy
@@ -740,23 +763,23 @@ class ConeProjectorFunction(torch.autograd.Function):
                     dx2 = ix - ix0
                     dy2 = iy - iy0
                     dz2 = iz - iz0
-                    c000 = d_volume[ix0,   iy0,   iz0]
-                    c100 = d_volume[ix0+1, iy0,   iz0]
-                    c010 = d_volume[ix0,   iy0+1, iz0]
-                    c001 = d_volume[ix0,   iy0,   iz0+1]
-                    c110 = d_volume[ix0+1, iy0+1, iz0]
-                    c101 = d_volume[ix0+1, iy0,   iz0+1]
-                    c011 = d_volume[ix0,   iy0+1, iz0+1]
-                    c111 = d_volume[ix0+1, iy0+1, iz0+1]
-                    val = (c000*(1-dx2)*(1-dy2)*(1-dz2) +
-                           c100*dx2*(1-dy2)*(1-dz2) +
-                           c010*(1-dx2)*dy2*(1-dz2) +
-                           c001*(1-dx2)*(1-dy2)*dz2 +
-                           c110*dx2*dy2*(1-dz2) +
-                           c101*dx2*(1-dy2)*dz2 +
-                           c011*(1-dx2)*dy2*dz2 +
-                           c111*dx2*dy2*dz2)
-                    total_val += val*step_size
+                    c000 = d_volume[ix0, iy0, iz0]
+                    c100 = d_volume[ix0 + 1, iy0, iz0]
+                    c010 = d_volume[ix0, iy0 + 1, iz0]
+                    c001 = d_volume[ix0, iy0, iz0 + 1]
+                    c110 = d_volume[ix0 + 1, iy0 + 1, iz0]
+                    c101 = d_volume[ix0 + 1, iy0, iz0 + 1]
+                    c011 = d_volume[ix0, iy0 + 1, iz0 + 1]
+                    c111 = d_volume[ix0 + 1, iy0 + 1, iz0 + 1]
+                    val = (c000 * (1 - dx2) * (1 - dy2) * (1 - dz2) +
+                           c100 * dx2 * (1 - dy2) * (1 - dz2) +
+                           c010 * (1 - dx2) * dy2 * (1 - dz2) +
+                           c001 * (1 - dx2) * (1 - dy2) * dz2 +
+                           c110 * dx2 * dy2 * (1 - dz2) +
+                           c101 * dx2 * (1 - dy2) * dz2 +
+                           c011 * (1 - dx2) * dy2 * dz2 +
+                           c111 * dx2 * dy2 * dz2)
+                    total_val += val * step_size  # No additional weighting (cos_theta removed)
                 t += step_size
 
             d_sino[iview, iu, ivz] = total_val
@@ -780,9 +803,9 @@ class ConeProjectorFunction(torch.autograd.Function):
         blockspergrid_z = math.ceil(det_v / threadsperblock[2])
         blockspergrid = (blockspergrid_x, blockspergrid_y, blockspergrid_z)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
-        cz = (Nz - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
+        cz = (Nz - 1) * 0.5
 
         ConeProjectorFunction._backward_kernel[blockspergrid, threadsperblock](
             d_grad_sino, num_views, det_u, det_v,
@@ -809,21 +832,21 @@ class ConeProjectorFunction(torch.autograd.Function):
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
 
-            u = (iu - (det_u - 1)*0.5)*du
-            v = (ivz - (det_v - 1)*0.5)*dv
+            u = (iu - (det_u - 1) * 0.5) * du
+            v = (ivz - (det_v - 1) * 0.5) * dv
 
-            sx = -isocenter_distance*sin_a
-            sy =  isocenter_distance*cos_a
-            sz =  0.0
+            sx = -isocenter_distance * sin_a
+            sy = isocenter_distance * cos_a
+            sz = 0.0
 
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
             dz = v
 
             rx = dx - sx
             ry = dy - sy
             rz = dz - sz
-            length = math.sqrt(rx*rx + ry*ry + rz*rz)
+            length = math.sqrt(rx * rx + ry * ry + rz * rz)
             rx /= length
             ry /= length
             rz /= length
@@ -832,30 +855,30 @@ class ConeProjectorFunction(torch.autograd.Function):
             t_max = length
             t = t_min
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
-                z = sz + t*rz
+                x = sx + t * rx
+                y = sy + t * ry
+                z = sz + t * rz
                 ix = x + cx
                 iy = y + cy
                 iz = z + cz
                 ix0 = int(math.floor(ix))
                 iy0 = int(math.floor(iy))
                 iz0 = int(math.floor(iz))
-                if (ix0 >= 0 and ix0 < Nx-1 and
-                    iy0 >= 0 and iy0 < Ny-1 and
-                    iz0 >= 0 and iz0 < Nz-1):
+                if (ix0 >= 0 and ix0 < Nx - 1 and
+                    iy0 >= 0 and iy0 < Ny - 1 and
+                    iz0 >= 0 and iz0 < Nz - 1):
                     dx2 = ix - ix0
                     dy2 = iy - iy0
                     dz2 = iz - iz0
-                    cval = grad_val*step_size
-                    cuda.atomic.add(d_vol_grad, (ix0,   iy0,   iz0),   cval*(1-dx2)*(1-dy2)*(1-dz2))
-                    cuda.atomic.add(d_vol_grad, (ix0+1, iy0,   iz0),   cval*dx2*(1-dy2)*(1-dz2))
-                    cuda.atomic.add(d_vol_grad, (ix0,   iy0+1, iz0),   cval*(1-dx2)*dy2*(1-dz2))
-                    cuda.atomic.add(d_vol_grad, (ix0,   iy0,   iz0+1), cval*(1-dx2)*(1-dy2)*dz2)
-                    cuda.atomic.add(d_vol_grad, (ix0+1, iy0+1, iz0),   cval*dx2*dy2*(1-dz2))
-                    cuda.atomic.add(d_vol_grad, (ix0+1, iy0,   iz0+1), cval*dx2*(1-dy2)*dz2)
-                    cuda.atomic.add(d_vol_grad, (ix0,   iy0+1, iz0+1), cval*(1-dx2)*dy2*dz2)
-                    cuda.atomic.add(d_vol_grad, (ix0+1, iy0+1, iz0+1), cval*dx2*dy2*dz2)
+                    cval = grad_val * step_size  # No additional weighting (cos_theta removed)
+                    cuda.atomic.add(d_vol_grad, (ix0, iy0, iz0), cval * (1 - dx2) * (1 - dy2) * (1 - dz2))
+                    cuda.atomic.add(d_vol_grad, (ix0 + 1, iy0, iz0), cval * dx2 * (1 - dy2) * (1 - dz2))
+                    cuda.atomic.add(d_vol_grad, (ix0, iy0 + 1, iz0), cval * (1 - dx2) * dy2 * (1 - dz2))
+                    cuda.atomic.add(d_vol_grad, (ix0, iy0, iz0 + 1), cval * (1 - dx2) * (1 - dy2) * dz2)
+                    cuda.atomic.add(d_vol_grad, (ix0 + 1, iy0 + 1, iz0), cval * dx2 * dy2 * (1 - dz2))
+                    cuda.atomic.add(d_vol_grad, (ix0 + 1, iy0, iz0 + 1), cval * dx2 * (1 - dy2) * dz2)
+                    cuda.atomic.add(d_vol_grad, (ix0, iy0 + 1, iz0 + 1), cval * (1 - dx2) * dy2 * dz2)
+                    cuda.atomic.add(d_vol_grad, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx2 * dy2 * dz2)
                 t += step_size
 
 ############################################################################
@@ -879,9 +902,9 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         blockspergrid_z = math.ceil(det_v / threadsperblock[2])
         blockspergrid = (blockspergrid_x, blockspergrid_y, blockspergrid_z)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
-        cz = (Nz - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
+        cz = (Nz - 1) * 0.5
 
         ConeBackprojectorFunction._forward_kernel[blockspergrid, threadsperblock](
             d_sino, num_views, det_u, det_v,
@@ -914,32 +937,37 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
 
-            u = (iu - (det_u - 1)*0.5)*du
-            v = (ivz - (det_v - 1)*0.5)*dv
+            u = (iu - (det_u - 1) * 0.5) * du
+            v = (ivz - (det_v - 1) * 0.5) * dv
 
-            sx = -isocenter_distance*sin_a
-            sy =  isocenter_distance*cos_a
-            sz =  0.0
+            sx = -isocenter_distance * sin_a
+            sy = isocenter_distance * cos_a
+            sz = 0.0
 
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
             dz = v
 
             rx = dx - sx
             ry = dy - sy
             rz = dz - sz
-            length = math.sqrt(rx*rx + ry*ry + rz*rz)
+            length = math.sqrt(rx * rx + ry * ry + rz * rz)
             rx /= length
             ry /= length
             rz /= length
+
+            # Cosine weighting calculation
+            sd_minus_iso = source_distance - isocenter_distance
+            distance_to_detector = math.sqrt(u**2 + v**2 + sd_minus_iso**2)
+            cos_theta = sd_minus_iso / (distance_to_detector + 1e-8)
 
             t_min = 0.0
             t_max = length
             t = t_min
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
-                z = sz + t*rz
+                x = sx + t * rx
+                y = sy + t * ry
+                z = sz + t * rz
 
                 ix = x + cx
                 iy = y + cy
@@ -947,21 +975,32 @@ class ConeBackprojectorFunction(torch.autograd.Function):
                 ix0 = int(math.floor(ix))
                 iy0 = int(math.floor(iy))
                 iz0 = int(math.floor(iz))
-                if (ix0 >= 0 and ix0 < Nx-1 and
-                    iy0 >= 0 and iy0 < Ny-1 and
-                    iz0 >= 0 and iz0 < Nz-1):
+                if (ix0 >= 0 and ix0 < Nx - 1 and
+                    iy0 >= 0 and iy0 < Ny - 1 and
+                    iz0 >= 0 and iz0 < Nz - 1):
                     dx2 = ix - ix0
                     dy2 = iy - iy0
                     dz2 = iz - iz0
-                    cval = val*step_size
-                    cuda.atomic.add(d_reco, (ix0,   iy0,   iz0),   cval*(1-dx2)*(1-dy2)*(1-dz2))
-                    cuda.atomic.add(d_reco, (ix0+1, iy0,   iz0),   cval*dx2*(1-dy2)*(1-dz2))
-                    cuda.atomic.add(d_reco, (ix0,   iy0+1, iz0),   cval*(1-dx2)*dy2*(1-dz2))
-                    cuda.atomic.add(d_reco, (ix0,   iy0,   iz0+1), cval*(1-dx2)*(1-dy2)*dz2)
-                    cuda.atomic.add(d_reco, (ix0+1, iy0+1, iz0),   cval*dx2*dy2*(1-dz2))
-                    cuda.atomic.add(d_reco, (ix0+1, iy0,   iz0+1), cval*dx2*(1-dy2)*dz2)
-                    cuda.atomic.add(d_reco, (ix0,   iy0+1, iz0+1), cval*(1-dx2)*dy2*dz2)
-                    cuda.atomic.add(d_reco, (ix0+1, iy0+1, iz0+1), cval*dx2*dy2*dz2)
+
+                    # Calculate distance from source to voxel
+                    dx_source = x - sx
+                    dy_source = y - sy
+                    dz_source = z - sz
+                    distance_from_source = math.sqrt(dx_source**2 + dy_source**2 + dz_source**2)
+
+                    # Updated weight calculation
+                    weight = (source_distance**2 / (distance_from_source**2 + 1e-8)) * cos_theta
+
+                    cval = val * step_size * weight
+
+                    cuda.atomic.add(d_reco, (ix0, iy0, iz0), cval * (1 - dx2) * (1 - dy2) * (1 - dz2))
+                    cuda.atomic.add(d_reco, (ix0 + 1, iy0, iz0), cval * dx2 * (1 - dy2) * (1 - dz2))
+                    cuda.atomic.add(d_reco, (ix0, iy0 + 1, iz0), cval * (1 - dx2) * dy2 * (1 - dz2))
+                    cuda.atomic.add(d_reco, (ix0, iy0, iz0 + 1), cval * (1 - dx2) * (1 - dy2) * dz2)
+                    cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1, iz0), cval * dx2 * dy2 * (1 - dz2))
+                    cuda.atomic.add(d_reco, (ix0 + 1, iy0, iz0 + 1), cval * dx2 * (1 - dy2) * dz2)
+                    cuda.atomic.add(d_reco, (ix0, iy0 + 1, iz0 + 1), cval * (1 - dx2) * dy2 * dz2)
+                    cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx2 * dy2 * dz2)
                 t += step_size
 
     @staticmethod
@@ -983,9 +1022,9 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         blockspergrid_z = math.ceil(det_v / threadsperblock[2])
         blockspergrid = (blockspergrid_x, blockspergrid_y, blockspergrid_z)
 
-        cx = (Nx - 1)*0.5
-        cy = (Ny - 1)*0.5
-        cz = (Nz - 1)*0.5
+        cx = (Nx - 1) * 0.5
+        cy = (Ny - 1) * 0.5
+        cz = (Nz - 1) * 0.5
 
         ConeBackprojectorFunction._backward_kernel[blockspergrid, threadsperblock](
             d_grad_out, num_views, det_u, det_v,
@@ -1017,51 +1056,67 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
 
-            u = (iu - (det_u - 1)*0.5)*du
-            v = (ivz - (det_v - 1)*0.5)*dv
+            u = (iu - (det_u - 1) * 0.5) * du
+            v = (ivz - (det_v - 1) * 0.5) * dv
 
-            sx = -isocenter_distance*sin_a
-            sy =  isocenter_distance*cos_a
-            sz =  0.0
+            sx = -isocenter_distance * sin_a
+            sy = isocenter_distance * cos_a
+            sz = 0.0
 
-            dx = (source_distance - isocenter_distance)*sin_a + u*cos_a
-            dy = -(source_distance - isocenter_distance)*cos_a + u*sin_a
+            dx = (source_distance - isocenter_distance) * sin_a + u * cos_a
+            dy = -(source_distance - isocenter_distance) * cos_a + u * sin_a
             dz = v
 
             rx = dx - sx
             ry = dy - sy
             rz = dz - sz
-            length = math.sqrt(rx*rx + ry*ry + rz*rz)
+            length = math.sqrt(rx * rx + ry * ry + rz * rz)
             rx /= length
             ry /= length
             rz /= length
+
+            # Cosine weighting calculation
+            sd_minus_iso = source_distance - isocenter_distance
+            distance_to_detector = math.sqrt(u**2 + v**2 + sd_minus_iso**2)
+            cos_theta = sd_minus_iso / (distance_to_detector + 1e-8)
 
             t_min = 0.0
             t_max = length
             t = t_min
             while t < t_max:
-                x = sx + t*rx
-                y = sy + t*ry
-                z = sz + t*rz
+                x = sx + t * rx
+                y = sy + t * ry
+                z = sz + t * rz
                 ix = x + cx
                 iy = y + cy
                 iz = z + cz
                 ix0 = int(math.floor(ix))
                 iy0 = int(math.floor(iy))
                 iz0 = int(math.floor(iz))
-                if (ix0 >= 0 and ix0 < Nx-1 and
-                    iy0 >= 0 and iy0 < Ny-1 and
-                    iz0 >= 0 and iz0 < Nz-1):
+                if (ix0 >= 0 and ix0 < Nx - 1 and
+                    iy0 >= 0 and iy0 < Ny - 1 and
+                    iz0 >= 0 and iz0 < Nz - 1):
                     dx2 = ix - ix0
                     dy2 = iy - iy0
                     dz2 = iz - iz0
-                    cval = (d_grad_out[ix0,   iy0,   iz0] * (1-dx2)*(1-dy2)*(1-dz2) +
-                            d_grad_out[ix0+1, iy0,   iz0] * dx2*(1-dy2)*(1-dz2) +
-                            d_grad_out[ix0,   iy0+1, iz0] * (1-dx2)*dy2*(1-dz2) +
-                            d_grad_out[ix0,   iy0,   iz0+1] * (1-dx2)*(1-dy2)*dz2 +
-                            d_grad_out[ix0+1, iy0+1, iz0] * dx2*dy2*(1-dz2) +
-                            d_grad_out[ix0+1, iy0,   iz0+1] * dx2*(1-dy2)*dz2 +
-                            d_grad_out[ix0,   iy0+1, iz0+1] * (1-dx2)*dy2*dz2 +
-                            d_grad_out[ix0+1, iy0+1, iz0+1] * dx2*dy2*dz2) * step_size
+
+                    # Calculate distance from source to voxel
+                    dx_source = x - sx
+                    dy_source = y - sy
+                    dz_source = z - sz
+                    distance_from_source = math.sqrt(dx_source**2 + dy_source**2 + dz_source**2)
+
+                    # Updated weight calculation
+                    weight = (source_distance**2 / (distance_from_source**2 + 1e-8)) * cos_theta
+
+                    cval = (d_grad_out[ix0, iy0, iz0] * (1 - dx2) * (1 - dy2) * (1 - dz2) +
+                            d_grad_out[ix0 + 1, iy0, iz0] * dx2 * (1 - dy2) * (1 - dz2) +
+                            d_grad_out[ix0, iy0 + 1, iz0] * (1 - dx2) * dy2 * (1 - dz2) +
+                            d_grad_out[ix0, iy0, iz0 + 1] * (1 - dx2) * (1 - dy2) * dz2 +
+                            d_grad_out[ix0 + 1, iy0 + 1, iz0] * dx2 * dy2 * (1 - dz2) +
+                            d_grad_out[ix0 + 1, iy0, iz0 + 1] * dx2 * (1 - dy2) * dz2 +
+                            d_grad_out[ix0, iy0 + 1, iz0 + 1] * (1 - dx2) * dy2 * dz2 +
+                            d_grad_out[ix0 + 1, iy0 + 1, iz0 + 1] * dx2 * dy2 * dz2) * step_size * weight
+
                     cuda.atomic.add(d_sino_grad, (iview, iu, ivz), cval)
                 t += step_size
