@@ -51,7 +51,7 @@ def example_fan_pipeline():
     num_angles = 360
     angles_np = np.linspace(0, 2*math.pi, num_angles, endpoint=False).astype(np.float32)
 
-    num_detectors = 512
+    num_detectors = 600
     detector_spacing = 1.0
     step_size = 1.0
     source_distance = 800.0
@@ -96,6 +96,10 @@ def example_fan_pipeline():
     plt.axis('off')
     plt.tight_layout()
     plt.show()
+
+    # print data range of the phantom and reco
+    print("Phantom range:", phantom.min(), phantom.max())
+    print("Reco range:", reco_cpu.min(), reco_cpu.max())
 
 if __name__ == "__main__":
     example_fan_pipeline()

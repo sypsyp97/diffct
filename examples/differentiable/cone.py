@@ -115,5 +115,9 @@ def example_cone_pipeline():
     plt.tight_layout()
     plt.show()
 
+    # print data range of the phantom and reco
+    print("Phantom data range:", phantom_cpu.min(), phantom_cpu.max())
+    print("Reco data range:", reconstruction_cpu.min(), reconstruction_cpu.max())
+
 if __name__ == "__main__":
     example_cone_pipeline()

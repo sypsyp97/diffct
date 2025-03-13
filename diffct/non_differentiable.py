@@ -134,12 +134,6 @@ def forward_fan_2d_kernel(
         sin_a = math.sin(angle)
         detector_pos_u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
 
-        # Cosine weighting factor
-        sd_minus_iso = source_distance - isocenter_distance
-        denominator = math.sqrt(detector_pos_u**2 + sd_minus_iso**2)
-        cos_gamma = sd_minus_iso / denominator
-
-
         ray_source_x = -isocenter_distance * sin_a
         ray_source_y =  isocenter_distance  * cos_a
         ray_detector_x = (
@@ -183,7 +177,8 @@ def forward_fan_2d_kernel(
                     + c01 * (1 - dx) * dy
                     + c11 * dx       * dy
                 )
-                total_val += val * step_size * cos_gamma  # Apply cosine weighting
+
+                total_val += val * step_size 
 
             t += step_size
 
@@ -202,11 +197,6 @@ def back_fan_2d_kernel(
         cos_a = math.cos(angle)
         sin_a = math.sin(angle)
         detector_pos_u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
-
-        # Cosine weighting factor
-        sd_minus_iso = source_distance - isocenter_distance
-        denominator = math.sqrt(detector_pos_u**2 + sd_minus_iso**2)
-        cos_gamma = sd_minus_iso / denominator
 
         ray_source_x = -isocenter_distance * sin_a
         ray_source_y =  isocenter_distance  * cos_a
@@ -237,9 +227,8 @@ def back_fan_2d_kernel(
             if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
                 dx = ix - ix0
                 dy = iy - iy0
-                dist = math.sqrt((x - ray_source_x)**2 + (y - ray_source_y)**2)
-                weight = (source_distance ** 2) / (dist ** 2 + 1e-8) # Apply combined weighting
-                cval = val * step_size * weight * cos_gamma
+
+                cval = val * step_size
 
                 cuda.atomic.add(d_reco, (ix0,     iy0),     cval * (1 - dx) * (1 - dy))
                 cuda.atomic.add(d_reco, (ix0 + 1, iy0),     cval * dx       * (1 - dy))
@@ -390,11 +379,6 @@ def back_cone_3d_kernel(
         u = (iu - (num_det_u - 1) / 2.0) * du
         v = (iv - (num_det_v - 1) / 2.0) * dv
 
-        # Cosine weighting factor
-        sd_minus_iso = source_distance - isocenter_distance
-        denominator_det = math.sqrt(u**2 + v**2 + sd_minus_iso**2)
-        cos_theta_det = sd_minus_iso / denominator_det
-
         ray_source_x = -isocenter_distance * sin_a
         ray_source_y =  isocenter_distance * cos_a
         ray_source_z = 0.0
@@ -432,9 +416,7 @@ def back_cone_3d_kernel(
                 dy = iy - iy0
                 dz = iz - iz0
 
-                dist = math.sqrt( (x - ray_source_x)**2 + (y - ray_source_y)**2 + (z - ray_source_z)**2 )
-                weight = (source_distance ** 2) / (dist ** 2 + 1e-8) * cos_theta_det  # Apply combined weighting
-                cval = val * step_size * weight
+                cval = val * step_size
 
                 cuda.atomic.add(d_reco, (ix0,     iy0,     iz0),     cval * (1 - dx) * (1 - dy) * (1 - dz))
                 cuda.atomic.add(d_reco, (ix0 + 1, iy0,     iz0),     cval * dx       * (1 - dy) * (1 - dz))

@@ -75,5 +75,10 @@ def main():
     plt.title("Parallel FBP Reconstruction")
     plt.show()
 
+    # print data range of the phantom and reco
+    print("Phantom min/max:", phantom.min(), phantom.max())
+    print("Reco min/max:", reco.min(), reco.max())
+
+
 if __name__ == "__main__":
     main()

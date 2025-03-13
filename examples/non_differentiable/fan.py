@@ -87,5 +87,9 @@ def main():
     plt.tight_layout()
     plt.show()
 
+    # print data range of the phantom and reco
+    print("Phantom data range:", phantom.min(), phantom.max())
+    print("Reconstruction data range:", reco.min(), reco.max())
+
 if __name__ == "__main__":
     main()

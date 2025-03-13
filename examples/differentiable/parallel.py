@@ -94,5 +94,9 @@ def example_parallel_pipeline():
     plt.tight_layout()
     plt.show()
 
+    # print data range of the phantom and reco 
+    print("Phantom range:", phantom.min(), phantom.max())
+    print("Reco range:", reco_cpu.min(), reco_cpu.max())
+
 if __name__ == "__main__":
     example_parallel_pipeline()

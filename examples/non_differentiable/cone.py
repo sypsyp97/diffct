@@ -112,5 +112,9 @@ def main():
     plt.tight_layout()
     plt.show()
 
+    # print data range of the phantom and reco
+    print("Phantom range:", phantom.min(), phantom.max())
+    print("Reco range:", reco.min(), reco.max())
+
 if __name__ == "__main__":
     main()
