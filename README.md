@@ -35,7 +35,7 @@ diffct/
 │   │   ├── parallel.py        
 │   │   ├── fan.py             
 │   │   ├── cone.py            
-├── setup.py                   # Installation script
+├── pyproject.toml             # Project metadata
 ├── README.md                  # README
 ├── LICENSE                    # License
 ├── requirements.txt           # Dependencies
@@ -56,11 +56,14 @@ diffct/
 conda create -n diffct python=3.10
 conda activate diffct
 
-# Clone and install
-git clone https://github.com/sypsyp97/diffct
+# Install CUDA support
+conda install cudatoolkit
+
+git clone https://github.com/sypsyp97/diffct.git
 cd diffct
+
 pip install -r requirements.txt
-pip install .
+pip install diffct
 ```
 
 ## 📚 Usage Examples
