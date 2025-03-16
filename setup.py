@@ -8,7 +8,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Yipeng Sun",
     author_email="yipeng.sun@fau.de",
-    url="https://github.com/sypsyp97/differentiable-ct-reconstruction",
+    url="https://github.com/sypsyp97/diffct",
     packages=find_packages(),
     install_requires=[
         "numpy",
