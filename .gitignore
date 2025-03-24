@@ -170,5 +170,16 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# test file
-test
+# Roo memory bank
+.vscode
+/memory-bank
+.rooignore
+
+# Cline configuration file
+.clinerules-architect
+.clinerules-ask
+.clinerules-code
+.clinerules-debug
+.clinerules-test
+.roomodes
+projectBrief.md
