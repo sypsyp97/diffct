@@ -462,7 +462,6 @@ class FanProjectorFunction(torch.autograd.Function):
                     iy0 >= 0 and iy0 < Ny - 1):
                     dx = ix - ix0
                     dy = iy - iy0
-                    # Multiply by cos_gamma here
                     cval = grad_val * step_size
                     cuda.atomic.add(d_image_grad, (ix0, iy0), cval * (1 - dx) * (1 - dy))
                     cuda.atomic.add(d_image_grad, (ix0 + 1, iy0), cval * dx * (1 - dy))
@@ -1033,11 +1032,6 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             rx /= length
             ry /= length
             rz /= length
-
-            # Cosine weighting calculation
-            sd_minus_iso = source_distance - isocenter_distance
-            distance_to_detector = math.sqrt(u**2 + v**2 + sd_minus_iso**2)
-            cos_theta = sd_minus_iso / (distance_to_detector + 1e-8)
 
             t_min = 0.0
             t_max = length
