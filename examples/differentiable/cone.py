@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 from diffct.differentiable import ConeProjectorFunction, ConeBackprojectorFunction
 
 def shepp_logan_3d(shape):
-    shepp_logan = np.zeros(shape, dtype=np.float32)
-    zz, yy, xx = np.mgrid[: shape[0], : shape[1], : shape[2]]
+    zz, yy, xx = np.mgrid[:shape[0], :shape[1], :shape[2]]
     xx = (xx - (shape[2] - 1) / 2) / ((shape[2] - 1) / 2)
     yy = (yy - (shape[1] - 1) / 2) / ((shape[1] - 1) / 2)
     zz = (zz - (shape[0] - 1) / 2) / ((shape[0] - 1) / 2)
@@ -21,27 +20,40 @@ def shepp_logan_3d(shape):
         [-0.08, -0.605, 0, 0.046, 0.023, 0.05, 0, 0, 0, 0.1],
         [0, -0.605, 0, 0.023, 0.023, 0.02, 0, 0, 0, 0.1],
         [0.06, -0.605, 0, 0.023, 0.046, 0.02, 0, 0, 0, 0.1],
-    ])
-    for i in range(el_params.shape[0]):
-        x_pos = el_params[i][0]
-        y_pos = el_params[i][1]
-        z_pos = el_params[i][2]
-        a_axis = el_params[i][3]
-        b_axis = el_params[i][4]
-        c_axis = el_params[i][5]
-        phi = el_params[i][6]
-        val = el_params[i][9]
-        xc = xx - x_pos
-        yc = yy - y_pos
-        zc = zz - z_pos
-        c = np.cos(phi)
-        s = np.sin(phi)
-        Rz_phi = np.array([[c, -s, 0],[s, c, 0],[0,0,1]])
-        xp = xc*Rz_phi[0,0] + yc*Rz_phi[0,1] + zc*Rz_phi[0,2]
-        yp = xc*Rz_phi[1,0] + yc*Rz_phi[1,1] + zc*Rz_phi[1,2]
-        zp = xc*Rz_phi[2,0] + yc*Rz_phi[2,1] + zc*Rz_phi[2,2]
-        mask = (xp**2)/(a_axis*a_axis) + (yp**2)/(b_axis*b_axis) + (zp**2)/(c_axis*c_axis) <= 1.0
-        shepp_logan[mask] += val
+    ], dtype=np.float32)
+
+    # Extract parameters for vectorization
+    x_pos = el_params[:, 0][:, None, None, None]
+    y_pos = el_params[:, 1][:, None, None, None]
+    z_pos = el_params[:, 2][:, None, None, None]
+    a_axis = el_params[:, 3][:, None, None, None]
+    b_axis = el_params[:, 4][:, None, None, None]
+    c_axis = el_params[:, 5][:, None, None, None]
+    phi = el_params[:, 6][:, None, None, None]
+    val = el_params[:, 9][:, None, None, None]
+
+    # Broadcast grid to ellipsoid axis
+    xc = xx[None, ...] - x_pos
+    yc = yy[None, ...] - y_pos
+    zc = zz[None, ...] - z_pos
+
+    c = np.cos(phi)
+    s = np.sin(phi)
+
+    # Only rotation around z, so can vectorize:
+    xp = c * xc - s * yc
+    yp = s * xc + c * yc
+    zp = zc
+
+    mask = (
+        (xp ** 2) / (a_axis ** 2)
+        + (yp ** 2) / (b_axis ** 2)
+        + (zp ** 2) / (c_axis ** 2)
+        <= 1.0
+    )
+
+    # Use broadcasting to sum all ellipsoid contributions
+    shepp_logan = np.sum(mask * val, axis=0)
     shepp_logan = np.clip(shepp_logan, 0, 1)
     return shepp_logan
 
