@@ -144,7 +144,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
             _DTYPE(step_size), cx, cy
         )
 
-        sinogram = torch.tensor(d_sino.copy_to_host(), device=device)
+        sinogram = torch.as_tensor(d_sino, device=device)
         ctx.save_for_backward(image, angles)
         ctx.intermediate = (num_detectors, detector_spacing, step_size, Nx, Ny)
         return sinogram
@@ -180,7 +180,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
             _DTYPE(step_size), cx, cy
         )
 
-        grad_image = torch.tensor(d_img_grad.copy_to_host(), device=device)
+        grad_image = torch.as_tensor(d_img_grad, device=device)
         return grad_image, None, None, None, None
 
 
@@ -294,7 +294,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
             _DTYPE(step_size), cx, cy
         )
 
-        reco = torch.tensor(d_reco.copy_to_host(), device=device)
+        reco = torch.as_tensor(d_reco, device=device)
         ctx.save_for_backward(sinogram, angles)
         ctx.intermediate = (Nx, Ny, detector_spacing, step_size)
         return reco
@@ -329,7 +329,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
             _DTYPE(step_size), cx, cy
         )
 
-        grad_sino = torch.tensor(d_sino_grad.copy_to_host(), device=device)
+        grad_sino = torch.as_tensor(d_sino_grad, device=device)
         return grad_sino, None, None, None, None, None
 
 
@@ -471,7 +471,7 @@ class FanProjectorFunction(torch.autograd.Function):
             cx, cy
         )
 
-        sino = torch.tensor(d_sino.copy_to_host(), device=device)
+        sino = torch.as_tensor(d_sino, device=device)
         ctx.save_for_backward(image, angles)
         ctx.intermediate = (num_detectors, detector_spacing, step_size,
                             Nx, Ny, source_distance, isocenter_distance)
@@ -508,7 +508,7 @@ class FanProjectorFunction(torch.autograd.Function):
             _DTYPE(src_dist), _DTYPE(iso_dist),
             cx, cy
         )
-        grad_img = torch.tensor(d_img_grad.copy_to_host(), device=device)
+        grad_img = torch.as_tensor(d_img_grad, device=device)
         return grad_img, None, None, None, None, None, None
 
 
@@ -647,7 +647,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
             cx, cy
         )
 
-        image = torch.tensor(d_reco.copy_to_host(), device=device)
+        image = torch.as_tensor(d_reco, device=device)
         ctx.save_for_backward(sinogram, angles)
         ctx.intermediate = (Nx, Ny, detector_spacing, step_size,
                             source_distance, isocenter_distance)
@@ -684,7 +684,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
             _DTYPE(src_dist), _DTYPE(iso_dist),
             cx, cy
         )
-        grad_sino = torch.tensor(d_sino_grad.copy_to_host(), device=device)
+        grad_sino = torch.as_tensor(d_sino_grad, device=device)
         return grad_sino, None, None, None, None, None, None, None
 
 
@@ -858,7 +858,7 @@ class ConeProjectorFunction(torch.autograd.Function):
             cx, cy, cz
         )
 
-        sino = torch.tensor(d_sino.copy_to_host(), device=device)
+        sino = torch.as_tensor(d_sino, device=device)
         ctx.save_for_backward(volume, angles)
         ctx.intermediate = (Nx, Ny, Nz, det_u, det_v, du, dv,
                             step_size, source_distance, isocenter_distance)
@@ -897,7 +897,7 @@ class ConeProjectorFunction(torch.autograd.Function):
             cx, cy, cz
         )
 
-        grad_vol = torch.tensor(d_vol_grad.copy_to_host(), device=device)
+        grad_vol = torch.as_tensor(d_vol_grad, device=device)
         return grad_vol, None, None, None, None, None, None, None, None, None, None, None
 
 
@@ -1069,7 +1069,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             cx, cy, cz
         )
 
-        vol = torch.tensor(d_reco.copy_to_host(), device=device)
+        vol = torch.as_tensor(d_reco, device=device)
         ctx.save_for_backward(sinogram, angles)
         ctx.intermediate = (Nx, Ny, Nz, det_u, det_v, du, dv,
                             step_size, source_distance, isocenter_distance)
@@ -1107,5 +1107,5 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             _DTYPE(src_dist), _DTYPE(iso_dist),
             cx, cy, cz
         )
-        grad_sino = torch.tensor(d_sino_grad.copy_to_host(), device=device)
+        grad_sino = torch.as_tensor(d_sino_grad, device=device)
         return grad_sino, None, None, None, None, None, None, None, None, None, None, None
