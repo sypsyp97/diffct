@@ -1,482 +1,562 @@
 import math
 import numpy as np
-from numba import cuda
+from numba import cuda, float32
 
-@cuda.jit(fastmath=True)
+# ------------------------------------------------------------------
+# GLOBAL SETTINGS
+# ------------------------------------------------------------------
+
+_DTYPE             = np.float32          # switch to float64 if needed
+_TPB_2D            = (16, 16)            # threads per block for 2‑D kernels
+_TPB_3D            = (8,  8,  8)         # threads per block for 3‑D kernels
+_FASTMATH_DECORATOR = cuda.jit(fastmath=True)
+
+# ------------------------------------------------------------------
+# SMALL HOST HELPERS
+# ------------------------------------------------------------------
+
+
+def _trig_tables(angles: np.ndarray, dtype=_DTYPE):
+    """Return (d_cos, d_sin) device vectors for all projection angles."""
+    cos_host = np.cos(angles).astype(dtype)
+    sin_host = np.sin(angles).astype(dtype)
+    return cuda.to_device(cos_host), cuda.to_device(sin_host)
+
+
+def _grid_2d(n1, n2, tpb=_TPB_2D):
+    return (math.ceil(n1 / tpb[0]), math.ceil(n2 / tpb[1])), tpb
+
+
+def _grid_3d(n1, n2, n3, tpb=_TPB_3D):
+    return (
+        math.ceil(n1 / tpb[0]),
+        math.ceil(n2 / tpb[1]),
+        math.ceil(n3 / tpb[2]),
+    ), tpb
+
+
+# ------------------------------------------------------------------
+# 2‑D PARALLEL GEOMETRY
+# ------------------------------------------------------------------
+
+@_FASTMATH_DECORATOR
 def forward_parallel_2d_kernel(
-    d_image, Nx, Ny, d_sinogram, num_views, num_detectors,
-    detector_spacing, d_angles, step_size, cx, cy
+    d_image,
+    Nx, Ny,                         # image size
+    diag,                           # diagonal length of the image
+    d_sino,
+    n_views, n_det,
+    det_spacing,
+    d_cos, d_sin,                   # trig lookup tables
+    step, cx, cy                    # ray‑marching parameters
 ):
     iview, idet = cuda.grid(2)
-    if iview < num_views and idet < num_detectors:
-        angle = d_angles[iview]
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
+    if iview >= n_views or idet >= n_det:
+        return
 
-        t_min = -math.sqrt(Nx*Nx + Ny*Ny)
-        t_max = math.sqrt(Nx*Nx + Ny*Ny)
-        total_val = 0.0
-        t = t_min
-        while t < t_max:
-            x = u * (-sin_a) + t * cos_a
-            y = u * cos_a + t * sin_a
-            ix = x + cx
-            iy = y + cy
-            ix0 = int(math.floor(ix))
-            iy0 = int(math.floor(iy))
+    cos_a = d_cos[iview]
+    sin_a = d_sin[iview]
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing
 
-            if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
-                dx = ix - ix0
-                dy = iy - iy0
-                val = (
-                    d_image[ix0,     iy0]     * (1 - dx) * (1 - dy)
-                    + d_image[ix0 + 1, iy0]   * dx       * (1 - dy)
-                    + d_image[ix0,     iy0+1] * (1 - dx) * dy
-                    + d_image[ix0 + 1, iy0+1] * dx       * dy
-                )
-                total_val += val * step_size
-            t += step_size
+    # integral limits (covers the whole image square)
+    t_min, t_max = -diag, diag
+    t            = t_min
+    accum        = 0.0
 
-        d_sinogram[iview, idet] = total_val
+    while t < t_max:
+        x  = u * (-sin_a) + t * cos_a
+        y  = u * ( cos_a) + t * sin_a
+        ix = x + cx
+        iy = y + cy
+        ix0 = int(math.floor(ix))
+        iy0 = int(math.floor(iy))
 
-@cuda.jit(fastmath=True)
+        if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
+            dx = ix - ix0
+            dy = iy - iy0
+            accum += (
+                d_image[ix0,     iy0]     * (1 - dx) * (1 - dy) +
+                d_image[ix0 + 1, iy0]     * dx       * (1 - dy) +
+                d_image[ix0,     iy0 + 1] * (1 - dx) * dy       +
+                d_image[ix0 + 1, iy0 + 1] * dx       * dy
+            ) * step
+        t += step
+
+    d_sino[iview, idet] = accum
+
+
+@_FASTMATH_DECORATOR
 def back_parallel_2d_kernel(
-    d_sinogram, Nx, Ny, d_reco, num_views, num_detectors,
-    detector_spacing, d_angles, step_size, cx, cy
+    d_sino,
+    Nx, Ny, diag,
+    d_reco,
+    n_views, n_det, det_spacing,
+    d_cos, d_sin,
+    step, cx, cy
 ):
     iview, idet = cuda.grid(2)
-    if iview < num_views and idet < num_detectors:
-        val = d_sinogram[iview, idet]
-        angle = d_angles[iview]
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
+    if iview >= n_views or idet >= n_det:
+        return
 
-        t_min = -math.sqrt(Nx*Nx + Ny*Ny)
-        t_max = math.sqrt(Nx*Nx + Ny*Ny)
-        t = t_min
+    val   = d_sino[iview, idet]
+    cos_a = d_cos[iview]
+    sin_a = d_sin[iview]
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing
 
-        while t < t_max:
-            x = u * (-sin_a) + t * cos_a
-            y = u * cos_a + t * sin_a
-            ix = x + cx
-            iy = y + cy
-            ix0 = int(math.floor(ix))
-            iy0 = int(math.floor(iy))
+    t_min, t_max = -diag, diag
+    t = t_min
+    while t < t_max:
+        x  = u * (-sin_a) + t * cos_a
+        y  = u * ( cos_a) + t * sin_a
+        ix = x + cx
+        iy = y + cy
+        ix0 = int(math.floor(ix))
+        iy0 = int(math.floor(iy))
 
-            if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
-                dx = ix - ix0
-                dy = iy - iy0
-                cval = val * step_size
-                cuda.atomic.add(d_reco, (ix0,     iy0),     cval * (1 - dx) * (1 - dy))
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0),     cval * dx       * (1 - dy))
-                cuda.atomic.add(d_reco, (ix0,     iy0 + 1), cval * (1 - dx) * dy)
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1), cval * dx       * dy)
-            t += step_size
+        if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
+            dx = ix - ix0
+            dy = iy - iy0
+            cval = val * step
+            cuda.atomic.add(d_reco, (ix0,     iy0),     cval * (1 - dx) * (1 - dy))
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0),     cval * dx       * (1 - dy))
+            cuda.atomic.add(d_reco, (ix0,     iy0 + 1), cval * (1 - dx) * dy)
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1), cval * dx       * dy)
+        t += step
+
 
 def forward_parallel_2d(
-    image, num_views, num_detectors, detector_spacing,
-    angles, step_size=0.5
+    image: np.ndarray,
+    n_views: int,
+    n_det: int,
+    det_spacing: float,
+    angles: np.ndarray,
+    step_size: float = 0.5,
 ):
+    # host‑side preparations --------------------------------------------------
+    image = image.astype(_DTYPE, copy=False)
     Nx, Ny = image.shape
+    diag   = _DTYPE(math.sqrt(Nx * Nx + Ny * Ny))
+
     d_image = cuda.to_device(image)
-    d_angles = cuda.to_device(angles)
-    d_sinogram = cuda.device_array((num_views, num_detectors), dtype=np.float64)
+    d_cos, d_sin = _trig_tables(angles, _DTYPE)
+    d_sino  = cuda.device_array((n_views, n_det), dtype=_DTYPE)
 
-    threadsperblock = (16, 16)
-    blockspergrid_x = math.ceil(num_views / threadsperblock[0])
-    blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
-    blockspergrid = (blockspergrid_x, blockspergrid_y)
+    (grid, tpb) = _grid_2d(n_views, n_det)
 
-    cx = (Nx - 1) / 2.0
-    cy = (Ny - 1) / 2.0
+    cx = _DTYPE((Nx - 1) * 0.5)
+    cy = _DTYPE((Ny - 1) * 0.5)
 
-    forward_parallel_2d_kernel[blockspergrid, threadsperblock](
-        d_image, Nx, Ny, d_sinogram, num_views, num_detectors,
-        detector_spacing, d_angles, step_size, cx, cy
+    forward_parallel_2d_kernel[grid, tpb](
+        d_image, Nx, Ny, diag, d_sino,
+        n_views, n_det, _DTYPE(det_spacing),
+        d_cos, d_sin,
+        _DTYPE(step_size), cx, cy
     )
-    return d_sinogram.copy_to_host()
+    return d_sino.copy_to_host()
+
 
 def back_parallel_2d(
-    sinogram, Nx, Ny, detector_spacing,
-    angles, step_size=0.5
+    sinogram: np.ndarray,
+    Nx: int, Ny: int,
+    det_spacing: float,
+    angles: np.ndarray,
+    step_size: float = 0.5,
 ):
-    num_views, num_detectors = sinogram.shape
-    d_sinogram = cuda.to_device(sinogram)
-    d_angles = cuda.to_device(angles)
-    d_reco = cuda.device_array((Nx, Ny), dtype=np.float64)
+    sinogram = sinogram.astype(_DTYPE, copy=False)
+    n_views, n_det = sinogram.shape
+    diag = _DTYPE(math.sqrt(Nx * Nx + Ny * Ny))
 
-    threadsperblock = (16, 16)
-    blockspergrid_x = math.ceil(num_views / threadsperblock[0])
-    blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
-    blockspergrid = (blockspergrid_x, blockspergrid_y)
+    d_sino = cuda.to_device(sinogram)
+    d_cos, d_sin = _trig_tables(angles, _DTYPE)
+    d_reco = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
 
-    cx = (Nx - 1) / 2.0
-    cy = (Ny - 1) / 2.0
+    (grid, tpb) = _grid_2d(n_views, n_det)
+    cx = _DTYPE((Nx - 1) * 0.5)
+    cy = _DTYPE((Ny - 1) * 0.5)
 
-    back_parallel_2d_kernel[blockspergrid, threadsperblock](
-        d_sinogram, Nx, Ny, d_reco, num_views, num_detectors,
-        detector_spacing, d_angles, step_size, cx, cy
+    back_parallel_2d_kernel[grid, tpb](
+        d_sino, Nx, Ny, diag, d_reco,
+        n_views, n_det, _DTYPE(det_spacing),
+        d_cos, d_sin,
+        _DTYPE(step_size), cx, cy
     )
     return d_reco.copy_to_host()
 
-@cuda.jit(fastmath=True)
+
+# ------------------------------------------------------------------
+# 2‑D FAN GEOMETRY
+# ------------------------------------------------------------------
+
+@_FASTMATH_DECORATOR
 def forward_fan_2d_kernel(
-    d_image, Nx, Ny, d_sinogram, num_views, num_detectors,
-    detector_spacing, d_angles, source_distance, isocenter_distance,
-    step_size, cx, cy
+    d_image,
+    Nx, Ny,
+    d_sino,
+    n_views, n_det,
+    det_spacing,
+    d_cos, d_sin,
+    src_dist, iso_dist,
+    step, cx, cy
 ):
     iview, idet = cuda.grid(2)
-    if iview < num_views and idet < num_detectors:
-        angle = d_angles[iview]
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        detector_pos_u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
+    if iview >= n_views or idet >= n_det:
+        return
 
-        ray_source_x = -isocenter_distance * sin_a
-        ray_source_y =  isocenter_distance  * cos_a
-        ray_detector_x = (
-            (source_distance - isocenter_distance) * sin_a
-            + detector_pos_u * cos_a
-        )
-        ray_detector_y = (
-            -(source_distance - isocenter_distance) * cos_a
-            + detector_pos_u * sin_a
-        )
+    cos_a = d_cos[iview]
+    sin_a = d_sin[iview]
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing
 
-        ray_dir_x = ray_detector_x - ray_source_x
-        ray_dir_y = ray_detector_y - ray_source_y
-        ray_length = math.sqrt(ray_dir_x * ray_dir_x + ray_dir_y * ray_dir_y)
+    # ray end points ----------------------------------------------------------
+    src_x = -iso_dist * sin_a
+    src_y =  iso_dist * cos_a
 
-        ray_dir_x /= ray_length
-        ray_dir_y /= ray_length
+    det_x = (src_dist - iso_dist) * sin_a + u * cos_a
+    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a
 
-        total_val = 0.0
-        t = 0.0
-        while t < ray_length:
-            x = ray_source_x + t * ray_dir_x
-            y = ray_source_y + t * ray_dir_y
-            ix = x + cx
-            iy = y + cy
-            ix0 = int(math.floor(ix))
-            iy0 = int(math.floor(iy))
+    dir_x = det_x - src_x
+    dir_y = det_y - src_y
+    length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
+    inv_len = 1.0 / length
+    dir_x *= inv_len
+    dir_y *= inv_len
 
-            if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
-                dx = ix - ix0
-                dy = iy - iy0
+    accum = 0.0
+    t     = 0.0
+    while t < length:
+        x  = src_x + t * dir_x
+        y  = src_y + t * dir_y
+        ix = x + cx
+        iy = y + cy
+        ix0 = int(math.floor(ix))
+        iy0 = int(math.floor(iy))
+        if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
+            dx = ix - ix0
+            dy = iy - iy0
+            accum += (
+                d_image[ix0,     iy0]     * (1 - dx) * (1 - dy) +
+                d_image[ix0 + 1, iy0]     * dx       * (1 - dy) +
+                d_image[ix0,     iy0 + 1] * (1 - dx) * dy       +
+                d_image[ix0 + 1, iy0 + 1] * dx       * dy
+            ) * step
+        t += step
 
-                c00 = d_image[ix0,     iy0]
-                c10 = d_image[ix0 + 1, iy0]
-                c01 = d_image[ix0,     iy0 + 1]
-                c11 = d_image[ix0 + 1, iy0 + 1]
+    d_sino[iview, idet] = accum
 
-                val = (
-                    c00 * (1 - dx) * (1 - dy)
-                    + c10 * dx       * (1 - dy)
-                    + c01 * (1 - dx) * dy
-                    + c11 * dx       * dy
-                )
 
-                total_val += val * step_size 
-
-            t += step_size
-
-        d_sinogram[iview, idet] = total_val
-
-@cuda.jit(fastmath=True)
+@_FASTMATH_DECORATOR
 def back_fan_2d_kernel(
-    d_sinogram, num_views, num_detectors, Nx, Ny, d_reco,
-    detector_spacing, d_angles, source_distance, isocenter_distance,
-    step_size, cx, cy
+    d_sino,
+    n_views, n_det,
+    Nx, Ny,
+    d_reco,
+    det_spacing,
+    d_cos, d_sin,
+    src_dist, iso_dist,
+    step, cx, cy
 ):
     iview, idet = cuda.grid(2)
-    if iview < num_views and idet < num_detectors:
-        val = d_sinogram[iview, idet]
-        angle = d_angles[iview]
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        detector_pos_u = (idet - (num_detectors - 1) / 2.0) * detector_spacing
+    if iview >= n_views or idet >= n_det:
+        return
 
-        ray_source_x = -isocenter_distance * sin_a
-        ray_source_y =  isocenter_distance  * cos_a
-        ray_detector_x = (
-            (source_distance - isocenter_distance) * sin_a
-            + detector_pos_u * cos_a
-        )
-        ray_detector_y = (
-            -(source_distance - isocenter_distance) * cos_a
-            + detector_pos_u * sin_a
-        )
+    val   = d_sino[iview, idet]
+    cos_a = d_cos[iview]
+    sin_a = d_sin[iview]
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing
 
-        ray_dir_x = ray_detector_x - ray_source_x
-        ray_dir_y = ray_detector_y - ray_source_y
-        ray_length = math.sqrt(ray_dir_x * ray_dir_x + ray_dir_y * ray_dir_y)
-        ray_dir_x /= ray_length
-        ray_dir_y /= ray_length
+    src_x = -iso_dist * sin_a
+    src_y =  iso_dist * cos_a
+    det_x = (src_dist - iso_dist) * sin_a + u * cos_a
+    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a
 
-        t = 0.0
-        while t < ray_length:
-            x = ray_source_x + t * ray_dir_x
-            y = ray_source_y + t * ray_dir_y
-            ix = x + cx
-            iy = y + cy
-            ix0 = int(math.floor(ix))
-            iy0 = int(math.floor(iy))
+    dir_x = det_x - src_x
+    dir_y = det_y - src_y
+    length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
+    inv_len = 1.0 / length
+    dir_x *= inv_len
+    dir_y *= inv_len
 
-            if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
-                dx = ix - ix0
-                dy = iy - iy0
+    t = 0.0
+    while t < length:
+        x  = src_x + t * dir_x
+        y  = src_y + t * dir_y
+        ix = x + cx
+        iy = y + cy
+        ix0 = int(math.floor(ix))
+        iy0 = int(math.floor(iy))
+        if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1:
+            dx = ix - ix0
+            dy = iy - iy0
+            cval = val * step
+            cuda.atomic.add(d_reco, (ix0,     iy0),     cval * (1 - dx) * (1 - dy))
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0),     cval * dx       * (1 - dy))
+            cuda.atomic.add(d_reco, (ix0,     iy0 + 1), cval * (1 - dx) * dy)
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1), cval * dx       * dy)
+        t += step
 
-                cval = val * step_size
-
-                cuda.atomic.add(d_reco, (ix0,     iy0),     cval * (1 - dx) * (1 - dy))
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0),     cval * dx       * (1 - dy))
-                cuda.atomic.add(d_reco, (ix0,     iy0 + 1), cval * (1 - dx) * dy)
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1), cval * dx       * dy)
-
-            t += step_size
 
 def forward_fan_2d(
-    image, num_views, num_detectors, detector_spacing,
-    angles, source_distance, isocenter_distance, step_size=0.5
+    image: np.ndarray,
+    n_views: int,
+    n_det: int,
+    det_spacing: float,
+    angles: np.ndarray,
+    src_dist: float,
+    iso_dist: float,
+    step_size: float = 0.5,
 ):
-    if not (image.ndim == 2 and num_views > 0 and num_detectors > 0):
-        raise ValueError("Invalid input dimensions")
-
+    image = image.astype(_DTYPE, copy=False)
     Nx, Ny = image.shape
     d_image = cuda.to_device(image)
-    d_angles = cuda.to_device(angles)
-    d_sinogram = cuda.device_array((num_views, num_detectors), dtype=np.float64)
+    d_cos, d_sin = _trig_tables(angles, _DTYPE)
+    d_sino = cuda.device_array((n_views, n_det), dtype=_DTYPE)
 
-    threadsperblock = (16, 16)
-    blockspergrid_x = math.ceil(num_views / threadsperblock[0])
-    blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
-    blockspergrid = (blockspergrid_x, blockspergrid_y)
+    (grid, tpb) = _grid_2d(n_views, n_det)
+    cx = _DTYPE((Nx - 1) * 0.5)
+    cy = _DTYPE((Ny - 1) * 0.5)
 
-    cx = (Nx - 1) / 2.0
-    cy = (Ny - 1) / 2.0
-
-    forward_fan_2d_kernel[blockspergrid, threadsperblock](
-        d_image, Nx, Ny, d_sinogram, num_views, num_detectors,
-        detector_spacing, d_angles, source_distance, isocenter_distance,
-        step_size, cx, cy
+    forward_fan_2d_kernel[grid, tpb](
+        d_image, Nx, Ny, d_sino,
+        n_views, n_det, _DTYPE(det_spacing),
+        d_cos, d_sin,
+        _DTYPE(src_dist), _DTYPE(iso_dist),
+        _DTYPE(step_size), cx, cy
     )
-    return d_sinogram.copy_to_host()
+    return d_sino.copy_to_host()
+
 
 def back_fan_2d(
-    sinogram, Nx, Ny, detector_spacing,
-    angles, source_distance, isocenter_distance, step_size=0.5
+    sinogram: np.ndarray,
+    Nx, Ny,
+    det_spacing: float,
+    angles: np.ndarray,
+    src_dist: float,
+    iso_dist: float,
+    step_size: float = 0.5,
 ):
-    num_views, num_detectors = sinogram.shape
-    d_sinogram = cuda.to_device(sinogram)
-    d_angles = cuda.to_device(angles)
-    d_reco = cuda.device_array((Nx, Ny), dtype=np.float64)
+    sinogram = sinogram.astype(_DTYPE, copy=False)
+    n_views, n_det = sinogram.shape
 
-    threadsperblock = (16, 16)
-    blockspergrid_x = math.ceil(num_views / threadsperblock[0])
-    blockspergrid_y = math.ceil(num_detectors / threadsperblock[1])
-    blockspergrid = (blockspergrid_x, blockspergrid_y)
+    d_sino = cuda.to_device(sinogram)
+    d_cos, d_sin = _trig_tables(angles, _DTYPE)
+    d_reco = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
 
-    cx = (Nx - 1) / 2.0
-    cy = (Ny - 1) / 2.0
+    (grid, tpb) = _grid_2d(n_views, n_det)
+    cx = _DTYPE((Nx - 1) * 0.5)
+    cy = _DTYPE((Ny - 1) * 0.5)
 
-    back_fan_2d_kernel[blockspergrid, threadsperblock](
-        d_sinogram, num_views, num_detectors, Nx, Ny, d_reco,
-        detector_spacing, d_angles, source_distance, isocenter_distance,
-        step_size, cx, cy
+    back_fan_2d_kernel[grid, tpb](
+        d_sino,
+        n_views, n_det,
+        Nx, Ny,
+        d_reco,
+        _DTYPE(det_spacing),
+        d_cos, d_sin,
+        _DTYPE(src_dist), _DTYPE(iso_dist),
+        _DTYPE(step_size), cx, cy
     )
     return d_reco.copy_to_host()
 
-@cuda.jit(fastmath=True)
+
+# ------------------------------------------------------------------
+# 3‑D CONE GEOMETRY
+# ------------------------------------------------------------------
+
+@_FASTMATH_DECORATOR
 def forward_cone_3d_kernel(
-    d_volume, Nx, Ny, Nz, d_sinogram, num_views, num_det_u, num_det_v,
-    du, dv, d_angles, source_distance, isocenter_distance, step_size,
-    cx, cy, cz
+    d_vol,
+    Nx, Ny, Nz,
+    d_sino,
+    n_views, n_u, n_v,
+    du, dv,
+    d_cos, d_sin,
+    src_dist, iso_dist,
+    step, cx, cy, cz
 ):
     iview, iu, iv = cuda.grid(3)
-    if iview < num_views and iu < num_det_u and iv < num_det_v:
-        angle = d_angles[iview]
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        u = (iu - (num_det_u - 1) / 2.0) * du
-        v = (iv - (num_det_v - 1) / 2.0) * dv
+    if iview >= n_views or iu >= n_u or iv >= n_v:
+        return
 
-        ray_source_x = -isocenter_distance * sin_a
-        ray_source_y =  isocenter_distance * cos_a
-        ray_source_z = 0.0
+    cos_a = d_cos[iview]
+    sin_a = d_sin[iview]
+    u     = (iu - (n_u - 1) * 0.5) * du
+    v     = (iv - (n_v - 1) * 0.5) * dv
 
-        ray_det_x = (source_distance - isocenter_distance) * sin_a + u * cos_a
-        ray_det_y = -(source_distance - isocenter_distance) * cos_a + u * sin_a
-        ray_det_z = v
+    src_x = -iso_dist * sin_a
+    src_y =  iso_dist * cos_a
+    src_z = 0.0
 
-        ray_dir_x = ray_det_x - ray_source_x
-        ray_dir_y = ray_det_y - ray_source_y
-        ray_dir_z = ray_det_z - ray_source_z
-        ray_length = math.sqrt(ray_dir_x**2 + ray_dir_y**2 + ray_dir_z**2)
+    det_x = (src_dist - iso_dist) * sin_a + u * cos_a
+    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a
+    det_z = v
 
-        ray_dir_x /= ray_length
-        ray_dir_y /= ray_length
-        ray_dir_z /= ray_length
+    dir_x = det_x - src_x
+    dir_y = det_y - src_y
+    dir_z = det_z - src_z
+    length = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
+    inv_len = 1.0 / length
+    dir_x *= inv_len
+    dir_y *= inv_len
+    dir_z *= inv_len
 
-        total_val = 0.0
-        t_min = 0.0
-        t_max = ray_length
-        t = t_min
-        while t < t_max:
-            x = ray_source_x + t * ray_dir_x
-            y = ray_source_y + t * ray_dir_y
-            z = ray_source_z + t * ray_dir_z
-            ix = x + cx
-            iy = y + cy
-            iz = z + cz
-            ix0 = int(math.floor(ix))
-            iy0 = int(math.floor(iy))
-            iz0 = int(math.floor(iz))
+    accum = 0.0
+    t = 0.0
+    while t < length:
+        x  = src_x + t * dir_x
+        y  = src_y + t * dir_y
+        z  = src_z + t * dir_z
+        ix = x + cx
+        iy = y + cy
+        iz = z + cz
+        ix0 = int(math.floor(ix))
+        iy0 = int(math.floor(iy))
+        iz0 = int(math.floor(iz))
 
-            if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1 and 0 <= iz0 < Nz - 1:
-                dx = ix - ix0
-                dy = iy - iy0
-                dz = iz - iz0
+        if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1 and 0 <= iz0 < Nz - 1:
+            dx = ix - ix0
+            dy = iy - iy0
+            dz = iz - iz0
 
-                c000 = d_volume[ix0,     iy0,     iz0]
-                c100 = d_volume[ix0 + 1, iy0,     iz0]
-                c010 = d_volume[ix0,     iy0 + 1, iz0]
-                c001 = d_volume[ix0,     iy0,     iz0 + 1]
-                c110 = d_volume[ix0 + 1, iy0 + 1, iz0]
-                c101 = d_volume[ix0 + 1, iy0,     iz0 + 1]
-                c011 = d_volume[ix0,     iy0 + 1, iz0 + 1]
-                c111 = d_volume[ix0 + 1, iy0 + 1, iz0 + 1]
+            accum += (
+                d_vol[ix0,     iy0,     iz0]     * (1 - dx) * (1 - dy) * (1 - dz) +
+                d_vol[ix0 + 1, iy0,     iz0]     * dx       * (1 - dy) * (1 - dz) +
+                d_vol[ix0,     iy0 + 1, iz0]     * (1 - dx) * dy       * (1 - dz) +
+                d_vol[ix0,     iy0,     iz0 + 1] * (1 - dx) * (1 - dy) * dz       +
+                d_vol[ix0 + 1, iy0 + 1, iz0]     * dx       * dy       * (1 - dz) +
+                d_vol[ix0 + 1, iy0,     iz0 + 1] * dx       * (1 - dy) * dz       +
+                d_vol[ix0,     iy0 + 1, iz0 + 1] * (1 - dx) * dy       * dz       +
+                d_vol[ix0 + 1, iy0 + 1, iz0 + 1] * dx       * dy       * dz
+            ) * step
+        t += step
 
-                val = (
-                    c000 * (1 - dx) * (1 - dy) * (1 - dz)
-                    + c100 * dx        * (1 - dy) * (1 - dz)
-                    + c010 * (1 - dx)  * dy       * (1 - dz)
-                    + c001 * (1 - dx)  * (1 - dy) * dz
-                    + c110 * dx        * dy       * (1 - dz)
-                    + c101 * dx        * (1 - dy) * dz
-                    + c011 * (1 - dx)  * dy       * dz
-                    + c111 * dx        * dy       * dz
-                )
-                total_val += val * step_size
+    d_sino[iview, iu, iv] = accum
 
-            t += step_size
 
-        d_sinogram[iview, iu, iv] = total_val
-
-@cuda.jit(fastmath=True)
+@_FASTMATH_DECORATOR
 def back_cone_3d_kernel(
-    d_sinogram, num_views, num_det_u, num_det_v, Nx, Ny, Nz,
-    d_reco, du, dv, d_angles, source_distance, isocenter_distance,
-    step_size, cx, cy, cz
+    d_sino,
+    n_views, n_u, n_v,
+    Nx, Ny, Nz,
+    d_reco,
+    du, dv,
+    d_cos, d_sin,
+    src_dist, iso_dist,
+    step, cx, cy, cz
 ):
     iview, iu, iv = cuda.grid(3)
-    if iview < num_views and iu < num_det_u and iv < num_det_v:
-        val = d_sinogram[iview, iu, iv]
-        angle = d_angles[iview]
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        u = (iu - (num_det_u - 1) / 2.0) * du
-        v = (iv - (num_det_v - 1) / 2.0) * dv
+    if iview >= n_views or iu >= n_u or iv >= n_v:
+        return
 
-        ray_source_x = -isocenter_distance * sin_a
-        ray_source_y =  isocenter_distance * cos_a
-        ray_source_z = 0.0
+    val   = d_sino[iview, iu, iv]
+    cos_a = d_cos[iview]
+    sin_a = d_sin[iview]
+    u     = (iu - (n_u - 1) * 0.5) * du
+    v     = (iv - (n_v - 1) * 0.5) * dv
 
-        ray_det_x = (source_distance - isocenter_distance) * sin_a + u * cos_a
-        ray_det_y = -(source_distance - isocenter_distance) * cos_a + u * sin_a
-        ray_det_z = v
+    src_x = -iso_dist * sin_a
+    src_y =  iso_dist * cos_a
+    src_z = 0.0
 
-        ray_dir_x = ray_det_x - ray_source_x
-        ray_dir_y = ray_det_y - ray_source_y
-        ray_dir_z = ray_det_z - ray_source_z
-        ray_length = math.sqrt(ray_dir_x**2 + ray_dir_y**2 + ray_dir_z**2)
+    det_x = (src_dist - iso_dist) * sin_a + u * cos_a
+    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a
+    det_z = v
 
-        ray_dir_x /= ray_length
-        ray_dir_y /= ray_length
-        ray_dir_z /= ray_length
+    dir_x = det_x - src_x
+    dir_y = det_y - src_y
+    dir_z = det_z - src_z
+    length = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
+    inv_len = 1.0 / length
+    dir_x *= inv_len
+    dir_y *= inv_len
+    dir_z *= inv_len
 
-        t_min = 0.0
-        t_max = ray_length
-        t = t_min
-        while t < t_max:
-            x = ray_source_x + t * ray_dir_x
-            y = ray_source_y + t * ray_dir_y
-            z = ray_source_z + t * ray_dir_z
+    t = 0.0
+    while t < length:
+        x  = src_x + t * dir_x
+        y  = src_y + t * dir_y
+        z  = src_z + t * dir_z
+        ix = x + cx
+        iy = y + cy
+        iz = z + cz
+        ix0 = int(math.floor(ix))
+        iy0 = int(math.floor(iy))
+        iz0 = int(math.floor(iz))
+        if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1 and 0 <= iz0 < Nz - 1:
+            dx = ix - ix0
+            dy = iy - iy0
+            dz = iz - iz0
+            cval = val * step
+            cuda.atomic.add(d_reco, (ix0,     iy0,     iz0),     cval * (1 - dx) * (1 - dy) * (1 - dz))
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0,     iz0),     cval * dx       * (1 - dy) * (1 - dz))
+            cuda.atomic.add(d_reco, (ix0,     iy0 + 1, iz0),     cval * (1 - dx) * dy       * (1 - dz))
+            cuda.atomic.add(d_reco, (ix0,     iy0,     iz0 + 1), cval * (1 - dx) * (1 - dy) * dz)
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1, iz0),     cval * dx       * dy       * (1 - dz))
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0,     iz0 + 1), cval * dx       * (1 - dy) * dz)
+            cuda.atomic.add(d_reco, (ix0,     iy0 + 1, iz0 + 1), cval * (1 - dx) * dy       * dz)
+            cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx       * dy       * dz)
+        t += step
 
-            ix = x + cx
-            iy = y + cy
-            iz = z + cz
-            ix0 = int(math.floor(ix))
-            iy0 = int(math.floor(iy))
-            iz0 = int(math.floor(iz))
-
-            if 0 <= ix0 < Nx - 1 and 0 <= iy0 < Ny - 1 and 0 <= iz0 < Nz - 1:
-                dx = ix - ix0
-                dy = iy - iy0
-                dz = iz - iz0
-
-                cval = val * step_size
-
-                cuda.atomic.add(d_reco, (ix0,     iy0,     iz0),     cval * (1 - dx) * (1 - dy) * (1 - dz))
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0,     iz0),     cval * dx       * (1 - dy) * (1 - dz))
-                cuda.atomic.add(d_reco, (ix0,     iy0 + 1, iz0),     cval * (1 - dx) * dy       * (1 - dz))
-                cuda.atomic.add(d_reco, (ix0,     iy0,     iz0 + 1), cval * (1 - dx) * (1 - dy) * dz)
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1, iz0),     cval * dx       * dy       * (1 - dz))
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0,     iz0 + 1), cval * dx       * (1 - dy) * dz)
-                cuda.atomic.add(d_reco, (ix0,     iy0 + 1, iz0 + 1), cval * (1 - dx) * dy       * dz)
-                cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx       * dy       * dz)
-
-            t += step_size
 
 def forward_cone_3d(
-    volume, num_views, num_det_u, num_det_v, du, dv, angles,
-    source_distance, isocenter_distance, step_size=0.5
+    volume: np.ndarray,
+    n_views: int,
+    n_u: int, n_v: int,
+    du: float, dv: float,
+    angles: np.ndarray,
+    src_dist: float,
+    iso_dist: float,
+    step_size: float = 0.5,
 ):
+    volume = volume.astype(_DTYPE, copy=False)
     Nx, Ny, Nz = volume.shape
-    d_volume = cuda.to_device(volume)
-    d_angles = cuda.to_device(angles)
-    d_sinogram = cuda.device_array((num_views, num_det_u, num_det_v), dtype=np.float64)
+    d_vol = cuda.to_device(volume)
+    d_cos, d_sin = _trig_tables(angles, _DTYPE)
+    d_sino = cuda.device_array((n_views, n_u, n_v), dtype=_DTYPE)
 
-    threadsperblock = (8, 8, 8)
-    blockspergrid_x = math.ceil(num_views / threadsperblock[0])
-    blockspergrid_y = math.ceil(num_det_u / threadsperblock[1])
-    blockspergrid_z = math.ceil(num_det_v / threadsperblock[2])
-    blockspergrid = (blockspergrid_x, blockspergrid_y, blockspergrid_z)
+    (grid, tpb) = _grid_3d(n_views, n_u, n_v)
+    cx = _DTYPE((Nx - 1) * 0.5)
+    cy = _DTYPE((Ny - 1) * 0.5)
+    cz = _DTYPE((Nz - 1) * 0.5)
 
-    cx = (Nx - 1) / 2.0
-    cy = (Ny - 1) / 2.0
-    cz = (Nz - 1) / 2.0
-
-    forward_cone_3d_kernel[blockspergrid, threadsperblock](
-        d_volume, Nx, Ny, Nz, d_sinogram, num_views, num_det_u,
-        num_det_v, du, dv, d_angles, source_distance,
-        isocenter_distance, step_size, cx, cy, cz
+    forward_cone_3d_kernel[grid, tpb](
+        d_vol, Nx, Ny, Nz,
+        d_sino,
+        n_views, n_u, n_v,
+        _DTYPE(du), _DTYPE(dv),
+        d_cos, d_sin,
+        _DTYPE(src_dist), _DTYPE(iso_dist),
+        _DTYPE(step_size), cx, cy, cz
     )
-    return d_sinogram.copy_to_host()
+    return d_sino.copy_to_host()
+
 
 def back_cone_3d(
-    sinogram, Nx, Ny, Nz, du, dv, angles,
-    source_distance, isocenter_distance, step_size=0.5
+    sinogram: np.ndarray,
+    Nx: int, Ny: int, Nz: int,
+    du: float, dv: float,
+    angles: np.ndarray,
+    src_dist: float,
+    iso_dist: float,
+    step_size: float = 0.5,
 ):
-    num_views, num_det_u, num_det_v = sinogram.shape
-    d_sinogram = cuda.to_device(sinogram)
-    d_angles = cuda.to_device(angles)
-    d_reco = cuda.device_array((Nx, Ny, Nz), dtype=np.float64)
+    sinogram = sinogram.astype(_DTYPE, copy=False)
+    n_views, n_u, n_v = sinogram.shape
+    d_sino = cuda.to_device(sinogram)
+    d_cos, d_sin = _trig_tables(angles, _DTYPE)
+    d_reco = cuda.to_device(np.zeros((Nx, Ny, Nz), dtype=_DTYPE))
 
-    threadsperblock = (8, 8, 8)
-    blockspergrid_x = math.ceil(num_views / threadsperblock[0])
-    blockspergrid_y = math.ceil(num_det_u / threadsperblock[1])
-    blockspergrid_z = math.ceil(num_det_v / threadsperblock[2])
-    blockspergrid = (blockspergrid_x, blockspergrid_y, blockspergrid_z)
+    (grid, tpb) = _grid_3d(n_views, n_u, n_v)
+    cx = _DTYPE((Nx - 1) * 0.5)
+    cy = _DTYPE((Ny - 1) * 0.5)
+    cz = _DTYPE((Nz - 1) * 0.5)
 
-    cx = (Nx - 1) / 2.0
-    cy = (Ny - 1) / 2.0
-    cz = (Nz - 1) / 2.0
-
-    back_cone_3d_kernel[blockspergrid, threadsperblock](
-        d_sinogram, num_views, num_det_u, num_det_v, Nx, Ny, Nz,
-        d_reco, du, dv, d_angles, source_distance,
-        isocenter_distance, step_size, cx, cy, cz
+    back_cone_3d_kernel[grid, tpb](
+        d_sino,
+        n_views, n_u, n_v,
+        Nx, Ny, Nz,
+        d_reco,
+        _DTYPE(du), _DTYPE(dv),
+        d_cos, d_sin,
+        _DTYPE(src_dist), _DTYPE(iso_dist),
+        _DTYPE(step_size), cx, cy, cz
     )
     return d_reco.copy_to_host()
