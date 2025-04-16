@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from numba import cuda, float32
+from numba import cuda
 
 # ------------------------------------------------------------------
 # GLOBAL SETTINGS

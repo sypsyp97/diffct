@@ -1,7 +1,7 @@
 import math
 import numpy as np
 import torch
-from numba import cuda, float32
+from numba import cuda
 
 # ---------------------------------------------------------------------------
 # Global settings & helpers
