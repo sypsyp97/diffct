@@ -63,7 +63,13 @@ def forward_parallel_2d_kernel(
     t            = t_min
     accum        = 0.0
 
-    while t < t_max:
+    num_steps = int(math.ceil((t_max - t_min) / step))
+    start_t = t_min + step * 0.5 # Start at the center of the first step
+
+    for n in range(num_steps):
+        t = start_t + n * step
+        if t >= t_max: # Ensure t doesn't exceed t_max
+            break
         x  = u * (-sin_a) + t * cos_a
         y  = u * ( cos_a) + t * sin_a
         ix = x + cx
@@ -80,8 +86,6 @@ def forward_parallel_2d_kernel(
                 d_image[ix0,     iy0 + 1] * (1 - dx) * dy       +
                 d_image[ix0 + 1, iy0 + 1] * dx       * dy
             ) * step
-        t += step
-
     d_sino[iview, idet] = accum
 
 
@@ -105,7 +109,13 @@ def back_parallel_2d_kernel(
 
     t_min, t_max = -diag, diag
     t = t_min
-    while t < t_max:
+    num_steps = int(math.ceil((t_max - t_min) / step))
+    start_t = t_min + step * 0.5 # Start at the center of the first step
+
+    for n in range(num_steps):
+        t = start_t + n * step
+        if t >= t_max: # Ensure t doesn't exceed t_max
+            break
         x  = u * (-sin_a) + t * cos_a
         y  = u * ( cos_a) + t * sin_a
         ix = x + cx
@@ -121,7 +131,6 @@ def back_parallel_2d_kernel(
             cuda.atomic.add(d_reco, (ix0 + 1, iy0),     cval * dx       * (1 - dy))
             cuda.atomic.add(d_reco, (ix0,     iy0 + 1), cval * (1 - dx) * dy)
             cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1), cval * dx       * dy)
-        t += step
 
 
 def forward_parallel_2d(
@@ -133,25 +142,28 @@ def forward_parallel_2d(
     step_size: float = 0.5,
 ):
     # host‑side preparations --------------------------------------------------
-    image = image.astype(_DTYPE, copy=False)
-    Nx, Ny = image.shape
-    diag   = _DTYPE(math.sqrt(Nx * Nx + Ny * Ny))
+    # Host layout (y, x), kernel expects (x, y) -> transpose
+    image_np = image.astype(_DTYPE, copy=False).T
+    Nx, Ny = image_np.shape # Now Nx=W, Ny=H
+    diag   = _DTYPE(math.sqrt(Nx * Nx + Ny * Ny)) * 0.5 # Half diagonal
 
-    d_image = cuda.to_device(image)
+    d_image = cuda.to_device(image_np) # Send transposed data
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
     d_sino  = cuda.device_array((n_views, n_det), dtype=_DTYPE)
 
     (grid, tpb) = _grid_2d(n_views, n_det)
 
+    # Center calculation uses transposed dims (Nx=W, Ny=H)
     cx = _DTYPE((Nx - 1) * 0.5)
     cy = _DTYPE((Ny - 1) * 0.5)
 
     forward_parallel_2d_kernel[grid, tpb](
-        d_image, Nx, Ny, diag, d_sino,
+        d_image, Nx, Ny, diag, d_sino, # Use transposed Nx, Ny, half-diag
         n_views, n_det, _DTYPE(det_spacing),
         d_cos, d_sin,
-        _DTYPE(step_size), cx, cy
+        _DTYPE(step_size), cx, cy # Use centers based on transposed dims
     )
+    # Sinogram layout is correct, no transpose needed
     return d_sino.copy_to_host()
 
 
@@ -162,25 +174,31 @@ def back_parallel_2d(
     angles: np.ndarray,
     step_size: float = 0.5,
 ):
+    # Input Nx, Ny are target reco dimensions (H, W)
     sinogram = sinogram.astype(_DTYPE, copy=False)
     n_views, n_det = sinogram.shape
-    diag = _DTYPE(math.sqrt(Nx * Nx + Ny * Ny))
+    # Use transposed dimensions (W, H) for kernel consistency
+    kernel_Nx, kernel_Ny = Ny, Nx
+    diag = _DTYPE(math.sqrt(kernel_Nx * kernel_Nx + kernel_Ny * kernel_Ny)) * 0.5 # Half diagonal
 
     d_sino = cuda.to_device(sinogram)
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
-    d_reco = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
+    # Create reco buffer with kernel layout (x, y) / (W, H)
+    d_reco = cuda.to_device(np.zeros((kernel_Nx, kernel_Ny), dtype=_DTYPE))
 
     (grid, tpb) = _grid_2d(n_views, n_det)
-    cx = _DTYPE((Nx - 1) * 0.5)
-    cy = _DTYPE((Ny - 1) * 0.5)
+    # Center calculation uses kernel dims (W, H)
+    cx = _DTYPE((kernel_Nx - 1) * 0.5)
+    cy = _DTYPE((kernel_Ny - 1) * 0.5)
 
     back_parallel_2d_kernel[grid, tpb](
-        d_sino, Nx, Ny, diag, d_reco,
+        d_sino, kernel_Nx, kernel_Ny, diag, d_reco, # Use kernel dims, half-diag
         n_views, n_det, _DTYPE(det_spacing),
         d_cos, d_sin,
-        _DTYPE(step_size), cx, cy
+        _DTYPE(step_size), cx, cy # Use centers based on kernel dims
     )
-    return d_reco.copy_to_host()
+    # Kernel output d_reco is (x, y), need (y, x) for host -> transpose back
+    return d_reco.copy_to_host().T
 
 
 # ------------------------------------------------------------------
@@ -221,8 +239,13 @@ def forward_fan_2d_kernel(
     dir_y *= inv_len
 
     accum = 0.0
-    t     = 0.0
-    while t < length:
+    num_steps = int(math.ceil(length / step))
+    start_t = step * 0.5 # Start at the center of the first step (t=0)
+
+    for n in range(num_steps):
+        t = start_t + n * step
+        if t >= length: # Ensure t doesn't exceed length
+            break
         x  = src_x + t * dir_x
         y  = src_y + t * dir_y
         ix = x + cx
@@ -238,8 +261,6 @@ def forward_fan_2d_kernel(
                 d_image[ix0,     iy0 + 1] * (1 - dx) * dy       +
                 d_image[ix0 + 1, iy0 + 1] * dx       * dy
             ) * step
-        t += step
-
     d_sino[iview, idet] = accum
 
 
@@ -275,8 +296,13 @@ def back_fan_2d_kernel(
     dir_x *= inv_len
     dir_y *= inv_len
 
-    t = 0.0
-    while t < length:
+    num_steps = int(math.ceil(length / step))
+    start_t = step * 0.5 # Start at the center of the first step (t=0)
+
+    for n in range(num_steps):
+        t = start_t + n * step
+        if t >= length: # Ensure t doesn't exceed length
+            break
         x  = src_x + t * dir_x
         y  = src_y + t * dir_y
         ix = x + cx
@@ -291,7 +317,6 @@ def back_fan_2d_kernel(
             cuda.atomic.add(d_reco, (ix0 + 1, iy0),     cval * dx       * (1 - dy))
             cuda.atomic.add(d_reco, (ix0,     iy0 + 1), cval * (1 - dx) * dy)
             cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1), cval * dx       * dy)
-        t += step
 
 
 def forward_fan_2d(
@@ -304,23 +329,26 @@ def forward_fan_2d(
     iso_dist: float,
     step_size: float = 0.5,
 ):
-    image = image.astype(_DTYPE, copy=False)
-    Nx, Ny = image.shape
-    d_image = cuda.to_device(image)
+    # Host layout (y, x), kernel expects (x, y) -> transpose
+    image_np = image.astype(_DTYPE, copy=False).T
+    Nx, Ny = image_np.shape # Now Nx=W, Ny=H
+    d_image = cuda.to_device(image_np) # Send transposed data
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
     d_sino = cuda.device_array((n_views, n_det), dtype=_DTYPE)
 
     (grid, tpb) = _grid_2d(n_views, n_det)
+    # Center calculation uses transposed dims (Nx=W, Ny=H)
     cx = _DTYPE((Nx - 1) * 0.5)
     cy = _DTYPE((Ny - 1) * 0.5)
 
     forward_fan_2d_kernel[grid, tpb](
-        d_image, Nx, Ny, d_sino,
+        d_image, Nx, Ny, d_sino, # Use transposed Nx, Ny
         n_views, n_det, _DTYPE(det_spacing),
         d_cos, d_sin,
         _DTYPE(src_dist), _DTYPE(iso_dist),
-        _DTYPE(step_size), cx, cy
+        _DTYPE(step_size), cx, cy # Use centers based on transposed dims
     )
+    # Sinogram layout is correct, no transpose needed
     return d_sino.copy_to_host()
 
 
@@ -333,28 +361,34 @@ def back_fan_2d(
     iso_dist: float,
     step_size: float = 0.5,
 ):
+    # Input Nx, Ny are target reco dimensions (H, W)
     sinogram = sinogram.astype(_DTYPE, copy=False)
     n_views, n_det = sinogram.shape
+    # Use transposed dimensions (W, H) for kernel consistency
+    kernel_Nx, kernel_Ny = Ny, Nx
 
     d_sino = cuda.to_device(sinogram)
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
-    d_reco = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
+    # Create reco buffer with kernel layout (x, y) / (W, H)
+    d_reco = cuda.to_device(np.zeros((kernel_Nx, kernel_Ny), dtype=_DTYPE))
 
     (grid, tpb) = _grid_2d(n_views, n_det)
-    cx = _DTYPE((Nx - 1) * 0.5)
-    cy = _DTYPE((Ny - 1) * 0.5)
+    # Center calculation uses kernel dims (W, H)
+    cx = _DTYPE((kernel_Nx - 1) * 0.5)
+    cy = _DTYPE((kernel_Ny - 1) * 0.5)
 
     back_fan_2d_kernel[grid, tpb](
         d_sino,
         n_views, n_det,
-        Nx, Ny,
-        d_reco,
+        kernel_Nx, kernel_Ny, # Use kernel dims
+        d_reco, # Reco buffer (W, H)
         _DTYPE(det_spacing),
         d_cos, d_sin,
         _DTYPE(src_dist), _DTYPE(iso_dist),
-        _DTYPE(step_size), cx, cy
+        _DTYPE(step_size), cx, cy # Use centers based on kernel dims
     )
-    return d_reco.copy_to_host()
+    # Kernel output d_reco is (x, y), need (y, x) for host -> transpose back
+    return d_reco.copy_to_host().T
 
 
 # ------------------------------------------------------------------
@@ -399,8 +433,13 @@ def forward_cone_3d_kernel(
     dir_z *= inv_len
 
     accum = 0.0
-    t = 0.0
-    while t < length:
+    num_steps = int(math.ceil(length / step))
+    start_t = step * 0.5 # Start at the center of the first step (t=0)
+
+    for n in range(num_steps):
+        t = start_t + n * step
+        if t >= length: # Ensure t doesn't exceed length
+            break
         x  = src_x + t * dir_x
         y  = src_y + t * dir_y
         z  = src_z + t * dir_z
@@ -426,8 +465,6 @@ def forward_cone_3d_kernel(
                 d_vol[ix0,     iy0 + 1, iz0 + 1] * (1 - dx) * dy       * dz       +
                 d_vol[ix0 + 1, iy0 + 1, iz0 + 1] * dx       * dy       * dz
             ) * step
-        t += step
-
     d_sino[iview, iu, iv] = accum
 
 
@@ -469,8 +506,13 @@ def back_cone_3d_kernel(
     dir_y *= inv_len
     dir_z *= inv_len
 
-    t = 0.0
-    while t < length:
+    num_steps = int(math.ceil(length / step))
+    start_t = step * 0.5 # Start at the center of the first step (t=0)
+
+    for n in range(num_steps):
+        t = start_t + n * step
+        if t >= length: # Ensure t doesn't exceed length
+            break
         x  = src_x + t * dir_x
         y  = src_y + t * dir_y
         z  = src_z + t * dir_z
@@ -493,7 +535,6 @@ def back_cone_3d_kernel(
             cuda.atomic.add(d_reco, (ix0 + 1, iy0,     iz0 + 1), cval * dx       * (1 - dy) * dz)
             cuda.atomic.add(d_reco, (ix0,     iy0 + 1, iz0 + 1), cval * (1 - dx) * dy       * dz)
             cuda.atomic.add(d_reco, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx       * dy       * dz)
-        t += step
 
 
 def forward_cone_3d(
@@ -506,26 +547,29 @@ def forward_cone_3d(
     iso_dist: float,
     step_size: float = 0.5,
 ):
-    volume = volume.astype(_DTYPE, copy=False)
-    Nx, Ny, Nz = volume.shape
-    d_vol = cuda.to_device(volume)
+    # Host layout (z, y, x), kernel expects (x, y, z) -> transpose
+    volume_np = volume.astype(_DTYPE, copy=False).transpose((2, 1, 0))
+    Nx, Ny, Nz = volume_np.shape # Now Nx=W, Ny=H, Nz=D
+    d_vol = cuda.to_device(volume_np) # Send transposed data
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
     d_sino = cuda.device_array((n_views, n_u, n_v), dtype=_DTYPE)
 
     (grid, tpb) = _grid_3d(n_views, n_u, n_v)
+    # Center calculation uses transposed dims (Nx=W, Ny=H, Nz=D)
     cx = _DTYPE((Nx - 1) * 0.5)
     cy = _DTYPE((Ny - 1) * 0.5)
     cz = _DTYPE((Nz - 1) * 0.5)
 
     forward_cone_3d_kernel[grid, tpb](
-        d_vol, Nx, Ny, Nz,
+        d_vol, Nx, Ny, Nz, # Use transposed Nx, Ny, Nz
         d_sino,
         n_views, n_u, n_v,
         _DTYPE(du), _DTYPE(dv),
         d_cos, d_sin,
         _DTYPE(src_dist), _DTYPE(iso_dist),
-        _DTYPE(step_size), cx, cy, cz
+        _DTYPE(step_size), cx, cy, cz # Use centers based on transposed dims
     )
+    # Sinogram layout is correct, no transpose needed
     return d_sino.copy_to_host()
 
 
@@ -538,25 +582,32 @@ def back_cone_3d(
     iso_dist: float,
     step_size: float = 0.5,
 ):
+    # Input Nx, Ny, Nz are target reco dimensions (D, H, W)
     sinogram = sinogram.astype(_DTYPE, copy=False)
     n_views, n_u, n_v = sinogram.shape
+    # Use transposed dimensions (W, H, D) for kernel consistency
+    kernel_Nx, kernel_Ny, kernel_Nz = Nz, Ny, Nx
+
     d_sino = cuda.to_device(sinogram)
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
-    d_reco = cuda.to_device(np.zeros((Nx, Ny, Nz), dtype=_DTYPE))
+    # Create reco buffer with kernel layout (x, y, z) / (W, H, D)
+    d_reco = cuda.to_device(np.zeros((kernel_Nx, kernel_Ny, kernel_Nz), dtype=_DTYPE))
 
     (grid, tpb) = _grid_3d(n_views, n_u, n_v)
-    cx = _DTYPE((Nx - 1) * 0.5)
-    cy = _DTYPE((Ny - 1) * 0.5)
-    cz = _DTYPE((Nz - 1) * 0.5)
+    # Center calculation uses kernel dims (W, H, D)
+    cx = _DTYPE((kernel_Nx - 1) * 0.5)
+    cy = _DTYPE((kernel_Ny - 1) * 0.5)
+    cz = _DTYPE((kernel_Nz - 1) * 0.5)
 
     back_cone_3d_kernel[grid, tpb](
         d_sino,
         n_views, n_u, n_v,
-        Nx, Ny, Nz,
-        d_reco,
+        kernel_Nx, kernel_Ny, kernel_Nz, # Use kernel dims
+        d_reco, # Reco buffer (W, H, D)
         _DTYPE(du), _DTYPE(dv),
         d_cos, d_sin,
         _DTYPE(src_dist), _DTYPE(iso_dist),
-        _DTYPE(step_size), cx, cy, cz
+        _DTYPE(step_size), cx, cy, cz # Use centers based on kernel dims
     )
-    return d_reco.copy_to_host()
+    # Kernel output d_reco is (x, y, z), need (z, y, x) for host -> transpose back
+    return d_reco.copy_to_host().transpose((2, 1, 0))
