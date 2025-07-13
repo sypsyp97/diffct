@@ -84,7 +84,7 @@ def main():
 
     sinogram = forward_cone_3d(
         phantom, num_views, num_det_u, num_det_v, du, dv,
-        angles, source_distance, isocenter_distance, step_size
+        angles, source_distance, isocenter_distance
     )
 
     sino = torch.from_numpy(sinogram)
@@ -92,7 +92,7 @@ def main():
 
     reco = back_cone_3d(
         sino_filt, Nx, Ny, Nz, du, dv, angles,
-        source_distance, isocenter_distance, step_size
+        source_distance, isocenter_distance
     )
 
     reco = reco / num_views  # Normalize by number of angles

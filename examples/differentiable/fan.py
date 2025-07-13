@@ -62,12 +62,12 @@ def example_fan_pipeline():
     angles_torch = torch.tensor(angles_np, device=device)
 
     sinogram = FanProjectorFunction.apply(image_torch, angles_torch, num_detectors,
-                                          detector_spacing, step_size, source_distance, isocenter_distance)
+                                          detector_spacing, source_distance, isocenter_distance)
 
     sinogram_filt = ramp_filter(sinogram).detach().requires_grad_(True).contiguous()
 
     reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                    detector_spacing, step_size, Nx, Ny,
+                                                    detector_spacing, Nx, Ny,
                                                     source_distance, isocenter_distance)
     
     reconstruction = reconstruction / num_angles # Normalize by number of angles

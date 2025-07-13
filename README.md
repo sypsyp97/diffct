@@ -89,8 +89,7 @@ sinogram = forward_parallel_2d(
     num_views=360,
     num_detectors=512, 
     detector_spacing=1.0, 
-    angles=angles, 
-    step=0.5
+    angles=angles
 )
 
 # Reconstruction
@@ -99,8 +98,7 @@ reconstruction = back_parallel_2d(
     sinogram_filtered, 
     Nx=256, Ny=256,
     detector_spacing=1.0, 
-    angles=angles, 
-    step=0.5
+    angles=angles
 ) / 360  # Normalize by number of angles
 ```
 
@@ -123,7 +121,6 @@ sinogram = ParallelProjectorFunction.apply(
     angles, 
     num_detectors=512, 
     detector_spacing=1.0, 
-    step_size=0.5
 )
 
 # Filtered backprojection
@@ -132,7 +129,6 @@ reconstruction = ParallelBackprojectorFunction.apply(
     sinogram_filtered,
     angles, 
     detector_spacing=1.0, 
-    step_size=0.5, 
     Nx=256, Ny=256
 ) / 360  # Normalize
 

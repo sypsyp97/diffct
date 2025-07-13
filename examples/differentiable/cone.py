@@ -87,15 +87,15 @@ def example_cone_pipeline():
     phantom_torch = torch.tensor(phantom_cpu, device=device, requires_grad=True)
     angles_torch = torch.tensor(angles_np, device=device)
 
-    sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch, Nx, Ny, Nz,
-                                           det_u, det_v, du, dv, step_size,
+    sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
+                                           det_u, det_v, du, dv,
                                            source_distance, isocenter_distance)
 
     sinogram_filt = ramp_filter_3d(sinogram).detach().requires_grad_(True).contiguous()
 
-    reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                     Nx, Ny, Nz, det_u, det_v, du, dv,
-                                                     step_size, source_distance, isocenter_distance)
+    reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nx, Ny, Nz,
+                                                    det_u, det_v, du, dv, 
+                                                    source_distance, isocenter_distance)
     
     reconstruction = reconstruction / num_views # Normalize
 

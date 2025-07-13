@@ -59,12 +59,12 @@ def example_parallel_pipeline():
     angles_torch = torch.tensor(angles_np, device=device, requires_grad=False)
 
     sinogram = ParallelProjectorFunction.apply(image_torch, angles_torch,
-                                               num_detectors, detector_spacing, step_size)
+                                               num_detectors, detector_spacing)
     
     sinogram_filt = ramp_filter(sinogram).detach().requires_grad_(True).contiguous() 
 
     reconstruction = ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                         detector_spacing, step_size, Nx, Ny)
+                                                         detector_spacing, Nx, Ny)
     
     reconstruction = reconstruction / num_angles # Normalize by number of angles
 

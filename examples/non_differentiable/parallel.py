@@ -53,10 +53,10 @@ def main():
     detector_spacing = 1.0
     step = 1.0
     angles = np.linspace(0, 2 * np.pi, num_views, endpoint=False)
-    sinogram = forward_parallel_2d(phantom, num_views, num_detectors, detector_spacing, angles, step)
+    sinogram = forward_parallel_2d(phantom, num_views, num_detectors, detector_spacing, angles)
     sinogram = torch.from_numpy(sinogram)
     sino_filt = ramp_filter(sinogram).contiguous().numpy()
-    reco = back_parallel_2d(sino_filt, Nx, Ny, detector_spacing, angles, step)
+    reco = back_parallel_2d(sino_filt, Nx, Ny, detector_spacing, angles)
 
     reco = reco / num_views  # Normalize by number of angles
     

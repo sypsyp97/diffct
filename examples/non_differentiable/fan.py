@@ -56,7 +56,7 @@ def main():
     step_size = 1.0
     sino = forward_fan_2d(
         phantom, num_views, num_detectors, detector_spacing,
-        angles, source_distance, isocenter_distance, step_size
+        angles, source_distance, isocenter_distance
     )
 
     sino = torch.from_numpy(sino)
@@ -64,7 +64,7 @@ def main():
 
     reco = back_fan_2d(
         sino_filt, Nx, Ny, detector_spacing,
-        angles, source_distance, isocenter_distance, step_size
+        angles, source_distance, isocenter_distance
     )
 
     reco = reco / num_views  # Normalize by number of angles
