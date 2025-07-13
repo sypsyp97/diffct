@@ -45,7 +45,7 @@ def ramp_filter(sinogram_tensor):
     
     return filtered
 
-def example_fan_pipeline():
+def main():
     Nx, Ny = 256, 256
     phantom = shepp_logan_2d(Nx, Ny)
     num_angles = 360
@@ -63,13 +63,28 @@ def example_fan_pipeline():
     sinogram = FanProjectorFunction.apply(image_torch, angles_torch, num_detectors,
                                           detector_spacing, source_distance, isocenter_distance)
 
-    sinogram_filt = ramp_filter(sinogram).detach().requires_grad_(True).contiguous()
+    # --- FBP weighting and filtering ---
+    # For fan-beam FBP, projections must be weighted before filtering.
+    # Weight = cos(gamma), where gamma is the fan angle for each detector.
+    u = (torch.arange(num_detectors, dtype=image_torch.dtype, device=device) - (num_detectors - 1) / 2) * detector_spacing
+    gamma = torch.atan(u / source_distance)
+    weights = torch.cos(gamma).unsqueeze(0)  # Shape (1, num_detectors) for broadcasting
+
+    # Apply weights before filtering
+    sino_weighted = sinogram * weights
+    sinogram_filt = ramp_filter(sino_weighted).detach().requires_grad_(True).contiguous()
 
     reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                     detector_spacing, Nx, Ny,
                                                     source_distance, isocenter_distance)
     
-    reconstruction = reconstruction / num_angles # Normalize by number of angles
+    # --- FBP normalization ---
+    # The backprojection is a sum over all angles. To approximate the integral,
+    # we need to multiply by the angular step d_beta.
+    # The fan-beam FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
+    # d_beta = 2 * pi / num_angles
+    # Normalization factor = (1/2) * d_beta = pi / num_angles
+    reconstruction = reconstruction * (math.pi / num_angles)
 
     loss = torch.mean((reconstruction - image_torch)**2)
     loss.backward()
@@ -101,4 +116,4 @@ def example_fan_pipeline():
     print("Reco range:", reco_cpu.min(), reco_cpu.max())
 
 if __name__ == "__main__":
-    example_fan_pipeline()
+    main()

@@ -70,7 +70,7 @@ def ramp_filter_3d(sinogram_tensor):
     
     return filtered
 
-def example_cone_pipeline():
+def main():
     Nx, Ny, Nz = 128, 128, 128
     phantom_cpu = shepp_logan_3d((Nx, Ny, Nz))
 
@@ -79,8 +79,8 @@ def example_cone_pipeline():
 
     det_u, det_v = 256, 256
     du, dv = 1.0, 1.0
-    source_distance = 600.0
-    isocenter_distance = 400.0
+    source_distance = 900.0
+    isocenter_distance = 600.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, requires_grad=True)
@@ -90,12 +90,33 @@ def example_cone_pipeline():
                                            det_u, det_v, du, dv,
                                            source_distance, isocenter_distance)
 
-    sinogram_filt = ramp_filter_3d(sinogram).detach().requires_grad_(True).contiguous()
+    # --- FDK weighting and filtering ---
+    # For FDK, projections must be weighted before filtering.
+    # Weight = D / sqrt(D^2 + u^2 + v^2), where D is source_distance
+    # and (u,v) are detector coordinates.
+    u_coords = (torch.arange(det_u, dtype=phantom_torch.dtype, device=device) - (det_u - 1) / 2) * du
+    v_coords = (torch.arange(det_v, dtype=phantom_torch.dtype, device=device) - (det_v - 1) / 2) * dv
+
+    # Reshape for broadcasting over sinogram of shape (views, u, v)
+    u_coords = u_coords.view(1, det_u, 1)
+    v_coords = v_coords.view(1, 1, det_v)
+    
+    weights = source_distance / torch.sqrt(source_distance**2 + u_coords**2 + v_coords**2)
+    
+    # Apply weights and then filter
+    sino_weighted = sinogram * weights
+    sinogram_filt = ramp_filter_3d(sino_weighted).detach().requires_grad_(True).contiguous()
 
     reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nx, Ny, Nz,
                                                     du, dv, source_distance, isocenter_distance)
     
-    reconstruction = reconstruction / num_views # Normalize
+    # --- FDK normalization ---
+    # The backprojection is a sum over all angles. To approximate the integral,
+    # we need to multiply by the angular step d_beta.
+    # The FDK formula also includes a factor of 1/2 when integrating over [0, 2*pi].
+    # d_beta = 2 * pi / num_views
+    # Normalization factor = (1/2) * d_beta = pi / num_views
+    reconstruction = reconstruction * (math.pi / num_views)
 
     loss = torch.mean((reconstruction - phantom_torch)**2)
     loss.backward()
@@ -130,4 +151,4 @@ def example_cone_pipeline():
     print("Reco data range:", reconstruction_cpu.min(), reconstruction_cpu.max())
 
 if __name__ == "__main__":
-    example_cone_pipeline()
+    main()

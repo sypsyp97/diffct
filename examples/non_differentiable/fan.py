@@ -54,20 +54,39 @@ def main():
     source_distance = 800.0
     isocenter_distance = 500.0
 
-    sino = forward_fan_2d(
+    sinogram_np = forward_fan_2d(
         phantom, num_views, num_detectors, detector_spacing,
         angles, source_distance, isocenter_distance
     )
 
-    sino = torch.from_numpy(sino)
-    sino_filt = ramp_filter(sino).contiguous().numpy()
+    sinogram_torch = torch.from_numpy(sinogram_np)
+
+    # --- FBP weighting and filtering ---
+    # For fan-beam FBP, projections must be weighted before filtering.
+    # Weight = cos(gamma), where gamma is the fan angle for each detector.
+    # Detector coordinates
+    u = (torch.arange(num_detectors, dtype=sinogram_torch.dtype, device=sinogram_torch.device) - (num_detectors - 1) / 2) * detector_spacing
+    # Fan angles
+    gamma = torch.atan(u / source_distance)
+    # Cosine weights
+    weights = torch.cos(gamma).unsqueeze(0)  # Shape (1, num_detectors) for broadcasting
+    
+    # Apply weights and then filter
+    sino_weighted = sinogram_torch * weights
+    sino_filt = ramp_filter(sino_weighted).contiguous().numpy()
 
     reco = back_fan_2d(
         sino_filt, Nx, Ny, detector_spacing,
         angles, source_distance, isocenter_distance
     )
 
-    reco = reco / num_views  # Normalize by number of angles
+    # --- FBP normalization ---
+    # The backprojection is a sum over all angles. To approximate the integral,
+    # we need to multiply by the angular step d_beta.
+    # The fan-beam FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
+    # d_beta = 2 * pi / num_views
+    # Normalization factor = (1/2) * d_beta = pi / num_views
+    reco = reco * (np.pi / num_views)
 
     plt.figure(figsize=(12, 4))
     plt.subplot(1, 3, 1)
@@ -76,7 +95,7 @@ def main():
     plt.title("Phantom")
 
     plt.subplot(1, 3, 2)
-    plt.imshow(sino, cmap='gray', aspect='auto')
+    plt.imshow(sinogram_np, cmap='gray', aspect='auto')
     plt.axis('off')
     plt.title("Fan Beam Sinogram")
 

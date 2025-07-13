@@ -1,4 +1,3 @@
-# parallel_beam_example_cuda.py
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -53,12 +52,19 @@ def main():
     detector_spacing = 1.0
 
     angles = np.linspace(0, 2 * np.pi, num_views, endpoint=False)
-    sinogram = forward_parallel_2d(phantom, num_views, num_detectors, detector_spacing, angles)
-    sinogram = torch.from_numpy(sinogram)
-    sino_filt = ramp_filter(sinogram).contiguous().numpy()
+    sinogram_np = forward_parallel_2d(phantom, num_views, num_detectors, detector_spacing, angles)
+    
+    sinogram_torch = torch.from_numpy(sinogram_np)
+    sino_filt = ramp_filter(sinogram_torch).contiguous().numpy()
     reco = back_parallel_2d(sino_filt, Nx, Ny, detector_spacing, angles)
 
-    reco = reco / num_views  # Normalize by number of angles
+    # --- FBP normalization ---
+    # The backprojection is a sum over all angles. To approximate the integral,
+    # we need to multiply by the angular step d_theta.
+    # The FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
+    # d_theta = 2 * pi / num_views
+    # Normalization factor = (1/2) * d_theta = pi / num_views
+    reco = reco * (np.pi / num_views)
     
     plt.figure(figsize=(12, 4))
     plt.subplot(1, 3, 1)
@@ -66,7 +72,7 @@ def main():
     plt.axis("off")
     plt.title("Phantom")
     plt.subplot(1, 3, 2)
-    plt.imshow(sinogram, aspect='auto', cmap='gray')
+    plt.imshow(sinogram_np, aspect='auto', cmap='gray')
     plt.axis("off")
     plt.title("Parallel Sinogram")
     plt.subplot(1, 3, 3)

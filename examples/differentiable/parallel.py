@@ -44,7 +44,7 @@ def ramp_filter(sinogram_tensor):
     
     return filtered
 
-def example_parallel_pipeline():
+def main():
     Nx, Ny = 256, 256
     phantom = shepp_logan_2d(Nx, Ny)
     num_angles = 360
@@ -65,7 +65,13 @@ def example_parallel_pipeline():
     reconstruction = ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                          detector_spacing, Nx, Ny)
     
-    reconstruction = reconstruction / num_angles # Normalize by number of angles
+    # --- FBP normalization ---
+    # The backprojection is a sum over all angles. To approximate the integral,
+    # we need to multiply by the angular step d_theta.
+    # The FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
+    # d_theta = 2 * pi / num_angles
+    # Normalization factor = (1/2) * d_theta = pi / num_angles
+    reconstruction = reconstruction * (np.pi / num_angles)
 
     loss = torch.mean((reconstruction - image_torch)**2)
     loss.backward()
@@ -98,4 +104,4 @@ def example_parallel_pipeline():
     print("Reco range:", reco_cpu.min(), reco_cpu.max())
 
 if __name__ == "__main__":
-    example_parallel_pipeline()
+    main()

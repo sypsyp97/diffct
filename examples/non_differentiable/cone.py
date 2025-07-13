@@ -78,23 +78,45 @@ def main():
     du = 1.0
     dv = 1.0
     angles = np.linspace(0, 2*np.pi, num_views, endpoint=False)
-    source_distance = 600.0
-    isocenter_distance = 400.0
+    source_distance = 900.0
+    isocenter_distance = 600.0
 
-    sinogram = forward_cone_3d(
+    sinogram_np = forward_cone_3d(
         phantom, num_views, num_det_u, num_det_v, du, dv,
         angles, source_distance, isocenter_distance
     )
 
-    sino = torch.from_numpy(sinogram)
-    sino_filt = ramp_filter_3d(sino).contiguous().numpy()
+    sinogram_torch = torch.from_numpy(sinogram_np)
+
+    # --- FDK weighting and filtering ---
+    # For FDK, projections must be weighted before filtering.
+    # Weight = D / sqrt(D^2 + u^2 + v^2), where D is source_distance
+    # and (u,v) are detector coordinates.
+    u_coords = (torch.arange(num_det_u, dtype=sinogram_torch.dtype, device=sinogram_torch.device) - (num_det_u - 1) / 2) * du
+    v_coords = (torch.arange(num_det_v, dtype=sinogram_torch.dtype, device=sinogram_torch.device) - (num_det_v - 1) / 2) * dv
+
+    # Reshape for broadcasting over sinogram of shape (views, u, v)
+    u_coords = u_coords.view(1, num_det_u, 1)
+    v_coords = v_coords.view(1, 1, num_det_v)
+    
+    weights = source_distance / torch.sqrt(source_distance**2 + u_coords**2 + v_coords**2)
+    
+    # Apply weights and then filter
+    sino_weighted = sinogram_torch * weights
+    sino_filt = ramp_filter_3d(sino_weighted).contiguous().numpy()
 
     reco = back_cone_3d(
         sino_filt, Nx, Ny, Nz, du, dv, angles,
         source_distance, isocenter_distance
     )
 
-    reco = reco / num_views  # Normalize by number of angles
+    # --- FDK normalization ---
+    # The backprojection is a sum over all angles. To approximate the integral,
+    # we need to multiply by the angular step d_beta.
+    # The FDK formula also includes a factor of 1/2 when integrating over [0, 2*pi].
+    # d_beta = 2 * pi / num_views
+    # Normalization factor = (1/2) * d_beta = pi / num_views
+    reco = reco * (np.pi / num_views)
 
     midz = Nz // 2
 
@@ -105,7 +127,7 @@ def main():
     plt.title("Phantom (Mid-Z)")
 
     plt.subplot(1,3,2)
-    plt.imshow(sinogram[num_views//2], cmap='gray')
+    plt.imshow(sinogram_np[num_views//2], cmap='gray')
     plt.axis('off')
     plt.title("Sinogram (Slice)")
 
