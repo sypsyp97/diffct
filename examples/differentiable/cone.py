@@ -94,8 +94,7 @@ def example_cone_pipeline():
     sinogram_filt = ramp_filter_3d(sinogram).detach().requires_grad_(True).contiguous()
 
     reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nx, Ny, Nz,
-                                                    det_u, det_v, du, dv, 
-                                                    source_distance, isocenter_distance)
+                                                    du, dv, source_distance, isocenter_distance)
     
     reconstruction = reconstruction / num_views # Normalize
 
