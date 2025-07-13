@@ -79,7 +79,6 @@ def example_cone_pipeline():
 
     det_u, det_v = 256, 256
     du, dv = 1.0, 1.0
-    step_size = 1.0
     source_distance = 600.0
     isocenter_distance = 400.0
 

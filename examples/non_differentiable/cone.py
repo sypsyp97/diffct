@@ -80,7 +80,6 @@ def main():
     angles = np.linspace(0, 2*np.pi, num_views, endpoint=False)
     source_distance = 600.0
     isocenter_distance = 400.0
-    step_size = 1.0
 
     sinogram = forward_cone_3d(
         phantom, num_views, num_det_u, num_det_v, du, dv,

@@ -52,7 +52,6 @@ def example_parallel_pipeline():
 
     num_detectors = 512
     detector_spacing = 1.0
-    step_size = 1.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_torch = torch.tensor(phantom, device=device, requires_grad=True)

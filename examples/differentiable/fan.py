@@ -53,7 +53,6 @@ def example_fan_pipeline():
 
     num_detectors = 600
     detector_spacing = 1.0
-    step_size = 1.0
     source_distance = 800.0
     isocenter_distance = 500.0
 

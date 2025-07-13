@@ -51,7 +51,7 @@ def main():
     num_views = 360
     num_detectors = 512
     detector_spacing = 1.0
-    step = 1.0
+
     angles = np.linspace(0, 2 * np.pi, num_views, endpoint=False)
     sinogram = forward_parallel_2d(phantom, num_views, num_detectors, detector_spacing, angles)
     sinogram = torch.from_numpy(sinogram)
