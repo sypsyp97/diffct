@@ -11,7 +11,7 @@ _TPB_2D = (16, 16)
 _TPB_3D = (8, 8, 8)
 _FASTMATH_DECORATOR = cuda.jit(fastmath=True)
 _INF = _DTYPE(np.inf)
-_EPSILON = _DTYPE(1e-9)
+_EPSILON = _DTYPE(1e-6)
 
 # ------------------------------------------------------------------
 # SMALL HOST HELPERS
