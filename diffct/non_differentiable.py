@@ -6,12 +6,12 @@ from numba import cuda
 # GLOBAL SETTINGS
 # ------------------------------------------------------------------
 
-_DTYPE = np.float32  # switch to float64 if needed
-_TPB_2D = (16, 16)  # threads per block for 2-D kernels
-_TPB_3D = (8, 8, 8)  # threads per block for 3-D kernels
+_DTYPE = np.float32
+_TPB_2D = (16, 16)
+_TPB_3D = (8, 8, 8)
 _FASTMATH_DECORATOR = cuda.jit(fastmath=True)
-_INF = _DTYPE(1e10)  # A large number to represent infinity
-_EPSILON = _DTYPE(1e-9) # A small number for safe division
+_INF = _DTYPE(np.inf)
+_EPSILON = _DTYPE(1e-9)
 
 # ------------------------------------------------------------------
 # SMALL HOST HELPERS
@@ -44,12 +44,12 @@ def _grid_3d(n1, n2, n3, tpb=_TPB_3D):
 @_FASTMATH_DECORATOR
 def forward_parallel_2d_kernel(
     d_image,
-    Nx, Ny,  # image size (W, H)
+    Nx, Ny,
     d_sino,
     n_views, n_det,
     det_spacing,
     d_cos, d_sin,
-    cx, cy  # image center (W-1)/2, (H-1)/2
+    cx, cy
 ):
     iview, idet = cuda.grid(2)
     if iview >= n_views or idet >= n_det:
@@ -59,13 +59,9 @@ def forward_parallel_2d_kernel(
     sin_a = d_sin[iview]
     u = (idet - (n_det - 1) * 0.5) * det_spacing
 
-    # Ray direction (already normalized)
     dir_x, dir_y = cos_a, sin_a
-    # A point on the ray (at t=0)
     start_x, start_y = u * (-sin_a), u * (cos_a)
 
-    # Ray-Bounding Box Intersection (Slab method)
-    # Bounding box is [-cx, cx] and [-cy, cy]
     t_min, t_max = -_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1 = (-cx - start_x) / dir_x
@@ -74,7 +70,7 @@ def forward_parallel_2d_kernel(
         t_max = min(t_max, max(tx1, tx2))
     elif start_x < -cx or start_x > cx:
         d_sino[iview, idet] = 0.0
-        return # Ray is parallel and outside the box
+        return
 
     if abs(dir_y) > _EPSILON:
         ty1 = (-cy - start_y) / dir_y
@@ -83,39 +79,32 @@ def forward_parallel_2d_kernel(
         t_max = min(t_max, max(ty1, ty2))
     elif start_y < -cy or start_y > cy:
         d_sino[iview, idet] = 0.0
-        return # Ray is parallel and outside the box
+        return
 
     if t_min >= t_max:
         d_sino[iview, idet] = 0.0
-        return # Ray does not intersect the image
+        return
 
-    # Siddon's algorithm setup
     t = t_min
     accum = 0.0
 
-    # Initial voxel index
     ix = int(math.floor(start_x + t * dir_x + cx))
     iy = int(math.floor(start_y + t * dir_y + cy))
 
-    # Voxel step direction and t-increments
     step_x = 1 if dir_x >= 0 else -1
     step_y = 1 if dir_y >= 0 else -1
     dt_x = abs(1.0 / dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(1.0 / dir_y) if abs(dir_y) > _EPSILON else _INF
 
-    # t for next grid line crossing
     tx = ((ix + (step_x > 0)) - cx - start_x) / dir_x if abs(dir_x) > _EPSILON else _INF
     ty = ((iy + (step_y > 0)) - cy - start_y) / dir_y if abs(dir_y) > _EPSILON else _INF
 
-    # March through voxels
     while t < t_max:
-        # Check if the interpolation stencil is within bounds
         if 0 <= ix < Nx - 1 and 0 <= iy < Ny - 1:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
 
             if seg_len > 0:
-                # Joseph's method: interpolate at segment midpoint
                 mid_x = start_x + (t + seg_len * 0.5) * dir_x + cx
                 mid_y = start_y + (t + seg_len * 0.5) * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
@@ -220,9 +209,8 @@ def forward_parallel_2d(
     angles: np.ndarray,
 ):
     """Computes the 2D parallel-beam forward projection."""
-    # Host layout is (H, W), kernel expects (W, H) -> transpose
     image_np = image.astype(_DTYPE, copy=False).T
-    kernel_Nx, kernel_Ny = image_np.shape  # W, H
+    kernel_Nx, kernel_Ny = image_np.shape
     d_image = cuda.to_device(image_np)
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
     d_sino = cuda.device_array((n_views, n_det), dtype=_DTYPE)
@@ -248,7 +236,6 @@ def back_parallel_2d(
     """Computes the 2D parallel-beam back-projection."""
     sinogram = sinogram.astype(_DTYPE, copy=False)
     n_views, n_det = sinogram.shape
-    # Use transposed dimensions (W, H) for kernel consistency
     kernel_Nx, kernel_Ny = int(reco_W), int(reco_H)
 
     d_sino = cuda.to_device(sinogram)
@@ -264,7 +251,6 @@ def back_parallel_2d(
         n_views, n_det, _DTYPE(det_spacing),
         d_cos, d_sin, cx, cy
     )
-    # Kernel output d_reco is (W, H), need (H, W) for host -> transpose back
     return d_reco.copy_to_host().T
 
 
@@ -291,13 +277,11 @@ def forward_fan_2d_kernel(
     sin_a = d_sin[iview]
     u = (idet - (n_det - 1) * 0.5) * det_spacing
 
-    # Ray start and end points
     src_x = -iso_dist * sin_a
     src_y =  iso_dist * cos_a
     det_x = (src_dist - iso_dist) * sin_a + u * cos_a
     det_y = -(src_dist - iso_dist) * cos_a + u * sin_a
 
-    # Ray direction
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
     if length < _EPSILON:
@@ -306,7 +290,6 @@ def forward_fan_2d_kernel(
     inv_len = 1.0 / length
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len
 
-    # Ray-Bounding Box Intersection
     t_min, t_max = -_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
@@ -326,7 +309,6 @@ def forward_fan_2d_kernel(
         d_sino[iview, idet] = 0.0
         return
 
-    # Siddon's algorithm setup
     t = t_min
     accum = 0.0
     ix = int(math.floor(src_x + t * dir_x + cx))
@@ -460,7 +442,7 @@ def forward_fan_2d(
 ):
     """Computes the 2D fan-beam forward projection."""
     image_np = image.astype(_DTYPE, copy=False).T
-    kernel_Nx, kernel_Ny = image_np.shape  # W, H
+    kernel_Nx, kernel_Ny = image_np.shape
     d_image = cuda.to_device(image_np)
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
     d_sino = cuda.device_array((n_views, n_det), dtype=_DTYPE)
@@ -729,9 +711,8 @@ def forward_cone_3d(
     iso_dist: float,
 ):
     """Computes the 3D cone-beam forward projection."""
-    # Host layout (D, H, W), kernel expects (W, H, D) -> transpose
     volume_np = volume.astype(_DTYPE, copy=False).transpose((2, 1, 0))
-    kernel_Nx, kernel_Ny, kernel_Nz = volume_np.shape  # W, H, D
+    kernel_Nx, kernel_Ny, kernel_Nz = volume_np.shape
     d_vol = cuda.to_device(volume_np)
     d_cos, d_sin = _trig_tables(angles, _DTYPE)
     d_sino = cuda.device_array((n_views, n_u, n_v), dtype=_DTYPE)
@@ -764,7 +745,6 @@ def back_cone_3d(
     """Computes the 3D cone-beam back-projection."""
     sinogram = sinogram.astype(_DTYPE, copy=False)
     n_views, n_u, n_v = sinogram.shape
-    # Use transposed dimensions (W, H, D) for kernel consistency
     kernel_Nx, kernel_Ny, kernel_Nz = int(reco_W), int(reco_H), int(reco_D)
 
     d_sino = cuda.to_device(sinogram)
@@ -786,5 +766,4 @@ def back_cone_3d(
         _DTYPE(src_dist), _DTYPE(iso_dist),
         cx, cy, cz
     )
-    # Kernel output d_reco is (W, H, D), need (D, H, W) for host -> transpose back
     return d_reco.copy_to_host().transpose((2, 1, 0))

@@ -7,12 +7,12 @@ from numba import cuda
 # Global settings & helpers
 # ---------------------------------------------------------------------------
 
-_DTYPE              = np.float32            # Change to np.float64 if desired
+_DTYPE              = np.float32
 _TPB_2D             = (16, 16)
 _TPB_3D             = (8,  8,  8)
 _FASTMATH_DECORATOR = cuda.jit(fastmath=True)
-_INF                = _DTYPE(1e10)          # A large number to represent infinity
-_EPSILON            = _DTYPE(1e-9)          # A small number for safe division
+_INF                = _DTYPE(np.inf)
+_EPSILON            = _DTYPE(1e-9)
 
 
 def _trig_tables(angles: np.ndarray, dtype=_DTYPE):
@@ -538,7 +538,6 @@ class ParallelProjectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, angles, num_detectors, detector_spacing=1.0):
         device = image.device
-        # Kernel expects (W, H), input is (H, W), so transpose
         image_np = image.detach().cpu().numpy().astype(_DTYPE, copy=False).T
         angles_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
 
@@ -583,7 +582,6 @@ class ParallelProjectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_angles, num_detectors)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
-        # The backward pass of forward projection is back-projection
         _parallel_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_angles, num_detectors,
             d_img_grad, Nx, Ny,
@@ -591,7 +589,6 @@ class ParallelProjectorFunction(torch.autograd.Function):
         )
 
         grad_image_np = d_img_grad.copy_to_host()
-        # Kernel produced (W, H), transpose to (H, W) for PyTorch
         grad_image = torch.as_tensor(grad_image_np.T, device=device)
         return grad_image, None, None, None
 
@@ -604,7 +601,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         angles_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
 
         n_ang, n_det = sino_np.shape
-        Nx, Ny = W, H # Kernel expects (W, H)
+        Nx, Ny = W, H
 
         d_sino = cuda.to_device(sino_np)
         d_cos, d_sin = _trig_tables(angles_np, _DTYPE)
@@ -619,7 +616,6 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         )
 
         reco_np = d_reco.copy_to_host()
-        # Kernel produced (W, H), transpose to (H, W) for PyTorch
         reco = torch.as_tensor(reco_np.T, device=device)
         
         ctx.save_for_backward(angles)
@@ -632,7 +628,6 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         H, W, detector_spacing, n_ang, n_det = ctx.intermediate
         device = grad_output.device
 
-        # Kernel expects (W, H), input is (H, W), so transpose
         grad_np = grad_output.detach().cpu().numpy().astype(_DTYPE, copy=False).T
         angles_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
         Nx, Ny = grad_np.shape
@@ -644,7 +639,6 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
-        # The backward pass of back-projection is forward projection
         _parallel_2d_forward_kernel[grid, tpb](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(detector_spacing), d_cos, d_sin, cx, cy
