@@ -1,0 +1,281 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Filtered Backprojection - Fan Beam &mdash; diffct 1.1.7 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=370aedac"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="FDK Reconstruction - Cone Beam" href="fdk_cone.html" />
+    <link rel="prev" title="Filtered Backprojection - Parallel Beam" href="fbp_parallel.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search"  style="background: #2980B9" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            diffct
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">Examples</a><ul class="current">
+<li class="toctree-l2 current"><a class="reference internal" href="fbp/index.html">Filtered Backprojection Examples</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="fbp_parallel.html">Filtered Backprojection - Parallel Beam</a></li>
+<li class="toctree-l3 current"><a class="current reference internal" href="#">Filtered Backprojection - Fan Beam</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#overview">Overview</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#code">Code</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#key-concepts">Key Concepts</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#usage">Usage</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="fdk_cone.html">FDK Reconstruction - Cone Beam</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="iterative/index.html">Iterative Reconstruction Examples</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu"  style="background: #2980B9" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">diffct</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">Examples</a></li>
+          <li class="breadcrumb-item"><a href="fbp/index.html">Filtered Backprojection Examples</a></li>
+      <li class="breadcrumb-item active">Filtered Backprojection - Fan Beam</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/examples/fbp_fan.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="filtered-backprojection-fan-beam">
+<h1>Filtered Backprojection - Fan Beam<a class="headerlink" href="#filtered-backprojection-fan-beam" title="Link to this heading"></a></h1>
+<p>This example demonstrates 2D fan beam reconstruction using the Filtered Backprojection (FBP) algorithm with diffct.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>Fan beam geometry is commonly used in medical CT scanners where X-rays emanate from a point source to a linear detector array. This example shows:</p>
+<ul class="simple">
+<li><p>Creating a Shepp-Logan phantom</p></li>
+<li><p>Computing fan beam forward projection</p></li>
+<li><p>Applying fan beam weighting and filtering</p></li>
+<li><p>Performing backprojection with geometric corrections</p></li>
+</ul>
+</section>
+<section id="code">
+<h2>Code<a class="headerlink" href="#code" title="Link to this heading"></a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="linenos">  2</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="linenos">  3</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="linenos">  4</span><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="linenos">  5</span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct.differentiable</span><span class="w"> </span><span class="kn">import</span> <span class="n">FanProjectorFunction</span><span class="p">,</span> <span class="n">FanBackprojectorFunction</span>
+<span class="linenos">  6</span>
+<span class="linenos">  7</span>
+<span class="linenos">  8</span><span class="k">def</span><span class="w"> </span><span class="nf">shepp_logan_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">):</span>
+<span class="linenos">  9</span>    <span class="n">Nx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">Nx</span><span class="p">)</span>
+<span class="linenos"> 10</span>    <span class="n">Ny</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">Ny</span><span class="p">)</span>
+<span class="linenos"> 11</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="linenos"> 12</span>    <span class="n">ellipses</span> <span class="o">=</span> <span class="p">[</span>
+<span class="linenos"> 13</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.69</span><span class="p">,</span> <span class="mf">0.92</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+<span class="linenos"> 14</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.0184</span><span class="p">,</span> <span class="mf">0.6624</span><span class="p">,</span> <span class="mf">0.8740</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
+<span class="linenos"> 15</span>        <span class="p">(</span><span class="mf">0.22</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.11</span><span class="p">,</span> <span class="mf">0.31</span><span class="p">,</span> <span class="o">-</span><span class="mf">18.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
+<span class="linenos"> 16</span>        <span class="p">(</span><span class="o">-</span><span class="mf">0.22</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.16</span><span class="p">,</span> <span class="mf">0.41</span><span class="p">,</span> <span class="mf">18.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
+<span class="linenos"> 17</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.35</span><span class="p">,</span> <span class="mf">0.21</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">),</span>
+<span class="linenos"> 18</span>    <span class="p">]</span>
+<span class="linenos"> 19</span>    <span class="n">cx</span> <span class="o">=</span> <span class="p">(</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span>
+<span class="linenos"> 20</span>    <span class="n">cy</span> <span class="o">=</span> <span class="p">(</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span>
+<span class="linenos"> 21</span>    <span class="k">for</span> <span class="n">ix</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Nx</span><span class="p">):</span>
+<span class="linenos"> 22</span>        <span class="k">for</span> <span class="n">iy</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Ny</span><span class="p">):</span>
+<span class="linenos"> 23</span>            <span class="n">xnorm</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">Nx</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 24</span>            <span class="n">ynorm</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">Ny</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 25</span>            <span class="n">val</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="linenos"> 26</span>            <span class="k">for</span> <span class="p">(</span><span class="n">x0</span><span class="p">,</span> <span class="n">y0</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">angdeg</span><span class="p">,</span> <span class="n">ampl</span><span class="p">)</span> <span class="ow">in</span> <span class="n">ellipses</span><span class="p">:</span>
+<span class="linenos"> 27</span>                <span class="n">th</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">deg2rad</span><span class="p">(</span><span class="n">angdeg</span><span class="p">)</span>
+<span class="linenos"> 28</span>                <span class="n">xprime</span> <span class="o">=</span> <span class="p">(</span><span class="n">xnorm</span> <span class="o">-</span> <span class="n">x0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">th</span><span class="p">)</span> <span class="o">+</span> <span class="p">(</span><span class="n">ynorm</span> <span class="o">-</span> <span class="n">y0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
+<span class="linenos"> 29</span>                <span class="n">yprime</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">xnorm</span> <span class="o">-</span> <span class="n">x0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">th</span><span class="p">)</span> <span class="o">+</span> <span class="p">(</span><span class="n">ynorm</span> <span class="o">-</span> <span class="n">y0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
+<span class="linenos"> 30</span>                <span class="k">if</span> <span class="n">xprime</span><span class="o">*</span><span class="n">xprime</span><span class="o">/</span><span class="p">(</span><span class="n">a</span><span class="o">*</span><span class="n">a</span><span class="p">)</span> <span class="o">+</span> <span class="n">yprime</span><span class="o">*</span><span class="n">yprime</span><span class="o">/</span><span class="p">(</span><span class="n">b</span><span class="o">*</span><span class="n">b</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">:</span>
+<span class="linenos"> 31</span>                    <span class="n">val</span> <span class="o">+=</span> <span class="n">ampl</span>
+<span class="linenos"> 32</span>            <span class="n">phantom</span><span class="p">[</span><span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">]</span> <span class="o">=</span> <span class="n">val</span>
+<span class="linenos"> 33</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="linenos"> 34</span>    <span class="k">return</span> <span class="n">phantom</span>
+<span class="linenos"> 35</span>
+<span class="linenos"> 36</span><span class="k">def</span><span class="w"> </span><span class="nf">ramp_filter</span><span class="p">(</span><span class="n">sinogram_tensor</span><span class="p">):</span>
+<span class="linenos"> 37</span>    <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">device</span>
+<span class="linenos"> 38</span>    <span class="n">num_views</span><span class="p">,</span> <span class="n">num_det</span> <span class="o">=</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">shape</span>
+<span class="linenos"> 39</span>    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">fftfreq</span><span class="p">(</span><span class="n">num_det</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="linenos"> 40</span>    <span class="n">omega</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">freqs</span>
+<span class="linenos"> 41</span>    <span class="n">ramp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">omega</span><span class="p">)</span>
+<span class="linenos"> 42</span>    <span class="n">ramp_2d</span> <span class="o">=</span> <span class="n">ramp</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_det</span><span class="p">)</span>
+<span class="linenos"> 43</span>    <span class="n">sino_fft</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">fft</span><span class="p">(</span><span class="n">sinogram_tensor</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="linenos"> 44</span>    <span class="n">filtered_fft</span> <span class="o">=</span> <span class="n">sino_fft</span> <span class="o">*</span> <span class="n">ramp_2d</span>
+<span class="linenos"> 45</span>    <span class="n">filtered</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">real</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">ifft</span><span class="p">(</span><span class="n">filtered_fft</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+<span class="linenos"> 46</span>    
+<span class="linenos"> 47</span>    <span class="k">return</span> <span class="n">filtered</span>
+<span class="linenos"> 48</span>
+<span class="linenos"> 49</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="linenos"> 50</span>    <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span>
+<span class="linenos"> 51</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">shepp_logan_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">)</span>
+<span class="linenos"> 52</span>    <span class="n">num_angles</span> <span class="o">=</span> <span class="mi">360</span>
+<span class="linenos"> 53</span>    <span class="n">angles_np</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">num_angles</span><span class="p">,</span> <span class="n">endpoint</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="linenos"> 54</span>
+<span class="linenos"> 55</span>    <span class="n">num_detectors</span> <span class="o">=</span> <span class="mi">600</span>
+<span class="linenos"> 56</span>    <span class="n">detector_spacing</span> <span class="o">=</span> <span class="mf">1.0</span>
+<span class="linenos"> 57</span>    <span class="n">source_distance</span> <span class="o">=</span> <span class="mf">800.0</span>
+<span class="linenos"> 58</span>    <span class="n">isocenter_distance</span> <span class="o">=</span> <span class="mf">500.0</span>
+<span class="linenos"> 59</span>
+<span class="linenos"> 60</span>    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s1">&#39;cuda&#39;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s1">&#39;cpu&#39;</span><span class="p">)</span>
+<span class="linenos"> 61</span>    <span class="n">image_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="linenos"> 62</span>    <span class="n">angles_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="linenos"> 63</span>
+<span class="linenos"> 64</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">image_torch</span><span class="p">,</span> <span class="n">angles_torch</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span>
+<span class="linenos"> 65</span>                                          <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
+<span class="linenos"> 66</span>
+<span class="linenos"> 67</span>    <span class="c1"># --- FBP weighting and filtering ---</span>
+<span class="linenos"> 68</span>    <span class="c1"># For fan-beam FBP, projections must be weighted before filtering.</span>
+<span class="linenos"> 69</span>    <span class="c1"># Weight = cos(gamma), where gamma is the fan angle for each detector.</span>
+<span class="linenos"> 70</span>    <span class="n">u</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">image_torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">-</span> <span class="p">(</span><span class="n">num_detectors</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">detector_spacing</span>
+<span class="linenos"> 71</span>    <span class="n">gamma</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">atan</span><span class="p">(</span><span class="n">u</span> <span class="o">/</span> <span class="n">source_distance</span><span class="p">)</span>
+<span class="linenos"> 72</span>    <span class="n">weights</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">gamma</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># Shape (1, num_detectors) for broadcasting</span>
+<span class="linenos"> 73</span>
+<span class="linenos"> 74</span>    <span class="c1"># Apply weights before filtering</span>
+<span class="linenos"> 75</span>    <span class="n">sino_weighted</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">weights</span>
+<span class="linenos"> 76</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">ramp_filter</span><span class="p">(</span><span class="n">sino_weighted</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+<span class="linenos"> 77</span>
+<span class="linenos"> 78</span>    <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">FanBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">sinogram_filt</span><span class="p">,</span> <span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos"> 79</span>                                                    <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
+<span class="linenos"> 80</span>                                                    <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
+<span class="linenos"> 81</span>    
+<span class="linenos"> 82</span>    <span class="c1"># --- FBP normalization ---</span>
+<span class="linenos"> 83</span>    <span class="c1"># The backprojection is a sum over all angles. To approximate the integral,</span>
+<span class="linenos"> 84</span>    <span class="c1"># we need to multiply by the angular step d_beta.</span>
+<span class="linenos"> 85</span>    <span class="c1"># The fan-beam FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].</span>
+<span class="linenos"> 86</span>    <span class="c1"># d_beta = 2 * pi / num_angles</span>
+<span class="linenos"> 87</span>    <span class="c1"># Normalization factor = (1/2) * d_beta = pi / num_angles</span>
+<span class="linenos"> 88</span>    <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">reconstruction</span> <span class="o">*</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="n">num_angles</span><span class="p">)</span>
+<span class="linenos"> 89</span>
+<span class="linenos"> 90</span>    <span class="n">loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction</span> <span class="o">-</span> <span class="n">image_torch</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 91</span>    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="linenos"> 92</span>
+<span class="linenos"> 93</span>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Loss:&quot;</span><span class="p">,</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+<span class="linenos"> 94</span>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Center pixel gradient:&quot;</span><span class="p">,</span> <span class="n">image_torch</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">Nx</span><span class="o">//</span><span class="mi">2</span><span class="p">,</span> <span class="n">Ny</span><span class="o">//</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+<span class="linenos"> 95</span>
+<span class="linenos"> 96</span>    <span class="n">sinogram_cpu</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="linenos"> 97</span>    <span class="n">reco_cpu</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="linenos"> 98</span>
+<span class="linenos"> 99</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span><span class="mi">4</span><span class="p">))</span>
+<span class="linenos">100</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">3</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span>
+<span class="linenos">101</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s1">&#39;gray&#39;</span><span class="p">)</span>
+<span class="linenos">102</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Phantom&quot;</span><span class="p">)</span>
+<span class="linenos">103</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s1">&#39;off&#39;</span><span class="p">)</span>
+<span class="linenos">104</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">3</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="linenos">105</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">sinogram_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s1">&#39;gray&#39;</span><span class="p">,</span> <span class="n">aspect</span><span class="o">=</span><span class="s1">&#39;auto&#39;</span><span class="p">)</span>
+<span class="linenos">106</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Fan Sinogram&quot;</span><span class="p">)</span>
+<span class="linenos">107</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s1">&#39;off&#39;</span><span class="p">)</span>
+<span class="linenos">108</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">3</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span>
+<span class="linenos">109</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">reco_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s1">&#39;gray&#39;</span><span class="p">)</span>
+<span class="linenos">110</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Fan Reconstruction&quot;</span><span class="p">)</span>
+<span class="linenos">111</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s1">&#39;off&#39;</span><span class="p">)</span>
+<span class="linenos">112</span>    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="linenos">113</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="linenos">114</span>
+<span class="linenos">115</span>    <span class="c1"># print data range of the phantom and reco</span>
+<span class="linenos">116</span>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Phantom range:&quot;</span><span class="p">,</span> <span class="n">phantom</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span> <span class="n">phantom</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>
+<span class="linenos">117</span>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Reco range:&quot;</span><span class="p">,</span> <span class="n">reco_cpu</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span> <span class="n">reco_cpu</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>
+<span class="linenos">118</span>
+<span class="linenos">119</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<span class="linenos">120</span>    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="key-concepts">
+<h2>Key Concepts<a class="headerlink" href="#key-concepts" title="Link to this heading"></a></h2>
+<ol class="arabic simple">
+<li><p><strong>Fan Beam Geometry</strong>: Rays diverge from a point source to detector elements, creating geometric magnification.</p></li>
+<li><p><strong>Weighting</strong>: Fan beam projections must be weighted by cos(γ) where γ is the fan angle for each detector.</p></li>
+<li><p><strong>Geometric Parameters</strong>:
+- Source distance: Distance from X-ray source to isocenter
+- Isocenter distance: Distance from isocenter to detector</p></li>
+<li><p><strong>Normalization</strong>: Similar to parallel beam, but accounts for the 2π angular range.</p></li>
+</ol>
+</section>
+<section id="usage">
+<h2>Usage<a class="headerlink" href="#usage" title="Link to this heading"></a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/fbp_fan.py
+</pre></div>
+</div>
+<p>The example will display the phantom, sinogram, and reconstructed image.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="fbp_parallel.html" class="btn btn-neutral float-left" title="Filtered Backprojection - Parallel Beam" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="fdk_cone.html" class="btn btn-neutral float-right" title="FDK Reconstruction - Cone Beam" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Yipeng Sun.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
