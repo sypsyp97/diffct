@@ -3,5 +3,3 @@ numpy
 torch
 numba
 matplotlib
-sphinx-rtd-theme
-sphinx
