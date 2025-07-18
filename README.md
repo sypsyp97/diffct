@@ -51,17 +51,6 @@ diffct/
 ### Installation
 
 ```bash
-# Create and activate environment
-conda create -n diffct python=3.10
-conda activate diffct
-
-# Install CUDA support
-conda install cudatoolkit
-
-git clone https://github.com/sypsyp97/diffct.git
-cd diffct
-
-pip install -r requirements.txt
 pip install diffct
 ```
 
