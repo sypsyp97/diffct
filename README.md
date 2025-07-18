@@ -33,6 +33,7 @@ diffct/
 │   ├── fdk_cone.py
 │   ├── iterative_reco_cone.py
 │   ├── iterative_reco_fan.py
+│   ├── iterative_reco_parallel.py
 ├── pyproject.toml             # Project metadata
 ├── README.md                  # README
 ├── LICENSE                    # License

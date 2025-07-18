@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
-from diffct.differentiable import FanProjectorFunction
+from diffct.differentiable import ParallelProjectorFunction
 
 
 def shepp_logan_2d(Nx, Ny):
@@ -36,33 +36,26 @@ def shepp_logan_2d(Nx, Ny):
     return phantom
 
 class IterativeRecoModel(nn.Module):
-    def __init__(self, volume_shape, angles, 
-                 num_detectors, detector_spacing, 
-                 source_distance, isocenter_distance):
-        
+    def __init__(self, volume_shape, angles, num_detectors, detector_spacing):
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
         self.angles = angles
         self.num_detectors = num_detectors
         self.detector_spacing = detector_spacing
-        self.source_distance = source_distance
-        self.isocenter_distance = isocenter_distance
 
     def forward(self, x):
         updated_reco = x + self.reco
-        current_sino = FanProjectorFunction.apply(updated_reco, self.angles, self.num_detectors, self.detector_spacing, self.source_distance, self.isocenter_distance)
+        current_sino = ParallelProjectorFunction.apply(updated_reco, self.angles, 
+                                                       self.num_detectors, self.detector_spacing)
         return current_sino, updated_reco
 
 class Pipeline:
-    def __init__(self, lr, volume_shape, angles, 
-                 num_detectors, detector_spacing, 
-                 source_distance, isocenter_distance, 
+    def __init__(self, lr, volume_shape, angles, num_detectors, detector_spacing, 
                  device, epoches=1000):
         
         self.epoches = epoches
-        self.model = IterativeRecoModel(volume_shape, angles,
-                                        num_detectors, detector_spacing, 
-                                        source_distance, isocenter_distance).to(device)
+        self.model = IterativeRecoModel(volume_shape, angles, num_detectors, 
+                                        detector_spacing).to(device)
         
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
         self.loss = nn.MSELoss()
@@ -91,25 +84,20 @@ def main():
 
     num_detectors = 256
     detector_spacing = 0.75
-    source_distance = 600.0
-    isocenter_distance = 400.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device)
     angles_torch = torch.tensor(angles_np, device=device)
 
     # Generate the "real" sinogram
-    real_sinogram = FanProjectorFunction.apply(phantom_torch, angles_torch,
-                                               num_detectors, detector_spacing,
-                                               source_distance, isocenter_distance)
+    real_sinogram = ParallelProjectorFunction.apply(phantom_torch, angles_torch,
+                                                    num_detectors, detector_spacing)
 
     pipeline_instance = Pipeline(lr=1e-1,
-                                 volume_shape=(Ny,Nx),
+                                 volume_shape=(Ny, Nx),
                                  angles=angles_torch,
                                  num_detectors=num_detectors,
                                  detector_spacing=detector_spacing,
-                                 source_distance=source_distance,
-                                 isocenter_distance=isocenter_distance,
                                  device=device, epoches=1000)
 
     ini_guess = torch.zeros_like(phantom_torch)
