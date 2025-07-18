@@ -40,15 +40,6 @@ diffct/
 ├── requirements.txt           # Dependencies
 ```
 
-## 📚 Documentation
-
-Comprehensive documentation is available at [https://sypsyp97.github.io/diffct/](https://sypsyp97.github.io/diffct/), including:
-
-- **Quick Start Guide**: Get up and running in minutes
-- **API Reference**: Detailed documentation for all functions and classes
-- **Examples**: Step-by-step tutorials for different geometries
-- **Mathematical Background**: Theory behind the algorithms
-
 ## 🚀 Quick Start
 
 ### Prerequisites
