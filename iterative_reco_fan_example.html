@@ -1,0 +1,276 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2D Fan Beam Iterative Reconstruction &mdash; diffct  documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="3D Cone Beam Iterative Reconstruction" href="iterative_reco_cone_example.html" />
+    <link rel="prev" title="2D Parallel Beam Iterative Reconstruction" href="iterative_reco_parallel_example.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            diffct
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">diffct</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="examples.html">Examples</a></li>
+      <li class="breadcrumb-item active">2D Fan Beam Iterative Reconstruction</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/iterative_reco_fan_example.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="d-fan-beam-iterative-reconstruction">
+<h1>2D Fan Beam Iterative Reconstruction<a class="headerlink" href="#d-fan-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
+<p>This example demonstrates how to use the differentiable <cite>FanProjectorFunction</cite> in an iterative reconstruction pipeline for 2D fan-beam geometry. The Shepp-Logan phantom is used as the test object, and a simple gradient-based optimization is performed to reconstruct the image from simulated projections.</p>
+<p>Key steps:
+- Generate a 2D Shepp-Logan phantom.
+- Simulate fan-beam projections using the differentiable projector.
+- Define a PyTorch-based iterative reconstruction model and pipeline.
+- Optimize the reconstruction to minimize the difference between simulated and measured sinograms.
+- Visualize the loss curve, original phantom, and reconstructed image.</p>
+<div class="literal-block-wrapper docutils container" id="id1">
+<div class="code-block-caption"><span class="caption-text">2D Fan Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="linenos">  2</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="linenos">  3</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="linenos">  4</span><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="linenos">  5</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="linenos">  6</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch.optim</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">optim</span>
+<span class="linenos">  7</span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct.differentiable</span><span class="w"> </span><span class="kn">import</span> <span class="n">FanProjectorFunction</span>
+<span class="linenos">  8</span>
+<span class="linenos">  9</span>
+<span class="linenos"> 10</span><span class="k">def</span><span class="w"> </span><span class="nf">shepp_logan_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">):</span>
+<span class="linenos"> 11</span>    <span class="n">Nx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">Nx</span><span class="p">)</span>
+<span class="linenos"> 12</span>    <span class="n">Ny</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">Ny</span><span class="p">)</span>
+<span class="linenos"> 13</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="linenos"> 14</span>    <span class="n">ellipses</span> <span class="o">=</span> <span class="p">[</span>
+<span class="linenos"> 15</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.69</span><span class="p">,</span> <span class="mf">0.92</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+<span class="linenos"> 16</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.0184</span><span class="p">,</span> <span class="mf">0.6624</span><span class="p">,</span> <span class="mf">0.8740</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
+<span class="linenos"> 17</span>        <span class="p">(</span><span class="mf">0.22</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.11</span><span class="p">,</span> <span class="mf">0.31</span><span class="p">,</span> <span class="o">-</span><span class="mf">18.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
+<span class="linenos"> 18</span>        <span class="p">(</span><span class="o">-</span><span class="mf">0.22</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.16</span><span class="p">,</span> <span class="mf">0.41</span><span class="p">,</span> <span class="mf">18.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
+<span class="linenos"> 19</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.35</span><span class="p">,</span> <span class="mf">0.21</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">),</span>
+<span class="linenos"> 20</span>    <span class="p">]</span>
+<span class="linenos"> 21</span>    <span class="n">cx</span> <span class="o">=</span> <span class="p">(</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span>
+<span class="linenos"> 22</span>    <span class="n">cy</span> <span class="o">=</span> <span class="p">(</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span>
+<span class="linenos"> 23</span>    <span class="k">for</span> <span class="n">ix</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Nx</span><span class="p">):</span>
+<span class="linenos"> 24</span>        <span class="k">for</span> <span class="n">iy</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Ny</span><span class="p">):</span>
+<span class="linenos"> 25</span>            <span class="n">xnorm</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">Nx</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 26</span>            <span class="n">ynorm</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">Ny</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 27</span>            <span class="n">val</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="linenos"> 28</span>            <span class="k">for</span> <span class="p">(</span><span class="n">x0</span><span class="p">,</span> <span class="n">y0</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">angdeg</span><span class="p">,</span> <span class="n">ampl</span><span class="p">)</span> <span class="ow">in</span> <span class="n">ellipses</span><span class="p">:</span>
+<span class="linenos"> 29</span>                <span class="n">th</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">deg2rad</span><span class="p">(</span><span class="n">angdeg</span><span class="p">)</span>
+<span class="linenos"> 30</span>                <span class="n">xprime</span> <span class="o">=</span> <span class="p">(</span><span class="n">xnorm</span> <span class="o">-</span> <span class="n">x0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">th</span><span class="p">)</span> <span class="o">+</span> <span class="p">(</span><span class="n">ynorm</span> <span class="o">-</span> <span class="n">y0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
+<span class="linenos"> 31</span>                <span class="n">yprime</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">xnorm</span> <span class="o">-</span> <span class="n">x0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">th</span><span class="p">)</span> <span class="o">+</span> <span class="p">(</span><span class="n">ynorm</span> <span class="o">-</span> <span class="n">y0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
+<span class="linenos"> 32</span>                <span class="k">if</span> <span class="n">xprime</span><span class="o">*</span><span class="n">xprime</span><span class="o">/</span><span class="p">(</span><span class="n">a</span><span class="o">*</span><span class="n">a</span><span class="p">)</span> <span class="o">+</span> <span class="n">yprime</span><span class="o">*</span><span class="n">yprime</span><span class="o">/</span><span class="p">(</span><span class="n">b</span><span class="o">*</span><span class="n">b</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">:</span>
+<span class="linenos"> 33</span>                    <span class="n">val</span> <span class="o">+=</span> <span class="n">ampl</span>
+<span class="linenos"> 34</span>            <span class="n">phantom</span><span class="p">[</span><span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">]</span> <span class="o">=</span> <span class="n">val</span>
+<span class="linenos"> 35</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="linenos"> 36</span>    <span class="k">return</span> <span class="n">phantom</span>
+<span class="linenos"> 37</span>
+<span class="linenos"> 38</span><span class="k">class</span><span class="w"> </span><span class="nc">IterativeRecoModel</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="linenos"> 39</span>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">volume_shape</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> 
+<span class="linenos"> 40</span>                 <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> 
+<span class="linenos"> 41</span>                 <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
+<span class="linenos"> 42</span>        
+<span class="linenos"> 43</span>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+<span class="linenos"> 44</span>        <span class="bp">self</span><span class="o">.</span><span class="n">reco</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">volume_shape</span><span class="p">))</span>
+<span class="linenos"> 45</span>        <span class="bp">self</span><span class="o">.</span><span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span>
+<span class="linenos"> 46</span>        <span class="bp">self</span><span class="o">.</span><span class="n">num_detectors</span> <span class="o">=</span> <span class="n">num_detectors</span>
+<span class="linenos"> 47</span>        <span class="bp">self</span><span class="o">.</span><span class="n">detector_spacing</span> <span class="o">=</span> <span class="n">detector_spacing</span>
+<span class="linenos"> 48</span>        <span class="bp">self</span><span class="o">.</span><span class="n">source_distance</span> <span class="o">=</span> <span class="n">source_distance</span>
+<span class="linenos"> 49</span>        <span class="bp">self</span><span class="o">.</span><span class="n">isocenter_distance</span> <span class="o">=</span> <span class="n">isocenter_distance</span>
+<span class="linenos"> 50</span>
+<span class="linenos"> 51</span>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+<span class="linenos"> 52</span>        <span class="n">updated_reco</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">reco</span>
+<span class="linenos"> 53</span>        <span class="n">current_sino</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">updated_reco</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">angles</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_detectors</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">detector_spacing</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">source_distance</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">isocenter_distance</span><span class="p">)</span>
+<span class="linenos"> 54</span>        <span class="k">return</span> <span class="n">current_sino</span><span class="p">,</span> <span class="n">updated_reco</span>
+<span class="linenos"> 55</span>
+<span class="linenos"> 56</span><span class="k">class</span><span class="w"> </span><span class="nc">Pipeline</span><span class="p">:</span>
+<span class="linenos"> 57</span>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">lr</span><span class="p">,</span> <span class="n">volume_shape</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> 
+<span class="linenos"> 58</span>                 <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> 
+<span class="linenos"> 59</span>                 <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">,</span> 
+<span class="linenos"> 60</span>                 <span class="n">device</span><span class="p">,</span> <span class="n">epoches</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+<span class="linenos"> 61</span>        
+<span class="linenos"> 62</span>        <span class="bp">self</span><span class="o">.</span><span class="n">epoches</span> <span class="o">=</span> <span class="n">epoches</span>
+<span class="linenos"> 63</span>        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">IterativeRecoModel</span><span class="p">(</span><span class="n">volume_shape</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span>
+<span class="linenos"> 64</span>                                        <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> 
+<span class="linenos"> 65</span>                                        <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="linenos"> 66</span>        
+<span class="linenos"> 67</span>        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span> <span class="o">=</span> <span class="n">optim</span><span class="o">.</span><span class="n">AdamW</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()),</span> <span class="n">lr</span><span class="o">=</span><span class="n">lr</span><span class="p">)</span>
+<span class="linenos"> 68</span>        <span class="bp">self</span><span class="o">.</span><span class="n">loss</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">MSELoss</span><span class="p">()</span>
+<span class="linenos"> 69</span>
+<span class="linenos"> 70</span>    <span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">input</span><span class="p">,</span> <span class="n">label</span><span class="p">):</span>
+<span class="linenos"> 71</span>        <span class="n">loss_values</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="linenos"> 72</span>        <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">epoches</span><span class="p">):</span>
+<span class="linenos"> 73</span>            <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+<span class="linenos"> 74</span>            <span class="n">predictions</span><span class="p">,</span> <span class="n">current_reco</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>
+<span class="linenos"> 75</span>            <span class="n">loss_value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">loss</span><span class="p">(</span><span class="n">predictions</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+<span class="linenos"> 76</span>            <span class="n">loss_value</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="linenos"> 77</span>            <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+<span class="linenos"> 78</span>            <span class="n">loss_values</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">loss_value</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+<span class="linenos"> 79</span>
+<span class="linenos"> 80</span>            <span class="k">if</span> <span class="n">epoch</span> <span class="o">%</span> <span class="mi">10</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+<span class="linenos"> 81</span>                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Epoch </span><span class="si">{</span><span class="n">epoch</span><span class="si">}</span><span class="s2">, Loss: </span><span class="si">{</span><span class="n">loss_value</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="linenos"> 82</span>                
+<span class="linenos"> 83</span>        <span class="k">return</span> <span class="n">loss_values</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span>
+<span class="linenos"> 84</span>
+<span class="linenos"> 85</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="linenos"> 86</span>    <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span>
+<span class="linenos"> 87</span>    <span class="n">phantom_cpu</span> <span class="o">=</span> <span class="n">shepp_logan_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">)</span>
+<span class="linenos"> 88</span>
+<span class="linenos"> 89</span>    <span class="n">num_views</span> <span class="o">=</span> <span class="mi">360</span>
+<span class="linenos"> 90</span>    <span class="n">angles_np</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">num_views</span><span class="p">,</span> <span class="n">endpoint</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="linenos"> 91</span>
+<span class="linenos"> 92</span>    <span class="n">num_detectors</span> <span class="o">=</span> <span class="mi">256</span>
+<span class="linenos"> 93</span>    <span class="n">detector_spacing</span> <span class="o">=</span> <span class="mf">0.75</span>
+<span class="linenos"> 94</span>    <span class="n">source_distance</span> <span class="o">=</span> <span class="mf">600.0</span>
+<span class="linenos"> 95</span>    <span class="n">isocenter_distance</span> <span class="o">=</span> <span class="mf">400.0</span>
+<span class="linenos"> 96</span>
+<span class="linenos"> 97</span>    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s1">&#39;cuda&#39;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s1">&#39;cpu&#39;</span><span class="p">)</span>
+<span class="linenos"> 98</span>    <span class="n">phantom_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="linenos"> 99</span>    <span class="n">angles_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="linenos">100</span>
+<span class="linenos">101</span>    <span class="c1"># Generate the &quot;real&quot; sinogram</span>
+<span class="linenos">102</span>    <span class="n">real_sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">phantom_torch</span><span class="p">,</span> <span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos">103</span>                                               <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span>
+<span class="linenos">104</span>                                               <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
+<span class="linenos">105</span>
+<span class="linenos">106</span>    <span class="n">pipeline_instance</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">(</span><span class="n">lr</span><span class="o">=</span><span class="mf">1e-1</span><span class="p">,</span>
+<span class="linenos">107</span>                                 <span class="n">volume_shape</span><span class="o">=</span><span class="p">(</span><span class="n">Ny</span><span class="p">,</span><span class="n">Nx</span><span class="p">),</span>
+<span class="linenos">108</span>                                 <span class="n">angles</span><span class="o">=</span><span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos">109</span>                                 <span class="n">num_detectors</span><span class="o">=</span><span class="n">num_detectors</span><span class="p">,</span>
+<span class="linenos">110</span>                                 <span class="n">detector_spacing</span><span class="o">=</span><span class="n">detector_spacing</span><span class="p">,</span>
+<span class="linenos">111</span>                                 <span class="n">source_distance</span><span class="o">=</span><span class="n">source_distance</span><span class="p">,</span>
+<span class="linenos">112</span>                                 <span class="n">isocenter_distance</span><span class="o">=</span><span class="n">isocenter_distance</span><span class="p">,</span>
+<span class="linenos">113</span>                                 <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">epoches</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+<span class="linenos">114</span>
+<span class="linenos">115</span>    <span class="n">ini_guess</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">phantom_torch</span><span class="p">)</span>
+<span class="linenos">116</span>
+<span class="linenos">117</span>    <span class="n">loss_values</span><span class="p">,</span> <span class="n">trained_model</span> <span class="o">=</span> <span class="n">pipeline_instance</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">ini_guess</span><span class="p">,</span> <span class="n">real_sinogram</span><span class="p">)</span>
+<span class="linenos">118</span>
+<span class="linenos">119</span>    <span class="n">reco</span> <span class="o">=</span> <span class="n">trained_model</span><span class="p">(</span><span class="n">ini_guess</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="linenos">120</span>
+<span class="linenos">121</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">()</span>
+<span class="linenos">122</span>    <span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">loss_values</span><span class="p">)</span>
+<span class="linenos">123</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Loss Curve&quot;</span><span class="p">)</span>
+<span class="linenos">124</span>    <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s2">&quot;Epoch&quot;</span><span class="p">)</span>
+<span class="linenos">125</span>    <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s2">&quot;Loss&quot;</span><span class="p">)</span>
+<span class="linenos">126</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="linenos">127</span>
+<span class="linenos">128</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">6</span><span class="p">))</span>
+<span class="linenos">129</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="linenos">130</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
+<span class="linenos">131</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Original Phantom&quot;</span><span class="p">)</span>
+<span class="linenos">132</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">133</span>
+<span class="linenos">134</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos">135</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">reco</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
+<span class="linenos">136</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Reconstructed&quot;</span><span class="p">)</span>
+<span class="linenos">137</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">138</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="linenos">139</span>
+<span class="linenos">140</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<span class="linenos">141</span>    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="iterative_reco_parallel_example.html" class="btn btn-neutral float-left" title="2D Parallel Beam Iterative Reconstruction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="iterative_reco_cone_example.html" class="btn btn-neutral float-right" title="3D Cone Beam Iterative Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Yipeng Sun.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
