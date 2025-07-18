@@ -1,7 +1,8 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from diffct.non_differentiable import forward_parallel_2d, back_parallel_2d
+from diffct.differentiable import ParallelProjectorFunction, ParallelBackprojectorFunction
+
 
 def shepp_logan_2d(Nx, Ny):
     Nx = int(Nx)
@@ -47,44 +48,61 @@ def ramp_filter(sinogram_tensor):
 def main():
     Nx, Ny = 256, 256
     phantom = shepp_logan_2d(Nx, Ny)
-    num_views = 360
+    num_angles = 360
+    angles_np = np.linspace(0, 2*np.pi, num_angles, endpoint=False).astype(np.float32)
+
     num_detectors = 512
     detector_spacing = 1.0
 
-    angles = np.linspace(0, 2 * np.pi, num_views, endpoint=False)
-    sinogram_np = forward_parallel_2d(phantom, num_views, num_detectors, detector_spacing, angles)
-    
-    sinogram_torch = torch.from_numpy(sinogram_np)
-    sino_filt = ramp_filter(sinogram_torch).contiguous().numpy()
-    reco = back_parallel_2d(sino_filt, Nx, Ny, detector_spacing, angles)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    image_torch = torch.tensor(phantom, device=device, requires_grad=True)
+    angles_torch = torch.tensor(angles_np, device=device, requires_grad=False)
 
+    sinogram = ParallelProjectorFunction.apply(image_torch, angles_torch,
+                                               num_detectors, detector_spacing)
+    
+    sinogram_filt = ramp_filter(sinogram).detach().requires_grad_(True).contiguous() 
+
+    reconstruction = ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
+                                                         detector_spacing, Nx, Ny)
+    
     # --- FBP normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,
     # we need to multiply by the angular step d_theta.
     # The FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
-    # d_theta = 2 * pi / num_views
-    # Normalization factor = (1/2) * d_theta = pi / num_views
-    reco = reco * (np.pi / num_views)
-    
-    plt.figure(figsize=(12, 4))
-    plt.subplot(1, 3, 1)
+    # d_theta = 2 * pi / num_angles
+    # Normalization factor = (1/2) * d_theta = pi / num_angles
+    reconstruction = reconstruction * (np.pi / num_angles)
+
+    loss = torch.mean((reconstruction - image_torch)**2)
+    loss.backward()
+
+    print("Loss:", loss.item())
+    print("Phantom gradient center pixel:", image_torch.grad[Nx//2, Ny//2].item())
+    print("Reconstruction shape:", reconstruction.shape)
+
+    sinogram_cpu = sinogram.detach().cpu().numpy()
+    reco_cpu = reconstruction.detach().cpu().numpy()
+
+    plt.figure(figsize=(12,4))
+    plt.subplot(1,3,1)
     plt.imshow(phantom, cmap='gray')
-    plt.axis("off")
     plt.title("Phantom")
-    plt.subplot(1, 3, 2)
-    plt.imshow(sinogram_np, aspect='auto', cmap='gray')
-    plt.axis("off")
-    plt.title("Parallel Sinogram")
-    plt.subplot(1, 3, 3)
-    plt.imshow(reco, cmap='gray')
-    plt.axis("off")
-    plt.title("Parallel FBP Reconstruction")
+    plt.axis('off')
+    plt.subplot(1,3,2)
+    plt.imshow(sinogram_cpu, aspect='auto', cmap='gray')
+    plt.title("Differentiable Sinogram")
+    plt.axis('off')
+    plt.subplot(1,3,3)
+    plt.imshow(reco_cpu, cmap='gray')
+    plt.title("Differentiable Recon")
+    plt.axis('off')
+    plt.tight_layout()
     plt.show()
 
-    # print data range of the phantom and reco
-    print("Phantom min/max:", phantom.min(), phantom.max())
-    print("Reco min/max:", reco.min(), reco.max())
-
+    # print data range of the phantom and reco 
+    print("Phantom range:", phantom.min(), phantom.max())
+    print("Reco range:", reco_cpu.min(), reco_cpu.max())
 
 if __name__ == "__main__":
     main()

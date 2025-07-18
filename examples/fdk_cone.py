@@ -1,7 +1,9 @@
+import math
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from diffct.non_differentiable import forward_cone_3d, back_cone_3d
+from diffct.differentiable import ConeProjectorFunction, ConeBackprojectorFunction
+
 
 def shepp_logan_3d(shape):
     zz, yy, xx = np.mgrid[:shape[0], :shape[1], :shape[2]]
@@ -71,76 +73,83 @@ def ramp_filter_3d(sinogram_tensor):
 
 def main():
     Nx, Ny, Nz = 128, 128, 128
-    phantom = shepp_logan_3d((Nx, Ny, Nz))
+    phantom_cpu = shepp_logan_3d((Nx, Ny, Nz))
+
     num_views = 360
-    num_det_u = 256
-    num_det_v = 256
-    du = 1.0
-    dv = 1.0
-    angles = np.linspace(0, 2*np.pi, num_views, endpoint=False)
+    angles_np = np.linspace(0, 2*math.pi, num_views, endpoint=False).astype(np.float32)
+
+    det_u, det_v = 256, 256
+    du, dv = 1.0, 1.0
     source_distance = 900.0
     isocenter_distance = 600.0
 
-    sinogram_np = forward_cone_3d(
-        phantom, num_views, num_det_u, num_det_v, du, dv,
-        angles, source_distance, isocenter_distance
-    )
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    phantom_torch = torch.tensor(phantom_cpu, device=device, requires_grad=True)
+    angles_torch = torch.tensor(angles_np, device=device)
 
-    sinogram_torch = torch.from_numpy(sinogram_np)
+    sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
+                                           det_u, det_v, du, dv,
+                                           source_distance, isocenter_distance)
 
     # --- FDK weighting and filtering ---
     # For FDK, projections must be weighted before filtering.
     # Weight = D / sqrt(D^2 + u^2 + v^2), where D is source_distance
     # and (u,v) are detector coordinates.
-    u_coords = (torch.arange(num_det_u, dtype=sinogram_torch.dtype, device=sinogram_torch.device) - (num_det_u - 1) / 2) * du
-    v_coords = (torch.arange(num_det_v, dtype=sinogram_torch.dtype, device=sinogram_torch.device) - (num_det_v - 1) / 2) * dv
+    u_coords = (torch.arange(det_u, dtype=phantom_torch.dtype, device=device) - (det_u - 1) / 2) * du
+    v_coords = (torch.arange(det_v, dtype=phantom_torch.dtype, device=device) - (det_v - 1) / 2) * dv
 
     # Reshape for broadcasting over sinogram of shape (views, u, v)
-    u_coords = u_coords.view(1, num_det_u, 1)
-    v_coords = v_coords.view(1, 1, num_det_v)
+    u_coords = u_coords.view(1, det_u, 1)
+    v_coords = v_coords.view(1, 1, det_v)
     
     weights = source_distance / torch.sqrt(source_distance**2 + u_coords**2 + v_coords**2)
     
     # Apply weights and then filter
-    sino_weighted = sinogram_torch * weights
-    sino_filt = ramp_filter_3d(sino_weighted).contiguous().numpy()
+    sino_weighted = sinogram * weights
+    sinogram_filt = ramp_filter_3d(sino_weighted).detach().requires_grad_(True).contiguous()
 
-    reco = back_cone_3d(
-        sino_filt, Nx, Ny, Nz, du, dv, angles,
-        source_distance, isocenter_distance
-    )
-
+    reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nx, Ny, Nz,
+                                                    du, dv, source_distance, isocenter_distance)
+    
     # --- FDK normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,
     # we need to multiply by the angular step d_beta.
     # The FDK formula also includes a factor of 1/2 when integrating over [0, 2*pi].
     # d_beta = 2 * pi / num_views
     # Normalization factor = (1/2) * d_beta = pi / num_views
-    reco = reco * (np.pi / num_views)
+    reconstruction = reconstruction * (math.pi / num_views)
 
-    midz = Nz // 2
+    loss = torch.mean((reconstruction - phantom_torch)**2)
+    loss.backward()
+
+    print("Cone Beam Example with user-defined geometry:")
+    print("Loss:", loss.item())
+    print("Volume center voxel gradient:", phantom_torch.grad[Nx//2, Ny//2, Nz//2].item())
+    print("Reconstruction shape:", reconstruction.shape)
+
+    reconstruction_cpu = reconstruction.detach().cpu().numpy()
+    sinogram_cpu = sinogram.detach().cpu().numpy()
+    mid_slice = Nz // 2
 
     plt.figure(figsize=(12,4))
     plt.subplot(1,3,1)
-    plt.imshow(phantom[:,:,midz], cmap='gray')
+    plt.imshow(phantom_cpu[:,:,mid_slice], cmap='gray')
+    plt.title("Phantom mid-slice")
     plt.axis('off')
-    plt.title("Phantom (Mid-Z)")
-
     plt.subplot(1,3,2)
-    plt.imshow(sinogram_np[num_views//2], cmap='gray')
+    plt.imshow(sinogram_cpu[num_views//2], cmap='gray')
+    plt.title("Sinogram mid-view")
     plt.axis('off')
-    plt.title("Sinogram (Slice)")
-
     plt.subplot(1,3,3)
-    plt.imshow(reco[:,:,midz], cmap='gray')
+    plt.imshow(reconstruction_cpu[:,:,mid_slice], cmap='gray')
+    plt.title("Recon mid-slice")
     plt.axis('off')
-    plt.title("Reconstruction (Mid-Z)")
     plt.tight_layout()
     plt.show()
 
     # print data range of the phantom and reco
-    print("Phantom range:", phantom.min(), phantom.max())
-    print("Reco range:", reco.min(), reco.max())
+    print("Phantom data range:", phantom_cpu.min(), phantom_cpu.max())
+    print("Reco data range:", reconstruction_cpu.min(), reconstruction_cpu.max())
 
 if __name__ == "__main__":
     main()

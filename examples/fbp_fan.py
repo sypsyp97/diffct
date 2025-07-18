@@ -4,6 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 from diffct.differentiable import FanProjectorFunction, FanBackprojectorFunction
 
+
 def shepp_logan_2d(Nx, Ny):
     Nx = int(Nx)
     Ny = int(Ny)

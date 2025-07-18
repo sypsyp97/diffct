@@ -26,17 +26,13 @@ A high-performance, CUDA-accelerated library for circular orbits CT reconstructi
 diffct/
 ├── diffct/
 │   ├── __init__.py            # Package initialization
-│   ├── non_differentiable.py  # CUDA implementation
-│   ├── differentiable.py      # Differentiable implementation
+│   ├── differentiable.py      # Differentiable CT operators
 ├── examples/                  # Example usages
-│   ├── non_differentiable     # Non-differentiable examples
-│   │   ├── parallel.py        
-│   │   ├── fan.py             
-│   │   ├── cone.py            
-│   ├── differentiable         # Differentiable examples
-│   │   ├── parallel.py        
-│   │   ├── fan.py             
-│   │   ├── cone.py            
+│   ├── fbp_parallel.py
+│   ├── fbp_fan.py
+│   ├── fdk_cone.py
+│   ├── iterative_reco_cone.py
+│   ├── iterative_reco_fan.py
 ├── pyproject.toml             # Project metadata
 ├── README.md                  # README
 ├── LICENSE                    # License
