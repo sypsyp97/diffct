@@ -7,7 +7,7 @@
 
 A high-performance, CUDA-accelerated library for circular orbits CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
 
-⭐ **Please star this project if you find it useful!**
+⭐ **Please star this project if you find it is useful!**
 
 ## ✨ Features
 
