@@ -61,9 +61,9 @@ pip install diffct
 If you use this library in your research, please cite:
 
 ```bibtex
-@software{DiffCT2025,
+@software{diffct2025,
   author       = {Yipeng Sun},
-  title        = {DiffCT: Differentiable Computed Tomography 
+  title        = {diffct: Differentiable Computed Tomography 
                  Reconstruction with CUDA},
   year         = 2025,
   publisher    = {Zenodo},
