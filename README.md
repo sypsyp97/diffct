@@ -48,7 +48,7 @@ diffct/
 
 - CUDA-capable GPU
 - Python 3.10+
-- PyTorch, NumPy, Numba with CUDA support
+- [PyTorch](https://pytorch.org/get-started/locally/), [NumPy](https://numpy.org/), [Numba](https://numba.readthedocs.io/en/stable/user/installing.html), [CUDA](https://developer.nvidia.com/cuda-toolkit)
 
 ### Installation
 
