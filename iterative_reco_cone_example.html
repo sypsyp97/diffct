@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>3D Cone Beam Iterative Reconstruction &mdash; diffct  documentation</title>
+  <title>Cone Beam Iterative Reconstruction &mdash; diffct  documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
 
@@ -20,7 +20,7 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="prev" title="2D Fan Beam Iterative Reconstruction" href="iterative_reco_fan_example.html" /> 
+    <link rel="prev" title="Fan Beam Iterative Reconstruction" href="iterative_reco_fan_example.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -50,12 +50,13 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">3D Cone Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam FDK Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Cone Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
 </ul>
 </li>
@@ -78,7 +79,7 @@
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="examples.html">Examples</a></li>
-      <li class="breadcrumb-item active">3D Cone Beam Iterative Reconstruction</li>
+      <li class="breadcrumb-item active">Cone Beam Iterative Reconstruction</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/iterative_reco_cone_example.rst.txt" rel="nofollow"> View page source</a>
       </li>
@@ -88,94 +89,104 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="d-cone-beam-iterative-reconstruction">
-<h1>3D Cone Beam Iterative Reconstruction<a class="headerlink" href="#d-cone-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the differentiable <cite>ConeProjectorFunction</cite> in an iterative reconstruction pipeline for 3D cone-beam geometry using gradient-based optimization.</p>
+  <section id="cone-beam-iterative-reconstruction">
+<h1>Cone Beam Iterative Reconstruction<a class="headerlink" href="#cone-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
+<p>This example demonstrates gradient-based iterative reconstruction for 3D cone beam CT using the differentiable <cite>ConeProjectorFunction</cite> from <cite>diffct</cite>.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>3D cone beam iterative reconstruction extends optimization methods to full volumetric reconstruction. This example shows how to:</p>
+<ul class="simple">
+<li><p>Formulate 3D cone beam CT reconstruction as a large-scale optimization problem</p></li>
+<li><p>Handle the computational complexity of 3D forward and backward projections</p></li>
+<li><p>Apply memory-efficient optimization strategies for volumetric data</p></li>
+<li><p>Monitor convergence in high-dimensional parameter space</p></li>
+</ul>
+</section>
 <section id="mathematical-background">
 <h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
-<p><strong>3D Cone Beam Iterative Reconstruction</strong></p>
-<p>The 3D iterative reconstruction problem is formulated as:</p>
+<p><strong>3D Cone Beam Iterative Formulation</strong></p>
+<p>The 3D reconstruction problem is formulated as:</p>
 <div class="math notranslate nohighlight">
 \[\hat{f} = \arg\min_f \|A_{\text{cone}}(f) - p\|_2^2 + \lambda R(f)\]</div>
 <p>where:
 - <span class="math notranslate nohighlight">\(f(x,y,z)\)</span> is the unknown 3D volume
 - <span class="math notranslate nohighlight">\(A_{\text{cone}}\)</span> is the cone beam forward projection operator
 - <span class="math notranslate nohighlight">\(p(\phi, u, v)\)</span> is the measured 2D projection data
-- <span class="math notranslate nohighlight">\(R(f)\)</span> is an optional 3D regularization term
-- <span class="math notranslate nohighlight">\(\lambda\)</span> is the regularization parameter</p>
+- <span class="math notranslate nohighlight">\(R(f)\)</span> is an optional 3D regularization term</p>
 <p><strong>3D Forward Projection</strong></p>
-<p>The cone beam forward projection integrates along rays from the point source through the volume:</p>
+<p>The cone beam forward projection integrates along rays through the 3D volume:</p>
 <div class="math notranslate nohighlight">
 \[p(\phi, u, v) = \int_0^{\infty} f\left(\vec{r}_s(\phi) + t \cdot \vec{d}(\phi, u, v)\right) dt\]</div>
-<p>where:
-- <span class="math notranslate nohighlight">\(\vec{r}_s(\phi) = D_s(\cos\phi, \sin\phi, 0)\)</span> is the source position
-- <span class="math notranslate nohighlight">\(\vec{d}(\phi, u, v)\)</span> is the normalized ray direction vector</p>
+<p>where <span class="math notranslate nohighlight">\(\vec{r}_s(\phi)\)</span> is the source position and <span class="math notranslate nohighlight">\(\vec{d}(\phi, u, v)\)</span> is the ray direction vector.</p>
 <p><strong>3D Gradient Computation</strong></p>
-<p>The gradient of the 3D loss function is:</p>
+<p>The gradient of the 3D loss function uses the cone beam backprojection operator:</p>
 <div class="math notranslate nohighlight">
 \[\frac{\partial L}{\partial f} = 2A_{\text{cone}}^T(A_{\text{cone}}(f) - p_{\text{measured}})\]</div>
-<p>where <span class="math notranslate nohighlight">\(A_{\text{cone}}^T\)</span> is the 3D cone beam backprojection operator.</p>
+<p>where <span class="math notranslate nohighlight">\(A_{\text{cone}}^T\)</span> is the 3D cone beam backprojection operator (adjoint).</p>
 <p><strong>Computational Complexity</strong></p>
-<p>3D cone beam reconstruction is significantly more computationally intensive than 2D:</p>
+<p>3D reconstruction presents significant computational challenges:</p>
 <ul class="simple">
-<li><p><strong>Memory Requirements</strong>: <span class="math notranslate nohighlight">\(O(N^3)\)</span> for volume storage vs <span class="math notranslate nohighlight">\(O(N^2)\)</span> for images</p></li>
-<li><p><strong>Projection Data</strong>: <span class="math notranslate nohighlight">\(O(N_{\phi} \times N_u \times N_v)\)</span> vs <span class="math notranslate nohighlight">\(O(N_{\phi} \times N_u)\)</span></p></li>
-<li><p><strong>Forward/Backward Operations</strong>: <span class="math notranslate nohighlight">\(O(N^3 \times N_{\phi})\)</span> complexity</p></li>
+<li><p><strong>Memory Requirements</strong>: <span class="math notranslate nohighlight">\(O(N^3)\)</span> for volume storage vs <span class="math notranslate nohighlight">\(O(N^2)\)</span> for 2D images</p></li>
+<li><p><strong>Projection Data</strong>: <span class="math notranslate nohighlight">\(O(N_{\phi} \times N_u \times N_v)\)</span> 2D projections</p></li>
+<li><p><strong>Forward/Backward Operations</strong>: :math:<a href="#id1"><span class="problematic" id="id2">`</span></a>O(N^3 times N_{phi})$ computational complexity</p></li>
+<li><p><strong>Gradient Storage</strong>: Additional memory for automatic differentiation</p></li>
+</ul>
+<p><strong>Implementation Steps</strong></p>
+<ol class="arabic simple">
+<li><p><strong>3D Problem Setup</strong>: Define parameterized 3D volume as learnable tensor</p></li>
+<li><p><strong>Cone Beam Forward Model</strong>: Use <cite>ConeProjectorFunction</cite> for 2D projection prediction</p></li>
+<li><p><strong>Loss Computation</strong>: Calculate L2 distance between predicted and measured projections</p></li>
+<li><p><strong>3D Gradient Computation</strong>: Use automatic differentiation through cone beam operators</p></li>
+<li><p><strong>Memory-Efficient Optimization</strong>: Apply strategies to handle large 3D parameter space</p></li>
+<li><p><strong>Convergence Monitoring</strong>: Track loss and 3D reconstruction quality</p></li>
+</ol>
+<p><strong>Model Architecture</strong></p>
+<p>The 3D reconstruction model consists of:</p>
+<ul class="simple">
+<li><p><strong>Parameterized Volume</strong>: Learnable 3D tensor representing the unknown volume</p></li>
+<li><p><strong>Cone Beam Forward Model</strong>: <cite>ConeProjectorFunction</cite> with 3D geometry parameters</p></li>
+<li><p><strong>Loss Function</strong>: Mean squared error between predicted and measured 2D projections</p></li>
 </ul>
 <p><strong>3D Regularization Options</strong></p>
-<p>Common 3D regularization terms include:</p>
-<ol class="arabic">
-<li><p><strong>3D Total Variation</strong>:</p>
-<div class="math notranslate nohighlight">
-\[R_{\text{TV}}(f) = \sum_{x,y,z} \sqrt{|\nabla_x f|^2 + |\nabla_y f|^2 + |\nabla_z f|^2}\]</div>
-</li>
-<li><p><strong>3D Smoothness</strong>:</p>
-<div class="math notranslate nohighlight">
-\[R_{\text{smooth}}(f) = \sum_{x,y,z} (|\nabla_x f|^2 + |\nabla_y f|^2 + |\nabla_z f|^2)\]</div>
-</li>
-<li><p><strong>L1 Sparsity</strong>:</p>
-<div class="math notranslate nohighlight">
-\[R_{\text{L1}}(f) = \sum_{x,y,z} |f(x,y,z)|\]</div>
-</li>
+<p>Common 3D regularization terms:</p>
+<ol class="arabic simple">
+<li><p><strong>3D Total Variation</strong>: <span class="math notranslate nohighlight">\(R_{\text{TV}}(f) = \sum_{x,y,z} \|\nabla f(x,y,z)\|_2\)</span></p></li>
+<li><p><strong>3D Smoothness</strong>: <span class="math notranslate nohighlight">\(R_{\text{smooth}}(f) = \sum_{x,y,z} \|\nabla f(x,y,z)\|_2^2\)</span></p></li>
+<li><p><strong>L1 Sparsity</strong>: <span class="math notranslate nohighlight">\(R_{\text{L1}}(f) = \sum_{x,y,z} |f(x,y,z)|\)</span></p></li>
 </ol>
-<p><strong>Memory Management</strong></p>
+<p><strong>Memory Management Strategies</strong></p>
 <p>3D reconstruction requires careful memory management:</p>
 <ul class="simple">
-<li><p><strong>Batch Processing</strong>: Process volume slices when memory is limited</p></li>
 <li><p><strong>Gradient Checkpointing</strong>: Trade computation for memory in backpropagation</p></li>
 <li><p><strong>Mixed Precision</strong>: Use float16 when possible to reduce memory usage</p></li>
-</ul>
-<p><strong>Optimization Strategy</strong></p>
-<ul class="simple">
-<li><p><strong>Learning Rate</strong>: 0.1 (may need adjustment based on volume size)</p></li>
-<li><p><strong>Optimizer</strong>: AdamW with weight decay for implicit regularization</p></li>
-<li><p><strong>Iterations</strong>: 1000 epochs (may need more for larger volumes)</p></li>
-<li><p><strong>Monitoring</strong>: Track loss every 10 iterations to detect convergence</p></li>
+<li><p><strong>Batch Processing</strong>: Process volume slices when memory is extremely limited</p></li>
+<li><p><strong>Efficient Data Layout</strong>: Optimize tensor storage and access patterns</p></li>
 </ul>
 <p><strong>Convergence Characteristics</strong></p>
-<p>3D cone beam reconstruction typically shows:</p>
+<p>3D cone beam reconstruction typically exhibits:</p>
 <ol class="arabic simple">
-<li><p><strong>Initial Convergence</strong> (0-100 iterations): Rapid loss decrease, basic 3D structure</p></li>
-<li><p><strong>Detail Refinement</strong> (100-500 iterations): Fine 3D features develop</p></li>
-<li><p><strong>Final Convergence</strong> (500+ iterations): Slow improvement, risk of overfitting</p></li>
+<li><p><strong>Initial Convergence</strong> (0-100 iterations): Rapid loss decrease, basic 3D structure emerges</p></li>
+<li><p><strong>Detail Refinement</strong> (100-500 iterations): Fine 3D features develop progressively</p></li>
+<li><p><strong>Final Convergence</strong> (500+ iterations): Slow improvement, potential overfitting risk</p></li>
 </ol>
 <p><strong>Challenges in 3D Reconstruction</strong></p>
 <ul class="simple">
-<li><p><strong>Cone Beam Artifacts</strong>: Increased artifacts for large cone angles</p></li>
+<li><p><strong>Cone Beam Artifacts</strong>: Increased artifacts for large cone angles in 3D</p></li>
 <li><p><strong>Incomplete Sampling</strong>: Missing data in certain regions of 3D Fourier space</p></li>
-<li><p><strong>Computational Cost</strong>: Significantly higher than 2D reconstruction</p></li>
-<li><p><strong>Memory Limitations</strong>: Large volumes may not fit in GPU memory</p></li>
+<li><p><strong>Computational Cost</strong>: Orders of magnitude higher than 2D reconstruction</p></li>
+<li><p><strong>Memory Limitations</strong>: Large volumes may exceed available GPU memory</p></li>
+<li><p><strong>Convergence Complexity</strong>: Higher-dimensional optimization landscape</p></li>
 </ul>
 <p><strong>Applications</strong></p>
-<p>3D cone beam iterative reconstruction is used in:</p>
+<p>3D cone beam iterative reconstruction is essential for:</p>
 <ul class="simple">
-<li><p><strong>Medical Imaging</strong>: CBCT for dental, orthopedic applications</p></li>
-<li><p><strong>Industrial CT</strong>: Non-destructive testing, quality control</p></li>
-<li><p><strong>Micro-CT</strong>: High-resolution imaging of small specimens</p></li>
-<li><p><strong>Security Screening</strong>: Baggage inspection systems</p></li>
+<li><p><strong>Medical CBCT</strong>: Dental, orthopedic, and interventional imaging</p></li>
+<li><p><strong>Industrial CT</strong>: Non-destructive testing and quality control</p></li>
+<li><p><strong>Micro-CT</strong>: High-resolution imaging of small specimens and materials</p></li>
+<li><p><strong>Security Screening</strong>: Advanced baggage and cargo inspection systems</p></li>
 </ul>
-<div class="literal-block-wrapper docutils container" id="id1">
-<div class="code-block-caption"><span class="caption-text">3D Cone Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
+<div class="literal-block-wrapper docutils container" id="id3">
+<div class="code-block-caption"><span class="caption-text">3D Cone Beam Iterative Example</span><a class="headerlink" href="#id3" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
 <span class="linenos">  2</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="linenos">  3</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
@@ -355,7 +366,7 @@
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="iterative_reco_fan_example.html" class="btn btn-neutral float-left" title="2D Fan Beam Iterative Reconstruction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="iterative_reco_fan_example.html" class="btn btn-neutral float-left" title="Fan Beam Iterative Reconstruction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
     </div>
 
   <hr/>

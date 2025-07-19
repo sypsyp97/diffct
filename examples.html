@@ -19,7 +19,7 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="2D Parallel Beam Filtered Backprojection (FBP)" href="fbp_parallel_example.html" />
+    <link rel="next" title="Parallel Beam Filtered Backprojection (FBP)" href="fbp_parallel_example.html" />
     <link rel="prev" title="API Reference" href="api.html" /> 
 </head>
 
@@ -50,12 +50,12 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Examples</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam FDK Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
 </ul>
 </li>
 </ul>
@@ -86,16 +86,28 @@
              
   <section id="examples">
 <h1>Examples<a class="headerlink" href="#examples" title="Link to this heading"></a></h1>
-<p>This section demonstrates how to use the <cite>diffct</cite> library for various computed tomography (CT) reconstruction tasks. Each example has its own page with detailed mathematical background, explanation and the full code.</p>
+<p>This section demonstrates practical applications of the <cite>diffct</cite> library for various computed tomography (CT) reconstruction tasks. Each example provides comprehensive mathematical background, implementation details, and complete working code.</p>
+<p>The examples are organized into two main categories:</p>
+<p><strong>Analytical Reconstruction Methods</strong>
+- Filtered backprojection (FBP) algorithms for direct reconstruction
+- Standard analytical approaches used in clinical and research settings</p>
+<p><strong>Iterative Reconstruction Methods</strong>
+- Gradient-based optimization approaches using differentiable operators
+- Advanced reconstruction techniques with regularization capabilities</p>
 <div class="toctree-wrapper compound">
-<p class="caption" role="heading"><span class="caption-text">Example Scripts</span></p>
+<p class="caption" role="heading"><span class="caption-text">Analytical Reconstruction</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fdk_cone_example.html">Cone Beam FDK Reconstruction</a></li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Iterative Reconstruction</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
 </ul>
 </div>
 </section>
@@ -105,7 +117,7 @@
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
         <a href="api.html" class="btn btn-neutral float-left" title="API Reference" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="fbp_parallel_example.html" class="btn btn-neutral float-right" title="2D Parallel Beam Filtered Backprojection (FBP)" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="fbp_parallel_example.html" class="btn btn-neutral float-right" title="Parallel Beam Filtered Backprojection (FBP)" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

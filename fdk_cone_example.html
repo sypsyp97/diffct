@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>3D Cone Beam FDK Reconstruction &mdash; diffct  documentation</title>
+  <title>Cone Beam FDK Reconstruction &mdash; diffct  documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
 
@@ -20,8 +20,8 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="2D Parallel Beam Iterative Reconstruction" href="iterative_reco_parallel_example.html" />
-    <link rel="prev" title="2D Fan Beam Filtered Backprojection (FBP)" href="fbp_fan_example.html" /> 
+    <link rel="next" title="Parallel Beam Iterative Reconstruction" href="iterative_reco_parallel_example.html" />
+    <link rel="prev" title="Fan Beam Filtered Backprojection (FBP)" href="fbp_fan_example.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -51,15 +51,16 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">3D Cone Beam FDK Reconstruction</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Cone Beam FDK Reconstruction</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
 </ul>
 </li>
 </ul>
@@ -79,7 +80,7 @@
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="examples.html">Examples</a></li>
-      <li class="breadcrumb-item active">3D Cone Beam FDK Reconstruction</li>
+      <li class="breadcrumb-item active">Cone Beam FDK Reconstruction</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/fdk_cone_example.rst.txt" rel="nofollow"> View page source</a>
       </li>
@@ -89,68 +90,82 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="d-cone-beam-fdk-reconstruction">
-<h1>3D Cone Beam FDK Reconstruction<a class="headerlink" href="#d-cone-beam-fdk-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the <cite>ConeProjectorFunction</cite> and <cite>ConeBackprojectorFunction</cite> from <cite>diffct</cite> to perform FDK (Feldkamp-Davis-Kress) reconstruction in a 3D cone-beam geometry.</p>
+  <section id="cone-beam-fdk-reconstruction">
+<h1>Cone Beam FDK Reconstruction<a class="headerlink" href="#cone-beam-fdk-reconstruction" title="Link to this heading"></a></h1>
+<p>This example demonstrates 3D cone beam FDK (Feldkamp-Davis-Kress) reconstruction using the <cite>ConeProjectorFunction</cite> and <cite>ConeBackprojectorFunction</cite> from <cite>diffct</cite>.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>The FDK algorithm is the standard analytical method for 3D cone beam CT reconstruction. This example shows how to:</p>
+<ul class="simple">
+<li><p>Configure 3D cone beam geometry with 2D detector array</p></li>
+<li><p>Generate cone beam projections from a 3D phantom</p></li>
+<li><p>Apply cosine weighting and ramp filtering for FDK reconstruction</p></li>
+<li><p>Perform 3D backprojection to reconstruct the volume</p></li>
+</ul>
+</section>
 <section id="mathematical-background">
 <h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
 <p><strong>Cone Beam Geometry</strong></p>
-<p>Cone beam CT extends fan beam geometry to 3D, where X-rays originate from a point source and form a cone-shaped beam illuminating a 2D detector array. The geometry is characterized by:</p>
+<p>Cone beam CT extends fan beam to 3D using a point X-ray source and 2D detector array. Key parameters:</p>
 <ul class="simple">
-<li><p>Source distance <span class="math notranslate nohighlight">\(D_s\)</span>: Distance from rotation center to X-ray source</p></li>
-<li><p>Detector distance <span class="math notranslate nohighlight">\(D_d\)</span>: Distance from rotation center to detector plane</p></li>
-<li><p>Detector coordinates <span class="math notranslate nohighlight">\((u, v)\)</span>: Horizontal and vertical detector positions</p></li>
-<li><p>Cone angles <span class="math notranslate nohighlight">\((\alpha, \beta)\)</span>: Angles in horizontal and vertical planes</p></li>
+<li><p><strong>Source distance</strong> <span class="math notranslate nohighlight">\(D_s\)</span>: Distance from rotation center to X-ray source</p></li>
+<li><p><strong>Detector distance</strong> <span class="math notranslate nohighlight">\(D_d\)</span>: Distance from rotation center to detector plane</p></li>
+<li><p><strong>Detector coordinates</strong> <span class="math notranslate nohighlight">\((u, v)\)</span>: Horizontal and vertical detector positions</p></li>
+<li><p><strong>Cone angles</strong> <span class="math notranslate nohighlight">\((\alpha, \beta)\)</span>: Horizontal and vertical beam divergence</p></li>
 </ul>
-<p><strong>3D Projection</strong></p>
+<p><strong>3D Forward Projection</strong></p>
 <p>The cone beam projection at source angle <span class="math notranslate nohighlight">\(\phi\)</span> and detector position <span class="math notranslate nohighlight">\((u, v)\)</span> is:</p>
 <div class="math notranslate nohighlight">
 \[p(\phi, u, v) = \int_0^{\infty} f\left(\vec{r}_s(\phi) + t \cdot \vec{d}(\phi, u, v)\right) dt\]</div>
 <p>where <span class="math notranslate nohighlight">\(\vec{r}_s(\phi)\)</span> is the source position and <span class="math notranslate nohighlight">\(\vec{d}(\phi, u, v)\)</span> is the ray direction vector.</p>
 <p><strong>FDK Algorithm</strong></p>
-<p>The Feldkamp-Davis-Kress (FDK) algorithm is an approximate reconstruction method for cone beam CT, consisting of:</p>
+<p>The Feldkamp-Davis-Kress algorithm performs approximate 3D reconstruction in three steps:</p>
 <ol class="arabic">
-<li><p><strong>Cosine Weighting</strong>: Apply distance-dependent weighting to account for ray divergence:</p>
+<li><p><strong>Cosine Weighting</strong>: Compensate for ray divergence and <span class="math notranslate nohighlight">\(1/r^2\)</span> intensity falloff:</p>
 <div class="math notranslate nohighlight">
 \[p_w(\phi, u, v) = p(\phi, u, v) \cdot \frac{D_s}{\sqrt{D_s^2 + u^2 + v^2}}\]</div>
-<p>This weighting compensates for the <span class="math notranslate nohighlight">\(1/r^2\)</span> falloff in X-ray intensity.</p>
 </li>
-<li><p><strong>Ramp Filtering</strong>: Apply 1D ramp filter along detector rows (u-direction):</p>
+<li><p><strong>Row-wise Ramp Filtering</strong>: Apply 1D ramp filter along detector rows (u-direction):</p>
 <div class="math notranslate nohighlight">
 \[p_f(\phi, u, v) = \mathcal{F}_u^{-1}\{|\omega_u| \cdot \mathcal{F}_u\{p_w(\phi, u, v)\}\}\]</div>
-<p>The filtering is performed independently for each detector row.</p>
+<p>Each detector row is filtered independently.</p>
 </li>
-<li><p><strong>3D Backprojection</strong>: Reconstruct the volume using:</p>
+<li><p><strong>3D Cone Beam Backprojection</strong>: Reconstruct volume using weighted backprojection:</p>
 <div class="math notranslate nohighlight">
 \[f(x,y,z) = \int_0^{2\pi} \frac{D_s^2}{(D_s + x\cos\phi + y\sin\phi)^2} p_f(\phi, u_{xyz}, v_{xyz}) d\phi\]</div>
-<p>where the detector coordinates <span class="math notranslate nohighlight">\((u_{xyz}, v_{xyz})\)</span> corresponding to voxel <span class="math notranslate nohighlight">\((x,y,z)\)</span> are:</p>
+<p>where detector coordinates <span class="math notranslate nohighlight">\((u_{xyz}, v_{xyz})\)</span> for voxel <span class="math notranslate nohighlight">\((x,y,z)\)</span> are:</p>
 <div class="math notranslate nohighlight">
 \[u_{xyz} = D_s \frac{-x\sin\phi + y\cos\phi}{D_s + x\cos\phi + y\sin\phi}\]</div>
 <div class="math notranslate nohighlight">
 \[v_{xyz} = D_s \frac{z}{D_s + x\cos\phi + y\sin\phi}\]</div>
 </li>
 </ol>
+<p><strong>Implementation Steps</strong></p>
+<ol class="arabic simple">
+<li><p><strong>3D Phantom Generation</strong>: Create 3D Shepp-Logan phantom with 10 ellipsoids</p></li>
+<li><p><strong>Cone Beam Projection</strong>: Generate 2D projections using <cite>ConeProjectorFunction</cite></p></li>
+<li><p><strong>Cosine Weighting</strong>: Apply distance-dependent weights</p></li>
+<li><p><strong>Row-wise Filtering</strong>: Apply ramp filter to each detector row</p></li>
+<li><p><strong>3D Backprojection</strong>: Reconstruct volume using <cite>ConeBackprojectorFunction</cite></p></li>
+<li><p><strong>Normalization</strong>: Scale by <span class="math notranslate nohighlight">\(\frac{\pi}{N_{\text{angles}}}\)</span> factor</p></li>
+</ol>
 <p><strong>3D Shepp-Logan Phantom</strong></p>
-<p>The 3D Shepp-Logan phantom extends the 2D version with 10 ellipsoids, each defined by:</p>
+<p>The 3D phantom extends the 2D version with 10 ellipsoids representing anatomical structures:</p>
 <ul class="simple">
-<li><p>Center position <span class="math notranslate nohighlight">\((x_0, y_0, z_0)\)</span></p></li>
-<li><p>Semi-axes lengths <span class="math notranslate nohighlight">\((a, b, c)\)</span></p></li>
-<li><p>Rotation angles <span class="math notranslate nohighlight">\((\phi, \theta, \psi)\)</span></p></li>
-<li><p>Attenuation coefficient <span class="math notranslate nohighlight">\(A\)</span></p></li>
+<li><p><strong>Outer skull</strong>: Large ellipsoid encompassing the head</p></li>
+<li><p><strong>Brain tissue</strong>: Medium ellipsoids for different brain regions</p></li>
+<li><p><strong>Ventricles</strong>: Small ellipsoids representing fluid-filled cavities</p></li>
+<li><p><strong>Lesions</strong>: High-contrast features for reconstruction assessment</p></li>
 </ul>
-<p>The ellipsoid equation in rotated coordinates is:</p>
-<div class="math notranslate nohighlight">
-\[\frac{x'^2}{a^2} + \frac{y'^2}{b^2} + \frac{z'^2}{c^2} \leq 1\]</div>
+<p>Each ellipsoid is defined by center position <span class="math notranslate nohighlight">\((x_0, y_0, z_0)\)</span>, semi-axes <span class="math notranslate nohighlight">\((a, b, c)\)</span>, rotation angles, and attenuation coefficient.</p>
 <p><strong>FDK Approximations and Limitations</strong></p>
 <p>The FDK algorithm makes several approximations:</p>
-<ol class="arabic simple">
-<li><p><strong>Circular orbit assumption</strong>: Source follows a circular trajectory</p></li>
-<li><p><strong>Parallel filtering</strong>: Ramp filtering only along detector rows</p></li>
-<li><p><strong>Cone angle approximation</strong>: Exact only for small cone angles</p></li>
-</ol>
-<p>These approximations introduce artifacts for large cone angles, but the algorithm remains widely used due to its computational efficiency.</p>
-<p><strong>Normalization</strong></p>
-<p>The final reconstruction is normalized by <span class="math notranslate nohighlight">\(\frac{\pi}{N_{\text{angles}}}\)</span> to approximate the continuous integral.</p>
+<ul class="simple">
+<li><p><strong>Circular orbit</strong>: Assumes circular source trajectory</p></li>
+<li><p><strong>Row-wise filtering</strong>: Ramp filtering only along detector rows</p></li>
+<li><p><strong>Small cone angle</strong>: Most accurate for limited cone angles</p></li>
+</ul>
+<p>These approximations introduce cone beam artifacts for large cone angles, but FDK remains widely used due to computational efficiency.</p>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">3D Cone Beam FDK Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
@@ -318,8 +333,8 @@
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="fbp_fan_example.html" class="btn btn-neutral float-left" title="2D Fan Beam Filtered Backprojection (FBP)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="iterative_reco_parallel_example.html" class="btn btn-neutral float-right" title="2D Parallel Beam Iterative Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="fbp_fan_example.html" class="btn btn-neutral float-left" title="Fan Beam Filtered Backprojection (FBP)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="iterative_reco_parallel_example.html" class="btn btn-neutral float-right" title="Parallel Beam Iterative Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

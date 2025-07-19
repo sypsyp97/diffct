@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>2D Fan Beam Filtered Backprojection (FBP) &mdash; diffct  documentation</title>
+  <title>Fan Beam Filtered Backprojection (FBP) &mdash; diffct  documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
 
@@ -20,8 +20,8 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="3D Cone Beam FDK Reconstruction" href="fdk_cone_example.html" />
-    <link rel="prev" title="2D Parallel Beam Filtered Backprojection (FBP)" href="fbp_parallel_example.html" /> 
+    <link rel="next" title="Cone Beam FDK Reconstruction" href="fdk_cone_example.html" />
+    <link rel="prev" title="Parallel Beam Filtered Backprojection (FBP)" href="fbp_parallel_example.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -51,15 +51,16 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Fan Beam Filtered Backprojection (FBP)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Fan Beam Filtered Backprojection (FBP)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam FDK Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
 </ul>
 </li>
 </ul>
@@ -79,7 +80,7 @@
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="examples.html">Examples</a></li>
-      <li class="breadcrumb-item active">2D Fan Beam Filtered Backprojection (FBP)</li>
+      <li class="breadcrumb-item active">Fan Beam Filtered Backprojection (FBP)</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/fbp_fan_example.rst.txt" rel="nofollow"> View page source</a>
       </li>
@@ -89,54 +90,70 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="d-fan-beam-filtered-backprojection-fbp">
-<h1>2D Fan Beam Filtered Backprojection (FBP)<a class="headerlink" href="#d-fan-beam-filtered-backprojection-fbp" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the <cite>FanProjectorFunction</cite> and <cite>FanBackprojectorFunction</cite> from <cite>diffct</cite> to perform filtered backprojection (FBP) reconstruction in a 2D fan-beam geometry.</p>
+  <section id="fan-beam-filtered-backprojection-fbp">
+<h1>Fan Beam Filtered Backprojection (FBP)<a class="headerlink" href="#fan-beam-filtered-backprojection-fbp" title="Link to this heading"></a></h1>
+<p>This example demonstrates 2D fan beam filtered backprojection (FBP) reconstruction using the <cite>FanProjectorFunction</cite> and <cite>FanBackprojectorFunction</cite> from <cite>diffct</cite>.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>Fan beam FBP extends parallel beam reconstruction to the more realistic fan beam geometry used in clinical CT scanners. This example shows how to:</p>
+<ul class="simple">
+<li><p>Configure fan beam geometry parameters (source distance, detector distance)</p></li>
+<li><p>Generate fan beam projections with proper weighting</p></li>
+<li><p>Apply ramp filtering with cosine weighting correction</p></li>
+<li><p>Perform fan beam backprojection reconstruction</p></li>
+</ul>
+</section>
 <section id="mathematical-background">
 <h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
 <p><strong>Fan Beam Geometry</strong></p>
-<p>In fan beam CT, X-rays originate from a point source and form a fan-shaped beam. The geometry is characterized by:</p>
+<p>Fan beam CT uses a point X-ray source creating a fan-shaped beam. Key geometric parameters:</p>
 <ul class="simple">
-<li><p>Source distance <span class="math notranslate nohighlight">\(D_s\)</span>: Distance from rotation center to X-ray source</p></li>
-<li><p>Detector distance <span class="math notranslate nohighlight">\(D_d\)</span>: Distance from rotation center to detector array</p></li>
-<li><p>Fan angle <span class="math notranslate nohighlight">\(\gamma\)</span>: Angle between central ray and detector element</p></li>
+<li><p><strong>Source distance</strong> <span class="math notranslate nohighlight">\(D_s\)</span>: Distance from rotation center to X-ray source</p></li>
+<li><p><strong>Detector distance</strong> <span class="math notranslate nohighlight">\(D_d\)</span>: Distance from rotation center to detector array</p></li>
+<li><p><strong>Fan angle</strong> <span class="math notranslate nohighlight">\(\gamma\)</span>: Angle between central ray and detector element</p></li>
 </ul>
-<p>The relationship between detector position <span class="math notranslate nohighlight">\(u\)</span> and fan angle <span class="math notranslate nohighlight">\(\gamma\)</span> is:</p>
+<p>The detector position <span class="math notranslate nohighlight">\(u\)</span> relates to fan angle <span class="math notranslate nohighlight">\(\gamma\)</span> by:</p>
 <div class="math notranslate nohighlight">
 \[\gamma = \arctan\left(\frac{u}{D_s}\right)\]</div>
-<p><strong>Fan Beam Projection</strong></p>
+<p><strong>Fan Beam Forward Projection</strong></p>
 <p>The fan beam projection at source angle <span class="math notranslate nohighlight">\(\beta\)</span> and detector position <span class="math notranslate nohighlight">\(u\)</span> is:</p>
 <div class="math notranslate nohighlight">
 \[p(\beta, u) = \int_0^{\infty} f\left(\vec{r}_s + t \cdot \vec{d}(\beta, u)\right) dt\]</div>
-<p>where <span class="math notranslate nohighlight">\(\vec{r}_s\)</span> is the source position and <span class="math notranslate nohighlight">\(\vec{d}(\beta, u)\)</span> is the ray direction.</p>
+<p>where <span class="math notranslate nohighlight">\(\vec{r}_s\)</span> is the source position and <span class="math notranslate nohighlight">\(\vec{d}(\beta, u)\)</span> is the ray direction vector.</p>
 <p><strong>Fan Beam FBP Algorithm</strong></p>
-<p>The fan beam FBP reconstruction involves three key steps:</p>
+<p>Fan beam FBP reconstruction involves three sequential steps:</p>
 <ol class="arabic">
-<li><p><strong>Weighting</strong>: Apply cosine weighting to account for ray divergence:</p>
+<li><p><strong>Cosine Weighting</strong>: Compensate for ray divergence:</p>
 <div class="math notranslate nohighlight">
-\[p_w(\beta, u) = p(\beta, u) \cdot \cos(\gamma)\]</div>
-<p>where <span class="math notranslate nohighlight">\(\gamma = \arctan(u/D_s)\)</span></p>
+\[p_w(\beta, u) = p(\beta, u) \cdot \cos(\gamma) = p(\beta, u) \cdot \frac{D_s}{\sqrt{D_s^2 + u^2}}\]</div>
 </li>
-<li><p><strong>Filtering</strong>: Apply ramp filter in frequency domain:</p>
+<li><p><strong>Ramp Filtering</strong>: Apply frequency domain filter:</p>
 <div class="math notranslate nohighlight">
 \[p_f(\beta, u) = \mathcal{F}^{-1}\{|\omega| \cdot \mathcal{F}\{p_w(\beta, u)\}\}\]</div>
 </li>
-<li><p><strong>Backprojection</strong>: Reconstruct using the fan beam backprojection formula:</p>
+<li><p><strong>Fan Beam Backprojection</strong>: Reconstruct using weighted backprojection:</p>
 <div class="math notranslate nohighlight">
 \[f(x,y) = \int_0^{2\pi} \frac{D_s^2}{(D_s + x\cos\beta + y\sin\beta)^2} p_f(\beta, u_{xy}) d\beta\]</div>
-<p>where <span class="math notranslate nohighlight">\(u_{xy}\)</span> is the detector coordinate corresponding to pixel <span class="math notranslate nohighlight">\((x,y)\)</span>:</p>
+<p>where the detector coordinate <span class="math notranslate nohighlight">\(u_{xy}\)</span> for pixel <span class="math notranslate nohighlight">\((x,y)\)</span> is:</p>
 <div class="math notranslate nohighlight">
 \[u_{xy} = D_s \frac{-x\sin\beta + y\cos\beta}{D_s + x\cos\beta + y\sin\beta}\]</div>
 </li>
 </ol>
-<p><strong>Normalization</strong></p>
-<p>The final reconstruction is normalized by <span class="math notranslate nohighlight">\(\frac{\pi}{N_{\text{angles}}}\)</span> to approximate the continuous integral over the angular range [0, 2π].</p>
+<p><strong>Implementation Steps</strong></p>
+<ol class="arabic simple">
+<li><p><strong>Phantom Generation</strong>: Create Shepp-Logan phantom for testing</p></li>
+<li><p><strong>Fan Beam Projection</strong>: Generate sinogram using <cite>FanProjectorFunction</cite></p></li>
+<li><p><strong>Cosine Weighting</strong>: Apply divergence correction weights</p></li>
+<li><p><strong>Ramp Filtering</strong>: Filter each projection in frequency domain</p></li>
+<li><p><strong>Fan Beam Backprojection</strong>: Reconstruct using <cite>FanBackprojectorFunction</cite></p></li>
+<li><p><strong>Normalization</strong>: Scale by <span class="math notranslate nohighlight">\(\frac{\pi}{N_{\text{angles}}}\)</span> factor</p></li>
+</ol>
 <p><strong>Advantages of Fan Beam Geometry</strong></p>
 <ul class="simple">
-<li><p>More realistic representation of clinical CT scanners</p></li>
-<li><p>Higher photon flux utilization compared to parallel beam</p></li>
-<li><p>Natural magnification provides higher spatial resolution</p></li>
-<li><p>Shorter scan times due to wider coverage per projection</p></li>
+<li><p><strong>Clinical Relevance</strong>: Matches real CT scanner geometry</p></li>
+<li><p><strong>Higher Flux</strong>: Better X-ray utilization than parallel beam</p></li>
+<li><p><strong>Natural Magnification</strong>: Improved spatial resolution</p></li>
+<li><p><strong>Faster Acquisition</strong>: Wider coverage per projection angle</p></li>
 </ul>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">2D Fan Beam FBP Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
@@ -270,8 +287,8 @@
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="fbp_parallel_example.html" class="btn btn-neutral float-left" title="2D Parallel Beam Filtered Backprojection (FBP)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="fdk_cone_example.html" class="btn btn-neutral float-right" title="3D Cone Beam FDK Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="fbp_parallel_example.html" class="btn btn-neutral float-left" title="Parallel Beam Filtered Backprojection (FBP)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="fdk_cone_example.html" class="btn btn-neutral float-right" title="Cone Beam FDK Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

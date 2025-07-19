@@ -1,75 +1,94 @@
-2D Parallel Beam Iterative Reconstruction
-=========================================
+Parallel Beam Iterative Reconstruction
+=====================================
 
-This example demonstrates how to use the differentiable `ParallelProjectorFunction` in an iterative reconstruction pipeline for 2D parallel-beam geometry using gradient-based optimization.
+This example demonstrates gradient-based iterative reconstruction for 2D parallel beam CT using the differentiable `ParallelProjectorFunction` from `diffct`.
+
+Overview
+--------
+
+Iterative reconstruction methods solve the CT inverse problem through optimization, offering advantages over analytical methods like FBP. This example shows how to:
+
+- Formulate CT reconstruction as an optimization problem
+- Use automatic differentiation for gradient computation
+- Apply advanced optimizers (Adam) for iterative reconstruction
+- Monitor convergence and reconstruction quality
 
 Mathematical Background
 -----------------------
 
 **Iterative Reconstruction Formulation**
 
-Iterative reconstruction solves the inverse problem by minimizing a cost function. The basic formulation is:
+CT reconstruction is formulated as an optimization problem:
 
 .. math::
-   \hat{f} = \arg\min_f \|Af - p\|_2^2 + R(f)
+   \hat{f} = \arg\min_f \|A(f) - p\|_2^2 + \lambda R(f)
 
 where:
-- :math:`f` is the unknown image
+- :math:`f` is the unknown 2D image
 - :math:`A` is the forward projection operator (Radon transform)
 - :math:`p` is the measured sinogram data
 - :math:`R(f)` is an optional regularization term
-- :math:`\|\cdot\|_2^2` is the L2 norm (mean squared error)
+- :math:`\lambda` is the regularization parameter
 
 **Gradient-Based Optimization**
 
-The gradient of the data fidelity term with respect to the image is:
+The gradient of the data fidelity term is computed using the adjoint operator:
 
 .. math::
-   \nabla_f \|Af - p\|_2^2 = 2A^T(Af - p)
+   \nabla_f \|A(f) - p\|_2^2 = 2A^T(A(f) - p)
 
-where :math:`A^T` is the backprojection operator (adjoint of the Radon transform).
+where :math:`A^T` is the backprojection operator (adjoint of the forward projector).
 
 **Automatic Differentiation**
 
-Using PyTorch's automatic differentiation, the gradient is computed automatically:
+PyTorch's automatic differentiation computes gradients through the differentiable operators:
 
 .. math::
    \frac{\partial L}{\partial f} = \frac{\partial}{\partial f} \|A(f) - p_{\text{measured}}\|_2^2
 
-This enables the use of advanced optimizers like Adam, which adapts the learning rate based on gradient statistics.
+This enables seamless integration with advanced optimizers like Adam.
 
-**Optimization Algorithm**
+**Adam Optimizer**
 
-The example uses the Adam optimizer with the update rule:
+The Adam optimizer adapts learning rates using gradient statistics:
 
 .. math::
    f^{(k+1)} = f^{(k)} - \alpha \cdot \frac{m^{(k)}}{1-\beta_1^k} \cdot \frac{1}{\sqrt{v^{(k)}/(1-\beta_2^k)} + \epsilon}
 
-where:
-- :math:`m^{(k)}` is the first moment estimate (momentum)
-- :math:`v^{(k)}` is the second moment estimate (RMSprop)
-- :math:`\alpha` is the learning rate
-- :math:`\beta_1, \beta_2` are exponential decay rates
-- :math:`\epsilon` is a small constant for numerical stability
+where :math:`m^{(k)}` and :math:`v^{(k)}` are biased first and second moment estimates.
+
+**Implementation Steps**
+
+1. **Problem Setup**: Define parameterized image as learnable tensor
+2. **Forward Model**: Compute predicted sinogram using `ParallelProjectorFunction`
+3. **Loss Computation**: Calculate L2 distance between predicted and measured data
+4. **Gradient Computation**: Use automatic differentiation for gradient calculation
+5. **Parameter Update**: Apply Adam optimizer for iterative improvement
+6. **Convergence Monitoring**: Track loss and reconstruction quality
 
 **Model Architecture**
 
-The reconstruction model implements:
+The reconstruction model consists of:
 
-1. **Parameterized Image**: The unknown image :math:`f` as a learnable parameter
-2. **Forward Model**: :math:`p_{\text{pred}} = A(f + f_{\text{initial}})`
-3. **Loss Function**: :math:`L = \|p_{\text{pred}} - p_{\text{measured}}\|_2^2`
+- **Parameterized Image**: Learnable 2D tensor representing the unknown image
+- **Forward Projection**: `ParallelProjectorFunction` for sinogram prediction
+- **Loss Function**: Mean squared error between predicted and measured sinograms
 
 **Advantages of Iterative Methods**
 
-- **Noise Robustness**: Better handling of noisy measurements
-- **Regularization**: Can incorporate prior knowledge through regularization terms
-- **Incomplete Data**: Works with limited-angle or sparse-view data
-- **Flexibility**: Easy to modify cost function and constraints
+- **Noise Robustness**: Superior handling of noisy measurements
+- **Regularization**: Natural incorporation of prior knowledge
+- **Incomplete Data**: Effective with limited-angle or sparse-view acquisitions
+- **Flexibility**: Easy modification of cost functions and constraints
+- **Artifact Reduction**: Better control over reconstruction artifacts
 
-**Expected Behavior**
+**Convergence Characteristics**
 
-The loss should decrease rapidly in the first 100-200 iterations, then converge more slowly. The reconstruction quality improves progressively, with fine details appearing as the optimization proceeds.
+Typical convergence behavior:
+
+1. **Initial Phase** (0-100 iterations): Rapid loss decrease, basic structure emerges
+2. **Refinement Phase** (100-500 iterations): Fine details develop, slower convergence  
+3. **Convergence Phase** (500+ iterations): Minimal improvement, potential overfitting
 
 .. literalinclude:: ../../examples/iterative_reco_parallel.py
    :language: python

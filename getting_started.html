@@ -47,7 +47,8 @@
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Getting Started</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#quick-example">Quick Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#quick-start-example">Quick Start Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#next-steps">Next Steps</a></li>
 </ul>
 </li>
 </ul>
@@ -83,47 +84,83 @@
              
   <section id="getting-started">
 <h1>Getting Started<a class="headerlink" href="#getting-started" title="Link to this heading"></a></h1>
-<p>This guide will walk you through the process of setting up <cite>diffct</cite> and running a simple example.</p>
+<p>This guide will walk you through the process of setting up <cite>diffct</cite> and running your first CT reconstruction example.</p>
 <section id="prerequisites">
 <h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading"></a></h2>
-<ul class="simple">
-<li><p>A CUDA-capable GPU</p></li>
-<li><p>Python 3.10 or later</p></li>
-<li><p>The following Python libraries:
-- PyTorch
-- NumPy
-- Numba (with CUDA support)</p></li>
+<p><strong>Hardware Requirements:</strong>
+- CUDA-capable GPU (compute capability 6.0 or higher recommended)
+- Minimum 4GB GPU memory for basic examples</p>
+<p><strong>Software Requirements:</strong>
+- Python 3.10 or later
+- CUDA Toolkit 11.0 or later
+- Required Python packages:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>PyTorch (with CUDA support)</p></li>
+<li><p>NumPy</p></li>
+<li><p>Numba (with CUDA support)</p></li>
 </ul>
+</div></blockquote>
 </section>
 <section id="installation">
 <h2>Installation<a class="headerlink" href="#installation" title="Link to this heading"></a></h2>
-<p>You can install <cite>diffct</cite> using pip:</p>
+<p>Install <cite>diffct</cite> directly from PyPI:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>diffct
 </pre></div>
 </div>
-</section>
-<section id="quick-example">
-<h2>Quick Example<a class="headerlink" href="#quick-example" title="Link to this heading"></a></h2>
-<p>Here is a simple example of how to use <cite>diffct</cite> to perform a projection and backprojection:</p>
+<p><strong>Verify Installation:</strong></p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParallelProjectorFunction</span><span class="p">,</span> <span class="n">ParallelBackprojectorFunction</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">diffct</span>
 
-<span class="c1"># Create a sample image</span>
-<span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-
-<span class="c1"># Define the projector and backprojector</span>
-<span class="n">projector</span> <span class="o">=</span> <span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span>
-<span class="n">backprojector</span> <span class="o">=</span> <span class="n">ParallelBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span>
-
-<span class="c1"># Perform the projection</span>
-<span class="n">sinogram</span> <span class="o">=</span> <span class="n">projector</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
-
-<span class="c1"># Perform the backprojection</span>
-<span class="n">reconstruction</span> <span class="o">=</span> <span class="n">backprojector</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Reconstruction shape:&quot;</span><span class="p">,</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+<span class="c1"># Check CUDA availability</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;CUDA available: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;DiffCT version: </span><span class="si">{</span><span class="n">diffct</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
+</section>
+<section id="quick-start-example">
+<h2>Quick Start Example<a class="headerlink" href="#quick-start-example" title="Link to this heading"></a></h2>
+<p>Here’s a minimal example demonstrating parallel beam projection and backprojection:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParallelProjectorFunction</span><span class="p">,</span> <span class="n">ParallelBackprojectorFunction</span>
+
+<span class="c1"># Set device</span>
+<span class="n">device</span> <span class="o">=</span> <span class="s1">&#39;cuda&#39;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s1">&#39;cpu&#39;</span>
+
+<span class="c1"># Create a simple test image (128x128)</span>
+<span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">image</span><span class="p">[</span><span class="mi">40</span><span class="p">:</span><span class="mi">88</span><span class="p">,</span> <span class="mi">40</span><span class="p">:</span><span class="mi">88</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>  <span class="c1"># Square phantom</span>
+
+<span class="c1"># Define projection parameters</span>
+<span class="n">num_angles</span> <span class="o">=</span> <span class="mi">180</span>
+<span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">num_angles</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">num_detectors</span> <span class="o">=</span> <span class="mi">128</span>
+<span class="n">detector_spacing</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+<span class="c1"># Forward projection</span>
+<span class="n">sinogram</span> <span class="o">=</span> <span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+    <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span>
+<span class="p">)</span>
+
+<span class="c1"># Backprojection</span>
+<span class="n">reconstruction</span> <span class="o">=</span> <span class="n">ParallelBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+    <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Original image shape: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Sinogram shape: </span><span class="si">{</span><span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Reconstruction shape: </span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="next-steps">
+<h2>Next Steps<a class="headerlink" href="#next-steps" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>Explore the <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a> for detailed reconstruction algorithms</p></li>
+<li><p>Check the <a class="reference internal" href="api.html"><span class="doc">API Reference</span></a> reference for complete function documentation</p></li>
+<li><p>Review the mathematical background in each example for deeper understanding</p></li>
+</ul>
 </section>
 </section>
 

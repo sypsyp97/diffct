@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>2D Parallel Beam Iterative Reconstruction &mdash; diffct  documentation</title>
+  <title>Parallel Beam Iterative Reconstruction &mdash; diffct  documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
 
@@ -20,8 +20,8 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="2D Fan Beam Iterative Reconstruction" href="iterative_reco_fan_example.html" />
-    <link rel="prev" title="3D Cone Beam FDK Reconstruction" href="fdk_cone_example.html" /> 
+    <link rel="next" title="Fan Beam Iterative Reconstruction" href="iterative_reco_fan_example.html" />
+    <link rel="prev" title="Cone Beam FDK Reconstruction" href="fdk_cone_example.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -51,15 +51,16 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Parallel Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam FDK Reconstruction</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Parallel Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
 </ul>
 </li>
 </ul>
@@ -79,7 +80,7 @@
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="examples.html">Examples</a></li>
-      <li class="breadcrumb-item active">2D Parallel Beam Iterative Reconstruction</li>
+      <li class="breadcrumb-item active">Parallel Beam Iterative Reconstruction</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/iterative_reco_parallel_example.rst.txt" rel="nofollow"> View page source</a>
       </li>
@@ -89,57 +90,77 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="d-parallel-beam-iterative-reconstruction">
-<h1>2D Parallel Beam Iterative Reconstruction<a class="headerlink" href="#d-parallel-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the differentiable <cite>ParallelProjectorFunction</cite> in an iterative reconstruction pipeline for 2D parallel-beam geometry using gradient-based optimization.</p>
+  <section id="parallel-beam-iterative-reconstruction">
+<h1>Parallel Beam Iterative Reconstruction<a class="headerlink" href="#parallel-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
+<p>This example demonstrates gradient-based iterative reconstruction for 2D parallel beam CT using the differentiable <cite>ParallelProjectorFunction</cite> from <cite>diffct</cite>.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>Iterative reconstruction methods solve the CT inverse problem through optimization, offering advantages over analytical methods like FBP. This example shows how to:</p>
+<ul class="simple">
+<li><p>Formulate CT reconstruction as an optimization problem</p></li>
+<li><p>Use automatic differentiation for gradient computation</p></li>
+<li><p>Apply advanced optimizers (Adam) for iterative reconstruction</p></li>
+<li><p>Monitor convergence and reconstruction quality</p></li>
+</ul>
+</section>
 <section id="mathematical-background">
 <h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
 <p><strong>Iterative Reconstruction Formulation</strong></p>
-<p>Iterative reconstruction solves the inverse problem by minimizing a cost function. The basic formulation is:</p>
+<p>CT reconstruction is formulated as an optimization problem:</p>
 <div class="math notranslate nohighlight">
-\[\hat{f} = \arg\min_f \|Af - p\|_2^2 + R(f)\]</div>
+\[\hat{f} = \arg\min_f \|A(f) - p\|_2^2 + \lambda R(f)\]</div>
 <p>where:
-- <span class="math notranslate nohighlight">\(f\)</span> is the unknown image
+- <span class="math notranslate nohighlight">\(f\)</span> is the unknown 2D image
 - <span class="math notranslate nohighlight">\(A\)</span> is the forward projection operator (Radon transform)
 - <span class="math notranslate nohighlight">\(p\)</span> is the measured sinogram data
 - <span class="math notranslate nohighlight">\(R(f)\)</span> is an optional regularization term
-- <span class="math notranslate nohighlight">\(\|\cdot\|_2^2\)</span> is the L2 norm (mean squared error)</p>
+- <span class="math notranslate nohighlight">\(\lambda\)</span> is the regularization parameter</p>
 <p><strong>Gradient-Based Optimization</strong></p>
-<p>The gradient of the data fidelity term with respect to the image is:</p>
+<p>The gradient of the data fidelity term is computed using the adjoint operator:</p>
 <div class="math notranslate nohighlight">
-\[\nabla_f \|Af - p\|_2^2 = 2A^T(Af - p)\]</div>
-<p>where <span class="math notranslate nohighlight">\(A^T\)</span> is the backprojection operator (adjoint of the Radon transform).</p>
+\[\nabla_f \|A(f) - p\|_2^2 = 2A^T(A(f) - p)\]</div>
+<p>where <span class="math notranslate nohighlight">\(A^T\)</span> is the backprojection operator (adjoint of the forward projector).</p>
 <p><strong>Automatic Differentiation</strong></p>
-<p>Using PyTorch’s automatic differentiation, the gradient is computed automatically:</p>
+<p>PyTorch’s automatic differentiation computes gradients through the differentiable operators:</p>
 <div class="math notranslate nohighlight">
 \[\frac{\partial L}{\partial f} = \frac{\partial}{\partial f} \|A(f) - p_{\text{measured}}\|_2^2\]</div>
-<p>This enables the use of advanced optimizers like Adam, which adapts the learning rate based on gradient statistics.</p>
-<p><strong>Optimization Algorithm</strong></p>
-<p>The example uses the Adam optimizer with the update rule:</p>
+<p>This enables seamless integration with advanced optimizers like Adam.</p>
+<p><strong>Adam Optimizer</strong></p>
+<p>The Adam optimizer adapts learning rates using gradient statistics:</p>
 <div class="math notranslate nohighlight">
 \[f^{(k+1)} = f^{(k)} - \alpha \cdot \frac{m^{(k)}}{1-\beta_1^k} \cdot \frac{1}{\sqrt{v^{(k)}/(1-\beta_2^k)} + \epsilon}\]</div>
-<p>where:
-- <span class="math notranslate nohighlight">\(m^{(k)}\)</span> is the first moment estimate (momentum)
-- <span class="math notranslate nohighlight">\(v^{(k)}\)</span> is the second moment estimate (RMSprop)
-- <span class="math notranslate nohighlight">\(\alpha\)</span> is the learning rate
-- <span class="math notranslate nohighlight">\(\beta_1, \beta_2\)</span> are exponential decay rates
-- <span class="math notranslate nohighlight">\(\epsilon\)</span> is a small constant for numerical stability</p>
-<p><strong>Model Architecture</strong></p>
-<p>The reconstruction model implements:</p>
+<p>where <span class="math notranslate nohighlight">\(m^{(k)}\)</span> and <span class="math notranslate nohighlight">\(v^{(k)}\)</span> are biased first and second moment estimates.</p>
+<p><strong>Implementation Steps</strong></p>
 <ol class="arabic simple">
-<li><p><strong>Parameterized Image</strong>: The unknown image <span class="math notranslate nohighlight">\(f\)</span> as a learnable parameter</p></li>
-<li><p><strong>Forward Model</strong>: <span class="math notranslate nohighlight">\(p_{\text{pred}} = A(f + f_{\text{initial}})\)</span></p></li>
-<li><p><strong>Loss Function</strong>: <span class="math notranslate nohighlight">\(L = \|p_{\text{pred}} - p_{\text{measured}}\|_2^2\)</span></p></li>
+<li><p><strong>Problem Setup</strong>: Define parameterized image as learnable tensor</p></li>
+<li><p><strong>Forward Model</strong>: Compute predicted sinogram using <cite>ParallelProjectorFunction</cite></p></li>
+<li><p><strong>Loss Computation</strong>: Calculate L2 distance between predicted and measured data</p></li>
+<li><p><strong>Gradient Computation</strong>: Use automatic differentiation for gradient calculation</p></li>
+<li><p><strong>Parameter Update</strong>: Apply Adam optimizer for iterative improvement</p></li>
+<li><p><strong>Convergence Monitoring</strong>: Track loss and reconstruction quality</p></li>
 </ol>
+<p><strong>Model Architecture</strong></p>
+<p>The reconstruction model consists of:</p>
+<ul class="simple">
+<li><p><strong>Parameterized Image</strong>: Learnable 2D tensor representing the unknown image</p></li>
+<li><p><strong>Forward Projection</strong>: <cite>ParallelProjectorFunction</cite> for sinogram prediction</p></li>
+<li><p><strong>Loss Function</strong>: Mean squared error between predicted and measured sinograms</p></li>
+</ul>
 <p><strong>Advantages of Iterative Methods</strong></p>
 <ul class="simple">
-<li><p><strong>Noise Robustness</strong>: Better handling of noisy measurements</p></li>
-<li><p><strong>Regularization</strong>: Can incorporate prior knowledge through regularization terms</p></li>
-<li><p><strong>Incomplete Data</strong>: Works with limited-angle or sparse-view data</p></li>
-<li><p><strong>Flexibility</strong>: Easy to modify cost function and constraints</p></li>
+<li><p><strong>Noise Robustness</strong>: Superior handling of noisy measurements</p></li>
+<li><p><strong>Regularization</strong>: Natural incorporation of prior knowledge</p></li>
+<li><p><strong>Incomplete Data</strong>: Effective with limited-angle or sparse-view acquisitions</p></li>
+<li><p><strong>Flexibility</strong>: Easy modification of cost functions and constraints</p></li>
+<li><p><strong>Artifact Reduction</strong>: Better control over reconstruction artifacts</p></li>
 </ul>
-<p><strong>Expected Behavior</strong></p>
-<p>The loss should decrease rapidly in the first 100-200 iterations, then converge more slowly. The reconstruction quality improves progressively, with fine details appearing as the optimization proceeds.</p>
+<p><strong>Convergence Characteristics</strong></p>
+<p>Typical convergence behavior:</p>
+<ol class="arabic simple">
+<li><p><strong>Initial Phase</strong> (0-100 iterations): Rapid loss decrease, basic structure emerges</p></li>
+<li><p><strong>Refinement Phase</strong> (100-500 iterations): Fine details develop, slower convergence</p></li>
+<li><p><strong>Convergence Phase</strong> (500+ iterations): Minimal improvement, potential overfitting</p></li>
+</ol>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">2D Parallel Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
@@ -281,8 +302,8 @@
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="fdk_cone_example.html" class="btn btn-neutral float-left" title="3D Cone Beam FDK Reconstruction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="iterative_reco_fan_example.html" class="btn btn-neutral float-right" title="2D Fan Beam Iterative Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="fdk_cone_example.html" class="btn btn-neutral float-left" title="Cone Beam FDK Reconstruction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="iterative_reco_fan_example.html" class="btn btn-neutral float-right" title="Fan Beam Iterative Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

@@ -1,7 +1,17 @@
-2D Parallel Beam Filtered Backprojection (FBP)
-==============================================
+Parallel Beam Filtered Backprojection (FBP)
+==========================================
 
-This example demonstrates how to use the `ParallelProjectorFunction` and `ParallelBackprojectorFunction` from `diffct` to perform filtered backprojection (FBP) reconstruction in a 2D parallel-beam geometry.
+This example demonstrates 2D parallel beam filtered backprojection (FBP) reconstruction using the `ParallelProjectorFunction` and `ParallelBackprojectorFunction` from `diffct`.
+
+Overview
+--------
+
+Filtered backprojection is the standard analytical reconstruction method for parallel beam CT. This example shows how to:
+
+- Generate synthetic projection data using the Shepp-Logan phantom
+- Apply ramp filtering in the frequency domain
+- Perform backprojection to reconstruct the image
+- Visualize the reconstruction results
 
 Mathematical Background
 -----------------------
@@ -17,7 +27,13 @@ where :math:`f(x,y)` is the 2D attenuation coefficient distribution.
 
 **Filtered Backprojection Algorithm**
 
-The FBP reconstruction formula is:
+The FBP reconstruction consists of three main steps:
+
+1. **Forward Projection**: Compute sinogram using the Radon transform
+2. **Ramp Filtering**: Apply frequency domain filter :math:`H(\omega) = |\omega|`
+3. **Backprojection**: Reconstruct using filtered projections
+
+The complete FBP formula is:
 
 .. math::
    f(x,y) = \int_0^\pi p_f(x\cos\theta + y\sin\theta, \theta) \, d\theta
@@ -25,31 +41,26 @@ The FBP reconstruction formula is:
 where :math:`p_f(t, \theta)` is the filtered projection:
 
 .. math::
-   p_f(t, \theta) = \int_{-\infty}^{\infty} p(t', \theta) h(t - t') \, dt'
+   p_f(t, \theta) = \mathcal{F}^{-1}\{|\omega| \cdot \mathcal{F}\{p(t, \theta)\}\}
 
-The ramp filter :math:`h(t)` in frequency domain is:
+**Implementation Steps**
 
-.. math::
-   H(\omega) = |\omega|
+1. **Phantom Generation**: Create Shepp-Logan phantom with 5 ellipses
+2. **Forward Projection**: Generate sinogram using `ParallelProjectorFunction`
+3. **Ramp Filtering**: Apply :math:`H(\omega) = |\omega|` filter in frequency domain
+4. **Backprojection**: Reconstruct using `ParallelBackprojectorFunction`
+5. **Normalization**: Scale by :math:`\frac{\pi}{N_{\text{angles}}}` factor
 
-**Implementation Details**
+**Shepp-Logan Phantom**
 
-The example implements the following steps:
+The phantom consists of 5 ellipses representing brain tissue structures:
 
-1. **Forward Projection**: Compute the Radon transform using `ParallelProjectorFunction`
-2. **Ramp Filtering**: Apply the ramp filter :math:`H(\omega) = |\omega|` in frequency domain
-3. **Backprojection**: Reconstruct using the filtered projections with `ParallelBackprojectorFunction`
-4. **Normalization**: Apply the factor :math:`\frac{\pi}{N_{\text{angles}}}` to approximate the continuous integral
+- **Outer skull**: Large ellipse with low attenuation
+- **Brain tissue**: Medium ellipse with baseline attenuation  
+- **Ventricles**: Small ellipses with fluid-like attenuation
+- **Lesions**: High-contrast features for reconstruction assessment
 
-
-**Phantom Description**
-
-The Shepp-Logan phantom consists of 5 ellipses with different attenuation coefficients, designed to simulate brain tissue structures. Each ellipse is defined by:
-
-- Center position :math:`(x_0, y_0)`
-- Semi-axes lengths :math:`a, b`
-- Rotation angle :math:`\phi`
-- Attenuation value :math:`A`
+Each ellipse is defined by center position, semi-axes, rotation angle, and attenuation coefficient.
 
 .. literalinclude:: ../../examples/fbp_parallel.py
    :language: python

@@ -6,7 +6,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>2D Fan Beam Iterative Reconstruction &mdash; diffct  documentation</title>
+  <title>Fan Beam Iterative Reconstruction &mdash; diffct  documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
 
@@ -20,8 +20,8 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="3D Cone Beam Iterative Reconstruction" href="iterative_reco_cone_example.html" />
-    <link rel="prev" title="2D Parallel Beam Iterative Reconstruction" href="iterative_reco_parallel_example.html" /> 
+    <link rel="next" title="Cone Beam Iterative Reconstruction" href="iterative_reco_cone_example.html" />
+    <link rel="prev" title="Parallel Beam Iterative Reconstruction" href="iterative_reco_parallel_example.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -51,15 +51,16 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Fan Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam FDK Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Fan Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
 </ul>
 </li>
 </ul>
@@ -79,7 +80,7 @@
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="examples.html">Examples</a></li>
-      <li class="breadcrumb-item active">2D Fan Beam Iterative Reconstruction</li>
+      <li class="breadcrumb-item active">Fan Beam Iterative Reconstruction</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/iterative_reco_fan_example.rst.txt" rel="nofollow"> View page source</a>
       </li>
@@ -89,68 +90,81 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="d-fan-beam-iterative-reconstruction">
-<h1>2D Fan Beam Iterative Reconstruction<a class="headerlink" href="#d-fan-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the differentiable <cite>FanProjectorFunction</cite> in an iterative reconstruction pipeline for 2D fan-beam geometry using gradient-based optimization.</p>
+  <section id="fan-beam-iterative-reconstruction">
+<h1>Fan Beam Iterative Reconstruction<a class="headerlink" href="#fan-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
+<p>This example demonstrates gradient-based iterative reconstruction for 2D fan beam CT using the differentiable <cite>FanProjectorFunction</cite> from <cite>diffct</cite>.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>Fan beam iterative reconstruction extends the optimization approach to the more realistic fan beam geometry. This example shows how to:</p>
+<ul class="simple">
+<li><p>Formulate fan beam CT reconstruction as an optimization problem</p></li>
+<li><p>Handle geometric complexities of divergent ray geometry</p></li>
+<li><p>Apply gradient-based optimization with fan beam operators</p></li>
+<li><p>Compare convergence characteristics with parallel beam reconstruction</p></li>
+</ul>
+</section>
 <section id="mathematical-background">
 <h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
-<p><strong>Fan Beam Iterative Reconstruction</strong></p>
-<p>The iterative reconstruction problem for fan beam geometry is formulated as:</p>
+<p><strong>Fan Beam Iterative Formulation</strong></p>
+<p>The fan beam reconstruction problem is formulated as:</p>
 <div class="math notranslate nohighlight">
-\[\hat{f} = \arg\min_f \|A_{\text{fan}}(f) - p\|_2^2 + R(f)\]</div>
-<p>where <span class="math notranslate nohighlight">\(A_{\text{fan}}\)</span> is the fan beam forward projection operator.</p>
+\[\hat{f} = \arg\min_f \|A_{\text{fan}}(f) - p\|_2^2 + \lambda R(f)\]</div>
+<p>where <span class="math notranslate nohighlight">\(A_{\text{fan}}\)</span> is the fan beam forward projection operator accounting for divergent ray geometry.</p>
 <p><strong>Fan Beam Forward Model</strong></p>
-<p>The fan beam projection operator maps the 2D image <span class="math notranslate nohighlight">\(f(x,y)\)</span> to sinogram <span class="math notranslate nohighlight">\(p(\beta, u)\)</span>:</p>
+<p>The fan beam projection operator maps 2D image <span class="math notranslate nohighlight">\(f(x,y)\)</span> to sinogram <span class="math notranslate nohighlight">\(p(\beta, u)\)</span>:</p>
 <div class="math notranslate nohighlight">
 \[p(\beta, u) = \int_{\text{ray}} f(x,y) \, dl\]</div>
-<p>where the integration is along the ray from source to detector element <span class="math notranslate nohighlight">\(u\)</span> at angle <span class="math notranslate nohighlight">\(\beta\)</span>.</p>
+<p>where integration follows the ray from point source to detector element <span class="math notranslate nohighlight">\(u\)</span> at source angle <span class="math notranslate nohighlight">\(\beta\)</span>.</p>
 <p><strong>Gradient Computation</strong></p>
-<p>The gradient of the loss function involves the adjoint (backprojection) operator:</p>
+<p>The gradient involves the fan beam backprojection operator (adjoint):</p>
 <div class="math notranslate nohighlight">
 \[\frac{\partial L}{\partial f} = 2A_{\text{fan}}^T(A_{\text{fan}}(f) - p_{\text{measured}})\]</div>
 <p>where <span class="math notranslate nohighlight">\(A_{\text{fan}}^T\)</span> is the fan beam backprojection operator.</p>
-<p><strong>Geometry-Specific Considerations</strong></p>
-<p>Fan beam geometry introduces additional complexity compared to parallel beam:</p>
-<ol class="arabic simple">
-<li><p><strong>Ray Divergence</strong>: Rays diverge from a point source, affecting sampling density</p></li>
-<li><p><strong>Magnification</strong>: Objects closer to the source appear larger on the detector</p></li>
-<li><p><strong>Geometric Distortion</strong>: Non-uniform spatial resolution across the field of view</p></li>
-</ol>
-<p><strong>Optimization Challenges</strong></p>
-<p>Fan beam iterative reconstruction faces unique challenges:</p>
+<p><strong>Geometric Considerations</strong></p>
+<p>Fan beam geometry introduces complexities compared to parallel beam:</p>
 <ul class="simple">
-<li><p><strong>Conditioning</strong>: The system matrix has different conditioning than parallel beam</p></li>
-<li><p><strong>Convergence</strong>: May require different learning rates due to geometry effects</p></li>
-<li><p><strong>Artifacts</strong>: Geometric artifacts can appear if not properly handled</p></li>
+<li><p><strong>Ray Divergence</strong>: Non-parallel rays affect sampling density and conditioning</p></li>
+<li><p><strong>Magnification Effects</strong>: Variable magnification across the field of view</p></li>
+<li><p><strong>Non-uniform Resolution</strong>: Spatial resolution varies with distance from rotation center</p></li>
+<li><p><strong>Geometric Distortion</strong>: Requires careful handling of coordinate transformations</p></li>
 </ul>
+<p><strong>Implementation Steps</strong></p>
+<ol class="arabic simple">
+<li><p><strong>Geometry Setup</strong>: Configure fan beam parameters (source distance, detector distance)</p></li>
+<li><p><strong>Problem Formulation</strong>: Define parameterized image and fan beam forward model</p></li>
+<li><p><strong>Loss Computation</strong>: Calculate L2 distance using <cite>FanProjectorFunction</cite></p></li>
+<li><p><strong>Gradient Computation</strong>: Use automatic differentiation through fan beam operators</p></li>
+<li><p><strong>Optimization</strong>: Apply Adam optimizer with appropriate learning rate</p></li>
+<li><p><strong>Convergence Monitoring</strong>: Track reconstruction quality and loss evolution</p></li>
+</ol>
 <p><strong>Model Architecture</strong></p>
-<p>The fan beam reconstruction model includes:</p>
-<ol class="arabic simple">
-<li><p><strong>Parameterized Image</strong>: Learnable 2D image parameters</p></li>
-<li><p><strong>Fan Beam Forward Model</strong>: Uses <cite>FanProjectorFunction</cite> with geometry parameters</p></li>
-<li><p><strong>Loss Computation</strong>: L2 distance between predicted and measured sinograms</p></li>
-</ol>
-<p><strong>Optimization Strategy</strong></p>
+<p>The fan beam reconstruction model consists of:</p>
 <ul class="simple">
-<li><p><strong>Learning Rate</strong>: 0.1 (same as parallel beam, but may need adjustment)</p></li>
-<li><p><strong>Optimizer</strong>: AdamW for adaptive learning rate and weight decay</p></li>
-<li><p><strong>Iterations</strong>: 1000 epochs with progress monitoring</p></li>
-<li><p><strong>Initialization</strong>: Zero image (uniform background)</p></li>
+<li><p><strong>Parameterized Image</strong>: Learnable 2D tensor representing the unknown image</p></li>
+<li><p><strong>Fan Beam Forward Model</strong>: <cite>FanProjectorFunction</cite> with geometric parameters</p></li>
+<li><p><strong>Loss Function</strong>: Mean squared error between predicted and measured sinograms</p></li>
 </ul>
-<p><strong>Expected Convergence</strong></p>
-<p>Fan beam reconstruction typically shows:</p>
+<p><strong>Convergence Characteristics</strong></p>
+<p>Fan beam reconstruction typically exhibits:</p>
 <ol class="arabic simple">
-<li><p><strong>Initial Phase</strong> (0-50 iterations): Rapid decrease in loss, basic structure emerges</p></li>
-<li><p><strong>Refinement Phase</strong> (50-200 iterations): Fine details develop, slower convergence</p></li>
-<li><p><strong>Convergence Phase</strong> (200+ iterations): Minimal improvement, potential overfitting</p></li>
+<li><p><strong>Initial Convergence</strong> (0-100 iterations): Rapid loss decrease, basic structure</p></li>
+<li><p><strong>Detail Refinement</strong> (100-500 iterations): Fine features develop, slower progress</p></li>
+<li><p><strong>Final Convergence</strong> (500+ iterations): Minimal improvement, convergence plateau</p></li>
 </ol>
 <p><strong>Comparison with Parallel Beam</strong></p>
-<p>Fan beam iterative reconstruction differs from parallel beam in:</p>
+<p>Fan beam iterative reconstruction differs from parallel beam:</p>
 <ul class="simple">
-<li><p><strong>Computational Cost</strong>: Slightly higher due to geometric calculations</p></li>
-<li><p><strong>Convergence Rate</strong>: May be slower due to more complex geometry</p></li>
-<li><p><strong>Artifact Patterns</strong>: Different artifact characteristics</p></li>
-<li><p><strong>Spatial Resolution</strong>: Non-uniform resolution across the field of view</p></li>
+<li><p><strong>Computational Complexity</strong>: Higher due to geometric calculations</p></li>
+<li><p><strong>Convergence Rate</strong>: Potentially slower due to geometry effects</p></li>
+<li><p><strong>Artifact Characteristics</strong>: Different artifact patterns from ray divergence</p></li>
+<li><p><strong>Spatial Resolution</strong>: Non-uniform resolution requires careful interpretation</p></li>
+</ul>
+<p><strong>Challenges and Solutions</strong></p>
+<ul class="simple">
+<li><p><strong>Conditioning</strong>: Fan beam system matrix may have different conditioning properties</p></li>
+<li><p><strong>Geometric Artifacts</strong>: Proper weighting and filtering help reduce artifacts</p></li>
+<li><p><strong>Parameter Tuning</strong>: Learning rate may need adjustment for optimal convergence</p></li>
+<li><p><strong>Memory Usage</strong>: Similar to parallel beam but with additional geometric computations</p></li>
 </ul>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">2D Fan Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
@@ -305,8 +319,8 @@
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="iterative_reco_parallel_example.html" class="btn btn-neutral float-left" title="2D Parallel Beam Iterative Reconstruction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="iterative_reco_cone_example.html" class="btn btn-neutral float-right" title="3D Cone Beam Iterative Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="iterative_reco_parallel_example.html" class="btn btn-neutral float-left" title="Parallel Beam Iterative Reconstruction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="iterative_reco_cone_example.html" class="btn btn-neutral float-right" title="Cone Beam Iterative Reconstruction" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>
