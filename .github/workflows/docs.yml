@@ -23,6 +23,7 @@ jobs:
         run: |
           pip install sphinx-rtd-theme
           pip install sphinx
+          pip install -r requirements.txt
 
       - name: Build documentation
         run: |
