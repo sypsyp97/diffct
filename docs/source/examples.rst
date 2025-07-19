@@ -1,7 +1,7 @@
 Examples
 ========
 
-This section demonstrates how to use the `diffct` library for various computed tomography (CT) reconstruction tasks. Each example has its own page with an explanation and the full code.
+This section demonstrates how to use the `diffct` library for various computed tomography (CT) reconstruction tasks. Each example has its own page with detailed mathematical background, explanation and the full code.
 
 .. toctree::
    :maxdepth: 1
