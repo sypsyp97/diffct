@@ -1,5 +1,5 @@
 3D Cone Beam Iterative Reconstruction
-====================================
+=====================================
 
 This example demonstrates how to use the differentiable `ConeProjectorFunction` in an iterative reconstruction pipeline for 3D cone-beam geometry. The 3D Shepp-Logan phantom is used as the test object, and a simple gradient-based optimization is performed to reconstruct the volume from simulated projections.
 

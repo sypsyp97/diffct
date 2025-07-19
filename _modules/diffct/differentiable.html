@@ -921,7 +921,7 @@
 <span class="c1"># ############################################################################</span>
 
 <div class="viewcode-block" id="ParallelProjectorFunction">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ParallelProjectorFunction">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelProjectorFunction">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ParallelProjectorFunction</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    PyTorch autograd function for differentiable 2D parallel beam forward projection.</span>
@@ -979,7 +979,7 @@
 <span class="sd">        environment. All input tensors must be on the same CUDA device.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="ParallelProjectorFunction.forward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ParallelProjectorFunction.forward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -1040,7 +1040,7 @@
 
 
 <div class="viewcode-block" id="ParallelProjectorFunction.backward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ParallelProjectorFunction.backward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelProjectorFunction.backward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
@@ -1074,7 +1074,7 @@
 
 
 <div class="viewcode-block" id="ParallelBackprojectorFunction">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ParallelBackprojectorFunction">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelBackprojectorFunction">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ParallelBackprojectorFunction</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    PyTorch autograd function for differentiable 2D parallel beam backprojection.</span>
@@ -1131,7 +1131,7 @@
 <span class="sd">        environment. All input tensors must be on the same CUDA device.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="ParallelBackprojectorFunction.forward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ParallelBackprojectorFunction.forward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">H</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -1191,7 +1191,7 @@
 
 
 <div class="viewcode-block" id="ParallelBackprojectorFunction.backward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ParallelBackprojectorFunction.backward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelBackprojectorFunction.backward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
@@ -1222,7 +1222,7 @@
 
 
 <div class="viewcode-block" id="FanProjectorFunction">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.FanProjectorFunction">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.FanProjectorFunction">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">FanProjectorFunction</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    PyTorch autograd function for differentiable 2D fan beam forward projection.</span>
@@ -1283,7 +1283,7 @@
 <span class="sd">        should be much larger than the object size to minimize geometric distortions.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="FanProjectorFunction.forward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.FanProjectorFunction.forward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.FanProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -1350,7 +1350,7 @@
 
 
 <div class="viewcode-block" id="FanProjectorFunction.backward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.FanProjectorFunction.backward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.FanProjectorFunction.backward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
@@ -1383,7 +1383,7 @@
 
 
 <div class="viewcode-block" id="FanBackprojectorFunction">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.FanBackprojectorFunction">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.FanBackprojectorFunction">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">FanBackprojectorFunction</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    PyTorch autograd function for differentiable 2D fan beam backprojection.</span>
@@ -1440,7 +1440,7 @@
 <span class="sd">        The geometry parameters must match those used in forward projection for consistency.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="FanBackprojectorFunction.forward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.FanBackprojectorFunction.forward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.FanBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -1505,7 +1505,7 @@
 
 
 <div class="viewcode-block" id="FanBackprojectorFunction.backward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.FanBackprojectorFunction.backward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.FanBackprojectorFunction.backward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
@@ -1537,7 +1537,7 @@
 
 
 <div class="viewcode-block" id="ConeProjectorFunction">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ConeProjectorFunction">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeProjectorFunction">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ConeProjectorFunction</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    PyTorch autograd function for differentiable 3D cone beam forward projection.</span>
@@ -1598,7 +1598,7 @@
 <span class="sd">        applications. The cone angle should be minimized to reduce reconstruction artifacts.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="ConeProjectorFunction.forward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ConeProjectorFunction.forward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -1671,7 +1671,7 @@
 
 
 <div class="viewcode-block" id="ConeProjectorFunction.backward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ConeProjectorFunction.backward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeProjectorFunction.backward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
@@ -1704,7 +1704,7 @@
 
 
 <div class="viewcode-block" id="ConeBackprojectorFunction">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ConeBackprojectorFunction">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeBackprojectorFunction">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ConeBackprojectorFunction</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">Function</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    PyTorch autograd function for differentiable 3D cone beam backprojection.</span>
@@ -1765,7 +1765,7 @@
 <span class="sd">        computing for large-scale applications. Ensure sufficient GPU memory is available.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="ConeBackprojectorFunction.forward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ConeBackprojectorFunction.forward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -1836,7 +1836,7 @@
 
 
 <div class="viewcode-block" id="ConeBackprojectorFunction.backward">
-<a class="viewcode-back" href="../../diffct.html#diffct.differentiable.ConeBackprojectorFunction.backward">[docs]</a>
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeBackprojectorFunction.backward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>

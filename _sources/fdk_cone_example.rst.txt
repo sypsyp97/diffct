@@ -1,5 +1,5 @@
 3D Cone Beam FDK Reconstruction
-==============================
+===============================
 
 This example demonstrates how to use the `ConeProjectorFunction` and `ConeBackprojectorFunction` from `diffct` to perform FDK (Feldkamp-Davis-Kress) reconstruction in a 3D cone-beam geometry. The 3D Shepp-Logan phantom is used as the test object, and the reconstruction is compared to the original phantom.
 

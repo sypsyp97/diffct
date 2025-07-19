@@ -176,18 +176,18 @@ environment. All input tensors must be on the same CUDA device.</p>
 <p>This function is to be overridden by all subclasses.
 (Defining this function is equivalent to defining the <code class="docutils literal notranslate"><span class="pre">vjp</span></code> function.)</p>
 <p>It must accept a context <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx</span></code> as the first argument, followed by
-as many outputs as the <a class="reference internal" href="diffct.html#diffct.differentiable.ParallelProjectorFunction.forward" title="diffct.differentiable.ParallelProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
+as many outputs as the <a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.forward" title="diffct.differentiable.ParallelProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
 for non tensor outputs of the forward function),
 and it should return as many tensors, as there were inputs to
-<a class="reference internal" href="diffct.html#diffct.differentiable.ParallelProjectorFunction.forward" title="diffct.differentiable.ParallelProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
+<a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.forward" title="diffct.differentiable.ParallelProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
 and each returned value should be the gradient w.r.t. the
 corresponding input. If an input is not a Tensor or is a Tensor not
 requiring grads, you can just pass None as a gradient for that input.</p>
 <p>The context can be used to retrieve tensors saved during the forward
 pass. It also has an attribute <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx.needs_input_grad</span></code> as a tuple
 of booleans representing whether each input needs gradient. E.g.,
-<a class="reference internal" href="diffct.html#diffct.differentiable.ParallelProjectorFunction.backward" title="diffct.differentiable.ParallelProjectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
-first input to <a class="reference internal" href="diffct.html#diffct.differentiable.ParallelProjectorFunction.forward" title="diffct.differentiable.ParallelProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
+<a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.backward" title="diffct.differentiable.ParallelProjectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
+first input to <a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.forward" title="diffct.differentiable.ParallelProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
 output.</p>
 </dd></dl>
 
@@ -302,18 +302,18 @@ environment. All input tensors must be on the same CUDA device.</p>
 <p>This function is to be overridden by all subclasses.
 (Defining this function is equivalent to defining the <code class="docutils literal notranslate"><span class="pre">vjp</span></code> function.)</p>
 <p>It must accept a context <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx</span></code> as the first argument, followed by
-as many outputs as the <a class="reference internal" href="diffct.html#diffct.differentiable.ParallelBackprojectorFunction.forward" title="diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
+as many outputs as the <a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.forward" title="diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
 for non tensor outputs of the forward function),
 and it should return as many tensors, as there were inputs to
-<a class="reference internal" href="diffct.html#diffct.differentiable.ParallelBackprojectorFunction.forward" title="diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
+<a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.forward" title="diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
 and each returned value should be the gradient w.r.t. the
 corresponding input. If an input is not a Tensor or is a Tensor not
 requiring grads, you can just pass None as a gradient for that input.</p>
 <p>The context can be used to retrieve tensors saved during the forward
 pass. It also has an attribute <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx.needs_input_grad</span></code> as a tuple
 of booleans representing whether each input needs gradient. E.g.,
-<a class="reference internal" href="diffct.html#diffct.differentiable.ParallelBackprojectorFunction.backward" title="diffct.differentiable.ParallelBackprojectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
-first input to <a class="reference internal" href="diffct.html#diffct.differentiable.ParallelBackprojectorFunction.forward" title="diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
+<a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.backward" title="diffct.differentiable.ParallelBackprojectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
+first input to <a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.forward" title="diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
 output.</p>
 </dd></dl>
 
@@ -432,18 +432,18 @@ should be much larger than the object size to minimize geometric distortions.</p
 <p>This function is to be overridden by all subclasses.
 (Defining this function is equivalent to defining the <code class="docutils literal notranslate"><span class="pre">vjp</span></code> function.)</p>
 <p>It must accept a context <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx</span></code> as the first argument, followed by
-as many outputs as the <a class="reference internal" href="diffct.html#diffct.differentiable.FanProjectorFunction.forward" title="diffct.differentiable.FanProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
+as many outputs as the <a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.forward" title="diffct.differentiable.FanProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
 for non tensor outputs of the forward function),
 and it should return as many tensors, as there were inputs to
-<a class="reference internal" href="diffct.html#diffct.differentiable.FanProjectorFunction.forward" title="diffct.differentiable.FanProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
+<a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.forward" title="diffct.differentiable.FanProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
 and each returned value should be the gradient w.r.t. the
 corresponding input. If an input is not a Tensor or is a Tensor not
 requiring grads, you can just pass None as a gradient for that input.</p>
 <p>The context can be used to retrieve tensors saved during the forward
 pass. It also has an attribute <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx.needs_input_grad</span></code> as a tuple
 of booleans representing whether each input needs gradient. E.g.,
-<a class="reference internal" href="diffct.html#diffct.differentiable.FanProjectorFunction.backward" title="diffct.differentiable.FanProjectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
-first input to <a class="reference internal" href="diffct.html#diffct.differentiable.FanProjectorFunction.forward" title="diffct.differentiable.FanProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
+<a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.backward" title="diffct.differentiable.FanProjectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
+first input to <a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.forward" title="diffct.differentiable.FanProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
 output.</p>
 </dd></dl>
 
@@ -564,18 +564,18 @@ The geometry parameters must match those used in forward projection for consiste
 <p>This function is to be overridden by all subclasses.
 (Defining this function is equivalent to defining the <code class="docutils literal notranslate"><span class="pre">vjp</span></code> function.)</p>
 <p>It must accept a context <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx</span></code> as the first argument, followed by
-as many outputs as the <a class="reference internal" href="diffct.html#diffct.differentiable.FanBackprojectorFunction.forward" title="diffct.differentiable.FanBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
+as many outputs as the <a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="diffct.differentiable.FanBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
 for non tensor outputs of the forward function),
 and it should return as many tensors, as there were inputs to
-<a class="reference internal" href="diffct.html#diffct.differentiable.FanBackprojectorFunction.forward" title="diffct.differentiable.FanBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
+<a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="diffct.differentiable.FanBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
 and each returned value should be the gradient w.r.t. the
 corresponding input. If an input is not a Tensor or is a Tensor not
 requiring grads, you can just pass None as a gradient for that input.</p>
 <p>The context can be used to retrieve tensors saved during the forward
 pass. It also has an attribute <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx.needs_input_grad</span></code> as a tuple
 of booleans representing whether each input needs gradient. E.g.,
-<a class="reference internal" href="diffct.html#diffct.differentiable.FanBackprojectorFunction.backward" title="diffct.differentiable.FanBackprojectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
-first input to <a class="reference internal" href="diffct.html#diffct.differentiable.FanBackprojectorFunction.forward" title="diffct.differentiable.FanBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
+<a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.backward" title="diffct.differentiable.FanBackprojectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
+first input to <a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="diffct.differentiable.FanBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
 output.</p>
 </dd></dl>
 
@@ -698,18 +698,18 @@ applications. The cone angle should be minimized to reduce reconstruction artifa
 <p>This function is to be overridden by all subclasses.
 (Defining this function is equivalent to defining the <code class="docutils literal notranslate"><span class="pre">vjp</span></code> function.)</p>
 <p>It must accept a context <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx</span></code> as the first argument, followed by
-as many outputs as the <a class="reference internal" href="diffct.html#diffct.differentiable.ConeProjectorFunction.forward" title="diffct.differentiable.ConeProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
+as many outputs as the <a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.forward" title="diffct.differentiable.ConeProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
 for non tensor outputs of the forward function),
 and it should return as many tensors, as there were inputs to
-<a class="reference internal" href="diffct.html#diffct.differentiable.ConeProjectorFunction.forward" title="diffct.differentiable.ConeProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
+<a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.forward" title="diffct.differentiable.ConeProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
 and each returned value should be the gradient w.r.t. the
 corresponding input. If an input is not a Tensor or is a Tensor not
 requiring grads, you can just pass None as a gradient for that input.</p>
 <p>The context can be used to retrieve tensors saved during the forward
 pass. It also has an attribute <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx.needs_input_grad</span></code> as a tuple
 of booleans representing whether each input needs gradient. E.g.,
-<a class="reference internal" href="diffct.html#diffct.differentiable.ConeProjectorFunction.backward" title="diffct.differentiable.ConeProjectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
-first input to <a class="reference internal" href="diffct.html#diffct.differentiable.ConeProjectorFunction.forward" title="diffct.differentiable.ConeProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
+<a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.backward" title="diffct.differentiable.ConeProjectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
+first input to <a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.forward" title="diffct.differentiable.ConeProjectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
 output.</p>
 </dd></dl>
 
@@ -838,18 +838,18 @@ computing for large-scale applications. Ensure sufficient GPU memory is availabl
 <p>This function is to be overridden by all subclasses.
 (Defining this function is equivalent to defining the <code class="docutils literal notranslate"><span class="pre">vjp</span></code> function.)</p>
 <p>It must accept a context <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx</span></code> as the first argument, followed by
-as many outputs as the <a class="reference internal" href="diffct.html#diffct.differentiable.ConeBackprojectorFunction.forward" title="diffct.differentiable.ConeBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
+as many outputs as the <a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="diffct.differentiable.ConeBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> returned (None will be passed in
 for non tensor outputs of the forward function),
 and it should return as many tensors, as there were inputs to
-<a class="reference internal" href="diffct.html#diffct.differentiable.ConeBackprojectorFunction.forward" title="diffct.differentiable.ConeBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
+<a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="diffct.differentiable.ConeBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a>. Each argument is the gradient w.r.t the given output,
 and each returned value should be the gradient w.r.t. the
 corresponding input. If an input is not a Tensor or is a Tensor not
 requiring grads, you can just pass None as a gradient for that input.</p>
 <p>The context can be used to retrieve tensors saved during the forward
 pass. It also has an attribute <code class="xref py py-attr docutils literal notranslate"><span class="pre">ctx.needs_input_grad</span></code> as a tuple
 of booleans representing whether each input needs gradient. E.g.,
-<a class="reference internal" href="diffct.html#diffct.differentiable.ConeBackprojectorFunction.backward" title="diffct.differentiable.ConeBackprojectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
-first input to <a class="reference internal" href="diffct.html#diffct.differentiable.ConeBackprojectorFunction.forward" title="diffct.differentiable.ConeBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
+<a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.backward" title="diffct.differentiable.ConeBackprojectorFunction.backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">backward()</span></code></a> will have <code class="docutils literal notranslate"><span class="pre">ctx.needs_input_grad[0]</span> <span class="pre">=</span> <span class="pre">True</span></code> if the
+first input to <a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="diffct.differentiable.ConeBackprojectorFunction.forward"><code class="xref py py-func docutils literal notranslate"><span class="pre">forward()</span></code></a> needs gradient computed w.r.t. the
 output.</p>
 </dd></dl>
 
