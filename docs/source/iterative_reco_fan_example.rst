@@ -1,86 +1,97 @@
-2D Fan Beam Iterative Reconstruction
-====================================
+Fan Beam Iterative Reconstruction
+=================================
 
-This example demonstrates how to use the differentiable `FanProjectorFunction` in an iterative reconstruction pipeline for 2D fan-beam geometry using gradient-based optimization.
+This example demonstrates gradient-based iterative reconstruction for 2D fan beam CT using the differentiable `FanProjectorFunction` from `diffct`.
+
+Overview
+--------
+
+Fan beam iterative reconstruction extends the optimization approach to the more realistic fan beam geometry. This example shows how to:
+
+- Formulate fan beam CT reconstruction as an optimization problem
+- Handle geometric complexities of divergent ray geometry
+- Apply gradient-based optimization with fan beam operators
+- Compare convergence characteristics with parallel beam reconstruction
 
 Mathematical Background
 -----------------------
 
-**Fan Beam Iterative Reconstruction**
+**Fan Beam Iterative Formulation**
 
-The iterative reconstruction problem for fan beam geometry is formulated as:
+The fan beam reconstruction problem is formulated as:
 
 .. math::
-   \hat{f} = \arg\min_f \|A_{\text{fan}}(f) - p\|_2^2 + R(f)
+   \hat{f} = \arg\min_f \|A_{\text{fan}}(f) - p\|_2^2 + \lambda R(f)
 
-
-where :math:`A_{\text{fan}}` is the fan beam forward projection operator.
+where :math:`A_{\text{fan}}` is the fan beam forward projection operator accounting for divergent ray geometry.
 
 **Fan Beam Forward Model**
 
-The fan beam projection operator maps the 2D image :math:`f(x,y)` to sinogram :math:`p(\beta, u)`:
+The fan beam projection operator maps 2D image :math:`f(x,y)` to sinogram :math:`p(\beta, u)`:
 
 .. math::
    p(\beta, u) = \int_{\text{ray}} f(x,y) \, dl
 
-where the integration is along the ray from source to detector element :math:`u` at angle :math:`\beta`.
+where integration follows the ray from point source to detector element :math:`u` at source angle :math:`\beta`.
 
 **Gradient Computation**
 
-The gradient of the loss function involves the adjoint (backprojection) operator:
+The gradient involves the fan beam backprojection operator (adjoint):
 
 .. math::
    \frac{\partial L}{\partial f} = 2A_{\text{fan}}^T(A_{\text{fan}}(f) - p_{\text{measured}})
 
 where :math:`A_{\text{fan}}^T` is the fan beam backprojection operator.
 
-**Geometry-Specific Considerations**
+**Geometric Considerations**
 
-Fan beam geometry introduces additional complexity compared to parallel beam:
+Fan beam geometry introduces complexities compared to parallel beam:
 
-1. **Ray Divergence**: Rays diverge from a point source, affecting sampling density
-2. **Magnification**: Objects closer to the source appear larger on the detector
-3. **Geometric Distortion**: Non-uniform spatial resolution across the field of view
+- **Ray Divergence**: Non-parallel rays affect sampling density and conditioning
+- **Magnification Effects**: Variable magnification across the field of view
+- **Non-uniform Resolution**: Spatial resolution varies with distance from rotation center
+- **Geometric Distortion**: Requires careful handling of coordinate transformations
 
-**Optimization Challenges**
+**Implementation Steps**
 
-Fan beam iterative reconstruction faces unique challenges:
-
-- **Conditioning**: The system matrix has different conditioning than parallel beam
-- **Convergence**: May require different learning rates due to geometry effects
-- **Artifacts**: Geometric artifacts can appear if not properly handled
+1. **Geometry Setup**: Configure fan beam parameters (source distance, detector distance)
+2. **Problem Formulation**: Define parameterized image and fan beam forward model
+3. **Loss Computation**: Calculate L2 distance using `FanProjectorFunction`
+4. **Gradient Computation**: Use automatic differentiation through fan beam operators
+5. **Optimization**: Apply Adam optimizer with appropriate learning rate
+6. **Convergence Monitoring**: Track reconstruction quality and loss evolution
 
 **Model Architecture**
 
-The fan beam reconstruction model includes:
+The fan beam reconstruction model consists of:
 
-1. **Parameterized Image**: Learnable 2D image parameters
-2. **Fan Beam Forward Model**: Uses `FanProjectorFunction` with geometry parameters
-3. **Loss Computation**: L2 distance between predicted and measured sinograms
+- **Parameterized Image**: Learnable 2D tensor representing the unknown image
+- **Fan Beam Forward Model**: `FanProjectorFunction` with geometric parameters
+- **Loss Function**: Mean squared error between predicted and measured sinograms
 
-**Optimization Strategy**
+**Convergence Characteristics**
 
-- **Learning Rate**: 0.1 (same as parallel beam, but may need adjustment)
-- **Optimizer**: AdamW for adaptive learning rate and weight decay
-- **Iterations**: 1000 epochs with progress monitoring
-- **Initialization**: Zero image (uniform background)
+Fan beam reconstruction typically exhibits:
 
-**Expected Convergence**
-
-Fan beam reconstruction typically shows:
-
-1. **Initial Phase** (0-50 iterations): Rapid decrease in loss, basic structure emerges
-2. **Refinement Phase** (50-200 iterations): Fine details develop, slower convergence
-3. **Convergence Phase** (200+ iterations): Minimal improvement, potential overfitting
+1. **Initial Convergence** (0-100 iterations): Rapid loss decrease, basic structure
+2. **Detail Refinement** (100-500 iterations): Fine features develop, slower progress
+3. **Final Convergence** (500+ iterations): Minimal improvement, convergence plateau
 
 **Comparison with Parallel Beam**
 
-Fan beam iterative reconstruction differs from parallel beam in:
+Fan beam iterative reconstruction differs from parallel beam:
 
-- **Computational Cost**: Slightly higher due to geometric calculations
-- **Convergence Rate**: May be slower due to more complex geometry
-- **Artifact Patterns**: Different artifact characteristics
-- **Spatial Resolution**: Non-uniform resolution across the field of view
+- **Computational Complexity**: Higher due to geometric calculations
+- **Convergence Rate**: Potentially slower due to geometry effects
+- **Artifact Characteristics**: Different artifact patterns from ray divergence
+- **Spatial Resolution**: Non-uniform resolution requires careful interpretation
+
+**Challenges and Solutions**
+
+- **Conditioning**: Fan beam system matrix may have different conditioning properties
+- **Geometric Artifacts**: Proper weighting and filtering help reduce artifacts
+- **Parameter Tuning**: Learning rate may need adjustment for optimal convergence
+- **Memory Usage**: Similar to parallel beam but with additional geometric computations
 
 .. literalinclude:: ../../examples/iterative_reco_fan.py
    :language: python
