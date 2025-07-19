@@ -50,36 +50,47 @@
 <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
 <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">API Reference</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction.backward()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction.forward()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#parallel-beam-operators">Parallel Beam Operators</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction.backward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ParallelProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction.forward()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction.backward()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction.forward()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction.backward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ParallelBackprojectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction.forward()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#diffct.differentiable.FanProjectorFunction"><code class="docutils literal notranslate"><span class="pre">FanProjectorFunction</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">FanProjectorFunction.backward()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">FanProjectorFunction.forward()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction.backward()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction.forward()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#fan-beam-operators">Fan Beam Operators</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.FanProjectorFunction"><code class="docutils literal notranslate"><span class="pre">FanProjectorFunction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">FanProjectorFunction.backward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.FanProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">FanProjectorFunction.forward()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction.backward()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction.forward()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction.backward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.FanBackprojectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction.forward()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction.backward()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction.forward()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l2"><a class="reference internal" href="#cone-beam-operators">Cone Beam Operators</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction.backward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction.forward()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction.backward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction.forward()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#usage-notes">Usage Notes</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="examples.html">Examples</a></li>
@@ -111,7 +122,20 @@
              
   <section id="api-reference">
 <h1>API Reference<a class="headerlink" href="#api-reference" title="Link to this heading"></a></h1>
-<p>This section documents the six main differentiable CT operators provided by <cite>diffct</cite>.</p>
+<p>This section provides comprehensive documentation for all differentiable CT operators in <cite>diffct</cite>. Each function is implemented as a PyTorch autograd Function, enabling seamless gradient computation through the CT reconstruction pipeline.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>The <cite>diffct</cite> library provides six main differentiable operators organized by geometry type:</p>
+<ul class="simple">
+<li><p><strong>Parallel Beam (2D):</strong> Traditional parallel-beam CT geometry</p></li>
+<li><p><strong>Fan Beam (2D):</strong> Fan-beam geometry with configurable source-detector setup</p></li>
+<li><p><strong>Cone Beam (3D):</strong> Full 3D cone-beam geometry for volumetric reconstruction</p></li>
+</ul>
+<p>Each geometry type includes both forward projection and backprojection operators that are fully differentiable and CUDA-accelerated.</p>
+</section>
+<section id="parallel-beam-operators">
+<h2>Parallel Beam Operators<a class="headerlink" href="#parallel-beam-operators" title="Link to this heading"></a></h2>
+<p>The parallel beam geometry assumes parallel X-ray beams, commonly used in synchrotron CT and some medical CT scanners.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelProjectorFunction">
 <em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ParallelProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelProjectorFunction" title="Link to this definition"></a></dt>
@@ -168,6 +192,23 @@ discrete approximation of the line integral.</p>
 <p class="admonition-title">Note</p>
 <p>This function requires CUDA-capable hardware and properly configured CUDA
 environment. All input tensors must be on the same CUDA device.</p>
+</div>
+<p><strong>Parameters:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">image</span></code> (torch.Tensor): Input 2D image tensor of shape (H, W)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">angles</span></code> (torch.Tensor): Projection angles in radians, shape (num_angles,)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">num_detectors</span></code> (int): Number of detector elements</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code> (float): Spacing between detector elements</p></li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> (torch.Tensor): Output sinogram of shape (num_angles, num_detectors)</p></li>
+</ul>
+<p><strong>Example:</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+    <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mf">1.0</span>
+<span class="p">)</span>
+</pre></div>
 </div>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelProjectorFunction.backward">
@@ -295,6 +336,18 @@ through the reconstruction volume.</p>
 <p>This function requires CUDA-capable hardware and properly configured CUDA
 environment. All input tensors must be on the same CUDA device.</p>
 </div>
+<p><strong>Parameters:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> (torch.Tensor): Input sinogram of shape (num_angles, num_detectors)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">angles</span></code> (torch.Tensor): Projection angles in radians, shape (num_angles,)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code> (float): Spacing between detector elements</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">image_width</span></code> (int): Width of output image</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">image_height</span></code> (int): Height of output image</p></li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">image</span></code> (torch.Tensor): Reconstructed image of shape (image_height, image_width)</p></li>
+</ul>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelBackprojectorFunction.backward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">grad_output</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelBackprojectorFunction.backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelBackprojectorFunction.backward" title="Link to this definition"></a></dt>
@@ -364,6 +417,10 @@ instead for proper autograd integration.</p>
 
 </dd></dl>
 
+</section>
+<section id="fan-beam-operators">
+<h2>Fan Beam Operators<a class="headerlink" href="#fan-beam-operators" title="Link to this heading"></a></h2>
+<p>Fan beam geometry uses a point X-ray source with a fan-shaped beam, typical in medical CT scanners.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.FanProjectorFunction">
 <em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">FanProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction" title="Link to this definition"></a></dt>
@@ -425,6 +482,19 @@ detector element, creating a divergent beam pattern that covers the field of vie
 reconstruction, unlike parallel beam which only needs 180°. The source distance
 should be much larger than the object size to minimize geometric distortions.</p>
 </div>
+<p><strong>Parameters:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">image</span></code> (torch.Tensor): Input 2D image tensor of shape (H, W)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">angles</span></code> (torch.Tensor): Projection angles in radians, shape (num_angles,)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">num_detectors</span></code> (int): Number of detector elements</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code> (float): Spacing between detector elements</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">source_distance</span></code> (float): Distance from rotation center to X-ray source</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">isocenter_distance</span></code> (float): Distance from rotation center to detector</p></li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> (torch.Tensor): Output sinogram of shape (num_angles, num_detectors)</p></li>
+</ul>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanProjectorFunction.backward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">grad_sinogram</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction.backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction.backward" title="Link to this definition"></a></dt>
@@ -557,6 +627,20 @@ a divergent pattern that reconstructs the object with geometric magnification.</
 which can lead to higher atomic contention in CUDA kernels compared to parallel beam.
 The geometry parameters must match those used in forward projection for consistency.</p>
 </div>
+<p><strong>Parameters:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> (torch.Tensor): Input sinogram of shape (num_angles, num_detectors)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">angles</span></code> (torch.Tensor): Projection angles in radians, shape (num_angles,)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code> (float): Spacing between detector elements</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">image_width</span></code> (int): Width of output image</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">image_height</span></code> (int): Height of output image</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">source_distance</span></code> (float): Distance from rotation center to X-ray source</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">isocenter_distance</span></code> (float): Distance from rotation center to detector</p></li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">image</span></code> (torch.Tensor): Reconstructed image of shape (image_height, image_width)</p></li>
+</ul>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanBackprojectorFunction.backward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">grad_output</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanBackprojectorFunction.backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanBackprojectorFunction.backward" title="Link to this definition"></a></dt>
@@ -630,6 +714,10 @@ parameters are consistent with the forward projection for accurate reconstructio
 
 </dd></dl>
 
+</section>
+<section id="cone-beam-operators">
+<h2>Cone Beam Operators<a class="headerlink" href="#cone-beam-operators" title="Link to this heading"></a></h2>
+<p>Cone beam geometry extends fan beam to 3D with a cone-shaped X-ray beam for volumetric reconstruction.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction">
 <em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ConeProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction" title="Link to this definition"></a></dt>
@@ -691,6 +779,21 @@ reconstruction. For larger volumes, helical scanning may be required.</p>
 memory. Consider using smaller volumes or gradient checkpointing for large-scale
 applications. The cone angle should be minimized to reduce reconstruction artifacts.</p>
 </div>
+<p><strong>Parameters:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">volume</span></code> (torch.Tensor): Input 3D volume tensor of shape (D, H, W)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">angles</span></code> (torch.Tensor): Projection angles in radians, shape (num_angles,)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">det_u</span></code> (int): Number of detector elements in U direction</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">det_v</span></code> (int): Number of detector elements in V direction</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">du</span></code> (float): Detector spacing in U direction</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dv</span></code> (float): Detector spacing in V direction</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">source_distance</span></code> (float): Distance from rotation center to X-ray source</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">isocenter_distance</span></code> (float): Distance from rotation center to detector</p></li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> (torch.Tensor): Output sinogram of shape (num_angles, det_u, det_v)</p></li>
+</ul>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction.backward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">grad_sinogram</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction.backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction.backward" title="Link to this definition"></a></dt>
@@ -831,6 +934,22 @@ complexity and memory requirements among all projection operators in DiffCT.</p>
 in DiffCT. Consider using gradient checkpointing, smaller volumes, or distributed
 computing for large-scale applications. Ensure sufficient GPU memory is available.</p>
 </div>
+<p><strong>Parameters:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> (torch.Tensor): Input sinogram of shape (num_angles, det_u, det_v)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">angles</span></code> (torch.Tensor): Projection angles in radians, shape (num_angles,)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">volume_width</span></code> (int): Width of output volume</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">volume_height</span></code> (int): Height of output volume</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">volume_depth</span></code> (int): Depth of output volume</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">du</span></code> (float): Detector spacing in U direction</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dv</span></code> (float): Detector spacing in V direction</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">source_distance</span></code> (float): Distance from rotation center to X-ray source</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">isocenter_distance</span></code> (float): Distance from rotation center to detector</p></li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">volume</span></code> (torch.Tensor): Reconstructed volume of shape (volume_depth, volume_height, volume_width)</p></li>
+</ul>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeBackprojectorFunction.backward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">grad_output</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction.backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction.backward" title="Link to this definition"></a></dt>
@@ -909,6 +1028,26 @@ are consistent with forward projection for accurate reconstruction.</p>
 
 </dd></dl>
 
+</section>
+<section id="usage-notes">
+<h2>Usage Notes<a class="headerlink" href="#usage-notes" title="Link to this heading"></a></h2>
+<p><strong>Memory Management:</strong>
+- All operators work with GPU tensors for optimal performance
+- Ensure sufficient GPU memory for your problem size
+- Use <code class="docutils literal notranslate"><span class="pre">torch.cuda.empty_cache()</span></code> if encountering memory issues</p>
+<p><strong>Gradient Computation:</strong>
+- All operators support automatic differentiation
+- Gradients flow through both forward and backward passes
+- Set <code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code> on input tensors to enable gradients</p>
+<p><strong>Performance Considerations:</strong>
+- Use contiguous tensors for optimal memory access
+- Consider batch processing for multiple reconstructions
+- Profile your code to identify bottlenecks</p>
+<p><strong>Coordinate Systems:</strong>
+- Image/volume coordinates: (0,0) at top-left corner
+- Detector coordinates: centered at detector array center
+- Rotation: counter-clockwise around z-axis (right-hand rule)</p>
+</section>
 </section>
 
 

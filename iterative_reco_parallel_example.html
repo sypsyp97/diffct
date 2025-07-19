@@ -16,6 +16,7 @@
       <script src="_static/documentation_options.js?v=5929fcd5"></script>
       <script src="_static/doctools.js?v=9bcbadda"></script>
       <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
@@ -53,7 +54,10 @@
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Parallel Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Parallel Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
 </ul>
@@ -87,13 +91,55 @@
              
   <section id="d-parallel-beam-iterative-reconstruction">
 <h1>2D Parallel Beam Iterative Reconstruction<a class="headerlink" href="#d-parallel-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the differentiable <cite>ParallelProjectorFunction</cite> in an iterative reconstruction pipeline for 2D parallel-beam geometry. The Shepp-Logan phantom is used as the test object, and a simple gradient-based optimization is performed to reconstruct the image from simulated projections.</p>
-<p>Key steps:
-- Generate a 2D Shepp-Logan phantom.
-- Simulate parallel-beam projections using the differentiable projector.
-- Define a PyTorch-based iterative reconstruction model and pipeline.
-- Optimize the reconstruction to minimize the difference between simulated and measured sinograms.
-- Visualize the loss curve, original phantom, and reconstructed image.</p>
+<p>This example demonstrates how to use the differentiable <cite>ParallelProjectorFunction</cite> in an iterative reconstruction pipeline for 2D parallel-beam geometry using gradient-based optimization.</p>
+<section id="mathematical-background">
+<h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
+<p><strong>Iterative Reconstruction Formulation</strong></p>
+<p>Iterative reconstruction solves the inverse problem by minimizing a cost function. The basic formulation is:</p>
+<div class="math notranslate nohighlight">
+\[\hat{f} = \arg\min_f \|Af - p\|_2^2 + R(f)\]</div>
+<p>where:
+- <span class="math notranslate nohighlight">\(f\)</span> is the unknown image
+- <span class="math notranslate nohighlight">\(A\)</span> is the forward projection operator (Radon transform)
+- <span class="math notranslate nohighlight">\(p\)</span> is the measured sinogram data
+- <span class="math notranslate nohighlight">\(R(f)\)</span> is an optional regularization term
+- <span class="math notranslate nohighlight">\(\|\cdot\|_2^2\)</span> is the L2 norm (mean squared error)</p>
+<p><strong>Gradient-Based Optimization</strong></p>
+<p>The gradient of the data fidelity term with respect to the image is:</p>
+<div class="math notranslate nohighlight">
+\[\nabla_f \|Af - p\|_2^2 = 2A^T(Af - p)\]</div>
+<p>where <span class="math notranslate nohighlight">\(A^T\)</span> is the backprojection operator (adjoint of the Radon transform).</p>
+<p><strong>Automatic Differentiation</strong></p>
+<p>Using PyTorch’s automatic differentiation, the gradient is computed automatically:</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial L}{\partial f} = \frac{\partial}{\partial f} \|A(f) - p_{\text{measured}}\|_2^2\]</div>
+<p>This enables the use of advanced optimizers like Adam, which adapts the learning rate based on gradient statistics.</p>
+<p><strong>Optimization Algorithm</strong></p>
+<p>The example uses the Adam optimizer with the update rule:</p>
+<div class="math notranslate nohighlight">
+\[f^{(k+1)} = f^{(k)} - \alpha \cdot \frac{m^{(k)}}{1-\beta_1^k} \cdot \frac{1}{\sqrt{v^{(k)}/(1-\beta_2^k)} + \epsilon}\]</div>
+<p>where:
+- <span class="math notranslate nohighlight">\(m^{(k)}\)</span> is the first moment estimate (momentum)
+- <span class="math notranslate nohighlight">\(v^{(k)}\)</span> is the second moment estimate (RMSprop)
+- <span class="math notranslate nohighlight">\(\alpha\)</span> is the learning rate
+- <span class="math notranslate nohighlight">\(\beta_1, \beta_2\)</span> are exponential decay rates
+- <span class="math notranslate nohighlight">\(\epsilon\)</span> is a small constant for numerical stability</p>
+<p><strong>Model Architecture</strong></p>
+<p>The reconstruction model implements:</p>
+<ol class="arabic simple">
+<li><p><strong>Parameterized Image</strong>: The unknown image <span class="math notranslate nohighlight">\(f\)</span> as a learnable parameter</p></li>
+<li><p><strong>Forward Model</strong>: <span class="math notranslate nohighlight">\(p_{\text{pred}} = A(f + f_{\text{initial}})\)</span></p></li>
+<li><p><strong>Loss Function</strong>: <span class="math notranslate nohighlight">\(L = \|p_{\text{pred}} - p_{\text{measured}}\|_2^2\)</span></p></li>
+</ol>
+<p><strong>Advantages of Iterative Methods</strong></p>
+<ul class="simple">
+<li><p><strong>Noise Robustness</strong>: Better handling of noisy measurements</p></li>
+<li><p><strong>Regularization</strong>: Can incorporate prior knowledge through regularization terms</p></li>
+<li><p><strong>Incomplete Data</strong>: Works with limited-angle or sparse-view data</p></li>
+<li><p><strong>Flexibility</strong>: Easy to modify cost function and constraints</p></li>
+</ul>
+<p><strong>Expected Behavior</strong></p>
+<p>The loss should decrease rapidly in the first 100-200 iterations, then converge more slowly. The reconstruction quality improves progressively, with fine details appearing as the optimization proceeds.</p>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">2D Parallel Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
@@ -228,6 +274,7 @@
 </pre></div>
 </div>
 </div>
+</section>
 </section>
 
 

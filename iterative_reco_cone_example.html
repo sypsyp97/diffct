@@ -16,6 +16,7 @@
       <script src="_static/documentation_options.js?v=5929fcd5"></script>
       <script src="_static/doctools.js?v=9bcbadda"></script>
       <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
@@ -54,7 +55,10 @@
 <li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">2D Fan Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">3D Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">3D Cone Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>
@@ -86,13 +90,90 @@
              
   <section id="d-cone-beam-iterative-reconstruction">
 <h1>3D Cone Beam Iterative Reconstruction<a class="headerlink" href="#d-cone-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the differentiable <cite>ConeProjectorFunction</cite> in an iterative reconstruction pipeline for 3D cone-beam geometry. The 3D Shepp-Logan phantom is used as the test object, and a simple gradient-based optimization is performed to reconstruct the volume from simulated projections.</p>
-<p>Key steps:
-- Generate a 3D Shepp-Logan phantom.
-- Simulate cone-beam projections using the differentiable projector.
-- Define a PyTorch-based iterative reconstruction model and pipeline.
-- Optimize the reconstruction to minimize the difference between simulated and measured sinograms.
-- Visualize the loss curve, original phantom mid-slice, and reconstructed mid-slice.</p>
+<p>This example demonstrates how to use the differentiable <cite>ConeProjectorFunction</cite> in an iterative reconstruction pipeline for 3D cone-beam geometry using gradient-based optimization.</p>
+<section id="mathematical-background">
+<h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
+<p><strong>3D Cone Beam Iterative Reconstruction</strong></p>
+<p>The 3D iterative reconstruction problem is formulated as:</p>
+<div class="math notranslate nohighlight">
+\[\hat{f} = \arg\min_f \|A_{\text{cone}}(f) - p\|_2^2 + \lambda R(f)\]</div>
+<p>where:
+- <span class="math notranslate nohighlight">\(f(x,y,z)\)</span> is the unknown 3D volume
+- <span class="math notranslate nohighlight">\(A_{\text{cone}}\)</span> is the cone beam forward projection operator
+- <span class="math notranslate nohighlight">\(p(\phi, u, v)\)</span> is the measured 2D projection data
+- <span class="math notranslate nohighlight">\(R(f)\)</span> is an optional 3D regularization term
+- <span class="math notranslate nohighlight">\(\lambda\)</span> is the regularization parameter</p>
+<p><strong>3D Forward Projection</strong></p>
+<p>The cone beam forward projection integrates along rays from the point source through the volume:</p>
+<div class="math notranslate nohighlight">
+\[p(\phi, u, v) = \int_0^{\infty} f\left(\vec{r}_s(\phi) + t \cdot \vec{d}(\phi, u, v)\right) dt\]</div>
+<p>where:
+- <span class="math notranslate nohighlight">\(\vec{r}_s(\phi) = D_s(\cos\phi, \sin\phi, 0)\)</span> is the source position
+- <span class="math notranslate nohighlight">\(\vec{d}(\phi, u, v)\)</span> is the normalized ray direction vector</p>
+<p><strong>3D Gradient Computation</strong></p>
+<p>The gradient of the 3D loss function is:</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial L}{\partial f} = 2A_{\text{cone}}^T(A_{\text{cone}}(f) - p_{\text{measured}})\]</div>
+<p>where <span class="math notranslate nohighlight">\(A_{\text{cone}}^T\)</span> is the 3D cone beam backprojection operator.</p>
+<p><strong>Computational Complexity</strong></p>
+<p>3D cone beam reconstruction is significantly more computationally intensive than 2D:</p>
+<ul class="simple">
+<li><p><strong>Memory Requirements</strong>: <span class="math notranslate nohighlight">\(O(N^3)\)</span> for volume storage vs <span class="math notranslate nohighlight">\(O(N^2)\)</span> for images</p></li>
+<li><p><strong>Projection Data</strong>: <span class="math notranslate nohighlight">\(O(N_{\phi} \times N_u \times N_v)\)</span> vs <span class="math notranslate nohighlight">\(O(N_{\phi} \times N_u)\)</span></p></li>
+<li><p><strong>Forward/Backward Operations</strong>: <span class="math notranslate nohighlight">\(O(N^3 \times N_{\phi})\)</span> complexity</p></li>
+</ul>
+<p><strong>3D Regularization Options</strong></p>
+<p>Common 3D regularization terms include:</p>
+<ol class="arabic">
+<li><p><strong>3D Total Variation</strong>:</p>
+<div class="math notranslate nohighlight">
+\[R_{\text{TV}}(f) = \sum_{x,y,z} \sqrt{|\nabla_x f|^2 + |\nabla_y f|^2 + |\nabla_z f|^2}\]</div>
+</li>
+<li><p><strong>3D Smoothness</strong>:</p>
+<div class="math notranslate nohighlight">
+\[R_{\text{smooth}}(f) = \sum_{x,y,z} (|\nabla_x f|^2 + |\nabla_y f|^2 + |\nabla_z f|^2)\]</div>
+</li>
+<li><p><strong>L1 Sparsity</strong>:</p>
+<div class="math notranslate nohighlight">
+\[R_{\text{L1}}(f) = \sum_{x,y,z} |f(x,y,z)|\]</div>
+</li>
+</ol>
+<p><strong>Memory Management</strong></p>
+<p>3D reconstruction requires careful memory management:</p>
+<ul class="simple">
+<li><p><strong>Batch Processing</strong>: Process volume slices when memory is limited</p></li>
+<li><p><strong>Gradient Checkpointing</strong>: Trade computation for memory in backpropagation</p></li>
+<li><p><strong>Mixed Precision</strong>: Use float16 when possible to reduce memory usage</p></li>
+</ul>
+<p><strong>Optimization Strategy</strong></p>
+<ul class="simple">
+<li><p><strong>Learning Rate</strong>: 0.1 (may need adjustment based on volume size)</p></li>
+<li><p><strong>Optimizer</strong>: AdamW with weight decay for implicit regularization</p></li>
+<li><p><strong>Iterations</strong>: 1000 epochs (may need more for larger volumes)</p></li>
+<li><p><strong>Monitoring</strong>: Track loss every 10 iterations to detect convergence</p></li>
+</ul>
+<p><strong>Convergence Characteristics</strong></p>
+<p>3D cone beam reconstruction typically shows:</p>
+<ol class="arabic simple">
+<li><p><strong>Initial Convergence</strong> (0-100 iterations): Rapid loss decrease, basic 3D structure</p></li>
+<li><p><strong>Detail Refinement</strong> (100-500 iterations): Fine 3D features develop</p></li>
+<li><p><strong>Final Convergence</strong> (500+ iterations): Slow improvement, risk of overfitting</p></li>
+</ol>
+<p><strong>Challenges in 3D Reconstruction</strong></p>
+<ul class="simple">
+<li><p><strong>Cone Beam Artifacts</strong>: Increased artifacts for large cone angles</p></li>
+<li><p><strong>Incomplete Sampling</strong>: Missing data in certain regions of 3D Fourier space</p></li>
+<li><p><strong>Computational Cost</strong>: Significantly higher than 2D reconstruction</p></li>
+<li><p><strong>Memory Limitations</strong>: Large volumes may not fit in GPU memory</p></li>
+</ul>
+<p><strong>Applications</strong></p>
+<p>3D cone beam iterative reconstruction is used in:</p>
+<ul class="simple">
+<li><p><strong>Medical Imaging</strong>: CBCT for dental, orthopedic applications</p></li>
+<li><p><strong>Industrial CT</strong>: Non-destructive testing, quality control</p></li>
+<li><p><strong>Micro-CT</strong>: High-resolution imaging of small specimens</p></li>
+<li><p><strong>Security Screening</strong>: Baggage inspection systems</p></li>
+</ul>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">3D Cone Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
@@ -267,6 +348,7 @@
 </pre></div>
 </div>
 </div>
+</section>
 </section>
 
 

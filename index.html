@@ -77,20 +77,33 @@
              
   <section id="diffct-differentiable-computed-tomography-operators">
 <h1>diffct: Differentiable Computed Tomography Operators<a class="headerlink" href="#diffct-differentiable-computed-tomography-operators" title="Link to this heading"></a></h1>
-<p>A high-performance, CUDA-accelerated library for circular orbits CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.</p>
-<section id="features">
-<h2><strong>Features</strong><a class="headerlink" href="#features" title="Link to this heading"></a></h2>
+<p>A high-performance, CUDA-accelerated library for circular orbit CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration in medical imaging and scientific computing.</p>
+<section id="key-features">
+<h2><strong>Key Features</strong><a class="headerlink" href="#key-features" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><strong>Fast:</strong> CUDA-accelerated projection and backprojection operations</p></li>
-<li><p><strong>Differentiable:</strong> End-to-end gradient propagation for deep learning workflows</p></li>
+<li><p><strong>High Performance:</strong> CUDA-accelerated projection and backprojection operations with optimized memory management</p></li>
+<li><p><strong>Fully Differentiable:</strong> End-to-end gradient propagation through all CT operations for seamless deep learning integration</p></li>
+<li><p><strong>Multiple Geometries:</strong> Support for 2D parallel-beam, 2D fan-beam, and 3D cone-beam geometries</p></li>
+<li><p><strong>PyTorch Integration:</strong> Native PyTorch autograd support with custom CUDA kernels</p></li>
+<li><p><strong>Research Ready:</strong> Optimized for both analytical reconstruction (FBP/FDK) and iterative methods</p></li>
 </ul>
 </section>
 <section id="supported-geometries">
 <h2><strong>Supported Geometries</strong><a class="headerlink" href="#supported-geometries" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><strong>Parallel Beam:</strong> 2D parallel-beam geometry</p></li>
-<li><p><strong>Fan Beam:</strong> 2D fan-beam geometry</p></li>
-<li><p><strong>Cone Beam:</strong> 3D cone-beam geometry</p></li>
+<li><p><strong>Parallel Beam (2D):</strong> Traditional parallel-beam geometry for 2D CT reconstruction</p></li>
+<li><p><strong>Fan Beam (2D):</strong> Fan-beam geometry with configurable source-detector distances</p></li>
+<li><p><strong>Cone Beam (3D):</strong> Full 3D cone-beam geometry for volumetric reconstruction</p></li>
+</ul>
+</section>
+<section id="applications">
+<h2><strong>Applications</strong><a class="headerlink" href="#applications" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>Medical image reconstruction with deep learning enhancement</p></li>
+<li><p>Physics-informed neural networks for CT imaging</p></li>
+<li><p>Iterative reconstruction algorithms with learned priors</p></li>
+<li><p>Multi-modal imaging research and development</p></li>
+<li><p>Educational CT reconstruction demonstrations</p></li>
 </ul>
 </section>
 <section id="getting-started">
@@ -113,12 +126,11 @@
 <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="api.html#diffct.differentiable.ParallelProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#diffct.differentiable.ParallelBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#diffct.differentiable.FanProjectorFunction"><code class="docutils literal notranslate"><span class="pre">FanProjectorFunction</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#diffct.differentiable.FanBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#diffct.differentiable.ConeProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#diffct.differentiable.ConeBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#parallel-beam-operators">Parallel Beam Operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#fan-beam-operators">Fan Beam Operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#cone-beam-operators">Cone Beam Operators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#usage-notes">Usage Notes</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="examples.html">Examples</a><ul>

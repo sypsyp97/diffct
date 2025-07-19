@@ -16,6 +16,7 @@
       <script src="_static/documentation_options.js?v=5929fcd5"></script>
       <script src="_static/doctools.js?v=9bcbadda"></script>
       <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
@@ -50,7 +51,10 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
 <li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
-<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Parallel Beam Filtered Backprojection (FBP)</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Parallel Beam Filtered Backprojection (FBP)</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
@@ -87,14 +91,40 @@
              
   <section id="d-parallel-beam-filtered-backprojection-fbp">
 <h1>2D Parallel Beam Filtered Backprojection (FBP)<a class="headerlink" href="#d-parallel-beam-filtered-backprojection-fbp" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the <cite>ParallelProjectorFunction</cite> and <cite>ParallelBackprojectorFunction</cite> from <cite>diffct</cite> to perform filtered backprojection (FBP) reconstruction in a 2D parallel-beam geometry. The Shepp-Logan phantom is used as the test object, and the reconstruction is compared to the original phantom.</p>
-<p>Key steps:
-- Generate a 2D Shepp-Logan phantom.
-- Simulate parallel-beam projections using the differentiable projector.
-- Apply a ramp filter to the sinogram.
-- Reconstruct the image using the differentiable backprojector.
-- Compute the loss and gradient for demonstration.
-- Visualize the phantom, sinogram, and reconstruction.</p>
+<p>This example demonstrates how to use the <cite>ParallelProjectorFunction</cite> and <cite>ParallelBackprojectorFunction</cite> from <cite>diffct</cite> to perform filtered backprojection (FBP) reconstruction in a 2D parallel-beam geometry.</p>
+<section id="mathematical-background">
+<h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
+<p><strong>Parallel Beam Geometry</strong></p>
+<p>In parallel beam CT, X-rays are collimated into parallel beams. The projection at angle <span class="math notranslate nohighlight">\(\theta\)</span> and detector position <span class="math notranslate nohighlight">\(t\)</span> is given by the Radon transform:</p>
+<div class="math notranslate nohighlight">
+\[p(t, \theta) = \int_{-\infty}^{\infty} f(t\cos\theta - s\sin\theta, t\sin\theta + s\cos\theta) \, ds\]</div>
+<p>where <span class="math notranslate nohighlight">\(f(x,y)\)</span> is the 2D attenuation coefficient distribution.</p>
+<p><strong>Filtered Backprojection Algorithm</strong></p>
+<p>The FBP reconstruction formula is:</p>
+<div class="math notranslate nohighlight">
+\[f(x,y) = \int_0^\pi p_f(x\cos\theta + y\sin\theta, \theta) \, d\theta\]</div>
+<p>where <span class="math notranslate nohighlight">\(p_f(t, \theta)\)</span> is the filtered projection:</p>
+<div class="math notranslate nohighlight">
+\[p_f(t, \theta) = \int_{-\infty}^{\infty} p(t', \theta) h(t - t') \, dt'\]</div>
+<p>The ramp filter <span class="math notranslate nohighlight">\(h(t)\)</span> in frequency domain is:</p>
+<div class="math notranslate nohighlight">
+\[H(\omega) = |\omega|\]</div>
+<p><strong>Implementation Details</strong></p>
+<p>The example implements the following steps:</p>
+<ol class="arabic simple">
+<li><p><strong>Forward Projection</strong>: Compute the Radon transform using <cite>ParallelProjectorFunction</cite></p></li>
+<li><p><strong>Ramp Filtering</strong>: Apply the ramp filter <span class="math notranslate nohighlight">\(H(\omega) = |\omega|\)</span> in frequency domain</p></li>
+<li><p><strong>Backprojection</strong>: Reconstruct using the filtered projections with <cite>ParallelBackprojectorFunction</cite></p></li>
+<li><p><strong>Normalization</strong>: Apply the factor <span class="math notranslate nohighlight">\(\frac{\pi}{N_{\text{angles}}}\)</span> to approximate the continuous integral</p></li>
+</ol>
+<p><strong>Phantom Description</strong></p>
+<p>The Shepp-Logan phantom consists of 5 ellipses with different attenuation coefficients, designed to simulate brain tissue structures. Each ellipse is defined by:</p>
+<ul class="simple">
+<li><p>Center position <span class="math notranslate nohighlight">\((x_0, y_0)\)</span></p></li>
+<li><p>Semi-axes lengths <span class="math notranslate nohighlight">\(a, b\)</span></p></li>
+<li><p>Rotation angle <span class="math notranslate nohighlight">\(\phi\)</span></p></li>
+<li><p>Attenuation value <span class="math notranslate nohighlight">\(A\)</span></p></li>
+</ul>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">2D Parallel Beam FBP Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
@@ -208,6 +238,7 @@
 </pre></div>
 </div>
 </div>
+</section>
 </section>
 
 

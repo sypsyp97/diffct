@@ -1,18 +1,29 @@
 diffct: Differentiable Computed Tomography Operators
 ====================================================
 
-A high-performance, CUDA-accelerated library for circular orbits CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
+A high-performance, CUDA-accelerated library for circular orbit CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration in medical imaging and scientific computing.
 
-**Features**
-------------
-- **Fast:** CUDA-accelerated projection and backprojection operations
-- **Differentiable:** End-to-end gradient propagation for deep learning workflows
+**Key Features**
+----------------
+- **High Performance:** CUDA-accelerated projection and backprojection operations with optimized memory management
+- **Fully Differentiable:** End-to-end gradient propagation through all CT operations for seamless deep learning integration
+- **Multiple Geometries:** Support for 2D parallel-beam, 2D fan-beam, and 3D cone-beam geometries
+- **PyTorch Integration:** Native PyTorch autograd support with custom CUDA kernels
+- **Research Ready:** Optimized for both analytical reconstruction (FBP/FDK) and iterative methods
 
 **Supported Geometries**
 ------------------------
-- **Parallel Beam:** 2D parallel-beam geometry
-- **Fan Beam:** 2D fan-beam geometry
-- **Cone Beam:** 3D cone-beam geometry
+- **Parallel Beam (2D):** Traditional parallel-beam geometry for 2D CT reconstruction
+- **Fan Beam (2D):** Fan-beam geometry with configurable source-detector distances
+- **Cone Beam (3D):** Full 3D cone-beam geometry for volumetric reconstruction
+
+**Applications**
+----------------
+- Medical image reconstruction with deep learning enhancement
+- Physics-informed neural networks for CT imaging
+- Iterative reconstruction algorithms with learned priors
+- Multi-modal imaging research and development
+- Educational CT reconstruction demonstrations
 
 Getting Started
 ---------------

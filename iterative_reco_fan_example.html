@@ -16,6 +16,7 @@
       <script src="_static/documentation_options.js?v=5929fcd5"></script>
       <script src="_static/doctools.js?v=9bcbadda"></script>
       <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
@@ -54,7 +55,10 @@
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">2D Fan Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">3D Cone Beam FDK Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">2D Parallel Beam Iterative Reconstruction</a></li>
-<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Fan Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">2D Fan Beam Iterative Reconstruction</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">3D Cone Beam Iterative Reconstruction</a></li>
 </ul>
 </li>
@@ -87,13 +91,67 @@
              
   <section id="d-fan-beam-iterative-reconstruction">
 <h1>2D Fan Beam Iterative Reconstruction<a class="headerlink" href="#d-fan-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates how to use the differentiable <cite>FanProjectorFunction</cite> in an iterative reconstruction pipeline for 2D fan-beam geometry. The Shepp-Logan phantom is used as the test object, and a simple gradient-based optimization is performed to reconstruct the image from simulated projections.</p>
-<p>Key steps:
-- Generate a 2D Shepp-Logan phantom.
-- Simulate fan-beam projections using the differentiable projector.
-- Define a PyTorch-based iterative reconstruction model and pipeline.
-- Optimize the reconstruction to minimize the difference between simulated and measured sinograms.
-- Visualize the loss curve, original phantom, and reconstructed image.</p>
+<p>This example demonstrates how to use the differentiable <cite>FanProjectorFunction</cite> in an iterative reconstruction pipeline for 2D fan-beam geometry using gradient-based optimization.</p>
+<section id="mathematical-background">
+<h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
+<p><strong>Fan Beam Iterative Reconstruction</strong></p>
+<p>The iterative reconstruction problem for fan beam geometry is formulated as:</p>
+<div class="math notranslate nohighlight">
+\[\hat{f} = \arg\min_f \|A_{\text{fan}}(f) - p\|_2^2 + R(f)\]</div>
+<p>where <span class="math notranslate nohighlight">\(A_{\text{fan}}\)</span> is the fan beam forward projection operator.</p>
+<p><strong>Fan Beam Forward Model</strong></p>
+<p>The fan beam projection operator maps the 2D image <span class="math notranslate nohighlight">\(f(x,y)\)</span> to sinogram <span class="math notranslate nohighlight">\(p(\beta, u)\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[p(\beta, u) = \int_{\text{ray}} f(x,y) \, dl\]</div>
+<p>where the integration is along the ray from source to detector element <span class="math notranslate nohighlight">\(u\)</span> at angle <span class="math notranslate nohighlight">\(\beta\)</span>.</p>
+<p><strong>Gradient Computation</strong></p>
+<p>The gradient of the loss function involves the adjoint (backprojection) operator:</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial L}{\partial f} = 2A_{\text{fan}}^T(A_{\text{fan}}(f) - p_{\text{measured}})\]</div>
+<p>where <span class="math notranslate nohighlight">\(A_{\text{fan}}^T\)</span> is the fan beam backprojection operator.</p>
+<p><strong>Geometry-Specific Considerations</strong></p>
+<p>Fan beam geometry introduces additional complexity compared to parallel beam:</p>
+<ol class="arabic simple">
+<li><p><strong>Ray Divergence</strong>: Rays diverge from a point source, affecting sampling density</p></li>
+<li><p><strong>Magnification</strong>: Objects closer to the source appear larger on the detector</p></li>
+<li><p><strong>Geometric Distortion</strong>: Non-uniform spatial resolution across the field of view</p></li>
+</ol>
+<p><strong>Optimization Challenges</strong></p>
+<p>Fan beam iterative reconstruction faces unique challenges:</p>
+<ul class="simple">
+<li><p><strong>Conditioning</strong>: The system matrix has different conditioning than parallel beam</p></li>
+<li><p><strong>Convergence</strong>: May require different learning rates due to geometry effects</p></li>
+<li><p><strong>Artifacts</strong>: Geometric artifacts can appear if not properly handled</p></li>
+</ul>
+<p><strong>Model Architecture</strong></p>
+<p>The fan beam reconstruction model includes:</p>
+<ol class="arabic simple">
+<li><p><strong>Parameterized Image</strong>: Learnable 2D image parameters</p></li>
+<li><p><strong>Fan Beam Forward Model</strong>: Uses <cite>FanProjectorFunction</cite> with geometry parameters</p></li>
+<li><p><strong>Loss Computation</strong>: L2 distance between predicted and measured sinograms</p></li>
+</ol>
+<p><strong>Optimization Strategy</strong></p>
+<ul class="simple">
+<li><p><strong>Learning Rate</strong>: 0.1 (same as parallel beam, but may need adjustment)</p></li>
+<li><p><strong>Optimizer</strong>: AdamW for adaptive learning rate and weight decay</p></li>
+<li><p><strong>Iterations</strong>: 1000 epochs with progress monitoring</p></li>
+<li><p><strong>Initialization</strong>: Zero image (uniform background)</p></li>
+</ul>
+<p><strong>Expected Convergence</strong></p>
+<p>Fan beam reconstruction typically shows:</p>
+<ol class="arabic simple">
+<li><p><strong>Initial Phase</strong> (0-50 iterations): Rapid decrease in loss, basic structure emerges</p></li>
+<li><p><strong>Refinement Phase</strong> (50-200 iterations): Fine details develop, slower convergence</p></li>
+<li><p><strong>Convergence Phase</strong> (200+ iterations): Minimal improvement, potential overfitting</p></li>
+</ol>
+<p><strong>Comparison with Parallel Beam</strong></p>
+<p>Fan beam iterative reconstruction differs from parallel beam in:</p>
+<ul class="simple">
+<li><p><strong>Computational Cost</strong>: Slightly higher due to geometric calculations</p></li>
+<li><p><strong>Convergence Rate</strong>: May be slower due to more complex geometry</p></li>
+<li><p><strong>Artifact Patterns</strong>: Different artifact characteristics</p></li>
+<li><p><strong>Spatial Resolution</strong>: Non-uniform resolution across the field of view</p></li>
+</ul>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">2D Fan Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
@@ -240,6 +298,7 @@
 </pre></div>
 </div>
 </div>
+</section>
 </section>
 
 
