@@ -25,12 +25,48 @@ _EPSILON            = _DTYPE(1e-6)
 class DeviceManager:
     @staticmethod
     def get_device(tensor):
-        """Return the device of a PyTorch tensor."""
+        """
+        Get the device on which a PyTorch tensor resides.
+
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            The tensor whose device is to be determined.
+
+        Returns
+        -------
+        torch.device
+            The device of the tensor. Returns 'cpu' if the tensor does not have a device attribute.
+
+        Examples
+        --------
+        >>> DeviceManager.get_device(torch.tensor([1, 2, 3]))
+        device(type='cpu')
+        """
         return tensor.device if hasattr(tensor, "device") else torch.device("cpu")
 
     @staticmethod
     def ensure_device(tensor, device):
-        """Move tensor to the specified device if not already there."""
+        """
+        Ensure that a tensor is on the specified device.
+
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            The tensor to move.
+        device : torch.device
+            The target device.
+
+        Returns
+        -------
+        torch.Tensor
+            The tensor on the specified device. If the tensor is already on the device, it is returned unchanged.
+
+        Examples
+        --------
+        >>> DeviceManager.ensure_device(torch.tensor([1, 2, 3]), torch.device('cuda'))
+        tensor([1, 2, 3], device='cuda:0')
+        """
         if hasattr(tensor, "to"):
             return tensor if tensor.device == device else tensor.to(device)
         return tensor
@@ -39,23 +75,89 @@ class DeviceManager:
 class TorchCUDABridge:
     @staticmethod
     def tensor_to_cuda_array(tensor):
-        """Convert PyTorch CUDA tensor to Numba CUDA array without CPU transfer.
-        Always detaches the tensor to avoid autograd Variable issues."""
+        """
+        Convert a PyTorch CUDA tensor to a Numba CUDA array without transferring data to the CPU.
+
+        This method always detaches the tensor to avoid autograd Variable issues.
+
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            A PyTorch tensor located on a CUDA device.
+
+        Returns
+        -------
+        numba.cuda.cudadrv.devicearray.DeviceNDArray
+            A Numba CUDA array view of the tensor's data.
+
+        Raises
+        ------
+        ValueError
+            If the tensor is not on a CUDA device.
+
+        Notes
+        -----
+        The returned array shares memory with the original tensor and does not trigger a device-to-host transfer.
+
+        Examples
+        --------
+        >>> t = torch.randn(10, device='cuda')
+        >>> arr = TorchCUDABridge.tensor_to_cuda_array(t)
+        """
         if not tensor.is_cuda:
             raise ValueError("Tensor must be on CUDA device")
         return cuda.as_cuda_array(tensor.detach())
 
     @staticmethod
     def cuda_array_to_tensor(cuda_array, tensor_template):
-        """Convert CUDA array to PyTorch tensor on the same device as tensor_template."""
+        """
+        Convert a Numba CUDA array to a PyTorch tensor on the same device and with the same dtype as a template tensor.
+
+        Parameters
+        ----------
+        cuda_array : numba.cuda.cudadrv.devicearray.DeviceNDArray
+            The CUDA array to convert.
+        tensor_template : torch.Tensor
+            A PyTorch tensor whose device and dtype will be used for the new tensor.
+
+        Returns
+        -------
+        torch.Tensor
+            A PyTorch tensor sharing data with the CUDA array, on the same device and with the same dtype as the template.
+
+        Examples
+        --------
+        >>> arr = cuda.device_array((10,), dtype=np.float32)
+        >>> t = torch.zeros(10, device='cuda')
+        >>> TorchCUDABridge.cuda_array_to_tensor(arr, t)
+        """
         return torch.as_tensor(cuda_array, device=tensor_template.device, dtype=tensor_template.dtype)
 
 # === GPU-aware Trigonometric Table Generation ===
 def _trig_tables(angles, dtype=_DTYPE):
     """
-    Precompute trigonometric lookup tables for projection angles and transfer to GPU memory.
-    Accepts either numpy arrays or torch tensors (on CPU or CUDA).
-    Returns (cos, sin) as torch tensors on the same device as input.
+    Precompute trigonometric lookup tables (cosine and sine) for a set of projection angles and transfer them to GPU memory.
+
+    Parameters
+    ----------
+    angles : array-like or torch.Tensor
+        Array of projection angles in radians. Can be a NumPy array or a PyTorch tensor (CPU or CUDA).
+    dtype : np.dtype or torch.dtype, optional
+        Data type for the output tables (default: np.float32).
+
+    Returns
+    -------
+    cos : torch.Tensor
+        Cosine values of the input angles, as a torch tensor on the same device as the input.
+    sin : torch.Tensor
+        Sine values of the input angles, as a torch tensor on the same device as the input.
+
+    Examples
+    --------
+    >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
+    >>> cos, sin = _trig_tables(angles)
+    >>> cos.device
+    device(type='cuda')
     """
     if isinstance(angles, torch.Tensor):
         device = angles.device
@@ -73,33 +175,78 @@ def _trig_tables(angles, dtype=_DTYPE):
 
 def _grid_2d(n1, n2, tpb=_TPB_2D):
     """
-    CUDA 2D grid configuration for optimal thread organization in ray-tracing kernels.
-    
-    Thread organization strategy:
-    - Each thread processes one ray (projection angle, detector element pair)
-    - Grid dimensions calculated to cover all rays with minimal thread divergence
-    - Block size (16x16) chosen to maximize occupancy while fitting in shared memory
-    
-    Memory access optimization:
-    - Threads in same warp access nearby detector elements (coalesced reads from sinogram)
-    - Ray geometry calculations benefit from spatial locality in trigonometric tables
+    Compute the CUDA 2D grid and block configuration for optimal thread organization in 2D ray-tracing kernels.
+
+    Parameters
+    ----------
+    n1 : int
+        Number of elements along the first dimension (e.g., number of projection angles).
+    n2 : int
+        Number of elements along the second dimension (e.g., number of detector elements).
+    tpb : tuple of int, optional
+        Threads per block (default: (16, 16)), chosen for optimal occupancy and shared memory usage.
+
+    Returns
+    -------
+    grid : tuple of int
+        Grid dimensions (number of blocks) along each axis.
+    tpb : tuple of int
+        Block dimensions (threads per block) along each axis.
+
+    Notes
+    -----
+    - Each thread processes one ray (projection angle, detector element pair).
+    - Grid dimensions are calculated to cover all rays with minimal thread divergence.
+    - Block size (16x16) is chosen to maximize occupancy while fitting in shared memory.
+    - Threads in the same warp access nearby detector elements for coalesced memory reads.
+
+    Examples
+    --------
+    >>> grid, tpb = _grid_2d(180, 256)
+    >>> grid
+    (12, 16)
+    >>> tpb
+    (16, 16)
     """
     return (math.ceil(n1 / tpb[0]), math.ceil(n2 / tpb[1])), tpb
 
 
 def _grid_3d(n1, n2, n3, tpb=_TPB_3D):
     """
-    CUDA 3D grid configuration for optimal thread organization in cone beam kernels.
-    
-    Thread organization strategy:
-    - Each thread processes one ray (view, detector_u, detector_v triplet)
-    - 3D grid maps directly to 3D detector array for intuitive thread-to-ray mapping
-    - Block size (8x8x8) balances occupancy with register pressure from 3D calculations
-    
-    Performance considerations:
-    - Smaller block size accommodates higher register usage in 3D ray-tracing
-    - 3D thread indexing enables efficient detector array traversal patterns
-    - Memory coalescing optimized for 3D sinogram access patterns
+    Compute the CUDA 3D grid and block configuration for optimal thread organization in 3D cone beam kernels.
+
+    Parameters
+    ----------
+    n1 : int
+        Number of elements along the first dimension (e.g., number of projection views).
+    n2 : int
+        Number of elements along the second dimension (e.g., detector u-axis).
+    n3 : int
+        Number of elements along the third dimension (e.g., detector v-axis).
+    tpb : tuple of int, optional
+        Threads per block (default: (8, 8, 8)), chosen to balance occupancy and register usage.
+
+    Returns
+    -------
+    grid : tuple of int
+        Grid dimensions (number of blocks) along each axis.
+    tpb : tuple of int
+        Block dimensions (threads per block) along each axis.
+
+    Notes
+    -----
+    - Each thread processes one ray (view, detector_u, detector_v triplet).
+    - 3D grid maps directly to the 3D detector array for intuitive thread-to-ray mapping.
+    - Block size (8x8x8) balances occupancy with register pressure from 3D calculations.
+    - 3D thread indexing enables efficient detector array traversal and memory coalescing.
+
+    Examples
+    --------
+    >>> grid, tpb = _grid_3d(360, 256, 256)
+    >>> grid
+    (45, 32, 32)
+    >>> tpb
+    (8, 8, 8)
     """
     return (
         math.ceil(n1 / tpb[0]),
@@ -920,7 +1067,35 @@ class ParallelProjectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, angles, num_detectors, detector_spacing=1.0):
         """
-        Optimized: Compute parallel beam forward projection (Radon transform) with minimal CPU-GPU transfers.
+        Compute the 2D parallel beam forward projection (Radon transform) of an image using CUDA acceleration.
+
+        Parameters
+        ----------
+        image : torch.Tensor
+            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.
+        angles : torch.Tensor
+            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `image`.
+        num_detectors : int
+            Number of detector elements in the sinogram (columns).
+        detector_spacing : float, optional
+            Physical spacing between detector elements (default: 1.0).
+
+        Returns
+        -------
+        sinogram : torch.Tensor
+            2D tensor of shape (num_angles, num_detectors) containing the forward projection (sinogram) on the same device as `image`.
+
+        Notes
+        -----
+        - All input tensors must be on the same CUDA device.
+        - The operation is fully differentiable and supports autograd.
+        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+
+        Example
+        -------
+        >>> image = torch.randn(128, 128, device='cuda', requires_grad=True)
+        >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
+        >>> sinogram = ParallelProjectorFunction.apply(image, angles, 128, 1.0)
         """
         device = DeviceManager.get_device(image)
         image = DeviceManager.ensure_device(image, device)
@@ -1048,7 +1223,37 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128):
         """
-        Optimized: Compute parallel beam backprojection (adjoint Radon transform) with minimal CPU-GPU transfers.
+        Compute the 2D parallel beam backprojection (adjoint Radon transform) of a sinogram using CUDA acceleration.
+
+        Parameters
+        ----------
+        sinogram : torch.Tensor
+            2D input sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.
+        angles : torch.Tensor
+            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `sinogram`.
+        detector_spacing : float, optional
+            Physical spacing between detector elements (default: 1.0).
+        H : int, optional
+            Height of the output reconstruction image (default: 128).
+        W : int, optional
+            Width of the output reconstruction image (default: 128).
+
+        Returns
+        -------
+        reco : torch.Tensor
+            2D tensor of shape (H, W) containing the reconstructed image on the same device as `sinogram`.
+
+        Notes
+        -----
+        - All input tensors must be on the same CUDA device.
+        - The operation is fully differentiable and supports autograd.
+        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+
+        Example
+        -------
+        >>> sinogram = torch.randn(180, 128, device='cuda', requires_grad=True)
+        >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
+        >>> reco = ParallelBackprojectorFunction.apply(sinogram, angles, 1.0, 128, 128)
         """
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
@@ -1183,7 +1388,40 @@ class FanProjectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, angles, num_detectors, detector_spacing, source_distance, isocenter_distance):
         """
-        Optimized: Compute fan beam forward projection with minimal CPU-GPU transfers.
+        Compute the 2D fan beam forward projection of an image using CUDA acceleration.
+
+        Parameters
+        ----------
+        image : torch.Tensor
+            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.
+        angles : torch.Tensor
+            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `image`.
+        num_detectors : int
+            Number of detector elements in the sinogram (columns).
+        detector_spacing : float
+            Physical spacing between detector elements.
+        source_distance : float
+            Distance from the X-ray source to the isocenter (center of rotation).
+        isocenter_distance : float
+            Distance from the isocenter to the detector array.
+
+        Returns
+        -------
+        sinogram : torch.Tensor
+            2D tensor of shape (num_angles, num_detectors) containing the fan beam sinogram on the same device as `image`.
+
+        Notes
+        -----
+        - All input tensors must be on the same CUDA device.
+        - The operation is fully differentiable and supports autograd.
+        - Fan beam geometry uses divergent rays from a point source to the detector.
+        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+
+        Example
+        -------
+        >>> image = torch.randn(256, 256, device='cuda', requires_grad=True)
+        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
+        >>> sinogram = FanProjectorFunction.apply(image, angles, 512, 1.0, 1000.0, 1500.0)
         """
         device = DeviceManager.get_device(image)
         image = DeviceManager.ensure_device(image, device)
@@ -1309,7 +1547,42 @@ class FanBackprojectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sinogram, angles, detector_spacing, H, W, source_distance, isocenter_distance):
         """
-        Optimized: Compute fan beam backprojection with minimal CPU-GPU transfers.
+        Compute the 2D fan beam backprojection of a sinogram using CUDA acceleration.
+
+        Parameters
+        ----------
+        sinogram : torch.Tensor
+            2D input fan beam sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.
+        angles : torch.Tensor
+            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `sinogram`.
+        detector_spacing : float
+            Physical spacing between detector elements.
+        H : int
+            Height of the output reconstruction image.
+        W : int
+            Width of the output reconstruction image.
+        source_distance : float
+            Distance from the X-ray source to the isocenter (center of rotation).
+        isocenter_distance : float
+            Distance from the isocenter to the detector array.
+
+        Returns
+        -------
+        reco : torch.Tensor
+            2D tensor of shape (H, W) containing the reconstructed image on the same device as `sinogram`.
+
+        Notes
+        -----
+        - All input tensors must be on the same CUDA device.
+        - The operation is fully differentiable and supports autograd.
+        - Fan beam geometry uses divergent rays from a point source to the detector.
+        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+
+        Example
+        -------
+        >>> sinogram = torch.randn(360, 512, device='cuda', requires_grad=True)
+        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
+        >>> reco = FanBackprojectorFunction.apply(sinogram, angles, 1.0, 256, 256, 1000.0, 500.0)
         """
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
@@ -1437,7 +1710,44 @@ class ConeProjectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, volume, angles, det_u, det_v, du, dv, source_distance, isocenter_distance):
         """
-        Optimized: Compute 3D cone beam forward projection with minimal CPU-GPU transfers.
+        Compute the 3D cone beam forward projection of a volume using CUDA acceleration.
+
+        Parameters
+        ----------
+        volume : torch.Tensor
+            3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.
+        angles : torch.Tensor
+            1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as `volume`.
+        det_u : int
+            Number of detector elements along the u-axis (width).
+        det_v : int
+            Number of detector elements along the v-axis (height).
+        du : float
+            Physical spacing between detector elements along the u-axis.
+        dv : float
+            Physical spacing between detector elements along the v-axis.
+        source_distance : float
+            Distance from the X-ray source to the isocenter (center of rotation).
+        isocenter_distance : float
+            Distance from the isocenter to the detector array.
+
+        Returns
+        -------
+        sino : torch.Tensor
+            3D tensor of shape (num_views, det_u, det_v) containing the cone beam projections on the same device as `volume`.
+
+        Notes
+        -----
+        - All input tensors must be on the same CUDA device.
+        - The operation is fully differentiable and supports autograd.
+        - Cone beam geometry uses a point source and a 2D detector array.
+        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.
+
+        Example
+        -------
+        >>> volume = torch.randn(128, 128, 128, device='cuda', requires_grad=True)
+        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
+        >>> sino = ConeProjectorFunction.apply(volume, angles, 256, 256, 1.0, 1.0, 1000.0, 500.0)
         """
         device = DeviceManager.get_device(volume)
         volume = DeviceManager.ensure_device(volume, device)
@@ -1568,7 +1878,46 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sinogram, angles, D, H, W, du, dv, source_distance, isocenter_distance):
         """
-        Optimized: Compute 3D cone beam backprojection with minimal CPU-GPU transfers.
+        Compute the 3D cone beam backprojection of a projection sinogram using CUDA acceleration.
+
+        Parameters
+        ----------
+        sinogram : torch.Tensor
+            3D input cone beam projection tensor of shape (num_views, det_u, det_v), must be on a CUDA device and of type float32.
+        angles : torch.Tensor
+            1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as `sinogram`.
+        D : int
+            Depth (z-dimension) of the output reconstruction volume.
+        H : int
+            Height (y-dimension) of the output reconstruction volume.
+        W : int
+            Width (x-dimension) of the output reconstruction volume.
+        du : float
+            Physical spacing between detector elements along the u-axis.
+        dv : float
+            Physical spacing between detector elements along the v-axis.
+        source_distance : float
+            Distance from the X-ray source to the isocenter (center of rotation).
+        isocenter_distance : float
+            Distance from the isocenter to the detector array.
+
+        Returns
+        -------
+        vol : torch.Tensor
+            3D tensor of shape (D, H, W) containing the reconstructed volume on the same device as `sinogram`.
+
+        Notes
+        -----
+        - All input tensors must be on the same CUDA device.
+        - The operation is fully differentiable and supports autograd.
+        - Cone beam geometry uses a point source and a 2D detector array.
+        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.
+
+        Example
+        -------
+        >>> projections = torch.randn(360, 256, 256, device='cuda', requires_grad=True)
+        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
+        >>> vol = ConeBackprojectorFunction.apply(projections, angles, 128, 128, 128, 1.0, 1.0, 1000.0, 500.0)
         """
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
