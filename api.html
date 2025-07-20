@@ -235,7 +235,35 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelProjectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelProjectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Optimized: Compute parallel beam forward projection (Radon transform) with minimal CPU-GPU transfers.</p>
+<dd><p>Compute the 2D parallel beam forward projection (Radon transform) of an image using CUDA acceleration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>image</strong> (<em>torch.Tensor</em>) – 2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>image</cite>.</p></li>
+<li><p><strong>num_detectors</strong> (<em>int</em>) – Number of detector elements in the sinogram (columns).</p></li>
+<li><p><strong>detector_spacing</strong> (<em>float</em><em>, </em><em>optional</em>) – Physical spacing between detector elements (default: 1.0).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>sinogram</strong> – 2D tensor of shape (num_angles, num_detectors) containing the forward projection (sinogram) on the same device as <cite>image</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>All input tensors must be on the same CUDA device.</p></li>
+<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+</ul>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">180</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+</pre></div>
+</div>
 </dd></dl>
 
 </dd></dl>
@@ -333,7 +361,36 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelBackprojectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">128</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">128</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelBackprojectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Optimized: Compute parallel beam backprojection (adjoint Radon transform) with minimal CPU-GPU transfers.</p>
+<dd><p>Compute the 2D parallel beam backprojection (adjoint Radon transform) of a sinogram using CUDA acceleration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 2D input sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>sinogram</cite>.</p></li>
+<li><p><strong>detector_spacing</strong> (<em>float</em><em>, </em><em>optional</em>) – Physical spacing between detector elements (default: 1.0).</p></li>
+<li><p><strong>H</strong> (<em>int</em><em>, </em><em>optional</em>) – Height of the output reconstruction image (default: 128).</p></li>
+<li><p><strong>W</strong> (<em>int</em><em>, </em><em>optional</em>) – Width of the output reconstruction image (default: 128).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>reco</strong> – 2D tensor of shape (H, W) containing the reconstructed image on the same device as <cite>sinogram</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>All input tensors must be on the same CUDA device.</p></li>
+<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+</ul>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">180</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">180</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">reco</span> <span class="o">=</span> <span class="n">ParallelBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>
+</pre></div>
+</div>
 </dd></dl>
 
 </dd></dl>
@@ -441,7 +498,38 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanProjectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Optimized: Compute fan beam forward projection with minimal CPU-GPU transfers.</p>
+<dd><p>Compute the 2D fan beam forward projection of an image using CUDA acceleration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>image</strong> (<em>torch.Tensor</em>) – 2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>image</cite>.</p></li>
+<li><p><strong>num_detectors</strong> (<em>int</em>) – Number of detector elements in the sinogram (columns).</p></li>
+<li><p><strong>detector_spacing</strong> (<em>float</em>) – Physical spacing between detector elements.</p></li>
+<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
+<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>sinogram</strong> – 2D tensor of shape (num_angles, num_detectors) containing the fan beam sinogram on the same device as <cite>image</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>All input tensors must be on the same CUDA device.</p></li>
+<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Fan beam geometry uses divergent rays from a point source to the detector.</p></li>
+<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+</ul>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">)</span>
+</pre></div>
+</div>
 </dd></dl>
 
 </dd></dl>
@@ -543,7 +631,39 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanBackprojectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Optimized: Compute fan beam backprojection with minimal CPU-GPU transfers.</p>
+<dd><p>Compute the 2D fan beam backprojection of a sinogram using CUDA acceleration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 2D input fan beam sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>sinogram</cite>.</p></li>
+<li><p><strong>detector_spacing</strong> (<em>float</em>) – Physical spacing between detector elements.</p></li>
+<li><p><strong>H</strong> (<em>int</em>) – Height of the output reconstruction image.</p></li>
+<li><p><strong>W</strong> (<em>int</em>) – Width of the output reconstruction image.</p></li>
+<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
+<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>reco</strong> – 2D tensor of shape (H, W) containing the reconstructed image on the same device as <cite>sinogram</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>All input tensors must be on the same CUDA device.</p></li>
+<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Fan beam geometry uses divergent rays from a point source to the detector.</p></li>
+<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+</ul>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">360</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">reco</span> <span class="o">=</span> <span class="n">FanBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">)</span>
+</pre></div>
+</div>
 </dd></dl>
 
 </dd></dl>
@@ -653,7 +773,40 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Optimized: Compute 3D cone beam forward projection with minimal CPU-GPU transfers.</p>
+<dd><p>Compute the 3D cone beam forward projection of a volume using CUDA acceleration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>volume</strong> (<em>torch.Tensor</em>) – 3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as <cite>volume</cite>.</p></li>
+<li><p><strong>det_u</strong> (<em>int</em>) – Number of detector elements along the u-axis (width).</p></li>
+<li><p><strong>det_v</strong> (<em>int</em>) – Number of detector elements along the v-axis (height).</p></li>
+<li><p><strong>du</strong> (<em>float</em>) – Physical spacing between detector elements along the u-axis.</p></li>
+<li><p><strong>dv</strong> (<em>float</em>) – Physical spacing between detector elements along the v-axis.</p></li>
+<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
+<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>sino</strong> – 3D tensor of shape (num_views, det_u, det_v) containing the cone beam projections on the same device as <cite>volume</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>All input tensors must be on the same CUDA device.</p></li>
+<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Cone beam geometry uses a point source and a 2D detector array.</p></li>
+<li><p>Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</p></li>
+</ul>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sino</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">)</span>
+</pre></div>
+</div>
 </dd></dl>
 
 </dd></dl>
@@ -760,7 +913,41 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeBackprojectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">D</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Optimized: Compute 3D cone beam backprojection with minimal CPU-GPU transfers.</p>
+<dd><p>Compute the 3D cone beam backprojection of a projection sinogram using CUDA acceleration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 3D input cone beam projection tensor of shape (num_views, det_u, det_v), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as <cite>sinogram</cite>.</p></li>
+<li><p><strong>D</strong> (<em>int</em>) – Depth (z-dimension) of the output reconstruction volume.</p></li>
+<li><p><strong>H</strong> (<em>int</em>) – Height (y-dimension) of the output reconstruction volume.</p></li>
+<li><p><strong>W</strong> (<em>int</em>) – Width (x-dimension) of the output reconstruction volume.</p></li>
+<li><p><strong>du</strong> (<em>float</em>) – Physical spacing between detector elements along the u-axis.</p></li>
+<li><p><strong>dv</strong> (<em>float</em>) – Physical spacing between detector elements along the v-axis.</p></li>
+<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
+<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>vol</strong> – 3D tensor of shape (D, H, W) containing the reconstructed volume on the same device as <cite>sinogram</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>All input tensors must be on the same CUDA device.</p></li>
+<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Cone beam geometry uses a point source and a 2D detector array.</p></li>
+<li><p>Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</p></li>
+</ul>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">projections</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">360</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">vol</span> <span class="o">=</span> <span class="n">ConeBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">projections</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">)</span>
+</pre></div>
+</div>
 </dd></dl>
 
 </dd></dl>

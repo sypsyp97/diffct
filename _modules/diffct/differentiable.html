@@ -101,12 +101,48 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">DeviceManager</span><span class="p">:</span>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_device</span><span class="p">(</span><span class="n">tensor</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the device of a PyTorch tensor.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get the device on which a PyTorch tensor resides.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        tensor : torch.Tensor</span>
+<span class="sd">            The tensor whose device is to be determined.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        torch.device</span>
+<span class="sd">            The device of the tensor. Returns &#39;cpu&#39; if the tensor does not have a device attribute.</span>
+
+<span class="sd">        Examples</span>
+<span class="sd">        --------</span>
+<span class="sd">        &gt;&gt;&gt; DeviceManager.get_device(torch.tensor([1, 2, 3]))</span>
+<span class="sd">        device(type=&#39;cpu&#39;)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="n">tensor</span><span class="o">.</span><span class="n">device</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="s2">&quot;device&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
 
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">ensure_device</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="n">device</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Move tensor to the specified device if not already there.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Ensure that a tensor is on the specified device.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        tensor : torch.Tensor</span>
+<span class="sd">            The tensor to move.</span>
+<span class="sd">        device : torch.device</span>
+<span class="sd">            The target device.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        torch.Tensor</span>
+<span class="sd">            The tensor on the specified device. If the tensor is already on the device, it is returned unchanged.</span>
+
+<span class="sd">        Examples</span>
+<span class="sd">        --------</span>
+<span class="sd">        &gt;&gt;&gt; DeviceManager.ensure_device(torch.tensor([1, 2, 3]), torch.device(&#39;cuda&#39;))</span>
+<span class="sd">        tensor([1, 2, 3], device=&#39;cuda:0&#39;)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="s2">&quot;to&quot;</span><span class="p">):</span>
             <span class="k">return</span> <span class="n">tensor</span> <span class="k">if</span> <span class="n">tensor</span><span class="o">.</span><span class="n">device</span> <span class="o">==</span> <span class="n">device</span> <span class="k">else</span> <span class="n">tensor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">tensor</span>
@@ -115,23 +151,89 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">TorchCUDABridge</span><span class="p">:</span>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">tensor_to_cuda_array</span><span class="p">(</span><span class="n">tensor</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert PyTorch CUDA tensor to Numba CUDA array without CPU transfer.</span>
-<span class="sd">        Always detaches the tensor to avoid autograd Variable issues.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Convert a PyTorch CUDA tensor to a Numba CUDA array without transferring data to the CPU.</span>
+
+<span class="sd">        This method always detaches the tensor to avoid autograd Variable issues.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        tensor : torch.Tensor</span>
+<span class="sd">            A PyTorch tensor located on a CUDA device.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
+<span class="sd">            A Numba CUDA array view of the tensor&#39;s data.</span>
+
+<span class="sd">        Raises</span>
+<span class="sd">        ------</span>
+<span class="sd">        ValueError</span>
+<span class="sd">            If the tensor is not on a CUDA device.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        The returned array shares memory with the original tensor and does not trigger a device-to-host transfer.</span>
+
+<span class="sd">        Examples</span>
+<span class="sd">        --------</span>
+<span class="sd">        &gt;&gt;&gt; t = torch.randn(10, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; arr = TorchCUDABridge.tensor_to_cuda_array(t)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Tensor must be on CUDA device&quot;</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">cuda</span><span class="o">.</span><span class="n">as_cuda_array</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
 
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">cuda_array_to_tensor</span><span class="p">(</span><span class="n">cuda_array</span><span class="p">,</span> <span class="n">tensor_template</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert CUDA array to PyTorch tensor on the same device as tensor_template.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Convert a Numba CUDA array to a PyTorch tensor on the same device and with the same dtype as a template tensor.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        cuda_array : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
+<span class="sd">            The CUDA array to convert.</span>
+<span class="sd">        tensor_template : torch.Tensor</span>
+<span class="sd">            A PyTorch tensor whose device and dtype will be used for the new tensor.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        torch.Tensor</span>
+<span class="sd">            A PyTorch tensor sharing data with the CUDA array, on the same device and with the same dtype as the template.</span>
+
+<span class="sd">        Examples</span>
+<span class="sd">        --------</span>
+<span class="sd">        &gt;&gt;&gt; arr = cuda.device_array((10,), dtype=np.float32)</span>
+<span class="sd">        &gt;&gt;&gt; t = torch.zeros(10, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; TorchCUDABridge.cuda_array_to_tensor(arr, t)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">cuda_array</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tensor_template</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">tensor_template</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
 <span class="c1"># === GPU-aware Trigonometric Table Generation ===</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Precompute trigonometric lookup tables for projection angles and transfer to GPU memory.</span>
-<span class="sd">    Accepts either numpy arrays or torch tensors (on CPU or CUDA).</span>
-<span class="sd">    Returns (cos, sin) as torch tensors on the same device as input.</span>
+<span class="sd">    Precompute trigonometric lookup tables (cosine and sine) for a set of projection angles and transfer them to GPU memory.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    angles : array-like or torch.Tensor</span>
+<span class="sd">        Array of projection angles in radians. Can be a NumPy array or a PyTorch tensor (CPU or CUDA).</span>
+<span class="sd">    dtype : np.dtype or torch.dtype, optional</span>
+<span class="sd">        Data type for the output tables (default: np.float32).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    cos : torch.Tensor</span>
+<span class="sd">        Cosine values of the input angles, as a torch tensor on the same device as the input.</span>
+<span class="sd">    sin : torch.Tensor</span>
+<span class="sd">        Sine values of the input angles, as a torch tensor on the same device as the input.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; angles = torch.linspace(0, torch.pi, 180, device=&#39;cuda&#39;)</span>
+<span class="sd">    &gt;&gt;&gt; cos, sin = _trig_tables(angles)</span>
+<span class="sd">    &gt;&gt;&gt; cos.device</span>
+<span class="sd">    device(type=&#39;cuda&#39;)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">device</span>
@@ -149,33 +251,78 @@
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_grid_2d</span><span class="p">(</span><span class="n">n1</span><span class="p">,</span> <span class="n">n2</span><span class="p">,</span> <span class="n">tpb</span><span class="o">=</span><span class="n">_TPB_2D</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    CUDA 2D grid configuration for optimal thread organization in ray-tracing kernels.</span>
-<span class="sd">    </span>
-<span class="sd">    Thread organization strategy:</span>
-<span class="sd">    - Each thread processes one ray (projection angle, detector element pair)</span>
-<span class="sd">    - Grid dimensions calculated to cover all rays with minimal thread divergence</span>
-<span class="sd">    - Block size (16x16) chosen to maximize occupancy while fitting in shared memory</span>
-<span class="sd">    </span>
-<span class="sd">    Memory access optimization:</span>
-<span class="sd">    - Threads in same warp access nearby detector elements (coalesced reads from sinogram)</span>
-<span class="sd">    - Ray geometry calculations benefit from spatial locality in trigonometric tables</span>
+<span class="sd">    Compute the CUDA 2D grid and block configuration for optimal thread organization in 2D ray-tracing kernels.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    n1 : int</span>
+<span class="sd">        Number of elements along the first dimension (e.g., number of projection angles).</span>
+<span class="sd">    n2 : int</span>
+<span class="sd">        Number of elements along the second dimension (e.g., number of detector elements).</span>
+<span class="sd">    tpb : tuple of int, optional</span>
+<span class="sd">        Threads per block (default: (16, 16)), chosen for optimal occupancy and shared memory usage.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    grid : tuple of int</span>
+<span class="sd">        Grid dimensions (number of blocks) along each axis.</span>
+<span class="sd">    tpb : tuple of int</span>
+<span class="sd">        Block dimensions (threads per block) along each axis.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - Each thread processes one ray (projection angle, detector element pair).</span>
+<span class="sd">    - Grid dimensions are calculated to cover all rays with minimal thread divergence.</span>
+<span class="sd">    - Block size (16x16) is chosen to maximize occupancy while fitting in shared memory.</span>
+<span class="sd">    - Threads in the same warp access nearby detector elements for coalesced memory reads.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; grid, tpb = _grid_2d(180, 256)</span>
+<span class="sd">    &gt;&gt;&gt; grid</span>
+<span class="sd">    (12, 16)</span>
+<span class="sd">    &gt;&gt;&gt; tpb</span>
+<span class="sd">    (16, 16)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">return</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">n1</span> <span class="o">/</span> <span class="n">tpb</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">n2</span> <span class="o">/</span> <span class="n">tpb</span><span class="p">[</span><span class="mi">1</span><span class="p">])),</span> <span class="n">tpb</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_grid_3d</span><span class="p">(</span><span class="n">n1</span><span class="p">,</span> <span class="n">n2</span><span class="p">,</span> <span class="n">n3</span><span class="p">,</span> <span class="n">tpb</span><span class="o">=</span><span class="n">_TPB_3D</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    CUDA 3D grid configuration for optimal thread organization in cone beam kernels.</span>
-<span class="sd">    </span>
-<span class="sd">    Thread organization strategy:</span>
-<span class="sd">    - Each thread processes one ray (view, detector_u, detector_v triplet)</span>
-<span class="sd">    - 3D grid maps directly to 3D detector array for intuitive thread-to-ray mapping</span>
-<span class="sd">    - Block size (8x8x8) balances occupancy with register pressure from 3D calculations</span>
-<span class="sd">    </span>
-<span class="sd">    Performance considerations:</span>
-<span class="sd">    - Smaller block size accommodates higher register usage in 3D ray-tracing</span>
-<span class="sd">    - 3D thread indexing enables efficient detector array traversal patterns</span>
-<span class="sd">    - Memory coalescing optimized for 3D sinogram access patterns</span>
+<span class="sd">    Compute the CUDA 3D grid and block configuration for optimal thread organization in 3D cone beam kernels.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    n1 : int</span>
+<span class="sd">        Number of elements along the first dimension (e.g., number of projection views).</span>
+<span class="sd">    n2 : int</span>
+<span class="sd">        Number of elements along the second dimension (e.g., detector u-axis).</span>
+<span class="sd">    n3 : int</span>
+<span class="sd">        Number of elements along the third dimension (e.g., detector v-axis).</span>
+<span class="sd">    tpb : tuple of int, optional</span>
+<span class="sd">        Threads per block (default: (8, 8, 8)), chosen to balance occupancy and register usage.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    grid : tuple of int</span>
+<span class="sd">        Grid dimensions (number of blocks) along each axis.</span>
+<span class="sd">    tpb : tuple of int</span>
+<span class="sd">        Block dimensions (threads per block) along each axis.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - Each thread processes one ray (view, detector_u, detector_v triplet).</span>
+<span class="sd">    - 3D grid maps directly to the 3D detector array for intuitive thread-to-ray mapping.</span>
+<span class="sd">    - Block size (8x8x8) balances occupancy with register pressure from 3D calculations.</span>
+<span class="sd">    - 3D thread indexing enables efficient detector array traversal and memory coalescing.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; grid, tpb = _grid_3d(360, 256, 256)</span>
+<span class="sd">    &gt;&gt;&gt; grid</span>
+<span class="sd">    (45, 32, 32)</span>
+<span class="sd">    &gt;&gt;&gt; tpb</span>
+<span class="sd">    (8, 8, 8)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">return</span> <span class="p">(</span>
         <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">n1</span> <span class="o">/</span> <span class="n">tpb</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>
@@ -1000,7 +1147,35 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Optimized: Compute parallel beam forward projection (Radon transform) with minimal CPU-GPU transfers.</span>
+<span class="sd">        Compute the 2D parallel beam forward projection (Radon transform) of an image using CUDA acceleration.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        image : torch.Tensor</span>
+<span class="sd">            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</span>
+<span class="sd">        angles : torch.Tensor</span>
+<span class="sd">            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `image`.</span>
+<span class="sd">        num_detectors : int</span>
+<span class="sd">            Number of detector elements in the sinogram (columns).</span>
+<span class="sd">        detector_spacing : float, optional</span>
+<span class="sd">            Physical spacing between detector elements (default: 1.0).</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        sinogram : torch.Tensor</span>
+<span class="sd">            2D tensor of shape (num_angles, num_detectors) containing the forward projection (sinogram) on the same device as `image`.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        - All input tensors must be on the same CUDA device.</span>
+<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+
+<span class="sd">        Example</span>
+<span class="sd">        -------</span>
+<span class="sd">        &gt;&gt;&gt; image = torch.randn(128, 128, device=&#39;cuda&#39;, requires_grad=True)</span>
+<span class="sd">        &gt;&gt;&gt; angles = torch.linspace(0, torch.pi, 180, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; sinogram = ParallelProjectorFunction.apply(image, angles, 128, 1.0)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
         <span class="n">image</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1137,7 +1312,37 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">H</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Optimized: Compute parallel beam backprojection (adjoint Radon transform) with minimal CPU-GPU transfers.</span>
+<span class="sd">        Compute the 2D parallel beam backprojection (adjoint Radon transform) of a sinogram using CUDA acceleration.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        sinogram : torch.Tensor</span>
+<span class="sd">            2D input sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.</span>
+<span class="sd">        angles : torch.Tensor</span>
+<span class="sd">            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `sinogram`.</span>
+<span class="sd">        detector_spacing : float, optional</span>
+<span class="sd">            Physical spacing between detector elements (default: 1.0).</span>
+<span class="sd">        H : int, optional</span>
+<span class="sd">            Height of the output reconstruction image (default: 128).</span>
+<span class="sd">        W : int, optional</span>
+<span class="sd">            Width of the output reconstruction image (default: 128).</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        reco : torch.Tensor</span>
+<span class="sd">            2D tensor of shape (H, W) containing the reconstructed image on the same device as `sinogram`.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        - All input tensors must be on the same CUDA device.</span>
+<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+
+<span class="sd">        Example</span>
+<span class="sd">        -------</span>
+<span class="sd">        &gt;&gt;&gt; sinogram = torch.randn(180, 128, device=&#39;cuda&#39;, requires_grad=True)</span>
+<span class="sd">        &gt;&gt;&gt; angles = torch.linspace(0, torch.pi, 180, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; reco = ParallelBackprojectorFunction.apply(sinogram, angles, 1.0, 128, 128)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
         <span class="n">sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1281,7 +1486,40 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Optimized: Compute fan beam forward projection with minimal CPU-GPU transfers.</span>
+<span class="sd">        Compute the 2D fan beam forward projection of an image using CUDA acceleration.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        image : torch.Tensor</span>
+<span class="sd">            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</span>
+<span class="sd">        angles : torch.Tensor</span>
+<span class="sd">            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `image`.</span>
+<span class="sd">        num_detectors : int</span>
+<span class="sd">            Number of detector elements in the sinogram (columns).</span>
+<span class="sd">        detector_spacing : float</span>
+<span class="sd">            Physical spacing between detector elements.</span>
+<span class="sd">        source_distance : float</span>
+<span class="sd">            Distance from the X-ray source to the isocenter (center of rotation).</span>
+<span class="sd">        isocenter_distance : float</span>
+<span class="sd">            Distance from the isocenter to the detector array.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        sinogram : torch.Tensor</span>
+<span class="sd">            2D tensor of shape (num_angles, num_detectors) containing the fan beam sinogram on the same device as `image`.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        - All input tensors must be on the same CUDA device.</span>
+<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Fan beam geometry uses divergent rays from a point source to the detector.</span>
+<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+
+<span class="sd">        Example</span>
+<span class="sd">        -------</span>
+<span class="sd">        &gt;&gt;&gt; image = torch.randn(256, 256, device=&#39;cuda&#39;, requires_grad=True)</span>
+<span class="sd">        &gt;&gt;&gt; angles = torch.linspace(0, 2*torch.pi, 360, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; sinogram = FanProjectorFunction.apply(image, angles, 512, 1.0, 1000.0, 1500.0)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
         <span class="n">image</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1416,7 +1654,42 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Optimized: Compute fan beam backprojection with minimal CPU-GPU transfers.</span>
+<span class="sd">        Compute the 2D fan beam backprojection of a sinogram using CUDA acceleration.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        sinogram : torch.Tensor</span>
+<span class="sd">            2D input fan beam sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.</span>
+<span class="sd">        angles : torch.Tensor</span>
+<span class="sd">            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `sinogram`.</span>
+<span class="sd">        detector_spacing : float</span>
+<span class="sd">            Physical spacing between detector elements.</span>
+<span class="sd">        H : int</span>
+<span class="sd">            Height of the output reconstruction image.</span>
+<span class="sd">        W : int</span>
+<span class="sd">            Width of the output reconstruction image.</span>
+<span class="sd">        source_distance : float</span>
+<span class="sd">            Distance from the X-ray source to the isocenter (center of rotation).</span>
+<span class="sd">        isocenter_distance : float</span>
+<span class="sd">            Distance from the isocenter to the detector array.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        reco : torch.Tensor</span>
+<span class="sd">            2D tensor of shape (H, W) containing the reconstructed image on the same device as `sinogram`.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        - All input tensors must be on the same CUDA device.</span>
+<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Fan beam geometry uses divergent rays from a point source to the detector.</span>
+<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+
+<span class="sd">        Example</span>
+<span class="sd">        -------</span>
+<span class="sd">        &gt;&gt;&gt; sinogram = torch.randn(360, 512, device=&#39;cuda&#39;, requires_grad=True)</span>
+<span class="sd">        &gt;&gt;&gt; angles = torch.linspace(0, 2*torch.pi, 360, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; reco = FanBackprojectorFunction.apply(sinogram, angles, 1.0, 256, 256, 1000.0, 500.0)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
         <span class="n">sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1553,7 +1826,44 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Optimized: Compute 3D cone beam forward projection with minimal CPU-GPU transfers.</span>
+<span class="sd">        Compute the 3D cone beam forward projection of a volume using CUDA acceleration.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        volume : torch.Tensor</span>
+<span class="sd">            3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.</span>
+<span class="sd">        angles : torch.Tensor</span>
+<span class="sd">            1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as `volume`.</span>
+<span class="sd">        det_u : int</span>
+<span class="sd">            Number of detector elements along the u-axis (width).</span>
+<span class="sd">        det_v : int</span>
+<span class="sd">            Number of detector elements along the v-axis (height).</span>
+<span class="sd">        du : float</span>
+<span class="sd">            Physical spacing between detector elements along the u-axis.</span>
+<span class="sd">        dv : float</span>
+<span class="sd">            Physical spacing between detector elements along the v-axis.</span>
+<span class="sd">        source_distance : float</span>
+<span class="sd">            Distance from the X-ray source to the isocenter (center of rotation).</span>
+<span class="sd">        isocenter_distance : float</span>
+<span class="sd">            Distance from the isocenter to the detector array.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        sino : torch.Tensor</span>
+<span class="sd">            3D tensor of shape (num_views, det_u, det_v) containing the cone beam projections on the same device as `volume`.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        - All input tensors must be on the same CUDA device.</span>
+<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Cone beam geometry uses a point source and a 2D detector array.</span>
+<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</span>
+
+<span class="sd">        Example</span>
+<span class="sd">        -------</span>
+<span class="sd">        &gt;&gt;&gt; volume = torch.randn(128, 128, 128, device=&#39;cuda&#39;, requires_grad=True)</span>
+<span class="sd">        &gt;&gt;&gt; angles = torch.linspace(0, 2*torch.pi, 360, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; sino = ConeProjectorFunction.apply(volume, angles, 256, 256, 1.0, 1.0, 1000.0, 500.0)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span>
         <span class="n">volume</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1693,7 +2003,46 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Optimized: Compute 3D cone beam backprojection with minimal CPU-GPU transfers.</span>
+<span class="sd">        Compute the 3D cone beam backprojection of a projection sinogram using CUDA acceleration.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        sinogram : torch.Tensor</span>
+<span class="sd">            3D input cone beam projection tensor of shape (num_views, det_u, det_v), must be on a CUDA device and of type float32.</span>
+<span class="sd">        angles : torch.Tensor</span>
+<span class="sd">            1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as `sinogram`.</span>
+<span class="sd">        D : int</span>
+<span class="sd">            Depth (z-dimension) of the output reconstruction volume.</span>
+<span class="sd">        H : int</span>
+<span class="sd">            Height (y-dimension) of the output reconstruction volume.</span>
+<span class="sd">        W : int</span>
+<span class="sd">            Width (x-dimension) of the output reconstruction volume.</span>
+<span class="sd">        du : float</span>
+<span class="sd">            Physical spacing between detector elements along the u-axis.</span>
+<span class="sd">        dv : float</span>
+<span class="sd">            Physical spacing between detector elements along the v-axis.</span>
+<span class="sd">        source_distance : float</span>
+<span class="sd">            Distance from the X-ray source to the isocenter (center of rotation).</span>
+<span class="sd">        isocenter_distance : float</span>
+<span class="sd">            Distance from the isocenter to the detector array.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        vol : torch.Tensor</span>
+<span class="sd">            3D tensor of shape (D, H, W) containing the reconstructed volume on the same device as `sinogram`.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        - All input tensors must be on the same CUDA device.</span>
+<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Cone beam geometry uses a point source and a 2D detector array.</span>
+<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</span>
+
+<span class="sd">        Example</span>
+<span class="sd">        -------</span>
+<span class="sd">        &gt;&gt;&gt; projections = torch.randn(360, 256, 256, device=&#39;cuda&#39;, requires_grad=True)</span>
+<span class="sd">        &gt;&gt;&gt; angles = torch.linspace(0, 2*torch.pi, 360, device=&#39;cuda&#39;)</span>
+<span class="sd">        &gt;&gt;&gt; vol = ConeBackprojectorFunction.apply(projections, angles, 128, 128, 128, 1.0, 1.0, 1000.0, 500.0)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
         <span class="n">sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
