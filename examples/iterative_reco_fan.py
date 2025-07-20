@@ -47,11 +47,14 @@ class IterativeRecoModel(nn.Module):
         self.detector_spacing = detector_spacing
         self.source_distance = source_distance
         self.isocenter_distance = isocenter_distance
+        self.relu = nn.ReLU() # non negative constraint
 
     def forward(self, x):
         updated_reco = x + self.reco
-        current_sino = FanProjectorFunction.apply(updated_reco, self.angles, self.num_detectors, self.detector_spacing, self.source_distance, self.isocenter_distance)
-        return current_sino, updated_reco
+        current_sino = FanProjectorFunction.apply(updated_reco, self.angles, 
+                                                  self.num_detectors, self.detector_spacing, 
+                                                  self.source_distance, self.isocenter_distance)
+        return current_sino, self.relu(updated_reco)
 
 class Pipeline:
     def __init__(self, lr, volume_shape, angles, 

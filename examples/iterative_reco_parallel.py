@@ -42,12 +42,13 @@ class IterativeRecoModel(nn.Module):
         self.angles = angles
         self.num_detectors = num_detectors
         self.detector_spacing = detector_spacing
+        self.relu = nn.ReLU() # non negative constraint
 
     def forward(self, x):
         updated_reco = x + self.reco
         current_sino = ParallelProjectorFunction.apply(updated_reco, self.angles, 
                                                        self.num_detectors, self.detector_spacing)
-        return current_sino, updated_reco
+        return current_sino, self.relu(updated_reco)
 
 class Pipeline:
     def __init__(self, lr, volume_shape, angles, num_detectors, detector_spacing, 

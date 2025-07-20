@@ -70,6 +70,7 @@ class IterativeRecoModel(nn.Module):
         self.dv = dv
         self.source_distance = source_distance
         self.isocenter_distance = isocenter_distance
+        self.relu = nn.ReLU() # non negative constraint
 
     def forward(self, x):
         updated_reco = x + self.reco
@@ -78,7 +79,7 @@ class IterativeRecoModel(nn.Module):
                                                    self.det_u, self.det_v, 
                                                    self.du, self.dv, 
                                                    self.source_distance, self.isocenter_distance)
-        return current_sino, updated_reco
+        return current_sino, self.relu(updated_reco)
 
 class Pipeline:
     def __init__(self, lr, volume_shape, angles, 
@@ -123,16 +124,15 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device)
-    angles_torch = torch.tensor(angles_np, device=device)
 
     # Generate the "real" sinogram
-    real_sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
+    real_sinogram = ConeProjectorFunction.apply(phantom_torch, angles_np,
                                                det_u, det_v, du, dv,
                                                source_distance, isocenter_distance)
 
     pipeline_instance = Pipeline(lr=1e-1, 
                                  volume_shape=(Nz,Ny,Nx), 
-                                 angles=angles_torch, 
+                                 angles=angles_np, 
                                  det_u=det_u, det_v=det_v, 
                                  du=du, dv=dv, 
                                  source_distance=source_distance, 
