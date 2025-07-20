@@ -84,8 +84,8 @@ def main():
     isocenter_distance = 600.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    phantom_torch = torch.tensor(phantom_cpu, device=device, requires_grad=True)
-    angles_torch = torch.tensor(angles_np, device=device)
+    phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32, requires_grad=True)
+    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
                                            det_u, det_v, du, dv,
@@ -106,7 +106,7 @@ def main():
     
     # Apply weights and then filter
     sino_weighted = sinogram * weights
-    sinogram_filt = ramp_filter_3d(sino_weighted).detach().requires_grad_(True).contiguous()
+    sinogram_filt = ramp_filter_3d(sino_weighted)
 
     reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nx, Ny, Nz,
                                                     du, dv, source_distance, isocenter_distance)

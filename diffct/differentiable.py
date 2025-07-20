@@ -21,37 +21,54 @@ _TPB_3D             = (8,  8,  8)
 _FASTMATH_DECORATOR = cuda.jit(fastmath=True)
 _INF                = _DTYPE(np.inf)
 _EPSILON            = _DTYPE(1e-6)
+# === Device Management Utilities ===
+class DeviceManager:
+    @staticmethod
+    def get_device(tensor):
+        """Return the device of a PyTorch tensor."""
+        return tensor.device if hasattr(tensor, "device") else torch.device("cpu")
 
+    @staticmethod
+    def ensure_device(tensor, device):
+        """Move tensor to the specified device if not already there."""
+        if hasattr(tensor, "to"):
+            return tensor if tensor.device == device else tensor.to(device)
+        return tensor
 
-def _trig_tables(angles: np.ndarray, dtype=_DTYPE):
+# === PyTorch-CUDA Bridge ===
+class TorchCUDABridge:
+    @staticmethod
+    def tensor_to_cuda_array(tensor):
+        """Convert PyTorch CUDA tensor to Numba CUDA array without CPU transfer.
+        Always detaches the tensor to avoid autograd Variable issues."""
+        if not tensor.is_cuda:
+            raise ValueError("Tensor must be on CUDA device")
+        return cuda.as_cuda_array(tensor.detach())
+
+    @staticmethod
+    def cuda_array_to_tensor(cuda_array, tensor_template):
+        """Convert CUDA array to PyTorch tensor on the same device as tensor_template."""
+        return torch.as_tensor(cuda_array, device=tensor_template.device, dtype=tensor_template.dtype)
+
+# === GPU-aware Trigonometric Table Generation ===
+def _trig_tables(angles, dtype=_DTYPE):
     """
     Precompute trigonometric lookup tables for projection angles and transfer to GPU memory.
-    
-    This helper function optimizes ray geometry calculations by precomputing cosine and sine
-    values for all projection angles, avoiding repeated trigonometric calculations in CUDA kernels.
-    The precomputed values are transferred to GPU device memory for efficient access during
-    ray-tracing operations.
-    
-    Coordinate system context:
-    - Angles define the rotation of the X-ray source/detector system around the reconstruction volume
-    - For parallel beam: angles determine ray direction vectors (cos_a, sin_a)
-    - For fan/cone beam: angles determine source position relative to isocenter
-    
-    Performance optimization:
-    - Eliminates expensive trigonometric function calls in GPU kernels
-    - Enables coalesced memory access to angle-dependent geometry parameters
-    - Reduces register pressure in ray-tracing kernels by using precomputed values
-    
-    Args:
-        angles: Array of projection angles in radians
-        dtype: Data type for GPU arrays (typically float32 for performance)
-        
-    Returns:
-        Tuple of (d_cos, d_sin): GPU device arrays containing precomputed trigonometric values
+    Accepts either numpy arrays or torch tensors (on CPU or CUDA).
+    Returns (cos, sin) as torch tensors on the same device as input.
     """
-    cos_host = np.cos(angles).astype(dtype)
-    sin_host = np.sin(angles).astype(dtype)
-    return cuda.to_device(cos_host), cuda.to_device(sin_host)
+    if isinstance(angles, torch.Tensor):
+        device = angles.device
+        cos = torch.cos(angles).to(dtype=dtype)
+        sin = torch.sin(angles).to(dtype=dtype)
+        return cos.to(device), sin.to(device)
+    else:
+        # fallback for numpy arrays
+        cos_host = np.cos(angles).astype(dtype)
+        sin_host = np.sin(angles).astype(dtype)
+        return torch.from_numpy(cos_host), torch.from_numpy(sin_host)
+
+
 
 
 def _grid_2d(n1, n2, tpb=_TPB_2D):
@@ -903,76 +920,63 @@ class ParallelProjectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, angles, num_detectors, detector_spacing=1.0):
         """
-        Compute parallel beam forward projection (Radon transform).
-        
-        Args:
-            ctx: PyTorch autograd context for saving information for backward pass
-            image (torch.Tensor): Input 2D image tensor of shape (H, W). Must be on CUDA device
-                and have dtype float32 or float64. Represents the object to be projected.
-            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on
-                same CUDA device as image. Typically torch.linspace(0, π, n_angles) for
-                parallel beam geometry.
-            num_detectors (int): Number of detector elements in the linear detector array.
-                Should be >= image diagonal for complete coverage. Typical values: 128-2048.
-            detector_spacing (float, optional): Physical spacing between detector elements
-                in mm or other length units. Determines the field of view and spatial
-                resolution. Default: 1.0.
-        
-        Returns:
-            torch.Tensor: Sinogram tensor of shape (n_angles, num_detectors) containing
-                the projection data. Each row corresponds to one projection angle, each
-                column to one detector element. Values represent line integrals through
-                the input image.
-        
-        Raises:
-            RuntimeError: If CUDA is not available or tensors are not on CUDA device
-            ValueError: If input dimensions are incompatible or parameters are invalid
-        
-        Note:
-            This method is typically not called directly. Use ParallelProjectorFunction.apply()
-            instead for proper autograd integration.
+        Optimized: Compute parallel beam forward projection (Radon transform) with minimal CPU-GPU transfers.
         """
-        device = image.device
-        image_np = image.detach().cpu().numpy().astype(_DTYPE, copy=False).T
-        angles_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
+        device = DeviceManager.get_device(image)
+        image = DeviceManager.ensure_device(image, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        Nx, Ny = image_np.shape
-        n_angles = angles_np.shape[0]
+        # Ensure input is float32 for kernel compatibility
+        image = image.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
 
-        d_image = cuda.to_device(image_np)
-        d_cos, d_sin = _trig_tables(angles_np, _DTYPE)
-        d_sino = cuda.device_array((n_angles, num_detectors), dtype=_DTYPE)
+        Nx, Ny = image.shape
+        n_angles = angles.shape[0]
+
+        # Allocate output tensor on the same device
+        sinogram = torch.zeros((n_angles, num_detectors), dtype=image.dtype, device=device)
+
+        # Prepare trigonometric tables on the correct device
+        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype)
+
+        # Get Numba CUDA array views for kernel
+        d_image = TorchCUDABridge.tensor_to_cuda_array(image)
+        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_angles, num_detectors)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
         _parallel_2d_forward_kernel[grid, tpb](
             d_image, Nx, Ny, d_sino, n_angles, num_detectors,
-            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy
         )
 
-        sino_np = d_sino.copy_to_host()
-        sinogram = torch.as_tensor(sino_np, device=device)
-        
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, image.shape[0], image.shape[1])
         return sinogram
 
-    @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
         num_detectors, detector_spacing, H, W = ctx.intermediate
-        device = grad_sinogram.device
+        device = DeviceManager.get_device(grad_sinogram)
+        grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        grad_np = grad_sinogram.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        n_angles = ang_np.shape[0]
-        
+        grad_sinogram = grad_sinogram.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
+
+        n_angles = angles.shape[0]
         Nx, Ny = W, H
 
-        d_grad_sino = cuda.to_device(grad_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_img_grad = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
+        grad_image = torch.zeros((Nx, Ny), dtype=grad_sinogram.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype)
+
+        d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
+        d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_image)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_angles, num_detectors)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
@@ -980,11 +984,9 @@ class ParallelProjectorFunction(torch.autograd.Function):
         _parallel_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_angles, num_detectors,
             d_img_grad, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy
         )
 
-        grad_image_np = d_img_grad.copy_to_host()
-        grad_image = torch.as_tensor(grad_image_np.T, device=device)
         return grad_image, None, None, None
 
 
@@ -1046,56 +1048,39 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128):
         """
-        Compute parallel beam backprojection (adjoint Radon transform).
-        
-        Args:
-            ctx: PyTorch autograd context for saving information for backward pass
-            sinogram (torch.Tensor): Input sinogram tensor of shape (n_angles, num_detectors).
-                Must be on CUDA device. Contains projection data where each row corresponds
-                to one projection angle and each column to one detector element.
-            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on
-                same CUDA device as sinogram. Should match the angles used for forward projection.
-            detector_spacing (float, optional): Physical spacing between detector elements
-                in mm or other length units. Must match the spacing used in forward projection.
-                Default: 1.0.
-            H (int, optional): Height of the reconstruction volume in pixels. Default: 128.
-            W (int, optional): Width of the reconstruction volume in pixels. Default: 128.
-        
-        Returns:
-            torch.Tensor: Reconstructed 2D image tensor of shape (H, W). Values represent
-                the backprojected reconstruction, which is the adjoint operation of forward
-                projection. For filtered backprojection, additional filtering is required.
-        
-        Raises:
-            RuntimeError: If CUDA is not available or tensors are not on CUDA device
-            ValueError: If input dimensions are incompatible or parameters are invalid
-        
-        Note:
-            This method is typically not called directly. Use ParallelBackprojectorFunction.apply()
-            instead for proper autograd integration.
+        Optimized: Compute parallel beam backprojection (adjoint Radon transform) with minimal CPU-GPU transfers.
         """
-        device = sinogram.device
-        sino_np = sinogram.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        angles_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
+        device = DeviceManager.get_device(sinogram)
+        sinogram = DeviceManager.ensure_device(sinogram, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        n_ang, n_det = sino_np.shape
+        # Ensure input is float32 for kernel compatibility
+        sinogram = sinogram.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
+
+        n_ang, n_det = sinogram.shape
         Nx, Ny = W, H
 
-        d_sino = cuda.to_device(sino_np)
-        d_cos, d_sin = _trig_tables(angles_np, _DTYPE)
-        d_reco = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
+        # Allocate output tensor on the same device
+        reco = torch.zeros((Nx, Ny), dtype=sinogram.dtype, device=device)
+
+        # Prepare trigonometric tables on the correct device
+        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)
+
+        # Get Numba CUDA array views for kernel
+        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+        d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
         _parallel_2d_backward_kernel[grid, tpb](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy
         )
 
-        reco_np = d_reco.copy_to_host()
-        reco = torch.as_tensor(reco_np.T, device=device)
-        
         ctx.save_for_backward(angles)
         ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1])
         return reco
@@ -1104,15 +1089,26 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
         H, W, detector_spacing, n_ang, n_det = ctx.intermediate
-        device = grad_output.device
+        device = DeviceManager.get_device(grad_output)
+        grad_output = DeviceManager.ensure_device(grad_output, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        grad_np = grad_output.detach().cpu().numpy().astype(_DTYPE, copy=False).T
-        angles_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        Nx, Ny = grad_np.shape
+        grad_output = grad_output.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
 
-        d_grad_out = cuda.to_device(grad_np)
-        d_cos, d_sin = _trig_tables(angles_np, _DTYPE)
-        d_sino_grad = cuda.device_array((n_ang, n_det), dtype=_DTYPE)
+        Nx, Ny = grad_output.shape
+
+        # Allocate output tensor on the same device
+        grad_sino = torch.zeros((n_ang, n_det), dtype=grad_output.dtype, device=device)
+
+        # Prepare trigonometric tables on the correct device
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype)
+
+        # Get Numba CUDA array views for kernel
+        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
+        d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
+        d_cos = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
@@ -1122,8 +1118,6 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
             _DTYPE(detector_spacing), d_cos, d_sin, cx, cy
         )
 
-        grad_sino_np = d_sino_grad.copy_to_host()
-        grad_sino = torch.as_tensor(grad_sino_np, device=device)
         return grad_sino, None, None, None, None
 
 
@@ -1189,93 +1183,71 @@ class FanProjectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, angles, num_detectors, detector_spacing, source_distance, isocenter_distance):
         """
-        Compute fan beam forward projection with divergent ray geometry.
-        
-        Args:
-            ctx: PyTorch autograd context for saving information for backward pass
-            image (torch.Tensor): Input 2D image tensor of shape (H, W). Must be on CUDA device
-                and represent the object to be projected using fan beam geometry.
-            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on
-                same CUDA device as image. Typically torch.linspace(0, 2π, n_angles) for
-                complete fan beam sampling.
-            num_detectors (int): Number of detector elements in the linear detector array.
-                Should provide adequate coverage of the magnified object. Typical values: 256-1024.
-            detector_spacing (float): Physical spacing between detector elements in mm or other
-                length units. Determines the detector field of view and spatial resolution.
-            source_distance (float): Distance from X-ray source to isocenter (rotation center)
-                in mm or other length units. Should be >> object size for good approximation.
-            isocenter_distance (float): Distance from isocenter to detector array in mm or other
-                length units. Total source-to-detector distance = source_distance + isocenter_distance.
-        
-        Returns:
-            torch.Tensor: Sinogram tensor of shape (n_angles, num_detectors) containing
-                the fan beam projection data. Each row corresponds to one projection angle,
-                each column to one detector element. Values represent line integrals along
-                divergent ray paths.
-        
-        Raises:
-            RuntimeError: If CUDA is not available or tensors are not on CUDA device
-            ValueError: If geometry parameters are invalid (e.g., negative distances)
-        
-        Note:
-            The magnification factor M = (source_distance + isocenter_distance) / source_distance
-            determines the geometric scaling. Larger source distances reduce magnification and
-            geometric distortions but may require larger detector arrays for coverage.
+        Optimized: Compute fan beam forward projection with minimal CPU-GPU transfers.
         """
-        device = image.device
-        img_np = image.detach().cpu().numpy().astype(_DTYPE, copy=False).T
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
+        device = DeviceManager.get_device(image)
+        image = DeviceManager.ensure_device(image, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        Nx, Ny = img_np.shape
-        n_ang = ang_np.shape[0]
+        image = image.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
 
-        d_image = cuda.to_device(img_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_sino = cuda.device_array((n_ang, num_detectors), dtype=_DTYPE)
+        Nx, Ny = image.shape
+        n_ang = angles.shape[0]
+
+        sinogram = torch.zeros((n_ang, num_detectors), dtype=image.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype)
+
+        d_image = TorchCUDABridge.tensor_to_cuda_array(image)
+        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, num_detectors)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
         _fan_2d_forward_kernel[grid, tpb](
             d_image, Nx, Ny, d_sino, n_ang, num_detectors,
-            _DTYPE(detector_spacing), d_cos, d_sin,
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(source_distance), _DTYPE(isocenter_distance), cx, cy
         )
 
-        sino_np = d_sino.copy_to_host()
-        sino = torch.as_tensor(sino_np, device=device)
-        
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, image.shape[0], image.shape[1],
                             source_distance, isocenter_distance)
-        return sino
+        return sinogram
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
         (n_det, det_spacing, H, W, src_dist, iso_dist) = ctx.intermediate
-        device = grad_sinogram.device
+        device = DeviceManager.get_device(grad_sinogram)
+        grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        grad_np = grad_sinogram.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        n_ang = ang_np.shape[0]
+        grad_sinogram = grad_sinogram.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
+
+        n_ang = angles.shape[0]
         Nx, Ny = W, H
 
-        d_grad_sino = cuda.to_device(grad_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_img_grad = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
+        grad_img = torch.zeros((Nx, Ny), dtype=grad_sinogram.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype)
+
+        d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
+        d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_img)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
         _fan_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
-            _DTYPE(det_spacing), d_cos, d_sin,
+            _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy
         )
-        
-        grad_img_np = d_img_grad.copy_to_host()
-        grad_img = torch.as_tensor(grad_img_np.T, device=device)
+
         return grad_img, None, None, None, None, None
 
 
@@ -1337,90 +1309,69 @@ class FanBackprojectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sinogram, angles, detector_spacing, H, W, source_distance, isocenter_distance):
         """
-        Compute fan beam backprojection with divergent ray geometry.
-        
-        Args:
-            ctx: PyTorch autograd context for saving information for backward pass
-            sinogram (torch.Tensor): Input sinogram tensor of shape (n_angles, num_detectors).
-                Must be on CUDA device. Contains fan beam projection data where each row
-                corresponds to one projection angle and each column to one detector element.
-            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on
-                same CUDA device as sinogram. Should match angles used in forward projection.
-            detector_spacing (float): Physical spacing between detector elements in mm or other
-                length units. Must match the spacing used in forward projection.
-            H (int): Height of the reconstruction volume in pixels.
-            W (int): Width of the reconstruction volume in pixels.
-            source_distance (float): Distance from X-ray source to isocenter in mm or other
-                length units. Must match the value used in forward projection.
-            isocenter_distance (float): Distance from isocenter to detector array in mm or other
-                length units. Must match the value used in forward projection.
-        
-        Returns:
-            torch.Tensor: Reconstructed 2D image tensor of shape (H, W). Values represent
-                the fan beam backprojected reconstruction with geometric magnification effects.
-                For filtered backprojection, additional ramp filtering is required.
-        
-        Raises:
-            RuntimeError: If CUDA is not available or tensors are not on CUDA device
-            ValueError: If geometry parameters are invalid or inconsistent with sinogram shape
-        
-        Note:
-            The reconstruction will have geometric magnification determined by the ratio
-            (source_distance + isocenter_distance) / source_distance. Ensure geometry
-            parameters are consistent with the forward projection for accurate reconstruction.
+        Optimized: Compute fan beam backprojection with minimal CPU-GPU transfers.
         """
-        device = sinogram.device
-        sino_np = sinogram.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        
-        n_ang, n_det = sino_np.shape
+        device = DeviceManager.get_device(sinogram)
+        sinogram = DeviceManager.ensure_device(sinogram, device)
+        angles = DeviceManager.ensure_device(angles, device)
+
+        sinogram = sinogram.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
+
+        n_ang, n_det = sinogram.shape
         Nx, Ny = W, H
 
-        d_sino = cuda.to_device(sino_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_reco = cuda.to_device(np.zeros((Nx, Ny), dtype=_DTYPE))
+        reco = torch.zeros((Nx, Ny), dtype=sinogram.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)
+
+        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+        d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
         _fan_2d_backward_kernel[grid, tpb](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos, d_sin,
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(source_distance), _DTYPE(isocenter_distance), cx, cy
         )
 
-        reco_np = d_reco.copy_to_host()
-        image = torch.as_tensor(reco_np.T, device=device)
-        
         ctx.save_for_backward(angles)
         ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, source_distance, isocenter_distance)
-        return image
+        return reco
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
         (H, W, det_spacing, n_ang, n_det, src_dist, iso_dist) = ctx.intermediate
-        device = grad_output.device
+        device = DeviceManager.get_device(grad_output)
+        grad_output = DeviceManager.ensure_device(grad_output, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        grad_np = grad_output.detach().cpu().numpy().astype(_DTYPE, copy=False).T
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        Nx, Ny = grad_np.shape
+        grad_output = grad_output.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
 
-        d_grad_out = cuda.to_device(grad_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_sino_grad = cuda.device_array((n_ang, n_det), dtype=_DTYPE)
+        Nx, Ny = grad_output.shape
+
+        grad_sino = torch.zeros((n_ang, n_det), dtype=grad_output.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype)
+
+        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
+        d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
 
         _fan_2d_forward_kernel[grid, tpb](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
-            _DTYPE(det_spacing), d_cos, d_sin,
+            _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy
         )
-        
-        grad_sino_np = d_sino_grad.copy_to_host()
-        grad_sino = torch.as_tensor(grad_sino_np, device=device)
+
         return grad_sino, None, None, None, None, None, None
 
 
@@ -1486,99 +1437,72 @@ class ConeProjectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, volume, angles, det_u, det_v, du, dv, source_distance, isocenter_distance):
         """
-        Compute 3D cone beam forward projection.
-        
-        Args:
-            ctx: PyTorch autograd context for saving information for backward pass
-            volume (torch.Tensor): Input 3D volume tensor of shape (D, H, W). Must be on CUDA
-                device and represent the 3D object to be projected using cone beam geometry.
-            angles (torch.Tensor): Projection angles in radians, shape (n_views,). Must be on
-                same CUDA device as volume. Typically torch.linspace(0, 2π, n_views) for
-                complete cone beam sampling.
-            det_u (int): Number of detector pixels in u-direction (horizontal). Determines
-                the horizontal field of view. Typical values: 256-2048.
-            det_v (int): Number of detector pixels in v-direction (vertical). Determines
-                the vertical field of view and axial coverage. Typical values: 256-2048.
-            du (float): Physical spacing between detector pixels in u-direction in mm or other
-                length units. Determines horizontal spatial resolution.
-            dv (float): Physical spacing between detector pixels in v-direction in mm or other
-                length units. Determines vertical spatial resolution.
-            source_distance (float): Distance from X-ray source to isocenter in mm or other
-                length units. Should be >> volume size for good approximation.
-            isocenter_distance (float): Distance from isocenter to detector array in mm or other
-                length units. Total source-to-detector distance = source_distance + isocenter_distance.
-        
-        Returns:
-            torch.Tensor: 3D projection tensor of shape (n_views, det_u, det_v) containing
-                the cone beam projection data. Each 2D slice corresponds to one projection
-                view, with (u,v) coordinates representing the 2D detector array. Values
-                represent line integrals along 3D ray paths.
-        
-        Raises:
-            RuntimeError: If CUDA is not available or tensors are not on CUDA device
-            ValueError: If geometry parameters are invalid or detector size is incompatible
-            MemoryError: If volume or detector array is too large for available GPU memory
-        
-        Note:
-            The cone angle is determined by the detector size and source distance:
-            cone_angle ≈ 2 * arctan(max(det_u*du, det_v*dv) / (2*source_distance)).
-            Keep cone angle < 30° to minimize reconstruction artifacts.
+        Optimized: Compute 3D cone beam forward projection with minimal CPU-GPU transfers.
         """
-        device = volume.device
-        vol_np = volume.detach().cpu().numpy().astype(_DTYPE, copy=False).transpose((2, 1, 0))
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
+        device = DeviceManager.get_device(volume)
+        volume = DeviceManager.ensure_device(volume, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        Nx, Ny, Nz = vol_np.shape
-        n_views = ang_np.shape[0]
+        volume = volume.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
 
-        d_vol = cuda.to_device(vol_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_sino = cuda.device_array((n_views, det_u, det_v), dtype=_DTYPE)
+        D, H, W = volume.shape
+        n_views = angles.shape[0]
+
+        sino = torch.zeros((n_views, det_u, det_v), dtype=volume.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=volume.dtype)
+
+        d_vol = TorchCUDABridge.tensor_to_cuda_array(volume)
+        d_sino = TorchCUDABridge.tensor_to_cuda_array(sino)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
-        cx, cy, cz = _DTYPE((Nx-1)*0.5), _DTYPE((Ny-1)*0.5), _DTYPE((Nz-1)*0.5)
+        cx, cy, cz = _DTYPE((D-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((W-1)*0.5)
 
         _cone_3d_forward_kernel[grid, tpb](
-            d_vol, Nx, Ny, Nz, d_sino, n_views, det_u, det_v,
-            _DTYPE(du), _DTYPE(dv), d_cos, d_sin,
+            d_vol, D, H, W, d_sino, n_views, det_u, det_v,
+            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(source_distance), _DTYPE(isocenter_distance),
             cx, cy, cz
         )
 
-        sino_np = d_sino.copy_to_host()
-        sino = torch.as_tensor(sino_np, device=device)
-        
         ctx.save_for_backward(angles)
-        ctx.intermediate = (Nx, Ny, Nz, det_u, det_v, du, dv,
+        ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
                             source_distance, isocenter_distance)
         return sino
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        (Nx, Ny, Nz, det_u, det_v, du, dv,
+        (D, H, W, det_u, det_v, du, dv,
          src_dist, iso_dist) = ctx.intermediate
-        device = grad_sinogram.device
+        device = DeviceManager.get_device(grad_sinogram)
+        grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        grad_np = grad_sinogram.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        n_views = ang_np.shape[0]
+        grad_sinogram = grad_sinogram.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
 
-        d_grad_sino = cuda.to_device(grad_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_vol_grad = cuda.to_device(np.zeros((Nx, Ny, Nz), dtype=_DTYPE))
+        n_views = angles.shape[0]
+
+        grad_vol = torch.zeros((D, H, W), dtype=grad_sinogram.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype)
+
+        d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
+        d_vol_grad = TorchCUDABridge.tensor_to_cuda_array(grad_vol)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
-        cx, cy, cz = _DTYPE((Nx-1)*0.5), _DTYPE((Ny-1)*0.5), _DTYPE((Nz-1)*0.5)
+        cx, cy, cz = _DTYPE((D-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((W-1)*0.5)
 
         _cone_3d_backward_kernel[grid, tpb](
-            d_grad_sino, n_views, det_u, det_v, d_vol_grad, Nx, Ny, Nz,
-            _DTYPE(du), _DTYPE(dv), d_cos, d_sin,
+            d_grad_sino, n_views, det_u, det_v, d_vol_grad, D, H, W,
+            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy, cz
         )
 
-        grad_vol_np = d_vol_grad.copy_to_host()
-        grad_vol = torch.as_tensor(grad_vol_np.transpose((2, 1, 0)), device=device)
         return grad_vol, None, None, None, None, None, None, None
 
 
@@ -1644,66 +1568,34 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sinogram, angles, D, H, W, du, dv, source_distance, isocenter_distance):
         """
-        Compute 3D cone beam backprojection.
-        
-        Args:
-            ctx: PyTorch autograd context for saving information for backward pass
-            sinogram (torch.Tensor): Input 3D projection tensor of shape (n_views, det_u, det_v).
-                Must be on CUDA device. Contains cone beam projection data where each 2D slice
-                corresponds to one projection view with (u,v) detector coordinates.
-            angles (torch.Tensor): Projection angles in radians, shape (n_views,). Must be on
-                same CUDA device as sinogram. Should match angles used in forward projection.
-            D (int): Depth of the 3D reconstruction volume in pixels (z-direction).
-            H (int): Height of the 3D reconstruction volume in pixels (y-direction).
-            W (int): Width of the 3D reconstruction volume in pixels (x-direction).
-            du (float): Physical spacing between detector pixels in u-direction in mm or other
-                length units. Must match the spacing used in forward projection.
-            dv (float): Physical spacing between detector pixels in v-direction in mm or other
-                length units. Must match the spacing used in forward projection.
-            source_distance (float): Distance from X-ray source to isocenter in mm or other
-                length units. Must match the value used in forward projection.
-            isocenter_distance (float): Distance from isocenter to detector array in mm or other
-                length units. Must match the value used in forward projection.
-        
-        Returns:
-            torch.Tensor: Reconstructed 3D volume tensor of shape (D, H, W). Values represent
-                the cone beam backprojected reconstruction with 3D geometric effects. For
-                filtered backprojection, additional 3D filtering may be required.
-        
-        Raises:
-            RuntimeError: If CUDA is not available or tensors are not on CUDA device
-            ValueError: If geometry parameters are invalid or inconsistent with projection shape
-            MemoryError: If reconstruction volume is too large for available GPU memory
-        
-        Note:
-            3D cone beam backprojection requires significant GPU memory proportional to
-            D×H×W×sizeof(float). Monitor GPU memory usage and consider using smaller volumes
-            or gradient checkpointing for large reconstructions. Ensure geometry parameters
-            are consistent with forward projection for accurate reconstruction.
+        Optimized: Compute 3D cone beam backprojection with minimal CPU-GPU transfers.
         """
-        device = sinogram.device
-        sino_np = sinogram.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        
-        n_views, n_u, n_v = sino_np.shape
-        Nx, Ny, Nz = W, H, D
+        device = DeviceManager.get_device(sinogram)
+        sinogram = DeviceManager.ensure_device(sinogram, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        d_sino = cuda.to_device(sino_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_reco = cuda.to_device(np.zeros((Nx, Ny, Nz), dtype=_DTYPE))
+        sinogram = sinogram.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
+
+        n_views, n_u, n_v = sinogram.shape
+
+        vol = torch.zeros((D, H, W), dtype=sinogram.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)
+
+        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+        d_reco = TorchCUDABridge.tensor_to_cuda_array(vol)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
-        cx, cy, cz = _DTYPE((Nx-1)*0.5), _DTYPE((Ny-1)*0.5), _DTYPE((Nz-1)*0.5)
+        cx, cy, cz = _DTYPE((D-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((W-1)*0.5)
 
         _cone_3d_backward_kernel[grid, tpb](
-            d_sino, n_views, n_u, n_v, d_reco, Nx, Ny, Nz,
-            _DTYPE(du), _DTYPE(dv), d_cos, d_sin,
+            d_sino, n_views, n_u, n_v, d_reco, D, H, W,
+            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(source_distance), _DTYPE(isocenter_distance), cx, cy, cz
         )
 
-        vol_np = d_reco.copy_to_host()
-        vol = torch.as_tensor(vol_np.transpose((2, 1, 0)), device=device)
-        
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
                             source_distance, isocenter_distance)
@@ -1714,26 +1606,30 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         angles, = ctx.saved_tensors
         (D, H, W, n_u, n_v, du, dv,
          src_dist, iso_dist) = ctx.intermediate
-        device = grad_output.device
+        device = DeviceManager.get_device(grad_output)
+        grad_output = DeviceManager.ensure_device(grad_output, device)
+        angles = DeviceManager.ensure_device(angles, device)
 
-        grad_np = grad_output.detach().cpu().numpy().astype(_DTYPE, copy=False).transpose((2, 1, 0))
-        ang_np = angles.detach().cpu().numpy().astype(_DTYPE, copy=False)
-        n_views = ang_np.shape[0]
-        Nx, Ny, Nz = grad_np.shape
+        grad_output = grad_output.to(dtype=torch.float32)
+        angles = angles.to(dtype=torch.float32)
 
-        d_grad_out = cuda.to_device(grad_np)
-        d_cos, d_sin = _trig_tables(ang_np, _DTYPE)
-        d_sino_grad = cuda.device_array((n_views, n_u, n_v), dtype=_DTYPE)
+        n_views = angles.shape[0]
+
+        grad_sino = torch.zeros((n_views, n_u, n_v), dtype=grad_output.dtype, device=device)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype)
+
+        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
+        d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
+        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
-        cx, cy, cz = _DTYPE((Nx-1)*0.5), _DTYPE((Ny-1)*0.5), _DTYPE((Nz-1)*0.5)
+        cx, cy, cz = _DTYPE((D-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((W-1)*0.5)
 
         _cone_3d_forward_kernel[grid, tpb](
-            d_grad_out, Nx, Ny, Nz, d_sino_grad, n_views, n_u, n_v,
-            _DTYPE(du), _DTYPE(dv), d_cos, d_sin,
+            d_grad_out, D, H, W, d_sino_grad, n_views, n_u, n_v,
+            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy, cz
         )
-        
-        grad_sino_np = d_sino_grad.copy_to_host()
-        grad_sino = torch.as_tensor(grad_sino_np, device=device)
+
         return grad_sino, None, None, None, None, None, None, None, None

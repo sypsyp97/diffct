@@ -55,13 +55,13 @@ def main():
     detector_spacing = 1.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    image_torch = torch.tensor(phantom, device=device, requires_grad=True)
-    angles_torch = torch.tensor(angles_np, device=device, requires_grad=False)
+    image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
+    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = ParallelProjectorFunction.apply(image_torch, angles_torch,
                                                num_detectors, detector_spacing)
     
-    sinogram_filt = ramp_filter(sinogram).detach().requires_grad_(True).contiguous() 
+    sinogram_filt = ramp_filter(sinogram)
 
     reconstruction = ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                          detector_spacing, Nx, Ny)

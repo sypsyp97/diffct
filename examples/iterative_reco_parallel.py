@@ -84,11 +84,11 @@ def main():
     angles_np = np.linspace(0, 2 * math.pi, num_views, endpoint=False).astype(np.float32)
 
     num_detectors = 256
-    detector_spacing = 0.75
+    detector_spacing = 0.5
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    phantom_torch = torch.tensor(phantom_cpu, device=device)
-    angles_torch = torch.tensor(angles_np, device=device)
+    phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32)
+    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     # Generate the "real" sinogram
     real_sinogram = ParallelProjectorFunction.apply(phantom_torch, angles_torch,

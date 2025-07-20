@@ -123,20 +123,21 @@ def main():
     isocenter_distance = 400.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    phantom_torch = torch.tensor(phantom_cpu, device=device)
+    phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32)
 
     # Generate the "real" sinogram
-    real_sinogram = ConeProjectorFunction.apply(phantom_torch, angles_np,
+    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
+    real_sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
                                                det_u, det_v, du, dv,
                                                source_distance, isocenter_distance)
 
     pipeline_instance = Pipeline(lr=1e-1, 
-                                 volume_shape=(Nz,Ny,Nx), 
-                                 angles=angles_np, 
-                                 det_u=det_u, det_v=det_v, 
-                                 du=du, dv=dv, 
-                                 source_distance=source_distance, 
-                                 isocenter_distance=isocenter_distance, 
+                                 volume_shape=(Nz,Ny,Nx),
+                                 angles=angles_torch,
+                                 det_u=det_u, det_v=det_v,
+                                 du=du, dv=dv,
+                                 source_distance=source_distance,
+                                 isocenter_distance=isocenter_distance,
                                  device=device, epoches=1000)
     
     ini_guess = torch.zeros_like(phantom_torch)
