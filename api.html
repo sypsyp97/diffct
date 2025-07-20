@@ -212,7 +212,7 @@ environment. All input tensors must be on the same CUDA device.</p>
 </div>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelProjectorFunction.backward">
-<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">grad_sinogram</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelProjectorFunction.backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelProjectorFunction.backward" title="Link to this definition"></a></dt>
+<span class="sig-name descname"><span class="pre">backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">grad_sinogram</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelProjectorFunction.backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelProjectorFunction.backward" title="Link to this definition"></a></dt>
 <dd><p>Define a formula for differentiating the operation with backward mode automatic differentiation.</p>
 <p>This function is to be overridden by all subclasses.
 (Defining this function is equivalent to defining the <code class="docutils literal notranslate"><span class="pre">vjp</span></code> function.)</p>
@@ -235,47 +235,7 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelProjectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelProjectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Compute parallel beam forward projection (Radon transform).</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>ctx</strong> – PyTorch autograd context for saving information for backward pass</p></li>
-<li><p><strong>image</strong> (<em>torch.Tensor</em>) – Input 2D image tensor of shape (H, W). Must be on CUDA device
-and have dtype float32 or float64. Represents the object to be projected.</p></li>
-<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – Projection angles in radians, shape (n_angles,). Must be on
-same CUDA device as image. Typically torch.linspace(0, π, n_angles) for
-parallel beam geometry.</p></li>
-<li><p><strong>num_detectors</strong> (<em>int</em>) – Number of detector elements in the linear detector array.
-Should be &gt;= image diagonal for complete coverage. Typical values: 128-2048.</p></li>
-<li><p><strong>detector_spacing</strong> (<em>float</em><em>, </em><em>optional</em>) – Physical spacing between detector elements
-in mm or other length units. Determines the field of view and spatial
-resolution. Default: 1.0.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p><dl class="simple">
-<dt>Sinogram tensor of shape (n_angles, num_detectors) containing</dt><dd><p>the projection data. Each row corresponds to one projection angle, each
-column to one detector element. Values represent line integrals through
-the input image.</p>
-</dd>
-</dl>
-</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.Tensor</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><ul class="simple">
-<li><p><strong>RuntimeError</strong> – If CUDA is not available or tensors are not on CUDA device</p></li>
-<li><p><strong>ValueError</strong> – If input dimensions are incompatible or parameters are invalid</p></li>
-</ul>
-</dd>
-</dl>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>This method is typically not called directly. Use ParallelProjectorFunction.apply()
-instead for proper autograd integration.</p>
-</div>
+<dd><p>Optimized: Compute parallel beam forward projection (Radon transform) with minimal CPU-GPU transfers.</p>
 </dd></dl>
 
 </dd></dl>
@@ -373,46 +333,7 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelBackprojectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">128</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">128</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelBackprojectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Compute parallel beam backprojection (adjoint Radon transform).</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>ctx</strong> – PyTorch autograd context for saving information for backward pass</p></li>
-<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – Input sinogram tensor of shape (n_angles, num_detectors).
-Must be on CUDA device. Contains projection data where each row corresponds
-to one projection angle and each column to one detector element.</p></li>
-<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – Projection angles in radians, shape (n_angles,). Must be on
-same CUDA device as sinogram. Should match the angles used for forward projection.</p></li>
-<li><p><strong>detector_spacing</strong> (<em>float</em><em>, </em><em>optional</em>) – Physical spacing between detector elements
-in mm or other length units. Must match the spacing used in forward projection.
-Default: 1.0.</p></li>
-<li><p><strong>H</strong> (<em>int</em><em>, </em><em>optional</em>) – Height of the reconstruction volume in pixels. Default: 128.</p></li>
-<li><p><strong>W</strong> (<em>int</em><em>, </em><em>optional</em>) – Width of the reconstruction volume in pixels. Default: 128.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p><dl class="simple">
-<dt>Reconstructed 2D image tensor of shape (H, W). Values represent</dt><dd><p>the backprojected reconstruction, which is the adjoint operation of forward
-projection. For filtered backprojection, additional filtering is required.</p>
-</dd>
-</dl>
-</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.Tensor</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><ul class="simple">
-<li><p><strong>RuntimeError</strong> – If CUDA is not available or tensors are not on CUDA device</p></li>
-<li><p><strong>ValueError</strong> – If input dimensions are incompatible or parameters are invalid</p></li>
-</ul>
-</dd>
-</dl>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>This method is typically not called directly. Use ParallelBackprojectorFunction.apply()
-instead for proper autograd integration.</p>
-</div>
+<dd><p>Optimized: Compute parallel beam backprojection (adjoint Radon transform) with minimal CPU-GPU transfers.</p>
 </dd></dl>
 
 </dd></dl>
@@ -520,51 +441,7 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanProjectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Compute fan beam forward projection with divergent ray geometry.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>ctx</strong> – PyTorch autograd context for saving information for backward pass</p></li>
-<li><p><strong>image</strong> (<em>torch.Tensor</em>) – Input 2D image tensor of shape (H, W). Must be on CUDA device
-and represent the object to be projected using fan beam geometry.</p></li>
-<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – Projection angles in radians, shape (n_angles,). Must be on
-same CUDA device as image. Typically torch.linspace(0, 2π, n_angles) for
-complete fan beam sampling.</p></li>
-<li><p><strong>num_detectors</strong> (<em>int</em>) – Number of detector elements in the linear detector array.
-Should provide adequate coverage of the magnified object. Typical values: 256-1024.</p></li>
-<li><p><strong>detector_spacing</strong> (<em>float</em>) – Physical spacing between detector elements in mm or other
-length units. Determines the detector field of view and spatial resolution.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from X-ray source to isocenter (rotation center)
-in mm or other length units. Should be &gt;&gt; object size for good approximation.</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from isocenter to detector array in mm or other
-length units. Total source-to-detector distance = source_distance + isocenter_distance.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p><dl class="simple">
-<dt>Sinogram tensor of shape (n_angles, num_detectors) containing</dt><dd><p>the fan beam projection data. Each row corresponds to one projection angle,
-each column to one detector element. Values represent line integrals along
-divergent ray paths.</p>
-</dd>
-</dl>
-</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.Tensor</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><ul class="simple">
-<li><p><strong>RuntimeError</strong> – If CUDA is not available or tensors are not on CUDA device</p></li>
-<li><p><strong>ValueError</strong> – If geometry parameters are invalid (e.g., negative distances)</p></li>
-</ul>
-</dd>
-</dl>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>The magnification factor M = (source_distance + isocenter_distance) / source_distance
-determines the geometric scaling. Larger source distances reduce magnification and
-geometric distortions but may require larger detector arrays for coverage.</p>
-</div>
+<dd><p>Optimized: Compute fan beam forward projection with minimal CPU-GPU transfers.</p>
 </dd></dl>
 
 </dd></dl>
@@ -666,50 +543,7 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanBackprojectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Compute fan beam backprojection with divergent ray geometry.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>ctx</strong> – PyTorch autograd context for saving information for backward pass</p></li>
-<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – Input sinogram tensor of shape (n_angles, num_detectors).
-Must be on CUDA device. Contains fan beam projection data where each row
-corresponds to one projection angle and each column to one detector element.</p></li>
-<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – Projection angles in radians, shape (n_angles,). Must be on
-same CUDA device as sinogram. Should match angles used in forward projection.</p></li>
-<li><p><strong>detector_spacing</strong> (<em>float</em>) – Physical spacing between detector elements in mm or other
-length units. Must match the spacing used in forward projection.</p></li>
-<li><p><strong>H</strong> (<em>int</em>) – Height of the reconstruction volume in pixels.</p></li>
-<li><p><strong>W</strong> (<em>int</em>) – Width of the reconstruction volume in pixels.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from X-ray source to isocenter in mm or other
-length units. Must match the value used in forward projection.</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from isocenter to detector array in mm or other
-length units. Must match the value used in forward projection.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p><dl class="simple">
-<dt>Reconstructed 2D image tensor of shape (H, W). Values represent</dt><dd><p>the fan beam backprojected reconstruction with geometric magnification effects.
-For filtered backprojection, additional ramp filtering is required.</p>
-</dd>
-</dl>
-</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.Tensor</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><ul class="simple">
-<li><p><strong>RuntimeError</strong> – If CUDA is not available or tensors are not on CUDA device</p></li>
-<li><p><strong>ValueError</strong> – If geometry parameters are invalid or inconsistent with sinogram shape</p></li>
-</ul>
-</dd>
-</dl>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>The reconstruction will have geometric magnification determined by the ratio
-(source_distance + isocenter_distance) / source_distance. Ensure geometry
-parameters are consistent with the forward projection for accurate reconstruction.</p>
-</div>
+<dd><p>Optimized: Compute fan beam backprojection with minimal CPU-GPU transfers.</p>
 </dd></dl>
 
 </dd></dl>
@@ -819,56 +653,7 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Compute 3D cone beam forward projection.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>ctx</strong> – PyTorch autograd context for saving information for backward pass</p></li>
-<li><p><strong>volume</strong> (<em>torch.Tensor</em>) – Input 3D volume tensor of shape (D, H, W). Must be on CUDA
-device and represent the 3D object to be projected using cone beam geometry.</p></li>
-<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – Projection angles in radians, shape (n_views,). Must be on
-same CUDA device as volume. Typically torch.linspace(0, 2π, n_views) for
-complete cone beam sampling.</p></li>
-<li><p><strong>det_u</strong> (<em>int</em>) – Number of detector pixels in u-direction (horizontal). Determines
-the horizontal field of view. Typical values: 256-2048.</p></li>
-<li><p><strong>det_v</strong> (<em>int</em>) – Number of detector pixels in v-direction (vertical). Determines
-the vertical field of view and axial coverage. Typical values: 256-2048.</p></li>
-<li><p><strong>du</strong> (<em>float</em>) – Physical spacing between detector pixels in u-direction in mm or other
-length units. Determines horizontal spatial resolution.</p></li>
-<li><p><strong>dv</strong> (<em>float</em>) – Physical spacing between detector pixels in v-direction in mm or other
-length units. Determines vertical spatial resolution.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from X-ray source to isocenter in mm or other
-length units. Should be &gt;&gt; volume size for good approximation.</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from isocenter to detector array in mm or other
-length units. Total source-to-detector distance = source_distance + isocenter_distance.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p><dl class="simple">
-<dt>3D projection tensor of shape (n_views, det_u, det_v) containing</dt><dd><p>the cone beam projection data. Each 2D slice corresponds to one projection
-view, with (u,v) coordinates representing the 2D detector array. Values
-represent line integrals along 3D ray paths.</p>
-</dd>
-</dl>
-</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.Tensor</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><ul class="simple">
-<li><p><strong>RuntimeError</strong> – If CUDA is not available or tensors are not on CUDA device</p></li>
-<li><p><strong>ValueError</strong> – If geometry parameters are invalid or detector size is incompatible</p></li>
-<li><p><strong>MemoryError</strong> – If volume or detector array is too large for available GPU memory</p></li>
-</ul>
-</dd>
-</dl>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>The cone angle is determined by the detector size and source distance:
-cone_angle ≈ 2 * arctan(max(det_u*du, det_v*dv) / (2*source_distance)).
-Keep cone angle &lt; 30° to minimize reconstruction artifacts.</p>
-</div>
+<dd><p>Optimized: Compute 3D cone beam forward projection with minimal CPU-GPU transfers.</p>
 </dd></dl>
 
 </dd></dl>
@@ -975,55 +760,7 @@ output.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeBackprojectorFunction.forward">
 <em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">D</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="Link to this definition"></a></dt>
-<dd><p>Compute 3D cone beam backprojection.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>ctx</strong> – PyTorch autograd context for saving information for backward pass</p></li>
-<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – Input 3D projection tensor of shape (n_views, det_u, det_v).
-Must be on CUDA device. Contains cone beam projection data where each 2D slice
-corresponds to one projection view with (u,v) detector coordinates.</p></li>
-<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – Projection angles in radians, shape (n_views,). Must be on
-same CUDA device as sinogram. Should match angles used in forward projection.</p></li>
-<li><p><strong>D</strong> (<em>int</em>) – Depth of the 3D reconstruction volume in pixels (z-direction).</p></li>
-<li><p><strong>H</strong> (<em>int</em>) – Height of the 3D reconstruction volume in pixels (y-direction).</p></li>
-<li><p><strong>W</strong> (<em>int</em>) – Width of the 3D reconstruction volume in pixels (x-direction).</p></li>
-<li><p><strong>du</strong> (<em>float</em>) – Physical spacing between detector pixels in u-direction in mm or other
-length units. Must match the spacing used in forward projection.</p></li>
-<li><p><strong>dv</strong> (<em>float</em>) – Physical spacing between detector pixels in v-direction in mm or other
-length units. Must match the spacing used in forward projection.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from X-ray source to isocenter in mm or other
-length units. Must match the value used in forward projection.</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from isocenter to detector array in mm or other
-length units. Must match the value used in forward projection.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p><dl class="simple">
-<dt>Reconstructed 3D volume tensor of shape (D, H, W). Values represent</dt><dd><p>the cone beam backprojected reconstruction with 3D geometric effects. For
-filtered backprojection, additional 3D filtering may be required.</p>
-</dd>
-</dl>
-</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.Tensor</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><ul class="simple">
-<li><p><strong>RuntimeError</strong> – If CUDA is not available or tensors are not on CUDA device</p></li>
-<li><p><strong>ValueError</strong> – If geometry parameters are invalid or inconsistent with projection shape</p></li>
-<li><p><strong>MemoryError</strong> – If reconstruction volume is too large for available GPU memory</p></li>
-</ul>
-</dd>
-</dl>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>3D cone beam backprojection requires significant GPU memory proportional to
-D×H×W×sizeof(float). Monitor GPU memory usage and consider using smaller volumes
-or gradient checkpointing for large reconstructions. Ensure geometry parameters
-are consistent with forward projection for accurate reconstruction.</p>
-</div>
+<dd><p>Optimized: Compute 3D cone beam backprojection with minimal CPU-GPU transfers.</p>
 </dd></dl>
 
 </dd></dl>

@@ -97,37 +97,54 @@
 <span class="n">_FASTMATH_DECORATOR</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">fastmath</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="n">_INF</span>                <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
 <span class="n">_EPSILON</span>            <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1e-6</span><span class="p">)</span>
+<span class="c1"># === Device Management Utilities ===</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">DeviceManager</span><span class="p">:</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_device</span><span class="p">(</span><span class="n">tensor</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the device of a PyTorch tensor.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">tensor</span><span class="o">.</span><span class="n">device</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="s2">&quot;device&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
 
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ensure_device</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="n">device</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Move tensor to the specified device if not already there.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="s2">&quot;to&quot;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">tensor</span> <span class="k">if</span> <span class="n">tensor</span><span class="o">.</span><span class="n">device</span> <span class="o">==</span> <span class="n">device</span> <span class="k">else</span> <span class="n">tensor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">tensor</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">):</span>
+<span class="c1"># === PyTorch-CUDA Bridge ===</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">TorchCUDABridge</span><span class="p">:</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">tensor_to_cuda_array</span><span class="p">(</span><span class="n">tensor</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert PyTorch CUDA tensor to Numba CUDA array without CPU transfer.</span>
+<span class="sd">        Always detaches the tensor to avoid autograd Variable issues.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Tensor must be on CUDA device&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cuda</span><span class="o">.</span><span class="n">as_cuda_array</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">cuda_array_to_tensor</span><span class="p">(</span><span class="n">cuda_array</span><span class="p">,</span> <span class="n">tensor_template</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert CUDA array to PyTorch tensor on the same device as tensor_template.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">cuda_array</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tensor_template</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">tensor_template</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+<span class="c1"># === GPU-aware Trigonometric Table Generation ===</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Precompute trigonometric lookup tables for projection angles and transfer to GPU memory.</span>
-<span class="sd">    </span>
-<span class="sd">    This helper function optimizes ray geometry calculations by precomputing cosine and sine</span>
-<span class="sd">    values for all projection angles, avoiding repeated trigonometric calculations in CUDA kernels.</span>
-<span class="sd">    The precomputed values are transferred to GPU device memory for efficient access during</span>
-<span class="sd">    ray-tracing operations.</span>
-<span class="sd">    </span>
-<span class="sd">    Coordinate system context:</span>
-<span class="sd">    - Angles define the rotation of the X-ray source/detector system around the reconstruction volume</span>
-<span class="sd">    - For parallel beam: angles determine ray direction vectors (cos_a, sin_a)</span>
-<span class="sd">    - For fan/cone beam: angles determine source position relative to isocenter</span>
-<span class="sd">    </span>
-<span class="sd">    Performance optimization:</span>
-<span class="sd">    - Eliminates expensive trigonometric function calls in GPU kernels</span>
-<span class="sd">    - Enables coalesced memory access to angle-dependent geometry parameters</span>
-<span class="sd">    - Reduces register pressure in ray-tracing kernels by using precomputed values</span>
-<span class="sd">    </span>
-<span class="sd">    Args:</span>
-<span class="sd">        angles: Array of projection angles in radians</span>
-<span class="sd">        dtype: Data type for GPU arrays (typically float32 for performance)</span>
-<span class="sd">        </span>
-<span class="sd">    Returns:</span>
-<span class="sd">        Tuple of (d_cos, d_sin): GPU device arrays containing precomputed trigonometric values</span>
+<span class="sd">    Accepts either numpy arrays or torch tensors (on CPU or CUDA).</span>
+<span class="sd">    Returns (cos, sin) as torch tensors on the same device as input.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">cos_host</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>
-    <span class="n">sin_host</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">cos_host</span><span class="p">),</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">sin_host</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">cos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">sin</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cos</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">sin</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># fallback for numpy arrays</span>
+        <span class="n">cos_host</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">sin_host</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">cos_host</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">sin_host</span><span class="p">)</span>
+
+
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_grid_2d</span><span class="p">(</span><span class="n">n1</span><span class="p">,</span> <span class="n">n2</span><span class="p">,</span> <span class="n">tpb</span><span class="o">=</span><span class="n">_TPB_2D</span><span class="p">):</span>
@@ -983,57 +1000,39 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Compute parallel beam forward projection (Radon transform).</span>
-<span class="sd">        </span>
-<span class="sd">        Args:</span>
-<span class="sd">            ctx: PyTorch autograd context for saving information for backward pass</span>
-<span class="sd">            image (torch.Tensor): Input 2D image tensor of shape (H, W). Must be on CUDA device</span>
-<span class="sd">                and have dtype float32 or float64. Represents the object to be projected.</span>
-<span class="sd">            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on</span>
-<span class="sd">                same CUDA device as image. Typically torch.linspace(0, π, n_angles) for</span>
-<span class="sd">                parallel beam geometry.</span>
-<span class="sd">            num_detectors (int): Number of detector elements in the linear detector array.</span>
-<span class="sd">                Should be &gt;= image diagonal for complete coverage. Typical values: 128-2048.</span>
-<span class="sd">            detector_spacing (float, optional): Physical spacing between detector elements</span>
-<span class="sd">                in mm or other length units. Determines the field of view and spatial</span>
-<span class="sd">                resolution. Default: 1.0.</span>
-<span class="sd">        </span>
-<span class="sd">        Returns:</span>
-<span class="sd">            torch.Tensor: Sinogram tensor of shape (n_angles, num_detectors) containing</span>
-<span class="sd">                the projection data. Each row corresponds to one projection angle, each</span>
-<span class="sd">                column to one detector element. Values represent line integrals through</span>
-<span class="sd">                the input image.</span>
-<span class="sd">        </span>
-<span class="sd">        Raises:</span>
-<span class="sd">            RuntimeError: If CUDA is not available or tensors are not on CUDA device</span>
-<span class="sd">            ValueError: If input dimensions are incompatible or parameters are invalid</span>
-<span class="sd">        </span>
-<span class="sd">        Note:</span>
-<span class="sd">            This method is typically not called directly. Use ParallelProjectorFunction.apply()</span>
-<span class="sd">            instead for proper autograd integration.</span>
+<span class="sd">        Optimized: Compute parallel beam forward projection (Radon transform) with minimal CPU-GPU transfers.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">device</span>
-        <span class="n">image_np</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
-        <span class="n">angles_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">image_np</span><span class="o">.</span><span class="n">shape</span>
-        <span class="n">n_angles</span> <span class="o">=</span> <span class="n">angles_np</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="c1"># Ensure input is float32 for kernel compatibility</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-        <span class="n">d_image</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">image_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">device_array</span><span class="p">((</span><span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">)</span>
+        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">n_angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="c1"># Allocate output tensor on the same device</span>
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">image</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Prepare trigonometric tables on the correct device</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">image</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="c1"># Get Numba CUDA array views for kernel</span>
+        <span class="n">d_image</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_parallel_2d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
 
-        <span class="n">sino_np</span> <span class="o">=</span> <span class="n">d_sino</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">sino_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
         <span class="k">return</span> <span class="n">sinogram</span></div>
@@ -1041,21 +1040,26 @@
 
 <div class="viewcode-block" id="ParallelProjectorFunction.backward">
 <a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelProjectorFunction.backward">[docs]</a>
-    <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
         <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
+        <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">grad_np</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">n_angles</span> <span class="o">=</span> <span class="n">ang_np</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-        
+        <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="n">n_angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
         <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span>
 
-        <span class="n">d_grad_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">grad_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_img_grad</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">))</span>
+        <span class="n">grad_image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_grad_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
+        <span class="n">d_img_grad</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_image</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
@@ -1063,11 +1067,9 @@
         <span class="n">_parallel_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span>
             <span class="n">d_img_grad</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
 
-        <span class="n">grad_image_np</span> <span class="o">=</span> <span class="n">d_img_grad</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">grad_image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">grad_image_np</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">grad_image</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
@@ -1135,56 +1137,39 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">H</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Compute parallel beam backprojection (adjoint Radon transform).</span>
-<span class="sd">        </span>
-<span class="sd">        Args:</span>
-<span class="sd">            ctx: PyTorch autograd context for saving information for backward pass</span>
-<span class="sd">            sinogram (torch.Tensor): Input sinogram tensor of shape (n_angles, num_detectors).</span>
-<span class="sd">                Must be on CUDA device. Contains projection data where each row corresponds</span>
-<span class="sd">                to one projection angle and each column to one detector element.</span>
-<span class="sd">            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on</span>
-<span class="sd">                same CUDA device as sinogram. Should match the angles used for forward projection.</span>
-<span class="sd">            detector_spacing (float, optional): Physical spacing between detector elements</span>
-<span class="sd">                in mm or other length units. Must match the spacing used in forward projection.</span>
-<span class="sd">                Default: 1.0.</span>
-<span class="sd">            H (int, optional): Height of the reconstruction volume in pixels. Default: 128.</span>
-<span class="sd">            W (int, optional): Width of the reconstruction volume in pixels. Default: 128.</span>
-<span class="sd">        </span>
-<span class="sd">        Returns:</span>
-<span class="sd">            torch.Tensor: Reconstructed 2D image tensor of shape (H, W). Values represent</span>
-<span class="sd">                the backprojected reconstruction, which is the adjoint operation of forward</span>
-<span class="sd">                projection. For filtered backprojection, additional filtering is required.</span>
-<span class="sd">        </span>
-<span class="sd">        Raises:</span>
-<span class="sd">            RuntimeError: If CUDA is not available or tensors are not on CUDA device</span>
-<span class="sd">            ValueError: If input dimensions are incompatible or parameters are invalid</span>
-<span class="sd">        </span>
-<span class="sd">        Note:</span>
-<span class="sd">            This method is typically not called directly. Use ParallelBackprojectorFunction.apply()</span>
-<span class="sd">            instead for proper autograd integration.</span>
+<span class="sd">        Optimized: Compute parallel beam backprojection (adjoint Radon transform) with minimal CPU-GPU transfers.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">device</span>
-        <span class="n">sino_np</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">angles_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span> <span class="o">=</span> <span class="n">sino_np</span><span class="o">.</span><span class="n">shape</span>
+        <span class="c1"># Ensure input is float32 for kernel compatibility</span>
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span>
         <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span>
 
-        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">sino_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_reco</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">))</span>
+        <span class="c1"># Allocate output tensor on the same device</span>
+        <span class="n">reco</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Prepare trigonometric tables on the correct device</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="c1"># Get Numba CUDA array views for kernel</span>
+        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">d_reco</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">reco</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_parallel_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
 
-        <span class="n">reco_np</span> <span class="o">=</span> <span class="n">d_reco</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">reco</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">reco_np</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
         <span class="k">return</span> <span class="n">reco</span></div>
@@ -1196,15 +1181,26 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
         <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
+        <span class="n">grad_output</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">grad_np</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
-        <span class="n">angles_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">grad_np</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">grad_output</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-        <span class="n">d_grad_out</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">grad_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_sino_grad</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">device_array</span><span class="p">((</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">)</span>
+        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="c1"># Allocate output tensor on the same device</span>
+        <span class="n">grad_sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_output</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Prepare trigonometric tables on the correct device</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_output</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="c1"># Get Numba CUDA array views for kernel</span>
+        <span class="n">d_grad_out</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
+        <span class="n">d_sino_grad</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_sino</span><span class="p">)</span>
+        <span class="n">d_cos</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
@@ -1214,8 +1210,6 @@
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
 
-        <span class="n">grad_sino_np</span> <span class="o">=</span> <span class="n">d_sino_grad</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">grad_sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">grad_sino_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
@@ -1287,66 +1281,39 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Compute fan beam forward projection with divergent ray geometry.</span>
-<span class="sd">        </span>
-<span class="sd">        Args:</span>
-<span class="sd">            ctx: PyTorch autograd context for saving information for backward pass</span>
-<span class="sd">            image (torch.Tensor): Input 2D image tensor of shape (H, W). Must be on CUDA device</span>
-<span class="sd">                and represent the object to be projected using fan beam geometry.</span>
-<span class="sd">            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on</span>
-<span class="sd">                same CUDA device as image. Typically torch.linspace(0, 2π, n_angles) for</span>
-<span class="sd">                complete fan beam sampling.</span>
-<span class="sd">            num_detectors (int): Number of detector elements in the linear detector array.</span>
-<span class="sd">                Should provide adequate coverage of the magnified object. Typical values: 256-1024.</span>
-<span class="sd">            detector_spacing (float): Physical spacing between detector elements in mm or other</span>
-<span class="sd">                length units. Determines the detector field of view and spatial resolution.</span>
-<span class="sd">            source_distance (float): Distance from X-ray source to isocenter (rotation center)</span>
-<span class="sd">                in mm or other length units. Should be &gt;&gt; object size for good approximation.</span>
-<span class="sd">            isocenter_distance (float): Distance from isocenter to detector array in mm or other</span>
-<span class="sd">                length units. Total source-to-detector distance = source_distance + isocenter_distance.</span>
-<span class="sd">        </span>
-<span class="sd">        Returns:</span>
-<span class="sd">            torch.Tensor: Sinogram tensor of shape (n_angles, num_detectors) containing</span>
-<span class="sd">                the fan beam projection data. Each row corresponds to one projection angle,</span>
-<span class="sd">                each column to one detector element. Values represent line integrals along</span>
-<span class="sd">                divergent ray paths.</span>
-<span class="sd">        </span>
-<span class="sd">        Raises:</span>
-<span class="sd">            RuntimeError: If CUDA is not available or tensors are not on CUDA device</span>
-<span class="sd">            ValueError: If geometry parameters are invalid (e.g., negative distances)</span>
-<span class="sd">        </span>
-<span class="sd">        Note:</span>
-<span class="sd">            The magnification factor M = (source_distance + isocenter_distance) / source_distance</span>
-<span class="sd">            determines the geometric scaling. Larger source distances reduce magnification and</span>
-<span class="sd">            geometric distortions but may require larger detector arrays for coverage.</span>
+<span class="sd">        Optimized: Compute fan beam forward projection with minimal CPU-GPU transfers.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">device</span>
-        <span class="n">img_np</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">img_np</span><span class="o">.</span><span class="n">shape</span>
-        <span class="n">n_ang</span> <span class="o">=</span> <span class="n">ang_np</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-        <span class="n">d_image</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">img_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">device_array</span><span class="p">((</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">)</span>
+        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">n_ang</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">image</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">image</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_image</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_fan_2d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">source_distance</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">isocenter_distance</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
 
-        <span class="n">sino_np</span> <span class="o">=</span> <span class="n">d_sino</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">sino_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
                             <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">sino</span></div>
+        <span class="k">return</span> <span class="n">sinogram</span></div>
 
 
 <div class="viewcode-block" id="FanProjectorFunction.backward">
@@ -1355,28 +1322,33 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
         <span class="p">(</span><span class="n">n_det</span><span class="p">,</span> <span class="n">det_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">src_dist</span><span class="p">,</span> <span class="n">iso_dist</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
+        <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">grad_np</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">n_ang</span> <span class="o">=</span> <span class="n">ang_np</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="n">n_ang</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
         <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span>
 
-        <span class="n">d_grad_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">grad_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_img_grad</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">))</span>
+        <span class="n">grad_img</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_grad_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
+        <span class="n">d_img_grad</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_img</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_fan_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_img_grad</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">src_dist</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">iso_dist</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
-        
-        <span class="n">grad_img_np</span> <span class="o">=</span> <span class="n">d_img_grad</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">grad_img</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">grad_img_np</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
         <span class="k">return</span> <span class="n">grad_img</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
@@ -1444,64 +1416,38 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Compute fan beam backprojection with divergent ray geometry.</span>
-<span class="sd">        </span>
-<span class="sd">        Args:</span>
-<span class="sd">            ctx: PyTorch autograd context for saving information for backward pass</span>
-<span class="sd">            sinogram (torch.Tensor): Input sinogram tensor of shape (n_angles, num_detectors).</span>
-<span class="sd">                Must be on CUDA device. Contains fan beam projection data where each row</span>
-<span class="sd">                corresponds to one projection angle and each column to one detector element.</span>
-<span class="sd">            angles (torch.Tensor): Projection angles in radians, shape (n_angles,). Must be on</span>
-<span class="sd">                same CUDA device as sinogram. Should match angles used in forward projection.</span>
-<span class="sd">            detector_spacing (float): Physical spacing between detector elements in mm or other</span>
-<span class="sd">                length units. Must match the spacing used in forward projection.</span>
-<span class="sd">            H (int): Height of the reconstruction volume in pixels.</span>
-<span class="sd">            W (int): Width of the reconstruction volume in pixels.</span>
-<span class="sd">            source_distance (float): Distance from X-ray source to isocenter in mm or other</span>
-<span class="sd">                length units. Must match the value used in forward projection.</span>
-<span class="sd">            isocenter_distance (float): Distance from isocenter to detector array in mm or other</span>
-<span class="sd">                length units. Must match the value used in forward projection.</span>
-<span class="sd">        </span>
-<span class="sd">        Returns:</span>
-<span class="sd">            torch.Tensor: Reconstructed 2D image tensor of shape (H, W). Values represent</span>
-<span class="sd">                the fan beam backprojected reconstruction with geometric magnification effects.</span>
-<span class="sd">                For filtered backprojection, additional ramp filtering is required.</span>
-<span class="sd">        </span>
-<span class="sd">        Raises:</span>
-<span class="sd">            RuntimeError: If CUDA is not available or tensors are not on CUDA device</span>
-<span class="sd">            ValueError: If geometry parameters are invalid or inconsistent with sinogram shape</span>
-<span class="sd">        </span>
-<span class="sd">        Note:</span>
-<span class="sd">            The reconstruction will have geometric magnification determined by the ratio</span>
-<span class="sd">            (source_distance + isocenter_distance) / source_distance. Ensure geometry</span>
-<span class="sd">            parameters are consistent with the forward projection for accurate reconstruction.</span>
+<span class="sd">        Optimized: Compute fan beam backprojection with minimal CPU-GPU transfers.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">device</span>
-        <span class="n">sino_np</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        
-        <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span> <span class="o">=</span> <span class="n">sino_np</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span>
         <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span>
 
-        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">sino_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_reco</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">))</span>
+        <span class="n">reco</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">d_reco</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">reco</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_fan_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">source_distance</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">isocenter_distance</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
 
-        <span class="n">reco_np</span> <span class="o">=</span> <span class="n">d_reco</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">reco_np</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">image</span></div>
+        <span class="k">return</span> <span class="n">reco</span></div>
 
 
 <div class="viewcode-block" id="FanBackprojectorFunction.backward">
@@ -1510,27 +1456,32 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
         <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">det_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">src_dist</span><span class="p">,</span> <span class="n">iso_dist</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
+        <span class="n">grad_output</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">grad_np</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">grad_np</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">grad_output</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-        <span class="n">d_grad_out</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">grad_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_sino_grad</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">device_array</span><span class="p">((</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">)</span>
+        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="n">grad_sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_output</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_output</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_grad_out</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
+        <span class="n">d_sino_grad</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_sino</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">)</span>
         <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_fan_2d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_out</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">d_sino_grad</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">src_dist</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">iso_dist</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
         <span class="p">)</span>
-        
-        <span class="n">grad_sino_np</span> <span class="o">=</span> <span class="n">d_sino_grad</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">grad_sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">grad_sino_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
         <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
@@ -1602,70 +1553,38 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Compute 3D cone beam forward projection.</span>
-<span class="sd">        </span>
-<span class="sd">        Args:</span>
-<span class="sd">            ctx: PyTorch autograd context for saving information for backward pass</span>
-<span class="sd">            volume (torch.Tensor): Input 3D volume tensor of shape (D, H, W). Must be on CUDA</span>
-<span class="sd">                device and represent the 3D object to be projected using cone beam geometry.</span>
-<span class="sd">            angles (torch.Tensor): Projection angles in radians, shape (n_views,). Must be on</span>
-<span class="sd">                same CUDA device as volume. Typically torch.linspace(0, 2π, n_views) for</span>
-<span class="sd">                complete cone beam sampling.</span>
-<span class="sd">            det_u (int): Number of detector pixels in u-direction (horizontal). Determines</span>
-<span class="sd">                the horizontal field of view. Typical values: 256-2048.</span>
-<span class="sd">            det_v (int): Number of detector pixels in v-direction (vertical). Determines</span>
-<span class="sd">                the vertical field of view and axial coverage. Typical values: 256-2048.</span>
-<span class="sd">            du (float): Physical spacing between detector pixels in u-direction in mm or other</span>
-<span class="sd">                length units. Determines horizontal spatial resolution.</span>
-<span class="sd">            dv (float): Physical spacing between detector pixels in v-direction in mm or other</span>
-<span class="sd">                length units. Determines vertical spatial resolution.</span>
-<span class="sd">            source_distance (float): Distance from X-ray source to isocenter in mm or other</span>
-<span class="sd">                length units. Should be &gt;&gt; volume size for good approximation.</span>
-<span class="sd">            isocenter_distance (float): Distance from isocenter to detector array in mm or other</span>
-<span class="sd">                length units. Total source-to-detector distance = source_distance + isocenter_distance.</span>
-<span class="sd">        </span>
-<span class="sd">        Returns:</span>
-<span class="sd">            torch.Tensor: 3D projection tensor of shape (n_views, det_u, det_v) containing</span>
-<span class="sd">                the cone beam projection data. Each 2D slice corresponds to one projection</span>
-<span class="sd">                view, with (u,v) coordinates representing the 2D detector array. Values</span>
-<span class="sd">                represent line integrals along 3D ray paths.</span>
-<span class="sd">        </span>
-<span class="sd">        Raises:</span>
-<span class="sd">            RuntimeError: If CUDA is not available or tensors are not on CUDA device</span>
-<span class="sd">            ValueError: If geometry parameters are invalid or detector size is incompatible</span>
-<span class="sd">            MemoryError: If volume or detector array is too large for available GPU memory</span>
-<span class="sd">        </span>
-<span class="sd">        Note:</span>
-<span class="sd">            The cone angle is determined by the detector size and source distance:</span>
-<span class="sd">            cone_angle ≈ 2 * arctan(max(det_u*du, det_v*dv) / (2*source_distance)).</span>
-<span class="sd">            Keep cone angle &lt; 30° to minimize reconstruction artifacts.</span>
+<span class="sd">        Optimized: Compute 3D cone beam forward projection with minimal CPU-GPU transfers.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">device</span>
-        <span class="n">vol_np</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">((</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span>
+        <span class="n">volume</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">=</span> <span class="n">vol_np</span><span class="o">.</span><span class="n">shape</span>
-        <span class="n">n_views</span> <span class="o">=</span> <span class="n">ang_np</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">volume</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-        <span class="n">d_vol</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">vol_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">device_array</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">)</span>
+        <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">n_views</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="n">sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">volume</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">volume</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_vol</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span>
+        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">sino</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">)</span>
-        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nz</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">D</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">H</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">W</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_cone_3d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
-            <span class="n">d_vol</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">d_vol</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">source_distance</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">isocenter_distance</span><span class="p">),</span>
             <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
         <span class="p">)</span>
 
-        <span class="n">sino_np</span> <span class="o">=</span> <span class="n">d_sino</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">sino_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
-        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
+        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
                             <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">sino</span></div>
 
@@ -1675,29 +1594,34 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
-        <span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
+        <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
          <span class="n">src_dist</span><span class="p">,</span> <span class="n">iso_dist</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
+        <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">grad_np</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">n_views</span> <span class="o">=</span> <span class="n">ang_np</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">grad_sinogram</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-        <span class="n">d_grad_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">grad_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_vol_grad</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">))</span>
+        <span class="n">n_views</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="n">grad_vol</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_grad_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
+        <span class="n">d_vol_grad</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_vol</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">)</span>
-        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nz</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">D</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">H</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">W</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
-            <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">d_vol_grad</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">d_vol_grad</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">src_dist</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">iso_dist</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
         <span class="p">)</span>
 
-        <span class="n">grad_vol_np</span> <span class="o">=</span> <span class="n">d_vol_grad</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">grad_vol</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">grad_vol_np</span><span class="o">.</span><span class="n">transpose</span><span class="p">((</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">grad_vol</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
@@ -1769,66 +1693,34 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Compute 3D cone beam backprojection.</span>
-<span class="sd">        </span>
-<span class="sd">        Args:</span>
-<span class="sd">            ctx: PyTorch autograd context for saving information for backward pass</span>
-<span class="sd">            sinogram (torch.Tensor): Input 3D projection tensor of shape (n_views, det_u, det_v).</span>
-<span class="sd">                Must be on CUDA device. Contains cone beam projection data where each 2D slice</span>
-<span class="sd">                corresponds to one projection view with (u,v) detector coordinates.</span>
-<span class="sd">            angles (torch.Tensor): Projection angles in radians, shape (n_views,). Must be on</span>
-<span class="sd">                same CUDA device as sinogram. Should match angles used in forward projection.</span>
-<span class="sd">            D (int): Depth of the 3D reconstruction volume in pixels (z-direction).</span>
-<span class="sd">            H (int): Height of the 3D reconstruction volume in pixels (y-direction).</span>
-<span class="sd">            W (int): Width of the 3D reconstruction volume in pixels (x-direction).</span>
-<span class="sd">            du (float): Physical spacing between detector pixels in u-direction in mm or other</span>
-<span class="sd">                length units. Must match the spacing used in forward projection.</span>
-<span class="sd">            dv (float): Physical spacing between detector pixels in v-direction in mm or other</span>
-<span class="sd">                length units. Must match the spacing used in forward projection.</span>
-<span class="sd">            source_distance (float): Distance from X-ray source to isocenter in mm or other</span>
-<span class="sd">                length units. Must match the value used in forward projection.</span>
-<span class="sd">            isocenter_distance (float): Distance from isocenter to detector array in mm or other</span>
-<span class="sd">                length units. Must match the value used in forward projection.</span>
-<span class="sd">        </span>
-<span class="sd">        Returns:</span>
-<span class="sd">            torch.Tensor: Reconstructed 3D volume tensor of shape (D, H, W). Values represent</span>
-<span class="sd">                the cone beam backprojected reconstruction with 3D geometric effects. For</span>
-<span class="sd">                filtered backprojection, additional 3D filtering may be required.</span>
-<span class="sd">        </span>
-<span class="sd">        Raises:</span>
-<span class="sd">            RuntimeError: If CUDA is not available or tensors are not on CUDA device</span>
-<span class="sd">            ValueError: If geometry parameters are invalid or inconsistent with projection shape</span>
-<span class="sd">            MemoryError: If reconstruction volume is too large for available GPU memory</span>
-<span class="sd">        </span>
-<span class="sd">        Note:</span>
-<span class="sd">            3D cone beam backprojection requires significant GPU memory proportional to</span>
-<span class="sd">            D×H×W×sizeof(float). Monitor GPU memory usage and consider using smaller volumes</span>
-<span class="sd">            or gradient checkpointing for large reconstructions. Ensure geometry parameters</span>
-<span class="sd">            are consistent with forward projection for accurate reconstruction.</span>
+<span class="sd">        Optimized: Compute 3D cone beam backprojection with minimal CPU-GPU transfers.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">device</span>
-        <span class="n">sino_np</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        
-        <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span> <span class="o">=</span> <span class="n">sino_np</span><span class="o">.</span><span class="n">shape</span>
-        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">=</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">sino_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_reco</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">))</span>
+        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span>
+
+        <span class="n">vol</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="n">d_reco</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">vol</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">)</span>
-        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nz</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">D</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">H</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">W</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
-            <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">source_distance</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">isocenter_distance</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
         <span class="p">)</span>
 
-        <span class="n">vol_np</span> <span class="o">=</span> <span class="n">d_reco</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">vol</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">vol_np</span><span class="o">.</span><span class="n">transpose</span><span class="p">((</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
                             <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
@@ -1842,28 +1734,32 @@
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
         <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
          <span class="n">src_dist</span><span class="p">,</span> <span class="n">iso_dist</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
+        <span class="n">grad_output</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">grad_np</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">((</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
-        <span class="n">ang_np</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">_DTYPE</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-        <span class="n">n_views</span> <span class="o">=</span> <span class="n">ang_np</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-        <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">=</span> <span class="n">grad_np</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">grad_output</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-        <span class="n">d_grad_out</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">grad_np</span><span class="p">)</span>
-        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">ang_np</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">)</span>
-        <span class="n">d_sino_grad</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">device_array</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_DTYPE</span><span class="p">)</span>
+        <span class="n">n_views</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="n">grad_sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_output</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">grad_output</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+        <span class="n">d_grad_out</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
+        <span class="n">d_sino_grad</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">grad_sino</span><span class="p">)</span>
+        <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+        <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
         <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">)</span>
-        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nx</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Ny</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">Nz</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">D</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">H</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">((</span><span class="n">W</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mf">0.5</span><span class="p">)</span>
 
         <span class="n">_cone_3d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
-            <span class="n">d_grad_out</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span> <span class="n">d_sino_grad</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+            <span class="n">d_grad_out</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">d_sino_grad</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">src_dist</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">iso_dist</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
         <span class="p">)</span>
-        
-        <span class="n">grad_sino_np</span> <span class="o">=</span> <span class="n">d_sino_grad</span><span class="o">.</span><span class="n">copy_to_host</span><span class="p">()</span>
-        <span class="n">grad_sino</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">grad_sino_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
         <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
