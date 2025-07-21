@@ -1,7 +1,7 @@
 Fan Beam Iterative Reconstruction
 =================================
 
-This example demonstrates gradient-based iterative reconstruction for 2D fan beam CT using the differentiable `FanProjectorFunction` from `diffct`.
+This example demonstrates 2D fan beam iterative reconstruction using the differentiable `FanProjectorFunction` and `FanBackprojectorFunction` from `diffct`.
 
 Overview
 --------
@@ -11,7 +11,7 @@ Fan beam iterative reconstruction extends the optimization approach to the more 
 - Formulate fan beam CT reconstruction as an optimization problem
 - Handle geometric complexities of divergent ray geometry
 - Apply gradient-based optimization with fan beam operators
-- Compare convergence characteristics with parallel beam reconstruction
+- Monitor convergence and reconstruction quality
 
 Mathematical Background
 -----------------------
@@ -54,7 +54,7 @@ Fan beam geometry introduces complexities compared to parallel beam:
 
 **Implementation Steps**
 
-1. **Geometry Setup**: Configure fan beam parameters (source distance, detector distance)
+1. **Geometry Setup**: Configure fan beam parameters (SID, SDD)
 2. **Problem Formulation**: Define parameterized image and fan beam forward model
 3. **Loss Computation**: Calculate L2 distance using `FanProjectorFunction`
 4. **Gradient Computation**: Use automatic differentiation through fan beam operators
@@ -76,15 +76,6 @@ Fan beam reconstruction typically exhibits:
 1. **Initial Convergence** (0-100 iterations): Rapid loss decrease, basic structure
 2. **Detail Refinement** (100-500 iterations): Fine features develop, slower progress
 3. **Final Convergence** (500+ iterations): Minimal improvement, convergence plateau
-
-**Comparison with Parallel Beam**
-
-Fan beam iterative reconstruction differs from parallel beam:
-
-- **Computational Complexity**: Higher due to geometric calculations
-- **Convergence Rate**: Potentially slower due to geometry effects
-- **Artifact Characteristics**: Different artifact patterns from ray divergence
-- **Spatial Resolution**: Non-uniform resolution requires careful interpretation
 
 **Challenges and Solutions**
 

@@ -6,12 +6,13 @@ This example demonstrates 2D parallel beam filtered backprojection (FBP) reconst
 Overview
 --------
 
-Filtered backprojection is the standard analytical reconstruction method for parallel beam CT. This example shows how to:
+Parallel beam FBP is the standard analytical reconstruction method for 2D parallel beam CT. This example shows how to:
 
+- Configure parallel beam geometry parameters
 - Generate synthetic projection data using the Shepp-Logan phantom
 - Apply ramp filtering in the frequency domain
 - Perform backprojection to reconstruct the image
-- Visualize the reconstruction results
+- Visualize and evaluate reconstruction results
 
 Mathematical Background
 -----------------------
@@ -27,7 +28,7 @@ where :math:`f(x,y)` is the 2D attenuation coefficient distribution.
 
 **Filtered Backprojection Algorithm**
 
-The FBP reconstruction consists of three main steps:
+The FBP reconstruction consists of three sequential steps:
 
 1. **Forward Projection**: Compute sinogram using the Radon transform
 2. **Ramp Filtering**: Apply frequency domain filter :math:`H(\omega) = |\omega|`
@@ -56,7 +57,7 @@ where :math:`p_f(t, \theta)` is the filtered projection:
 The phantom consists of 5 ellipses representing brain tissue structures:
 
 - **Outer skull**: Large ellipse with low attenuation
-- **Brain tissue**: Medium ellipse with baseline attenuation  
+- **Brain tissue**: Medium ellipse with baseline attenuation
 - **Ventricles**: Small ellipses with fluid-like attenuation
 - **Lesions**: High-contrast features for reconstruction assessment
 

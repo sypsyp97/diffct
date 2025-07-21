@@ -20,8 +20,8 @@ Mathematical Background
 
 Cone beam CT extends fan beam to 3D using a point X-ray source and 2D detector array. Key parameters:
 
-- **Source distance** :math:`D_s`: Distance from rotation center to X-ray source
-- **Detector distance** :math:`D_d`: Distance from rotation center to detector plane
+- **SDD** :math:`D_s`: Source-to-Detector Distance (distance from X-ray source to detector plane)
+- **SID** :math:`D_{sid}`: Source-to-Isocenter Distance (distance from X-ray source to rotation center)
 - **Detector coordinates** :math:`(u, v)`: Horizontal and vertical detector positions
 - **Cone angles** :math:`(\alpha, \beta)`: Horizontal and vertical beam divergence
 
