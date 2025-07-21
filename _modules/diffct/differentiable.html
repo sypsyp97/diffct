@@ -1282,13 +1282,6 @@
 <span class="sd">    CUDA-capable hardware and a properly configured CUDA environment; all input</span>
 <span class="sd">    tensors must reside on the same CUDA device.</span>
 
-<span class="sd">    Methods</span>
-<span class="sd">    -------</span>
-<span class="sd">    forward(ctx, image, angles, num_detectors, detector_spacing=1.0)</span>
-<span class="sd">        Compute the 2D parallel beam forward projection (Radon transform) of an image using CUDA acceleration.</span>
-<span class="sd">    backward(ctx, grad_sinogram)</span>
-<span class="sd">        Compute gradients for the input image given the sinogram gradient.</span>
-
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
 <span class="sd">    &gt;&gt;&gt; import torch</span>
@@ -1434,13 +1427,6 @@
 <span class="sd">    backward pass computes gradients via forward projection as the adjoint operation.</span>
 <span class="sd">    Requires CUDA-capable hardware and consistent device placements.</span>
 <span class="sd">    </span>
-<span class="sd">    Methods</span>
-<span class="sd">    -------</span>
-<span class="sd">    forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128)</span>
-<span class="sd">        Compute the 2D parallel beam backprojection (adjoint Radon transform) of a</span>
-<span class="sd">        sinogram using CUDA acceleration.</span>
-<span class="sd">    backward(ctx, grad_output)</span>
-<span class="sd">        Compute gradients for the input sinogram given the reconstruction gradient.</span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1585,13 +1571,6 @@
 <span class="sd">    using divergent beam geometry, and the backward pass computes gradients via</span>
 <span class="sd">    adjoint backprojection.</span>
 <span class="sd">    </span>
-<span class="sd">    Methods</span>
-<span class="sd">    -------</span>
-<span class="sd">    forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid)</span>
-<span class="sd">        Compute the 2D fan beam forward projection (divergent beam Radon transform)</span>
-<span class="sd">        of an image using CUDA acceleration.</span>
-<span class="sd">    backward(ctx, grad_sinogram)</span>
-<span class="sd">        Compute gradients for the input image given the sinogram gradient.</span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1737,13 +1716,6 @@
 <span class="sd">    computes reconstruction from sinogram data, and the backward pass computes</span>
 <span class="sd">    gradients via forward projection.</span>
 <span class="sd">    </span>
-<span class="sd">    Methods</span>
-<span class="sd">    -------</span>
-<span class="sd">    forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid)</span>
-<span class="sd">        Compute the 2D fan beam backprojection (adjoint transform) of a sinogram</span>
-<span class="sd">        using CUDA acceleration.</span>
-<span class="sd">    backward(ctx, grad_output)</span>
-<span class="sd">        Compute gradients for the input sinogram given the reconstruction gradient.</span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1888,13 +1860,6 @@
 <span class="sd">    The forward pass computes 3D projections, and the backward pass computes</span>
 <span class="sd">    gradients via adjoint 3D backprojection. Requires significant GPU memory.</span>
 <span class="sd">    </span>
-<span class="sd">    Methods</span>
-<span class="sd">    -------</span>
-<span class="sd">    forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid)</span>
-<span class="sd">        Compute the 3D cone beam forward projection (volumetric Radon transform)</span>
-<span class="sd">        of a volume using CUDA acceleration.</span>
-<span class="sd">    backward(ctx, grad_sinogram)</span>
-<span class="sd">        Compute gradients for the input volume given the projection gradient.</span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -2049,12 +2014,6 @@
 <span class="sd">    Consider using gradient checkpointing, smaller volumes, or distributed computing</span>
 <span class="sd">    for large-scale applications, and ensure sufficient GPU memory is available.</span>
 
-<span class="sd">    Methods</span>
-<span class="sd">    -------</span>
-<span class="sd">    forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid)</span>
-<span class="sd">        Compute the 3D cone beam backprojection (adjoint transform) of a projection sinogram using CUDA acceleration.</span>
-<span class="sd">    backward(ctx, grad_output)</span>
-<span class="sd">        Compute gradients for the input sinogram given the reconstruction gradient.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
