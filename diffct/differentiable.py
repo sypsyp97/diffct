@@ -980,14 +980,14 @@ def _cone_3d_forward_kernel(
                 # Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy, (1-dz) or dz
                 # Each of the 8 cube corners gets a weight proportional to its distance from the sample point
                 val = (
-                    d_vol[iz0,     iy0,     ix0]     * (1 - dx) * (1 - dy) * (1 - dz) +
-                    d_vol[iz0,     iy0,     ix0 + 1] * dx * (1 - dy) * (1 - dz) +
-                    d_vol[iz0,     iy0 + 1, ix0]     * (1 - dx) * dy * (1 - dz) +
-                    d_vol[iz0,     iy0 + 1, ix0 + 1] * dx * dy * (1 - dz) +
-                    d_vol[iz0 + 1, iy0,     ix0]     * (1 - dx) * (1 - dy) * dz +
-                    d_vol[iz0 + 1, iy0,     ix0 + 1] * dx * (1 - dy) * dz +
-                    d_vol[iz0 + 1, iy0 + 1, ix0]     * (1 - dx) * dy * dz +
-                    d_vol[iz0 + 1, iy0 + 1, ix0 + 1] * dx * dy * dz
+                    d_vol[ix0,     iy0,     iz0]     * (1-dx)*(1-dy)*(1-dz) +  # Corner (0,0,0): weight = product of distances from opposite faces
+                    d_vol[ix0 + 1, iy0,     iz0]     * dx*(1-dy)*(1-dz) +     # Corner (1,0,0): weight = dx * (1-dy) * (1-dz)
+                    d_vol[ix0,     iy0 + 1, iz0]     * (1-dx)*dy*(1-dz) +     # Corner (0,1,0): weight = (1-dx) * dy * (1-dz)
+                    d_vol[ix0,     iy0,     iz0 + 1] * (1-dx)*(1-dy)*dz +     # Corner (0,0,1): weight = (1-dx) * (1-dy) * dz
+                    d_vol[ix0 + 1, iy0 + 1, iz0]     * dx*dy*(1-dz) +         # Corner (1,1,0): weight = dx * dy * (1-dz)
+                    d_vol[ix0 + 1, iy0,     iz0 + 1] * dx*(1-dy)*dz +         # Corner (1,0,1): weight = dx * (1-dy) * dz
+                    d_vol[ix0,     iy0 + 1, iz0 + 1] * (1-dx)*dy*dz +         # Corner (0,1,1): weight = (1-dx) * dy * dz
+                    d_vol[ix0 + 1, iy0 + 1, iz0 + 1] * dx*dy*dz               # Corner (1,1,1): weight = dx * dy * dz
                 )
                 # Accumulate contribution weighted by 3D ray segment length (discrete line integral approximation)
                 # This implements the 3D Radon transform: integral of f(x,y,z) along the ray path
@@ -1161,14 +1161,14 @@ def _cone_3d_backward_kernel(
                 # Performance impact: 3D atomics are most expensive due to volume of concurrent writes
                 # Memory bandwidth: 8 atomic operations per interpolation point can saturate memory subsystem
                 cval = g * seg_len  # Contribution value for this ray segment
-                cuda.atomic.add(d_vol, (iz0,     iy0,     ix0),     cval * (1-dx)*(1-dy)*(1-dz))
-                cuda.atomic.add(d_vol, (iz0,     iy0,     ix0 + 1), cval * dx*(1-dy)*(1-dz))
-                cuda.atomic.add(d_vol, (iz0,     iy0 + 1, ix0),     cval * (1-dx)*dy*(1-dz))
-                cuda.atomic.add(d_vol, (iz0,     iy0 + 1, ix0 + 1), cval * dx*dy*(1-dz))
-                cuda.atomic.add(d_vol, (iz0 + 1, iy0,     ix0),     cval * (1-dx)*(1-dy)*dz)
-                cuda.atomic.add(d_vol, (iz0 + 1, iy0,     ix0 + 1), cval * dx*(1-dy)*dz)
-                cuda.atomic.add(d_vol, (iz0 + 1, iy0 + 1, ix0),     cval * (1-dx)*dy*dz)
-                cuda.atomic.add(d_vol, (iz0 + 1, iy0 + 1, ix0 + 1), cval * dx*dy*dz)
+                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0),     cval * (1-dx)*(1-dy)*(1-dz))  # Corner (0,0,0) - atomic write
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0),     cval * dx*(1-dy)*(1-dz))      # Corner (1,0,0) - atomic write
+                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0),     cval * (1-dx)*dy*(1-dz))      # Corner (0,1,0) - atomic write
+                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0 + 1), cval * (1-dx)*(1-dy)*dz)      # Corner (0,0,1) - atomic write
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0),     cval * dx*dy*(1-dz))          # Corner (1,1,0) - atomic write
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0 + 1), cval * dx*(1-dy)*dz)          # Corner (1,0,1) - atomic write
+                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0 + 1), cval * (1-dx)*dy*dz)          # Corner (0,1,1) - atomic write
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx*dy*dz)              # Corner (1,1,1) - atomic write
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first in 3D
@@ -1809,36 +1809,37 @@ class ConeProjectorFunction(torch.autograd.Function):
         volume = volume.to(dtype=torch.float32)
         angles = angles.to(dtype=torch.float32)
 
-        Nz, Ny, Nx = volume.shape
+        D, H, W = volume.shape
         n_views = angles.shape[0]
 
         sino = torch.zeros((n_views, det_u, det_v), dtype=volume.dtype, device=device)
         d_cos, d_sin = _trig_tables(angles, dtype=volume.dtype)
 
-        d_vol = TorchCUDABridge.tensor_to_cuda_array(volume)
+        volume_perm = volume.permute(2, 1, 0).contiguous()
+        d_vol = TorchCUDABridge.tensor_to_cuda_array(volume_perm)
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sino)
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
-        cx, cy, cz = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5), _DTYPE((Nz - 1) * 0.5)
-    
+        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+
         _cone_3d_forward_kernel[grid, tpb](
-            d_vol, Nx, Ny, Nz, d_sino, n_views, det_u, det_v,
+            d_vol, W, H, D, d_sino, n_views, det_u, det_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid),
             cx, cy, cz
         )
-    
+
         ctx.save_for_backward(angles)
-        ctx.intermediate = (Nz, Ny, Nx, det_u, det_v, du, dv,
+        ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
                             sdd, sid)
         return sino
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        (Nz, Ny, Nx, det_u, det_v, du, dv,
+        (D, H, W, det_u, det_v, du, dv,
          sdd, sid) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
@@ -1849,23 +1850,24 @@ class ConeProjectorFunction(torch.autograd.Function):
 
         n_views = angles.shape[0]
 
-        grad_vol = torch.zeros((Nz, Ny, Nx), dtype=grad_sinogram.dtype, device=device)
+        grad_vol_perm = torch.zeros((W, H, D), dtype=grad_sinogram.dtype, device=device)
         d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype)
 
         d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
-        d_vol_grad = TorchCUDABridge.tensor_to_cuda_array(grad_vol)
+        d_vol_grad = TorchCUDABridge.tensor_to_cuda_array(grad_vol_perm)
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
-        cx, cy, cz = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5), _DTYPE((Nz - 1) * 0.5)
-    
+        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+
         _cone_3d_backward_kernel[grid, tpb](
-            d_grad_sino, n_views, det_u, det_v, d_vol_grad, Nx, Ny, Nz,
+            d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
         )
 
+        grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
         return grad_vol, None, None, None, None, None, None, None
 
 
@@ -1962,20 +1964,19 @@ class ConeBackprojectorFunction(torch.autograd.Function):
 
         n_views, n_u, n_v = sinogram.shape
 
-        Nz, Ny, Nx = D, H, W
-        vol = torch.zeros((Nz, Ny, Nx), dtype=sinogram.dtype, device=device)
+        vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
         d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)
 
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_reco = TorchCUDABridge.tensor_to_cuda_array(vol)
+        d_reco = TorchCUDABridge.tensor_to_cuda_array(vol_perm)
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
-        cx, cy, cz = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5), _DTYPE((Nz - 1) * 0.5)
-    
+        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+
         _cone_3d_backward_kernel[grid, tpb](
-            d_sino, n_views, n_u, n_v, d_reco, Nx, Ny, Nz,
+            d_sino, n_views, n_u, n_v, d_reco, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
         )
@@ -1983,12 +1984,13 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
                             sdd, sid)
+        vol = vol_perm.permute(2, 1, 0).contiguous()
         return vol
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
-        (Nz, Ny, Nx, n_u, n_v, du, dv,
+        (D, H, W, n_u, n_v, du, dv,
          sdd, sid) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
@@ -1998,19 +2000,19 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         angles = angles.to(dtype=torch.float32)
 
         n_views = angles.shape[0]
-        
+
         grad_sino = torch.zeros((n_views, n_u, n_v), dtype=grad_output.dtype, device=device)
         d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype)
 
-        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
+        grad_output_perm = grad_output.permute(2, 1, 0).contiguous()
+        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output_perm)
         d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
-        D, H, W = grad_output.shape
-        cx, cy, cz = _DTYPE((W - 1) * 0.5), _DTYPE((H - 1) * 0.5), _DTYPE((D - 1) * 0.5)
-    
+        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+
         _cone_3d_forward_kernel[grid, tpb](
             d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
