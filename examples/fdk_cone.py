@@ -80,8 +80,8 @@ def main():
 
     det_u, det_v = 256, 256
     du, dv = 1.0, 1.0
-    source_distance = 900.0
-    isocenter_distance = 600.0
+    sdd = 900.0
+    sid = 600.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32, requires_grad=True)
@@ -89,7 +89,7 @@ def main():
 
     sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
                                            det_u, det_v, du, dv,
-                                           source_distance, isocenter_distance)
+                                           sdd, sid)
 
     # --- FDK weighting and filtering ---
     # For FDK, projections must be weighted before filtering.
@@ -102,14 +102,14 @@ def main():
     u_coords = u_coords.view(1, det_u, 1)
     v_coords = v_coords.view(1, 1, det_v)
     
-    weights = source_distance / torch.sqrt(source_distance**2 + u_coords**2 + v_coords**2)
+    weights = sdd / torch.sqrt(sdd**2 + u_coords**2 + v_coords**2)
     
     # Apply weights and then filter
     sino_weighted = sinogram * weights
     sinogram_filt = ramp_filter_3d(sino_weighted)
 
     reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nx, Ny, Nz,
-                                                    du, dv, source_distance, isocenter_distance)
+                                                    du, dv, sdd, sid)
     
     # --- FDK normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

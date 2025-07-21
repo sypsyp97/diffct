@@ -498,7 +498,7 @@ def _fan_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
     det_spacing, d_cos, d_sin,
-    src_dist, iso_dist, cx, cy
+    sdd, sid, cx, cy
 ):
     """
     CUDA kernel implementing the Siddon-Joseph algorithm for 2D fan beam forward projection.
@@ -510,6 +510,13 @@ def _fan_2d_forward_kernel(
     
     Coordinate system: Source rotates around isocenter, detector array is positioned
     at fixed distance from source, rays connect source to individual detector pixels.
+    
+    Parameters
+    ----------
+    sdd : float
+        Source-to-Detector Distance (SDD). Total distance from X-ray source to detector.
+    sid : float
+        Source-to-Isocenter Distance (SID). Distance from X-ray source to center of rotation.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -521,14 +528,14 @@ def _fan_2d_forward_kernel(
     u     = (idet - (n_det - 1) * 0.5) * det_spacing  # Detector coordinate (centered)
 
     # Calculate source and detector positions for current projection angle
-    # Source position: rotated by angle around isocenter at distance iso_dist
-    src_x = -iso_dist * sin_a  # Source x-coordinate in world space
-    src_y =  iso_dist * cos_a  # Source y-coordinate in world space
+    # Source position: rotated by angle around isocenter at distance sid (SID)
+    src_x = -sid * sin_a  # Source x-coordinate in world space
+    src_y =  sid * cos_a  # Source y-coordinate in world space
     
-    # Detector element position: on detector array at distance src_dist from isocenter
-    # Detector array is perpendicular to source-isocenter line, offset by u
-    det_x = (src_dist - iso_dist) * sin_a + u * cos_a   # Detector x-coordinate
-    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a  # Detector y-coordinate
+    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
+    idd = sdd - sid
+    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate
+    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -612,7 +619,7 @@ def _fan_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
     det_spacing, d_cos, d_sin,
-    src_dist, iso_dist, cx, cy
+    sdd, sid, cx, cy
 ):
     """
     CUDA kernel implementing the Siddon-Joseph algorithm for 2D fan beam backprojection.
@@ -623,6 +630,13 @@ def _fan_2d_backward_kernel(
     
     Mathematical basis: Implements the transpose of the fan beam forward projection matrix,
     distributing detector measurements back along divergent ray paths with bilinear interpolation.
+    
+    Parameters
+    ----------
+    sdd : float
+        Source-to-Detector Distance (SDD). Total distance from X-ray source to detector.
+    sid : float
+        Source-to-Isocenter Distance (SID). Distance from X-ray source to center of rotation.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -635,13 +649,14 @@ def _fan_2d_backward_kernel(
     u     = (idet - (n_det - 1) * 0.5) * det_spacing  # Detector coordinate (centered)
 
     # Calculate source and detector positions for current projection angle
-    # Source position: rotated by angle around isocenter at distance iso_dist
-    src_x = -iso_dist * sin_a  # Source x-coordinate in world space
-    src_y =  iso_dist * cos_a  # Source y-coordinate in world space
+    # Source position: rotated by angle around isocenter at distance sid (SID)
+    src_x = -sid * sin_a  # Source x-coordinate in world space
+    src_y =  sid * cos_a  # Source y-coordinate in world space
     
-    # Detector element position: on detector array at distance src_dist from isocenter
-    det_x = (src_dist - iso_dist) * sin_a + u * cos_a   # Detector x-coordinate
-    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a  # Detector y-coordinate
+    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
+    idd = sdd - sid
+    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate
+    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -722,7 +737,7 @@ def _cone_3d_forward_kernel(
     d_vol, Nx, Ny, Nz,
     d_sino, n_views, n_u, n_v,
     du, dv, d_cos, d_sin,
-    src_dist, iso_dist, cx, cy, cz
+    sdd, sid, cx, cy, cz
 ):
     """
     CUDA kernel implementing the Siddon-Joseph algorithm for 3D cone beam forward projection.
@@ -733,6 +748,13 @@ def _cone_3d_forward_kernel(
     
     Coordinate system: Source rotates around isocenter in xy-plane, 2D detector array
     positioned at fixed distance from source with (u,v) coordinates, z-axis is vertical.
+    
+    Parameters
+    ----------
+    sdd : float
+        Source-to-Detector Distance (SDD). Total distance from X-ray source to detector.
+    sid : float
+        Source-to-Isocenter Distance (SID). Distance from X-ray source to center of rotation.
     """
     iview, iu, iv = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
@@ -744,12 +766,13 @@ def _cone_3d_forward_kernel(
 
     # Calculate 3D source and detector positions
     # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -iso_dist * sin_a, iso_dist * cos_a, 0.0
+    src_x, src_y, src_z = -sid * sin_a, sid * cos_a, 0.0
     
-    # Detector element position: 2D array perpendicular to source-isocenter line
+    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
-    det_x = (src_dist - iso_dist) * sin_a + u * cos_a   # In-plane x-coordinate
-    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a  # In-plane y-coordinate  
+    idd = sdd - sid
+    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate
+    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate  
     det_z = v                                           # Vertical z-coordinate
 
     # === 3D RAY DIRECTION CALCULATION ===
@@ -872,7 +895,7 @@ def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
     du, dv, d_cos, d_sin,
-    src_dist, iso_dist, cx, cy, cz
+    sdd, sid, cx, cy, cz
 ):
     """
     CUDA kernel implementing the Siddon-Joseph algorithm for 3D cone beam backprojection.
@@ -883,6 +906,13 @@ def _cone_3d_backward_kernel(
     
     Mathematical basis: Implements the transpose of the cone beam forward projection matrix,
     distributing detector measurements back along divergent 3D ray paths with trilinear interpolation.
+    
+    Parameters
+    ----------
+    sdd : float
+        Source-to-Detector Distance (SDD). Total distance from X-ray source to detector.
+    sid : float
+        Source-to-Isocenter Distance (SID). Distance from X-ray source to center of rotation.
     """
     iview, iu, iv = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
@@ -895,12 +925,13 @@ def _cone_3d_backward_kernel(
 
     # Calculate 3D source and detector positions
     # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -iso_dist * sin_a, iso_dist * cos_a, 0.0
+    src_x, src_y, src_z = -sid * sin_a, sid * cos_a, 0.0
     
-    # Detector element position: 2D array perpendicular to source-isocenter line
+    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
-    det_x = (src_dist - iso_dist) * sin_a + u * cos_a   # In-plane x-coordinate
-    det_y = -(src_dist - iso_dist) * cos_a + u * sin_a  # In-plane y-coordinate
+    idd = sdd - sid
+    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate
+    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate
     det_z = v                                           # Vertical z-coordinate
 
     # === 3D RAY DIRECTION CALCULATION ===
@@ -1348,9 +1379,9 @@ class FanProjectorFunction(torch.autograd.Function):
         - Configurable source and detector distances for flexible geometry setup
     
     Mathematical Background:
-        Fan beam projection involves rays from a point source at distance `source_distance`
-        from the isocenter to detector elements at distance `detector_distance` from the source.
-        The magnification factor M = detector_distance / source_distance determines the
+        Fan beam projection involves rays from a point source at distance `sid` (SID)
+        from the isocenter to detector elements at distance `sdd` (SDD) from the source.
+        The magnification factor M = sdd / sid determines the
         geometric scaling between object and detector coordinates.
         
         Each ray connects the source position (rotated around isocenter) to a specific
@@ -1386,7 +1417,7 @@ class FanProjectorFunction(torch.autograd.Function):
         should be much larger than the object size to minimize geometric distortions.
     """
     @staticmethod
-    def forward(ctx, image, angles, num_detectors, detector_spacing, source_distance, isocenter_distance):
+    def forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid):
         """
         Compute the 2D fan beam forward projection of an image using CUDA acceleration.
 
@@ -1400,10 +1431,12 @@ class FanProjectorFunction(torch.autograd.Function):
             Number of detector elements in the sinogram (columns).
         detector_spacing : float
             Physical spacing between detector elements.
-        source_distance : float
-            Distance from the X-ray source to the isocenter (center of rotation).
-        isocenter_distance : float
-            Distance from the isocenter to the detector array.
+        sdd : float
+            Source-to-Detector Distance (SDD). The total distance from the X-ray
+            source to the detector, passing through the isocenter.
+        sid : float
+            Source-to-Isocenter Distance (SID). The distance from the X-ray
+            source to the center of rotation (isocenter).
 
         Returns
         -------
@@ -1421,7 +1454,7 @@ class FanProjectorFunction(torch.autograd.Function):
         -------
         >>> image = torch.randn(256, 256, device='cuda', requires_grad=True)
         >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
-        >>> sinogram = FanProjectorFunction.apply(image, angles, 512, 1.0, 1000.0, 1500.0)
+        >>> sinogram = FanProjectorFunction.apply(image, angles, 512, 1.0, 1500.0, 1000.0)
         """
         device = DeviceManager.get_device(image)
         image = DeviceManager.ensure_device(image, device)
@@ -1447,18 +1480,18 @@ class FanProjectorFunction(torch.autograd.Function):
         _fan_2d_forward_kernel[grid, tpb](
             d_image, Nx, Ny, d_sino, n_ang, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(source_distance), _DTYPE(isocenter_distance), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy
         )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, image.shape[0], image.shape[1],
-                            source_distance, isocenter_distance)
+                            sdd, sid)
         return sinogram
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        (n_det, det_spacing, H, W, src_dist, iso_dist) = ctx.intermediate
+        (n_det, det_spacing, H, W, sdd, sid) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1483,7 +1516,7 @@ class FanProjectorFunction(torch.autograd.Function):
         _fan_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy
         )
 
         return grad_img, None, None, None, None, None
@@ -1526,13 +1559,13 @@ class FanBackprojectorFunction(torch.autograd.Function):
         >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
         >>> detector_spacing = 1.0
         >>> H, W = 256, 256  # Reconstruction size
-        >>> source_distance = 1000.0
-        >>> isocenter_distance = 500.0
+        >>> sdd = 1500.0  # Source-to-Detector Distance
+        >>> sid = 1000.0  # Source-to-Isocenter Distance
         >>> 
         >>> # Compute backprojection
         >>> backprojector = FanBackprojectorFunction.apply
         >>> reconstruction = backprojector(sinogram, angles, detector_spacing, H, W,
-        ...                               source_distance, isocenter_distance)
+        ...                               sdd, sid)
         >>> 
         >>> # Compute loss and gradients
         >>> loss = reconstruction.sum()
@@ -1545,7 +1578,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         The geometry parameters must match those used in forward projection for consistency.
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, detector_spacing, H, W, source_distance, isocenter_distance):
+    def forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid):
         """
         Compute the 2D fan beam backprojection of a sinogram using CUDA acceleration.
 
@@ -1561,10 +1594,12 @@ class FanBackprojectorFunction(torch.autograd.Function):
             Height of the output reconstruction image.
         W : int
             Width of the output reconstruction image.
-        source_distance : float
-            Distance from the X-ray source to the isocenter (center of rotation).
-        isocenter_distance : float
-            Distance from the isocenter to the detector array.
+        sdd : float
+            Source-to-Detector Distance (SDD). The total distance from the X-ray
+            source to the detector, passing through the isocenter.
+        sid : float
+            Source-to-Isocenter Distance (SID). The distance from the X-ray
+            source to the center of rotation (isocenter).
 
         Returns
         -------
@@ -1608,17 +1643,17 @@ class FanBackprojectorFunction(torch.autograd.Function):
         _fan_2d_backward_kernel[grid, tpb](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(source_distance), _DTYPE(isocenter_distance), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, source_distance, isocenter_distance)
+        ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, sdd, sid)
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
-        (H, W, det_spacing, n_ang, n_det, src_dist, iso_dist) = ctx.intermediate
+        (H, W, det_spacing, n_ang, n_det, sdd, sid) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1642,7 +1677,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         _fan_2d_forward_kernel[grid, tpb](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy
         )
 
         return grad_sino, None, None, None, None, None, None
@@ -1689,13 +1724,13 @@ class ConeProjectorFunction(torch.autograd.Function):
         >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
         >>> det_u, det_v = 256, 256  # 2D detector array size
         >>> du, dv = 1.0, 1.0       # Detector pixel spacing
-        >>> source_distance = 1000.0    # Source to isocenter distance
-        >>> isocenter_distance = 500.0  # Isocenter to detector distance
+        >>> sdd = 1500.0    # Source-to-Detector Distance
+        >>> sid = 1000.0  # Source-to-Isocenter Distance
         >>> 
         >>> # Compute 3D forward projection
         >>> projector = ConeProjectorFunction.apply
         >>> projections = projector(volume, angles, det_u, det_v, du, dv,
-        ...                        source_distance, isocenter_distance)
+        ...                        sdd, sid)
         >>> 
         >>> # Compute loss and gradients
         >>> loss = projections.sum()
@@ -1708,7 +1743,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         applications. The cone angle should be minimized to reduce reconstruction artifacts.
     """
     @staticmethod
-    def forward(ctx, volume, angles, det_u, det_v, du, dv, source_distance, isocenter_distance):
+    def forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid):
         """
         Compute the 3D cone beam forward projection of a volume using CUDA acceleration.
 
@@ -1726,10 +1761,12 @@ class ConeProjectorFunction(torch.autograd.Function):
             Physical spacing between detector elements along the u-axis.
         dv : float
             Physical spacing between detector elements along the v-axis.
-        source_distance : float
-            Distance from the X-ray source to the isocenter (center of rotation).
-        isocenter_distance : float
-            Distance from the isocenter to the detector array.
+        sdd : float
+            Source-to-Detector Distance (SDD). The total distance from the X-ray
+            source to the detector, passing through the isocenter.
+        sid : float
+            Source-to-Isocenter Distance (SID). The distance from the X-ray
+            source to the center of rotation (isocenter).
 
         Returns
         -------
@@ -1747,7 +1784,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         -------
         >>> volume = torch.randn(128, 128, 128, device='cuda', requires_grad=True)
         >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
-        >>> sino = ConeProjectorFunction.apply(volume, angles, 256, 256, 1.0, 1.0, 1000.0, 500.0)
+        >>> sino = ConeProjectorFunction.apply(volume, angles, 256, 256, 1.0, 1.0, 1500.0, 1000.0)
         """
         device = DeviceManager.get_device(volume)
         volume = DeviceManager.ensure_device(volume, device)
@@ -1773,20 +1810,20 @@ class ConeProjectorFunction(torch.autograd.Function):
         _cone_3d_forward_kernel[grid, tpb](
             d_vol, D, H, W, d_sino, n_views, det_u, det_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(source_distance), _DTYPE(isocenter_distance),
+            _DTYPE(sdd), _DTYPE(sid),
             cx, cy, cz
         )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
-                            source_distance, isocenter_distance)
+                            sdd, sid)
         return sino
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
         (D, H, W, det_u, det_v, du, dv,
-         src_dist, iso_dist) = ctx.intermediate
+         sdd, sid) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1810,7 +1847,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         _cone_3d_backward_kernel[grid, tpb](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, D, H, W,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy, cz
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
         )
 
         return grad_vol, None, None, None, None, None, None, None
@@ -1857,13 +1894,13 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
         >>> D, H, W = 128, 128, 128  # 3D reconstruction size
         >>> du, dv = 1.0, 1.0       # Detector pixel spacing
-        >>> source_distance = 1000.0
-        >>> isocenter_distance = 500.0
+        >>> sdd = 1500.0
+        >>> sid = 1000.0
         >>> 
         >>> # Compute 3D backprojection
         >>> backprojector = ConeBackprojectorFunction.apply
         >>> volume = backprojector(projections, angles, D, H, W, du, dv,
-        ...                       source_distance, isocenter_distance)
+        ...                       sdd, sid)
         >>> 
         >>> # Compute loss and gradients
         >>> loss = volume.sum()
@@ -1876,7 +1913,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         computing for large-scale applications. Ensure sufficient GPU memory is available.
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, D, H, W, du, dv, source_distance, isocenter_distance):
+    def forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid):
         """
         Compute the 3D cone beam backprojection of a projection sinogram using CUDA acceleration.
 
@@ -1896,10 +1933,12 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             Physical spacing between detector elements along the u-axis.
         dv : float
             Physical spacing between detector elements along the v-axis.
-        source_distance : float
-            Distance from the X-ray source to the isocenter (center of rotation).
-        isocenter_distance : float
-            Distance from the isocenter to the detector array.
+        sdd : float
+            Source-to-Detector Distance (SDD). The total distance from the X-ray
+            source to the detector, passing through the isocenter.
+        sid : float
+            Source-to-Isocenter Distance (SID). The distance from the X-ray
+            source to the center of rotation (isocenter).
 
         Returns
         -------
@@ -1917,7 +1956,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         -------
         >>> projections = torch.randn(360, 256, 256, device='cuda', requires_grad=True)
         >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
-        >>> vol = ConeBackprojectorFunction.apply(projections, angles, 128, 128, 128, 1.0, 1.0, 1000.0, 500.0)
+        >>> vol = ConeBackprojectorFunction.apply(projections, angles, 128, 128, 128, 1.0, 1.0, 1500.0, 1000.0)
         """
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
@@ -1942,19 +1981,19 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         _cone_3d_backward_kernel[grid, tpb](
             d_sino, n_views, n_u, n_v, d_reco, D, H, W,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(source_distance), _DTYPE(isocenter_distance), cx, cy, cz
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
         )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
-                            source_distance, isocenter_distance)
+                            sdd, sid)
         return vol
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
         (D, H, W, n_u, n_v, du, dv,
-         src_dist, iso_dist) = ctx.intermediate
+         sdd, sid) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1978,7 +2017,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         _cone_3d_forward_kernel[grid, tpb](
             d_grad_out, D, H, W, d_sino_grad, n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(src_dist), _DTYPE(iso_dist), cx, cy, cz
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
         )
 
         return grad_sino, None, None, None, None, None, None, None, None

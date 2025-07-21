@@ -54,21 +54,21 @@ def main():
 
     num_detectors = 600
     detector_spacing = 1.0
-    source_distance = 800.0
-    isocenter_distance = 500.0
+    sdd = 800.0
+    sid = 500.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = FanProjectorFunction.apply(image_torch, angles_torch, num_detectors,
-                                          detector_spacing, source_distance, isocenter_distance)
+                                          detector_spacing, sdd, sid)
 
     # --- FBP weighting and filtering ---
     # For fan-beam FBP, projections must be weighted before filtering.
     # Weight = cos(gamma), where gamma is the fan angle for each detector.
     u = (torch.arange(num_detectors, dtype=image_torch.dtype, device=device) - (num_detectors - 1) / 2) * detector_spacing
-    gamma = torch.atan(u / source_distance)
+    gamma = torch.atan(u / sdd)
     weights = torch.cos(gamma).unsqueeze(0)  # Shape (1, num_detectors) for broadcasting
 
     # Apply weights before filtering
@@ -77,7 +77,7 @@ def main():
 
     reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                     detector_spacing, Nx, Ny,
-                                                    source_distance, isocenter_distance)
+                                                    sdd, sid)
     
     # --- FBP normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,
