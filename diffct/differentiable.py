@@ -18,7 +18,7 @@ _TPB_3D             = (8,  8,  8)
 # CUDA fastmath optimization: enables aggressive floating-point optimizations
 # Trades numerical precision for performance in ray-tracing calculations
 # Safe for CT reconstruction where slight precision loss is acceptable for speed gains
-_FASTMATH_DECORATOR = cuda.jit(fastmath=True)
+_FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=True)
 _INF                = _DTYPE(np.inf)
 _EPSILON            = _DTYPE(1e-6)
 # === Device Management Utilities ===
