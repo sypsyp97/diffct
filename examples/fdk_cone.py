@@ -137,7 +137,7 @@ def main():
     plt.title("Phantom mid-slice")
     plt.axis('off')
     plt.subplot(1,3,2)
-    plt.imshow(sinogram_cpu[num_views//2], cmap='gray')
+    plt.imshow(sinogram_cpu[num_views//2].T, cmap='gray', origin='lower') # Transpose for correct orientation
     plt.title("Sinogram mid-view")
     plt.axis('off')
     plt.subplot(1,3,3)
