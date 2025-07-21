@@ -25,18 +25,17 @@ _EPSILON            = _DTYPE(1e-6)
 class DeviceManager:
     @staticmethod
     def get_device(tensor):
-        """Get the device on which a PyTorch tensor resides.
+        """Get the device of a PyTorch tensor.
 
         Parameters
         ----------
         tensor : torch.Tensor
-            The tensor whose device is to be determined.
+            Tensor whose device to determine.
 
         Returns
         -------
         torch.device
-            The device of the tensor. Returns 'cpu' if the tensor does not
-            have a device attribute.
+            Device of the tensor or CPU if unavailable.
 
         Examples
         --------
@@ -47,20 +46,19 @@ class DeviceManager:
 
     @staticmethod
     def ensure_device(tensor, device):
-        """Ensure that a tensor is on the specified device.
+        """Ensure a tensor resides on a given device.
 
         Parameters
         ----------
         tensor : torch.Tensor
-            The tensor to move.
+            Tensor to move.
         device : torch.device
-            The target device.
+            Desired device.
 
         Returns
         -------
         torch.Tensor
-            The tensor on the specified device. If the tensor is already on
-            the device, it is returned unchanged.
+            Tensor on the specified device. Unchanged if already on it.
 
         Examples
         --------
@@ -78,30 +76,26 @@ class DeviceManager:
 class TorchCUDABridge:
     @staticmethod
     def tensor_to_cuda_array(tensor):
-        """Convert a PyTorch CUDA tensor to a Numba CUDA array.
+        """Convert a PyTorch CUDA tensor to a Numba CUDA DeviceNDArray.
 
-        This function provides a zero-copy view of a PyTorch tensor as a Numba
-        CUDA array, avoiding any data transfer to the CPU. The tensor is
-        always detached to prevent autograd-related issues.
+        Provides a zero-copy view of a detached PyTorch tensor as a Numba CUDA array,
+        avoiding CPU data transfers. The returned array shares memory with the
+        original tensor.
 
         Parameters
         ----------
         tensor : torch.Tensor
-            A PyTorch tensor located on a CUDA device.
+            PyTorch tensor on a CUDA device.
 
         Returns
         -------
         numba.cuda.cudadrv.devicearray.DeviceNDArray
-            A Numba CUDA array view of the tensor's data.
+            Numba CUDA array view sharing memory with `tensor`.
 
         Raises
         ------
         ValueError
-            If the tensor is not on a CUDA device.
-
-        Notes
-        -----
-        The returned array shares memory with the original tensor.
+            If `tensor` is not on a CUDA device.
 
         Examples
         --------
@@ -116,19 +110,21 @@ class TorchCUDABridge:
     def cuda_array_to_tensor(cuda_array, tensor_template):
         """Convert a Numba CUDA array to a PyTorch tensor.
 
+        Wrap a Numba CUDA DeviceNDArray as a PyTorch tensor with matching device
+        and dtype from a template tensor, sharing underlying memory.
+
         Parameters
         ----------
         cuda_array : numba.cuda.cudadrv.devicearray.DeviceNDArray
-            The CUDA array to convert.
+            Numba CUDA array to wrap.
         tensor_template : torch.Tensor
-            A PyTorch tensor whose device and dtype will be used for the new
-            tensor.
+            Template tensor specifying device and dtype.
 
         Returns
         -------
         torch.Tensor
-            A PyTorch tensor sharing data with the CUDA array, configured
-            with the device and dtype of the template tensor.
+            PyTorch tensor sharing data with the CUDA array on the template's
+            device and dtype.
 
         Examples
         --------
@@ -140,24 +136,24 @@ class TorchCUDABridge:
 
 # === GPU-aware Trigonometric Table Generation ===
 def _trig_tables(angles, dtype=_DTYPE):
-    """Precompute trigonometric lookup tables and transfer to GPU.
+    """Compute cosine and sine tables for input angles.
+
+    Precompute cosine and sine values and return as torch tensors on the
+    same device as `angles`.
 
     Parameters
     ----------
     angles : array-like or torch.Tensor
-        Array of projection angles in radians. It can be a NumPy array or a
-        PyTorch tensor on either CPU or CUDA.
-    dtype : np.dtype or torch.dtype, optional
-        The desired data type for the output tables. Defaults to `_DTYPE`.
+        Projection angles in radians. Can be a NumPy array or a PyTorch tensor on CPU or CUDA.
+    dtype : numpy.dtype or torch.dtype, optional
+        Desired data type for output tables. Default is `_DTYPE`.
 
     Returns
     -------
     cos : torch.Tensor
-        A tensor containing the cosine of the input angles, located on the
-        same device as the input.
+        Cosine values of `angles` on the same device.
     sin : torch.Tensor
-        A tensor containing the sine of the input angles, located on the
-        same device as the input.
+        Sine values of `angles` on the same device.
 
     Examples
     --------
@@ -181,42 +177,25 @@ def _trig_tables(angles, dtype=_DTYPE):
 
 
 def _grid_2d(n1, n2, tpb=_TPB_2D):
-    """Compute the CUDA 2D grid and block configuration.
+    """Compute 2D CUDA grid and block dimensions.
 
-    This function determines the optimal thread organization for 2D
-    ray-tracing kernels.
+    Determine optimal grid and block sizes for 2D CUDA ray-tracing kernels.
 
     Parameters
     ----------
     n1 : int
-        The number of elements along the first dimension (e.g., projection
-        angles).
+        Number of elements along the first dimension (e.g., projection angles).
     n2 : int
-        The number of elements along the second dimension (e.g., detector
-        elements).
+        Number of elements along the second dimension (e.g., detector elements).
     tpb : tuple of int, optional
-        The number of threads per block, defaulting to `_TPB_2D`. This value
-        is chosen to optimize occupancy and shared memory usage.
+        Threads per block (default is `_TPB_2D`) to balance occupancy and memory.
 
     Returns
     -------
     grid : tuple of int
-        A tuple representing the grid dimensions (number of blocks) for each
-        axis.
+        Blocks count per axis.
     tpb : tuple of int
-        A tuple representing the block dimensions (threads per block) for
-        each axis.
-
-    Notes
-    -----
-    - Each thread is assigned to a single ray, identified by a unique
-      (projection angle, detector element) pair.
-    - Grid dimensions are computed to ensure full coverage of all rays while
-      minimizing thread divergence.
-    - The default block size of 16x16 is selected to maximize GPU
-      occupancy while staying within shared memory limits.
-    - Threads within the same warp are assigned to adjacent detector
-      elements to promote coalesced memory access.
+        Threads per block per axis.
 
     Examples
     --------
@@ -230,45 +209,27 @@ def _grid_2d(n1, n2, tpb=_TPB_2D):
 
 
 def _grid_3d(n1, n2, n3, tpb=_TPB_3D):
-    """Compute the CUDA 3D grid and block configuration.
+    """Compute 3D CUDA grid and block dimensions.
 
-    This function determines the optimal thread organization for 3D cone-beam
-    kernels.
+    Determine optimal grid and block sizes for 3D CUDA cone-beam kernels.
 
     Parameters
     ----------
     n1 : int
-        The number of elements along the first dimension (e.g., projection
-        views).
+        Number of elements along the first dimension (e.g., projection views).
     n2 : int
-        The number of elements along the second dimension (e.g., detector
-        u-axis).
+        Number of elements along the second dimension (e.g., detector u-axis).
     n3 : int
-        The number of elements along the third dimension (e.g., detector
-        v-axis).
+        Number of elements along the third dimension (e.g., detector v-axis).
     tpb : tuple of int, optional
-        The number of threads per block, defaulting to `_TPB_3D`. This value
-        is chosen to balance occupancy and register usage.
+        Threads per block (default is `_TPB_3D`) to balance occupancy and registers.
 
     Returns
     -------
     grid : tuple of int
-        A tuple representing the grid dimensions (number of blocks) for each
-        axis.
+        Blocks count per axis.
     tpb : tuple of int
-        A tuple representing the block dimensions (threads per block) for
-        each axis.
-
-    Notes
-    -----
-    - Each thread processes a single ray, defined by a (view, detector_u,
-      detector_v) triplet.
-    - The 3D grid is designed to map directly to the 3D detector array,
-      providing an intuitive thread-to-ray correspondence.
-    - The 8x8x8 block size is chosen to balance occupancy with the higher
-      register pressure typical of 3D calculations.
-    - The use of 3D thread indexing facilitates efficient traversal of the
-      detector array and promotes memory coalescing.
+        Threads per block per axis.
 
     Examples
     --------
@@ -304,21 +265,38 @@ def _parallel_2d_forward_kernel(
     This CUDA kernel implements the Siddon-Joseph ray-tracing algorithm for
     2D parallel beam forward projection.
 
-    .. note::
-        The Siddon-Joseph algorithm provides accurate ray-volume intersection
-        by:
-        1. Calculating ray-volume boundary intersections to define traversal
-           limits.
-        2. Iterating through voxels along the ray path via parametric
-           equations.
-        3. Determining bilinear interpolation weights for sub-voxel
-           sampling.
-        4. Aggregating weighted voxel values based on ray segment lengths.
+    Parameters
+    ----------
+    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input 2D image array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output sinogram array on CUDA.
+    n_ang : int
+        Number of projection angles.
+    n_det : int
+        Number of detector elements.
+    det_spacing : float
+        Physical spacing between detector elements.
+    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed cosine values of projection angles.
+    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed sine values of projection angles.
+    cx : float
+        Half of image width in voxels.
+    cy : float
+        Half of image height in voxels.
 
-        The mathematical foundation relies on the parametric ray equation
-        :math:`\mathbf{r}(t) = \text{start} + t \cdot \text{direction}`,
-        where the algorithm identifies intersections with voxel boundaries
-        and integrates the volume function along the ray.
+    Notes
+    -----
+    The Siddon-Joseph algorithm provides accurate ray-volume intersection by:
+      - Calculating ray-volume boundary intersections to define traversal limits.
+      - Iterating through voxels along the ray path via parametric equations.
+      - Determining bilinear interpolation weights for sub-voxel sampling.
+      - Aggregating weighted voxel values based on ray segment lengths.
     """
     # CUDA THREAD ORGANIZATION: 2D grid maps directly to ray geometry
     # Each thread processes one ray defined by (projection_angle, detector_element) pair
@@ -448,15 +426,36 @@ def _parallel_2d_backward_kernel(
     This CUDA kernel implements the Siddon-Joseph algorithm for 2D parallel
     beam backprojection.
 
-    .. note::
-        This operation is the adjoint of the forward projection, where
-        sinogram values are distributed back into the volume along identical
-        ray paths. It employs the same ray-tracing logic but utilizes atomic
-        operations to manage concurrent writes from multiple threads.
+    Parameters
+    ----------
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input sinogram array on CUDA.
+    n_ang : int
+        Number of projection angles.
+    n_det : int
+        Number of detector elements.
+    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output image gradient array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    det_spacing : float
+        Physical spacing between detector elements.
+    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed cosine values of projection angles.
+    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed sine values of projection angles.
+    cx : float
+        Half of image width in voxels.
+    cy : float
+        Half of image height in voxels.
 
-        The mathematical foundation is based on implementing the transpose of
-        the forward projection matrix, which distributes detector
-        measurements back along ray paths using bilinear interpolation.
+    Notes
+    -----
+    This operation is the adjoint of the forward projection. Sinogram values
+    are distributed back into the volume along identical ray paths using
+    atomic operations to ensure thread-safe accumulation.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -549,25 +548,40 @@ def _fan_2d_forward_kernel(
     This CUDA kernel implements the Siddon-Joseph algorithm for 2D fan beam
     forward projection.
 
-    .. note::
-        Fan beam geometry diverges from parallel beam in that its rays
-        originate from a single point source, forming a divergent beam
-        pattern as they connect the X-ray source to each detector element.
-        While this kernel uses the same Siddon-Joseph traversal algorithm,
-        it requires distinct ray geometry calculations.
-
-        The coordinate system is defined with the source rotating around the
-        isocenter, a detector array at a fixed distance from the source, and
-        rays connecting the source to each detector pixel.
-
     Parameters
     ----------
+    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input 2D image array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output fan beam sinogram array on CUDA.
+    n_ang : int
+        Number of projection angles.
+    n_det : int
+        Number of detector elements.
+    det_spacing : float
+        Physical spacing between detector elements.
+    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed cosine values of projection angles.
+    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed sine values of projection angles.
     sdd : float
-        The Source-to-Detector Distance (SDD), representing the total
-        distance from the X-ray source to the detector.
+        Source-to-Detector Distance (SDD), total distance from source to detector.
     sid : float
-        The Source-to-Isocenter Distance (SID), representing the distance
-        from the X-ray source to the center of rotation.
+        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    cx : float
+        Half of image width in voxels.
+    cy : float
+        Half of image height in voxels.
+
+    Notes
+    -----
+    Fan beam geometry diverges from parallel beam in that its rays originate
+    from a single point source to a linear detector array. Rays connect the
+    rotated source position around the isocenter to each detector pixel.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -677,25 +691,40 @@ def _fan_2d_backward_kernel(
     This CUDA kernel implements the Siddon-Joseph algorithm for 2D fan beam
     backprojection.
 
-    .. note::
-        As the adjoint to the fan beam forward projection, this operation
-        distributes sinogram values back into the volume along the same ray
-        paths. It employs identical ray-tracing logic but relies on atomic
-        operations to manage concurrent writes from multiple threads.
-
-        The mathematical foundation involves implementing the transpose of
-        the fan beam forward projection matrix, which distributes detector
-        measurements back along divergent ray paths using bilinear
-        interpolation.
-
     Parameters
     ----------
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input fan beam sinogram array on CUDA.
+    n_ang : int
+        Number of projection angles.
+    n_det : int
+        Number of detector elements.
+    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output image gradient array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    det_spacing : float
+        Physical spacing between detector elements.
+    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed cosine values of projection angles.
+    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed sine values of projection angles.
     sdd : float
-        The Source-to-Detector Distance (SDD), representing the total
-        distance from the X-ray source to the detector.
+        Source-to-Detector Distance (SDD), total distance from source to detector.
     sid : float
-        The Source-to-Isocenter Distance (SID), representing the distance
-        from the X-ray source to the center of rotation.
+        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    cx : float
+        Half of image width in voxels.
+    cy : float
+        Half of image height in voxels.
+
+    Notes
+    -----
+    As the adjoint to the fan beam forward projection, this operation
+    distributes sinogram values back into the volume along divergent ray
+    paths using atomic operations for thread-safe accumulation.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -803,26 +832,48 @@ def _cone_3d_forward_kernel(
     This CUDA kernel implements the Siddon-Joseph algorithm for 3D cone-beam
     forward projection.
 
-    .. note::
-        Cone-beam geometry extends the fan-beam configuration to 3D by
-        employing a 2D detector array. Rays originate from a point source
-        and form a cone-shaped beam. This implementation adapts the
-        Siddon-Joseph algorithm to 3D by incorporating trilinear
-        interpolation and 3D voxel traversal.
-
-        The coordinate system is defined with the source rotating around the
-        isocenter in the xy-plane. The 2D detector, with coordinates (u, v),
-        is positioned at a fixed distance from the source, and the z-axis
-        is oriented vertically.
-
     Parameters
     ----------
+    d_vol : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input 3D volume array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    Nz : int
+        Number of voxels along the z-axis.
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output cone-beam sinogram array on CUDA.
+    n_views : int
+        Number of projection views.
+    n_u : int
+        Number of detector elements along the u-axis.
+    n_v : int
+        Number of detector elements along the v-axis.
+    du : float
+        Physical spacing between detector elements along the u-axis.
+    dv : float
+        Physical spacing between detector elements along the v-axis.
+    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed cosine values of projection angles.
+    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed sine values of projection angles.
     sdd : float
-        The Source-to-Detector Distance (SDD), representing the total
-        distance from the X-ray source to the detector.
+        Source-to-Detector Distance (SDD), total distance from source to detector.
     sid : float
-        The Source-to-Isocenter Distance (SID), representing the distance
-        from the X-ray source to the center of rotation.
+        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    cx : float
+        Half of volume width along x-axis (in voxels).
+    cy : float
+        Half of volume height along y-axis (in voxels).
+    cz : float
+        Half of volume depth along z-axis (in voxels).
+
+    Notes
+    -----
+    Cone-beam geometry extends the fan-beam configuration to 3D by employing
+    a 2D detector array and trilinear interpolation for accurate volumetric
+    sampling.
     """
     iview, iu, iv = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
@@ -970,25 +1021,48 @@ def _cone_3d_backward_kernel(
     This CUDA kernel implements the Siddon-Joseph algorithm for 3D cone-beam
     backprojection.
 
-    .. note::
-        As the adjoint to the cone-beam forward projection, this operation
-        distributes sinogram values back into the 3D volume along the same
-        ray paths. It uses identical ray-tracing logic but incorporates
-        atomic operations to manage concurrent writes from multiple threads.
-
-        The mathematical foundation is based on implementing the transpose of
-        the cone-beam forward projection matrix, which distributes detector
-        measurements back along divergent 3D ray paths using trilinear
-        interpolation.
-
     Parameters
     ----------
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input cone-beam sinogram array on CUDA.
+    n_views : int
+        Number of projection views.
+    n_u : int
+        Number of detector elements along the u-axis.
+    n_v : int
+        Number of detector elements along the v-axis.
+    d_vol : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output 3D volume gradient array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    Nz : int
+        Number of voxels along the z-axis.
+    du : float
+        Physical spacing between detector elements along the u-axis.
+    dv : float
+        Physical spacing between detector elements along the v-axis.
+    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed cosine values of projection angles.
+    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Precomputed sine values of projection angles.
     sdd : float
-        The Source-to-Detector Distance (SDD), representing the total
-        distance from the X-ray source to the detector.
+        Source-to-Detector Distance (SDD), total distance from source to detector.
     sid : float
-        The Source-to-Isocenter Distance (SID), representing the distance
-        from the X-ray source to the center of rotation.
+        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    cx : float
+        Half of volume width along x-axis (in voxels).
+    cy : float
+        Half of volume height along y-axis (in voxels).
+    cz : float
+        Half of volume depth along z-axis (in voxels).
+
+    Notes
+    -----
+    As the adjoint to the cone-beam forward projection, this operation
+    distributes sinogram values back into the 3D volume along ray paths using
+    atomic operations for thread-safe accumulation.
     """
     iview, iu, iv = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
@@ -1117,65 +1191,49 @@ def _cone_3d_backward_kernel(
 
 class ParallelProjectorFunction(torch.autograd.Function):
     """
+    Summary
+    -------
     PyTorch autograd function for differentiable 2D parallel beam forward projection.
-    
-    This class provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for parallel beam geometry. It implements the Radon transform
-    for parallel beam CT geometry with full gradient support for optimization-based
-    reconstruction algorithms.
-    
-    The forward pass computes the sinogram (projection data) from a 2D image using
-    parallel beam geometry, where all rays are parallel and perpendicular to the
-    detector array. The backward pass computes gradients using the adjoint backprojection
-    operation, enabling end-to-end differentiable CT reconstruction.
-    
-    Key Features:
-        - CUDA-accelerated Siddon-Joseph ray tracing for accurate volume sampling
-        - Bilinear interpolation for smooth gradients and sub-pixel accuracy
-        - Automatic GPU memory management and device consistency
-        - Full PyTorch autograd integration for gradient-based optimization
-        - Optimized thread organization for maximum GPU utilization
-    
-    Mathematical Background:
-        The parallel beam Radon transform is defined as:
-        
-        .. math::
-            R[f](s,\\theta) = \\int_{-\\infty}^{\\infty} f(s\\cos\\theta - t\\sin\\theta, s\\sin\\theta + t\\cos\\theta) dt
-        
-        where f(x,y) is the input image, s is the detector coordinate, and θ is the
-        projection angle. This implementation uses the Siddon-Joseph algorithm for
-        discrete approximation of the line integral.
-    
-    Example:
-        >>> import torch
-        >>> from diffct.differentiable import ParallelProjectorFunction
-        >>> 
-        >>> # Create a 2D image with gradient tracking
-        >>> image = torch.randn(128, 128, device='cuda', requires_grad=True)
-        >>> 
-        >>> # Define projection parameters
-        >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
-        >>> num_detectors = 128
-        >>> detector_spacing = 1.0
-        >>> 
-        >>> # Compute forward projection
-        >>> projector = ParallelProjectorFunction.apply
-        >>> sinogram = projector(image, angles, num_detectors, detector_spacing)
-        >>> 
-        >>> # Compute loss and gradients
-        >>> loss = sinogram.sum()
-        >>> loss.backward()
-        >>> print(f"Gradient shape: {image.grad.shape}")  # (128, 128)
-    
-    .. note::
-        This function requires CUDA-capable hardware and a properly
-        configured CUDA environment. All input tensors must be on the same
-        CUDA device.
+
+    Notes
+    -----
+    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
+    ray-tracing algorithm for parallel beam CT geometry. The forward pass computes
+    the sinogram from a 2D image using parallel beam geometry. The backward pass
+    computes gradients using the adjoint backprojection operation. Requires
+    CUDA-capable hardware and a properly configured CUDA environment; all input
+    tensors must reside on the same CUDA device.
+
+    Methods
+    -------
+    forward(ctx, image, angles, num_detectors, detector_spacing=1.0)
+        Compute the 2D parallel beam forward projection (Radon transform) of an image using CUDA acceleration.
+    backward(ctx, grad_sinogram)
+        Compute gradients for the input image given the sinogram gradient.
+
+    Examples
+    --------
+    >>> import torch
+    >>> from diffct.differentiable import ParallelProjectorFunction
+    >>>
+    >>> # Create a 2D image with gradient tracking
+    >>> image = torch.randn(128, 128, device='cuda', requires_grad=True)
+    >>> # Define projection parameters
+    >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
+    >>> num_detectors = 128
+    >>> detector_spacing = 1.0
+    >>> # Compute forward projection
+    >>> projector = ParallelProjectorFunction.apply
+    >>> sinogram = projector(image, angles, num_detectors, detector_spacing)
+    >>> # Compute loss and gradients
+    >>> loss = sinogram.sum()
+    >>> loss.backward()
+    >>> print(f"Gradient shape: {image.grad.shape}")  # (128, 128)
     """
     @staticmethod
     def forward(ctx, image, angles, num_detectors, detector_spacing=1.0):
-        """
-        Compute the 2D parallel beam forward projection (Radon transform) of an image using CUDA acceleration.
+        """Compute the 2D parallel beam forward projection (Radon transform) of
+        an image using CUDA acceleration.
 
         Parameters
         ----------
@@ -1277,64 +1335,42 @@ class ParallelProjectorFunction(torch.autograd.Function):
 
 class ParallelBackprojectorFunction(torch.autograd.Function):
     """
+    Summary
+    -------
     PyTorch autograd function for differentiable 2D parallel beam backprojection.
     
-    This class provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for parallel beam backprojection. It implements the adjoint
-    (transpose) of the Radon transform, distributing sinogram values back into the
-    reconstruction volume along the same ray paths used in forward projection.
+    Notes
+    -----
+    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph ray-tracing
+    algorithm for parallel beam backprojection. The forward pass computes a 2D
+    reconstruction from sinogram data using parallel beam backprojection, and the
+    backward pass computes gradients via forward projection as the adjoint operation.
+    Requires CUDA-capable hardware and consistent device placements.
     
-    The forward pass computes a 2D reconstruction from sinogram data using parallel
-    beam backprojection. The backward pass computes gradients using forward projection,
-    enabling end-to-end differentiable CT reconstruction pipelines.
+    Methods
+    -------
+    forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128)
+        Compute the 2D parallel beam backprojection (adjoint Radon transform) of a
+        sinogram using CUDA acceleration.
+    backward(ctx, grad_output)
+        Compute gradients for the input sinogram given the reconstruction gradient.
     
-    Key Features:
-        - CUDA-accelerated Siddon-Joseph ray tracing with atomic operations
-        - Bilinear interpolation for smooth gradient flow and sub-pixel accuracy
-        - Thread-safe voxel accumulation using CUDA atomic operations
-        - Full PyTorch autograd integration for gradient-based optimization
-        - Automatic memory management and device consistency
-    
-    Mathematical Background:
-        The parallel beam backprojection is the adjoint of the Radon transform:
-        
-        .. math::
-            R^*[p](x,y) = \\int_0^\\pi p(x\\cos\\theta + y\\sin\\theta, \\theta) d\\theta
-        
-        where p(s,θ) is the sinogram data, and R* is the backprojection operator.
-        This operation distributes each projection ray's value back along its path
-        through the reconstruction volume.
-    
-    Example:
-        >>> import torch
-        >>> from diffct.differentiable import ParallelBackprojectorFunction
-        >>> 
-        >>> # Create sinogram data with gradient tracking
-        >>> sinogram = torch.randn(180, 128, device='cuda', requires_grad=True)
-        >>> 
-        >>> # Define reconstruction parameters
-        >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
-        >>> detector_spacing = 1.0
-        >>> H, W = 128, 128  # Reconstruction size
-        >>> 
-        >>> # Compute backprojection
-        >>> backprojector = ParallelBackprojectorFunction.apply
-        >>> reconstruction = backprojector(sinogram, angles, detector_spacing, H, W)
-        >>> 
-        >>> # Compute loss and gradients
-        >>> loss = reconstruction.sum()
-        >>> loss.backward()
-        >>> print(f"Sinogram gradient shape: {sinogram.grad.shape}")  # (180, 128)
-    
-    .. note::
-        This function requires CUDA-capable hardware and a properly
-        configured CUDA environment. All input tensors must be on the same
-        CUDA device.
+    Examples
+    --------
+    >>> import torch
+    >>> from diffct.differentiable import ParallelBackprojectorFunction
+    >>>
+    >>> sinogram = torch.randn(180, 128, device='cuda', requires_grad=True)
+    >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
+    >>> recon = ParallelBackprojectorFunction.apply(sinogram, angles, 1.0, 128, 128)
+    >>> loss = recon.sum()
+    >>> loss.backward()
+    >>> print(sinogram.grad.shape)  # (180, 128)
     """
     @staticmethod
     def forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128):
-        """
-        Compute the 2D parallel beam backprojection (adjoint Radon transform) of a sinogram using CUDA acceleration.
+        """Compute the 2D parallel beam backprojection (adjoint Radon
+        transform) of a sinogram using CUDA acceleration.
 
         Parameters
         ----------
@@ -1441,68 +1477,42 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
 
 class FanProjectorFunction(torch.autograd.Function):
     """
+    Summary
+    -------
     PyTorch autograd function for differentiable 2D fan beam forward projection.
     
-    This class provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for fan beam geometry. Fan beam geometry uses divergent rays
-    emanating from a point X-ray source to a linear detector array, which is common
-    in medical CT scanners and provides faster data acquisition than parallel beam.
+    Notes
+    -----
+    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
+    ray-tracing algorithm for fan beam geometry, where rays diverge from a point
+    X-ray source to a linear detector array. The forward pass computes sinograms
+    using divergent beam geometry, and the backward pass computes gradients via
+    adjoint backprojection.
     
-    The forward pass computes the sinogram from a 2D image using fan beam geometry,
-    where rays diverge from a point source to individual detector elements. The backward
-    pass computes gradients using the adjoint backprojection operation with the same
-    divergent ray geometry.
+    Methods
+    -------
+    forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid)
+        Compute the 2D fan beam forward projection (divergent beam Radon transform)
+        of an image using CUDA acceleration.
+    backward(ctx, grad_sinogram)
+        Compute gradients for the input image given the sinogram gradient.
     
-    Key Features:
-        - CUDA-accelerated Siddon-Joseph ray tracing for divergent beam geometry
-        - Point source to detector ray path calculations with geometric corrections
-        - Bilinear interpolation for smooth gradients and sub-pixel accuracy
-        - Full PyTorch autograd integration for gradient-based optimization
-        - Configurable source and detector distances for flexible geometry setup
-    
-    Mathematical Background:
-        Fan beam projection involves rays from a point source at distance `sid` (SID)
-        from the isocenter to detector elements at distance `sdd` (SDD) from the source.
-        The magnification factor M = sdd / sid determines the
-        geometric scaling between object and detector coordinates.
-        
-        Each ray connects the source position (rotated around isocenter) to a specific
-        detector element, creating a divergent beam pattern that covers the field of view.
-    
-    Example:
-        >>> import torch
-        >>> from diffct.differentiable import FanProjectorFunction
-        >>> 
-        >>> # Create a 2D image with gradient tracking
-        >>> image = torch.randn(256, 256, device='cuda', requires_grad=True)
-        >>> 
-        >>> # Define fan beam geometry parameters
-        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
-        >>> num_detectors = 512
-        >>> detector_spacing = 1.0
-        >>> source_distance = 1000.0    # Distance from source to isocenter
-        >>> detector_distance = 1500.0  # Distance from source to detector
-        >>> 
-        >>> # Compute forward projection
-        >>> projector = FanProjectorFunction.apply
-        >>> sinogram = projector(image, angles, num_detectors, detector_spacing,
-        ...                     source_distance, detector_distance)
-        >>> 
-        >>> # Compute loss and gradients
-        >>> loss = sinogram.sum()
-        >>> loss.backward()
-        >>> print(f"Gradient shape: {image.grad.shape}")  # (256, 256)
-    
-    .. note::
-        Fan beam geometry requires 360° angular sampling (2π radians) for
-        complete reconstruction, unlike parallel beam, which only needs
-        180°. The source distance should be significantly larger than the
-        object size to minimize geometric distortions.
+    Examples
+    --------
+    >>> import torch
+    >>> from diffct.differentiable import FanProjectorFunction
+    >>>
+    >>> image = torch.randn(256, 256, device='cuda', requires_grad=True)
+    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
+    >>> sinogram = FanProjectorFunction.apply(image, angles, 512, 1.0, 1500.0, 1000.0)
+    >>> loss = sinogram.sum()
+    >>> loss.backward()
+    >>> print(image.grad.shape)  # (256, 256)
     """
     @staticmethod
     def forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid):
-        """
-        Compute the 2D fan beam forward projection of an image using CUDA acceleration.
+        """Compute the 2D fan beam forward projection of an image using CUDA
+        acceleration.
 
         Parameters
         ----------
@@ -1609,64 +1619,43 @@ class FanProjectorFunction(torch.autograd.Function):
 
 class FanBackprojectorFunction(torch.autograd.Function):
     """
+    Summary
+    -------
     PyTorch autograd function for differentiable 2D fan beam backprojection.
     
-    This class provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for fan beam backprojection. It implements the adjoint of the
-    fan beam projection operator, distributing sinogram values back into the reconstruction
-    volume along divergent ray paths from point source to detector elements.
+    Notes
+    -----
+    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
+    ray-tracing algorithm for fan beam backprojection. Implements the adjoint
+    of the fan beam projection operator, distributing sinogram values back into
+    the reconstruction volume along divergent ray paths. The forward pass
+    computes reconstruction from sinogram data, and the backward pass computes
+    gradients via forward projection.
     
-    The forward pass computes a 2D reconstruction from fan beam sinogram data using
-    backprojection with divergent ray geometry. The backward pass computes gradients
-    using fan beam forward projection, enabling end-to-end differentiable CT reconstruction.
+    Methods
+    -------
+    forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid)
+        Compute the 2D fan beam backprojection (adjoint transform) of a sinogram
+        using CUDA acceleration.
+    backward(ctx, grad_output)
+        Compute gradients for the input sinogram given the reconstruction gradient.
     
-    Key Features:
-        - CUDA-accelerated Siddon-Joseph ray tracing with divergent beam geometry
-        - Point source to detector ray path calculations with geometric corrections
-        - Thread-safe voxel accumulation using CUDA atomic operations
-        - Full PyTorch autograd integration for gradient-based optimization
-        - Configurable source and detector distances for flexible geometry setup
-    
-    Mathematical Background:
-        Fan beam backprojection distributes each detector measurement back along its
-        corresponding divergent ray path. The ray geometry is determined by the source
-        position (rotating around isocenter) and the detector element position, creating
-        a divergent pattern that reconstructs the object with geometric magnification.
-    
-    Example:
-        >>> import torch
-        >>> from diffct.differentiable import FanBackprojectorFunction
-        >>> 
-        >>> # Create fan beam sinogram data with gradient tracking
-        >>> sinogram = torch.randn(360, 512, device='cuda', requires_grad=True)
-        >>> 
-        >>> # Define reconstruction parameters
-        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
-        >>> detector_spacing = 1.0
-        >>> H, W = 256, 256  # Reconstruction size
-        >>> sdd = 1500.0  # Source-to-Detector Distance
-        >>> sid = 1000.0  # Source-to-Isocenter Distance
-        >>> 
-        >>> # Compute backprojection
-        >>> backprojector = FanBackprojectorFunction.apply
-        >>> reconstruction = backprojector(sinogram, angles, detector_spacing, H, W,
-        ...                               sdd, sid)
-        >>> 
-        >>> # Compute loss and gradients
-        >>> loss = reconstruction.sum()
-        >>> loss.backward()
-        >>> print(f"Sinogram gradient shape: {sinogram.grad.shape}")  # (360, 512)
-    
-    .. note::
-        Fan beam backprojection requires careful handling of ray convergence
-        at the source, which can lead to higher atomic contention in CUDA
-        kernels compared to parallel beam. The geometry parameters must
-        match those used in the forward projection for consistency.
+    Examples
+    --------
+    >>> import torch
+    >>> from diffct.differentiable import FanBackprojectorFunction
+    >>>
+    >>> sinogram = torch.randn(360, 512, device='cuda', requires_grad=True)
+    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
+    >>> recon = FanBackprojectorFunction.apply(sinogram, angles, 1.0, 256, 256, 1500.0, 1000.0)
+    >>> loss = recon.sum()
+    >>> loss.backward()
+    >>> print(sinogram.grad.shape)  # (360, 512)
     """
     @staticmethod
     def forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid):
-        """
-        Compute the 2D fan beam backprojection of a sinogram using CUDA acceleration.
+        """Compute the 2D fan beam backprojection of a sinogram using CUDA
+        acceleration.
 
         Parameters
         ----------
@@ -1773,68 +1762,42 @@ class FanBackprojectorFunction(torch.autograd.Function):
 
 class ConeProjectorFunction(torch.autograd.Function):
     """
+    Summary
+    -------
     PyTorch autograd function for differentiable 3D cone beam forward projection.
     
-    This class provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for 3D cone beam geometry. Cone beam geometry uses a point X-ray
-    source and 2D detector array to capture volumetric projection data in a single circular
-    scan, enabling full 3D CT reconstruction from one acquisition.
+    Notes
+    -----
+    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
+    ray-tracing algorithm for 3D cone beam geometry. Rays emanate from a point
+    X-ray source to a 2D detector array capturing volumetric projection data.
+    The forward pass computes 3D projections, and the backward pass computes
+    gradients via adjoint 3D backprojection. Requires significant GPU memory.
     
-    The forward pass computes 3D projection data from a volume using cone beam geometry,
-    where rays emanate from a point source to each pixel of a 2D detector array. The
-    backward pass computes gradients using 3D adjoint backprojection, enabling end-to-end
-    differentiable volumetric CT reconstruction.
+    Methods
+    -------
+    forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid)
+        Compute the 3D cone beam forward projection (volumetric Radon transform)
+        of a volume using CUDA acceleration.
+    backward(ctx, grad_sinogram)
+        Compute gradients for the input volume given the projection gradient.
     
-    Key Features:
-        - CUDA-accelerated 3D Siddon-Joseph ray tracing with trilinear interpolation
-        - Point source to 2D detector array ray path calculations
-        - Optimized 3D thread organization for maximum GPU utilization
-        - Full PyTorch autograd integration for gradient-based optimization
-        - Configurable detector array size and spacing for flexible geometry
-    
-    Mathematical Background:
-        3D cone beam projection involves rays from a point source to each detector pixel
-        (u,v) on a 2D detector array. The source rotates around the isocenter in the xy-plane
-        while the detector maintains fixed distance from the source. Each ray samples the
-        3D volume using trilinear interpolation for accurate gradient computation.
-        
-        The cone angle should be kept small (< 30°) to minimize cone beam artifacts in
-        reconstruction. For larger volumes, helical scanning may be required.
-    
-    Example:
-        >>> import torch
-        >>> from diffct.differentiable import ConeProjectorFunction
-        >>> 
-        >>> # Create a 3D volume with gradient tracking
-        >>> volume = torch.randn(128, 128, 128, device='cuda', requires_grad=True)
-        >>> 
-        >>> # Define cone beam geometry parameters
-        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
-        >>> det_u, det_v = 256, 256  # 2D detector array size
-        >>> du, dv = 1.0, 1.0       # Detector pixel spacing
-        >>> sdd = 1500.0    # Source-to-Detector Distance
-        >>> sid = 1000.0  # Source-to-Isocenter Distance
-        >>> 
-        >>> # Compute 3D forward projection
-        >>> projector = ConeProjectorFunction.apply
-        >>> projections = projector(volume, angles, det_u, det_v, du, dv,
-        ...                        sdd, sid)
-        >>> 
-        >>> # Compute loss and gradients
-        >>> loss = projections.sum()
-        >>> loss.backward()
-        >>> print(f"Volume gradient shape: {volume.grad.shape}")  # (128, 128, 128)
-    
-    .. note::
-        3D cone-beam projection is computationally intensive and requires
-        significant GPU memory. For large-scale applications, consider
-        using smaller volumes or gradient checkpointing. The cone angle
-        should be minimized to reduce reconstruction artifacts.
+    Examples
+    --------
+    >>> import torch
+    >>> from diffct.differentiable import ConeProjectorFunction
+    >>>
+    >>> volume = torch.randn(128, 128, 128, device='cuda', requires_grad=True)
+    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
+    >>> projections = ConeProjectorFunction.apply(volume, angles, 256, 256, 1.0, 1.0, 1500.0, 1000.0)
+    >>> loss = projections.sum()
+    >>> loss.backward()
+    >>> print(volume.grad.shape)  # (128, 128, 128)
     """
     @staticmethod
     def forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid):
-        """
-        Compute the 3D cone beam forward projection of a volume using CUDA acceleration.
+        """Compute the 3D cone beam forward projection of a volume using CUDA
+        acceleration.
 
         Parameters
         ----------
@@ -1946,68 +1909,50 @@ class ConeProjectorFunction(torch.autograd.Function):
 
 class ConeBackprojectorFunction(torch.autograd.Function):
     """
+    Summary
+    -------
     PyTorch autograd function for differentiable 3D cone beam backprojection.
+
+    Notes
+    -----
+    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
+    ray-tracing algorithm for 3D cone beam backprojection. The forward pass
+    computes a 3D reconstruction from cone beam projection data using
+    backprojection as the adjoint operation. The backward pass computes gradients
+    via 3D cone beam forward projection. Requires CUDA-capable hardware and
+    consistent device placements.
     
-    This class provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for 3D cone beam backprojection. It implements the adjoint of the
-    3D cone beam projection operator, distributing projection values from a 2D detector array
-    back into a 3D reconstruction volume along divergent ray paths.
-    
-    The forward pass computes a 3D reconstruction from cone beam projection data using
-    backprojection with 3D divergent ray geometry. The backward pass computes gradients
-    using 3D cone beam forward projection, enabling end-to-end differentiable volumetric
-    CT reconstruction pipelines.
-    
-    Key Features:
-        - CUDA-accelerated 3D Siddon-Joseph ray tracing with trilinear interpolation
-        - Point source to 2D detector array ray path calculations in 3D space
-        - Thread-safe 3D voxel accumulation using CUDA atomic operations
-        - Full PyTorch autograd integration for gradient-based optimization
-        - Optimized 3D memory access patterns and thread organization
-    
-    Mathematical Background:
-        3D cone beam backprojection distributes each detector pixel measurement back along
-        its corresponding 3D ray path from source to detector. The reconstruction process
-        involves trilinear interpolation for sub-voxel accuracy and atomic operations for
-        thread-safe accumulation when multiple rays contribute to the same voxel.
-        
-        Due to the 3D nature and ray convergence, this operation has the highest computational
-        complexity and memory requirements among all projection operators in DiffCT.
-    
-    Example:
-        >>> import torch
-        >>> from diffct.differentiable import ConeBackprojectorFunction
-        >>> 
-        >>> # Create 3D cone beam projection data with gradient tracking
-        >>> projections = torch.randn(360, 256, 256, device='cuda', requires_grad=True)
-        >>> 
-        >>> # Define reconstruction parameters
-        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
-        >>> D, H, W = 128, 128, 128  # 3D reconstruction size
-        >>> du, dv = 1.0, 1.0       # Detector pixel spacing
-        >>> sdd = 1500.0
-        >>> sid = 1000.0
-        >>> 
-        >>> # Compute 3D backprojection
-        >>> backprojector = ConeBackprojectorFunction.apply
-        >>> volume = backprojector(projections, angles, D, H, W, du, dv,
-        ...                       sdd, sid)
-        >>> 
-        >>> # Compute loss and gradients
-        >>> loss = volume.sum()
-        >>> loss.backward()
-        >>> print(f"Projection gradient shape: {projections.grad.shape}")  # (360, 256, 256)
-    
-    .. note::
-        3D cone-beam backprojection is the most memory- and computationally
-        intensive operation in ``diffct``. For large-scale applications,
-        consider using gradient checkpointing, smaller volumes, or
-        distributed computing. Ensure sufficient GPU memory is available.
+    This operation may be memory- and computationally-intensive due to 3D geometry.
+    Consider using gradient checkpointing, smaller volumes, or distributed computing
+    for large-scale applications, and ensure sufficient GPU memory is available.
+
+    Methods
+    -------
+    forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid)
+        Compute the 3D cone beam backprojection (adjoint transform) of a projection sinogram using CUDA acceleration.
+    backward(ctx, grad_output)
+        Compute gradients for the input sinogram given the reconstruction gradient.
+
+    Examples
+    --------
+    >>> import torch
+    >>> from diffct.differentiable import ConeBackprojectorFunction
+    >>>
+    >>> projections = torch.randn(360, 256, 256, device='cuda', requires_grad=True)
+    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
+    >>> D, H, W = 128, 128, 128
+    >>> du, dv = 1.0, 1.0
+    >>> sdd, sid = 1500.0, 1000.0
+    >>> backprojector = ConeBackprojectorFunction.apply
+    >>> volume = backprojector(projections, angles, D, H, W, du, dv, sdd, sid)
+    >>> loss = volume.sum()
+    >>> loss.backward()
+    >>> print(f"Projection gradient shape: {projections.grad.shape}")  # (360, 256, 256)
     """
     @staticmethod
     def forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid):
-        """
-        Compute the 3D cone beam backprojection of a projection sinogram using CUDA acceleration.
+        """Compute the 3D cone beam backprojection of a projection sinogram
+        using CUDA acceleration.
 
         Parameters
         ----------
