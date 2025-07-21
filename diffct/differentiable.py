@@ -1204,13 +1204,6 @@ class ParallelProjectorFunction(torch.autograd.Function):
     CUDA-capable hardware and a properly configured CUDA environment; all input
     tensors must reside on the same CUDA device.
 
-    Methods
-    -------
-    forward(ctx, image, angles, num_detectors, detector_spacing=1.0)
-        Compute the 2D parallel beam forward projection (Radon transform) of an image using CUDA acceleration.
-    backward(ctx, grad_sinogram)
-        Compute gradients for the input image given the sinogram gradient.
-
     Examples
     --------
     >>> import torch
@@ -1347,13 +1340,6 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     backward pass computes gradients via forward projection as the adjoint operation.
     Requires CUDA-capable hardware and consistent device placements.
     
-    Methods
-    -------
-    forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128)
-        Compute the 2D parallel beam backprojection (adjoint Radon transform) of a
-        sinogram using CUDA acceleration.
-    backward(ctx, grad_output)
-        Compute gradients for the input sinogram given the reconstruction gradient.
     
     Examples
     --------
@@ -1489,13 +1475,6 @@ class FanProjectorFunction(torch.autograd.Function):
     using divergent beam geometry, and the backward pass computes gradients via
     adjoint backprojection.
     
-    Methods
-    -------
-    forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid)
-        Compute the 2D fan beam forward projection (divergent beam Radon transform)
-        of an image using CUDA acceleration.
-    backward(ctx, grad_sinogram)
-        Compute gradients for the input image given the sinogram gradient.
     
     Examples
     --------
@@ -1632,13 +1611,6 @@ class FanBackprojectorFunction(torch.autograd.Function):
     computes reconstruction from sinogram data, and the backward pass computes
     gradients via forward projection.
     
-    Methods
-    -------
-    forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid)
-        Compute the 2D fan beam backprojection (adjoint transform) of a sinogram
-        using CUDA acceleration.
-    backward(ctx, grad_output)
-        Compute gradients for the input sinogram given the reconstruction gradient.
     
     Examples
     --------
@@ -1774,13 +1746,6 @@ class ConeProjectorFunction(torch.autograd.Function):
     The forward pass computes 3D projections, and the backward pass computes
     gradients via adjoint 3D backprojection. Requires significant GPU memory.
     
-    Methods
-    -------
-    forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid)
-        Compute the 3D cone beam forward projection (volumetric Radon transform)
-        of a volume using CUDA acceleration.
-    backward(ctx, grad_sinogram)
-        Compute gradients for the input volume given the projection gradient.
     
     Examples
     --------
@@ -1926,12 +1891,6 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     Consider using gradient checkpointing, smaller volumes, or distributed computing
     for large-scale applications, and ensure sufficient GPU memory is available.
 
-    Methods
-    -------
-    forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid)
-        Compute the 3D cone beam backprojection (adjoint transform) of a projection sinogram using CUDA acceleration.
-    backward(ctx, grad_output)
-        Compute gradients for the input sinogram given the reconstruction gradient.
 
     Examples
     --------
