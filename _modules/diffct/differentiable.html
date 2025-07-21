@@ -94,7 +94,7 @@
 <span class="c1"># CUDA fastmath optimization: enables aggressive floating-point optimizations</span>
 <span class="c1"># Trades numerical precision for performance in ray-tracing calculations</span>
 <span class="c1"># Safe for CT reconstruction where slight precision loss is acceptable for speed gains</span>
-<span class="n">_FASTMATH_DECORATOR</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">fastmath</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">_FASTMATH_DECORATOR</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fastmath</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="n">_INF</span>                <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
 <span class="n">_EPSILON</span>            <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1e-6</span><span class="p">)</span>
 <span class="c1"># === Device Management Utilities ===</span>
