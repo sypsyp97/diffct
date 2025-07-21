@@ -92,7 +92,7 @@
              
   <section id="fan-beam-iterative-reconstruction">
 <h1>Fan Beam Iterative Reconstruction<a class="headerlink" href="#fan-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates gradient-based iterative reconstruction for 2D fan beam CT using the differentiable <cite>FanProjectorFunction</cite> from <cite>diffct</cite>.</p>
+<p>This example demonstrates 2D fan beam iterative reconstruction using the differentiable <cite>FanProjectorFunction</cite> and <cite>FanBackprojectorFunction</cite> from <cite>diffct</cite>.</p>
 <section id="overview">
 <h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
 <p>Fan beam iterative reconstruction extends the optimization approach to the more realistic fan beam geometry. This example shows how to:</p>
@@ -100,7 +100,7 @@
 <li><p>Formulate fan beam CT reconstruction as an optimization problem</p></li>
 <li><p>Handle geometric complexities of divergent ray geometry</p></li>
 <li><p>Apply gradient-based optimization with fan beam operators</p></li>
-<li><p>Compare convergence characteristics with parallel beam reconstruction</p></li>
+<li><p>Monitor convergence and reconstruction quality</p></li>
 </ul>
 </section>
 <section id="mathematical-background">
@@ -130,7 +130,7 @@
 </ul>
 <p><strong>Implementation Steps</strong></p>
 <ol class="arabic simple">
-<li><p><strong>Geometry Setup</strong>: Configure fan beam parameters (source distance, detector distance)</p></li>
+<li><p><strong>Geometry Setup</strong>: Configure fan beam parameters (SID, SDD)</p></li>
 <li><p><strong>Problem Formulation</strong>: Define parameterized image and fan beam forward model</p></li>
 <li><p><strong>Loss Computation</strong>: Calculate L2 distance using <cite>FanProjectorFunction</cite></p></li>
 <li><p><strong>Gradient Computation</strong>: Use automatic differentiation through fan beam operators</p></li>
@@ -151,14 +151,6 @@
 <li><p><strong>Detail Refinement</strong> (100-500 iterations): Fine features develop, slower progress</p></li>
 <li><p><strong>Final Convergence</strong> (500+ iterations): Minimal improvement, convergence plateau</p></li>
 </ol>
-<p><strong>Comparison with Parallel Beam</strong></p>
-<p>Fan beam iterative reconstruction differs from parallel beam:</p>
-<ul class="simple">
-<li><p><strong>Computational Complexity</strong>: Higher due to geometric calculations</p></li>
-<li><p><strong>Convergence Rate</strong>: Potentially slower due to geometry effects</p></li>
-<li><p><strong>Artifact Characteristics</strong>: Different artifact patterns from ray divergence</p></li>
-<li><p><strong>Spatial Resolution</strong>: Non-uniform resolution requires careful interpretation</p></li>
-</ul>
 <p><strong>Challenges and Solutions</strong></p>
 <ul class="simple">
 <li><p><strong>Conditioning</strong>: Fan beam system matrix may have different conditioning properties</p></li>

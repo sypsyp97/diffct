@@ -1,31 +1,31 @@
 Parallel Beam Iterative Reconstruction
 =====================================
 
-This example demonstrates gradient-based iterative reconstruction for 2D parallel beam CT using the differentiable `ParallelProjectorFunction` from `diffct`.
+This example demonstrates 2D parallel beam iterative reconstruction using the differentiable `ParallelProjectorFunction` and `ParallelBackprojectorFunction` from `diffct`.
 
 Overview
 --------
 
-Iterative reconstruction methods solve the CT inverse problem through optimization, offering advantages over analytical methods like FBP. This example shows how to:
+Parallel beam iterative reconstruction solves the CT inverse problem through optimization, offering advantages over analytical methods like FBP. This example shows how to:
 
-- Formulate CT reconstruction as an optimization problem
+- Formulate parallel beam CT reconstruction as an optimization problem
 - Use automatic differentiation for gradient computation
-- Apply advanced optimizers (Adam) for iterative reconstruction
+- Apply gradient-based optimization with parallel beam operators
 - Monitor convergence and reconstruction quality
 
 Mathematical Background
 -----------------------
 
-**Iterative Reconstruction Formulation**
+**Parallel Beam Iterative Formulation**
 
-CT reconstruction is formulated as an optimization problem:
+The parallel beam reconstruction problem is formulated as:
 
 .. math::
-   \hat{f} = \arg\min_f \|A(f) - p\|_2^2 + \lambda R(f)
+   \hat{f} = \arg\min_f \|A_{\text{parallel}}(f) - p\|_2^2 + \lambda R(f)
 
 where:
 - :math:`f` is the unknown 2D image
-- :math:`A` is the forward projection operator (Radon transform)
+- :math:`A_{\text{parallel}}` is the parallel beam forward projection operator (Radon transform)
 - :math:`p` is the measured sinogram data
 - :math:`R(f)` is an optional regularization term
 - :math:`\lambda` is the regularization parameter
@@ -35,16 +35,16 @@ where:
 The gradient of the data fidelity term is computed using the adjoint operator:
 
 .. math::
-   \nabla_f \|A(f) - p\|_2^2 = 2A^T(A(f) - p)
+   \nabla_f \|A_{\text{parallel}}(f) - p\|_2^2 = 2A_{\text{parallel}}^T(A_{\text{parallel}}(f) - p)
 
-where :math:`A^T` is the backprojection operator (adjoint of the forward projector).
+where :math:`A_{\text{parallel}}^T` is the parallel beam backprojection operator (adjoint of the forward projector).
 
 **Automatic Differentiation**
 
 PyTorch's automatic differentiation computes gradients through the differentiable operators:
 
 .. math::
-   \frac{\partial L}{\partial f} = \frac{\partial}{\partial f} \|A(f) - p_{\text{measured}}\|_2^2
+   \frac{\partial L}{\partial f} = \frac{\partial}{\partial f} \|A_{\text{parallel}}(f) - p_{\text{measured}}\|_2^2
 
 This enables seamless integration with advanced optimizers like Adam.
 
@@ -59,7 +59,7 @@ where :math:`m^{(k)}` and :math:`v^{(k)}` are biased first and second moment est
 
 **Implementation Steps**
 
-1. **Problem Setup**: Define parameterized image as learnable tensor
+1. **Problem Setup**: Define parameterized 2D image as learnable tensor
 2. **Forward Model**: Compute predicted sinogram using `ParallelProjectorFunction`
 3. **Loss Computation**: Calculate L2 distance between predicted and measured data
 4. **Gradient Computation**: Use automatic differentiation for gradient calculation
@@ -87,7 +87,7 @@ The reconstruction model consists of:
 Typical convergence behavior:
 
 1. **Initial Phase** (0-100 iterations): Rapid loss decrease, basic structure emerges
-2. **Refinement Phase** (100-500 iterations): Fine details develop, slower convergence  
+2. **Refinement Phase** (100-500 iterations): Fine details develop, slower convergence
 3. **Convergence Phase** (500+ iterations): Minimal improvement, potential overfitting
 
 .. literalinclude:: ../../examples/iterative_reco_parallel.py

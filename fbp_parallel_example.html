@@ -95,12 +95,13 @@
 <p>This example demonstrates 2D parallel beam filtered backprojection (FBP) reconstruction using the <cite>ParallelProjectorFunction</cite> and <cite>ParallelBackprojectorFunction</cite> from <cite>diffct</cite>.</p>
 <section id="overview">
 <h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
-<p>Filtered backprojection is the standard analytical reconstruction method for parallel beam CT. This example shows how to:</p>
+<p>Parallel beam FBP is the standard analytical reconstruction method for 2D parallel beam CT. This example shows how to:</p>
 <ul class="simple">
+<li><p>Configure parallel beam geometry parameters</p></li>
 <li><p>Generate synthetic projection data using the Shepp-Logan phantom</p></li>
 <li><p>Apply ramp filtering in the frequency domain</p></li>
 <li><p>Perform backprojection to reconstruct the image</p></li>
-<li><p>Visualize the reconstruction results</p></li>
+<li><p>Visualize and evaluate reconstruction results</p></li>
 </ul>
 </section>
 <section id="mathematical-background">
@@ -111,7 +112,7 @@
 \[p(t, \theta) = \int_{-\infty}^{\infty} f(t\cos\theta - s\sin\theta, t\sin\theta + s\cos\theta) \, ds\]</div>
 <p>where <span class="math notranslate nohighlight">\(f(x,y)\)</span> is the 2D attenuation coefficient distribution.</p>
 <p><strong>Filtered Backprojection Algorithm</strong></p>
-<p>The FBP reconstruction consists of three main steps:</p>
+<p>The FBP reconstruction consists of three sequential steps:</p>
 <ol class="arabic simple">
 <li><p><strong>Forward Projection</strong>: Compute sinogram using the Radon transform</p></li>
 <li><p><strong>Ramp Filtering</strong>: Apply frequency domain filter <span class="math notranslate nohighlight">\(H(\omega) = |\omega|\)</span></p></li>

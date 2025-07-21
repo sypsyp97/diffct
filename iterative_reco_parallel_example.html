@@ -92,38 +92,38 @@
              
   <section id="parallel-beam-iterative-reconstruction">
 <h1>Parallel Beam Iterative Reconstruction<a class="headerlink" href="#parallel-beam-iterative-reconstruction" title="Link to this heading"></a></h1>
-<p>This example demonstrates gradient-based iterative reconstruction for 2D parallel beam CT using the differentiable <cite>ParallelProjectorFunction</cite> from <cite>diffct</cite>.</p>
+<p>This example demonstrates 2D parallel beam iterative reconstruction using the differentiable <cite>ParallelProjectorFunction</cite> and <cite>ParallelBackprojectorFunction</cite> from <cite>diffct</cite>.</p>
 <section id="overview">
 <h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
-<p>Iterative reconstruction methods solve the CT inverse problem through optimization, offering advantages over analytical methods like FBP. This example shows how to:</p>
+<p>Parallel beam iterative reconstruction solves the CT inverse problem through optimization, offering advantages over analytical methods like FBP. This example shows how to:</p>
 <ul class="simple">
-<li><p>Formulate CT reconstruction as an optimization problem</p></li>
+<li><p>Formulate parallel beam CT reconstruction as an optimization problem</p></li>
 <li><p>Use automatic differentiation for gradient computation</p></li>
-<li><p>Apply advanced optimizers (Adam) for iterative reconstruction</p></li>
+<li><p>Apply gradient-based optimization with parallel beam operators</p></li>
 <li><p>Monitor convergence and reconstruction quality</p></li>
 </ul>
 </section>
 <section id="mathematical-background">
 <h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
-<p><strong>Iterative Reconstruction Formulation</strong></p>
-<p>CT reconstruction is formulated as an optimization problem:</p>
+<p><strong>Parallel Beam Iterative Formulation</strong></p>
+<p>The parallel beam reconstruction problem is formulated as:</p>
 <div class="math notranslate nohighlight">
-\[\hat{f} = \arg\min_f \|A(f) - p\|_2^2 + \lambda R(f)\]</div>
+\[\hat{f} = \arg\min_f \|A_{\text{parallel}}(f) - p\|_2^2 + \lambda R(f)\]</div>
 <p>where:
 - <span class="math notranslate nohighlight">\(f\)</span> is the unknown 2D image
-- <span class="math notranslate nohighlight">\(A\)</span> is the forward projection operator (Radon transform)
+- <span class="math notranslate nohighlight">\(A_{\text{parallel}}\)</span> is the parallel beam forward projection operator (Radon transform)
 - <span class="math notranslate nohighlight">\(p\)</span> is the measured sinogram data
 - <span class="math notranslate nohighlight">\(R(f)\)</span> is an optional regularization term
 - <span class="math notranslate nohighlight">\(\lambda\)</span> is the regularization parameter</p>
 <p><strong>Gradient-Based Optimization</strong></p>
 <p>The gradient of the data fidelity term is computed using the adjoint operator:</p>
 <div class="math notranslate nohighlight">
-\[\nabla_f \|A(f) - p\|_2^2 = 2A^T(A(f) - p)\]</div>
-<p>where <span class="math notranslate nohighlight">\(A^T\)</span> is the backprojection operator (adjoint of the forward projector).</p>
+\[\nabla_f \|A_{\text{parallel}}(f) - p\|_2^2 = 2A_{\text{parallel}}^T(A_{\text{parallel}}(f) - p)\]</div>
+<p>where <span class="math notranslate nohighlight">\(A_{\text{parallel}}^T\)</span> is the parallel beam backprojection operator (adjoint of the forward projector).</p>
 <p><strong>Automatic Differentiation</strong></p>
 <p>PyTorch’s automatic differentiation computes gradients through the differentiable operators:</p>
 <div class="math notranslate nohighlight">
-\[\frac{\partial L}{\partial f} = \frac{\partial}{\partial f} \|A(f) - p_{\text{measured}}\|_2^2\]</div>
+\[\frac{\partial L}{\partial f} = \frac{\partial}{\partial f} \|A_{\text{parallel}}(f) - p_{\text{measured}}\|_2^2\]</div>
 <p>This enables seamless integration with advanced optimizers like Adam.</p>
 <p><strong>Adam Optimizer</strong></p>
 <p>The Adam optimizer adapts learning rates using gradient statistics:</p>
@@ -132,7 +132,7 @@
 <p>where <span class="math notranslate nohighlight">\(m^{(k)}\)</span> and <span class="math notranslate nohighlight">\(v^{(k)}\)</span> are biased first and second moment estimates.</p>
 <p><strong>Implementation Steps</strong></p>
 <ol class="arabic simple">
-<li><p><strong>Problem Setup</strong>: Define parameterized image as learnable tensor</p></li>
+<li><p><strong>Problem Setup</strong>: Define parameterized 2D image as learnable tensor</p></li>
 <li><p><strong>Forward Model</strong>: Compute predicted sinogram using <cite>ParallelProjectorFunction</cite></p></li>
 <li><p><strong>Loss Computation</strong>: Calculate L2 distance between predicted and measured data</p></li>
 <li><p><strong>Gradient Computation</strong>: Use automatic differentiation for gradient calculation</p></li>

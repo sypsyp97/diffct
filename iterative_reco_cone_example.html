@@ -58,6 +58,14 @@
 <li class="toctree-l2 current"><a class="current reference internal" href="#">Cone Beam Iterative Reconstruction</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#implementation-steps">Implementation Steps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#model-architecture">Model Architecture</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#d-regularization-options">3D Regularization Options</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#memory-management-strategies">Memory Management Strategies</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#convergence-characteristics">Convergence Characteristics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#challenges-in-3d-reconstruction">Challenges in 3D Reconstruction</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#applications">Applications</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#code-example">Code Example</a></li>
 </ul>
 </li>
 </ul>
@@ -128,10 +136,12 @@
 <ul class="simple">
 <li><p><strong>Memory Requirements</strong>: <span class="math notranslate nohighlight">\(O(N^3)\)</span> for volume storage vs <span class="math notranslate nohighlight">\(O(N^2)\)</span> for 2D images</p></li>
 <li><p><strong>Projection Data</strong>: <span class="math notranslate nohighlight">\(O(N_{\phi} \times N_u \times N_v)\)</span> 2D projections</p></li>
-<li><p><strong>Forward/Backward Operations</strong>: :math:<a href="#id1"><span class="problematic" id="id2">`</span></a>O(N^3 times N_{phi})$ computational complexity</p></li>
+<li><p><strong>Forward/Backward Operations</strong>: <span class="math notranslate nohighlight">\(O(N^3 \times N_{\phi})\)</span> computational complexity</p></li>
 <li><p><strong>Gradient Storage</strong>: Additional memory for automatic differentiation</p></li>
 </ul>
-<p><strong>Implementation Steps</strong></p>
+</section>
+<section id="implementation-steps">
+<h2>Implementation Steps<a class="headerlink" href="#implementation-steps" title="Link to this heading"></a></h2>
 <ol class="arabic simple">
 <li><p><strong>3D Problem Setup</strong>: Define parameterized 3D volume as learnable tensor</p></li>
 <li><p><strong>Cone Beam Forward Model</strong>: Use <cite>ConeProjectorFunction</cite> for 2D projection prediction</p></li>
@@ -140,21 +150,27 @@
 <li><p><strong>Memory-Efficient Optimization</strong>: Apply strategies to handle large 3D parameter space</p></li>
 <li><p><strong>Convergence Monitoring</strong>: Track loss and 3D reconstruction quality</p></li>
 </ol>
-<p><strong>Model Architecture</strong></p>
+</section>
+<section id="model-architecture">
+<h2>Model Architecture<a class="headerlink" href="#model-architecture" title="Link to this heading"></a></h2>
 <p>The 3D reconstruction model consists of:</p>
 <ul class="simple">
 <li><p><strong>Parameterized Volume</strong>: Learnable 3D tensor representing the unknown volume</p></li>
 <li><p><strong>Cone Beam Forward Model</strong>: <cite>ConeProjectorFunction</cite> with 3D geometry parameters</p></li>
 <li><p><strong>Loss Function</strong>: Mean squared error between predicted and measured 2D projections</p></li>
 </ul>
-<p><strong>3D Regularization Options</strong></p>
+</section>
+<section id="d-regularization-options">
+<h2>3D Regularization Options<a class="headerlink" href="#d-regularization-options" title="Link to this heading"></a></h2>
 <p>Common 3D regularization terms:</p>
 <ol class="arabic simple">
 <li><p><strong>3D Total Variation</strong>: <span class="math notranslate nohighlight">\(R_{\text{TV}}(f) = \sum_{x,y,z} \|\nabla f(x,y,z)\|_2\)</span></p></li>
 <li><p><strong>3D Smoothness</strong>: <span class="math notranslate nohighlight">\(R_{\text{smooth}}(f) = \sum_{x,y,z} \|\nabla f(x,y,z)\|_2^2\)</span></p></li>
 <li><p><strong>L1 Sparsity</strong>: <span class="math notranslate nohighlight">\(R_{\text{L1}}(f) = \sum_{x,y,z} |f(x,y,z)|\)</span></p></li>
 </ol>
-<p><strong>Memory Management Strategies</strong></p>
+</section>
+<section id="memory-management-strategies">
+<h2>Memory Management Strategies<a class="headerlink" href="#memory-management-strategies" title="Link to this heading"></a></h2>
 <p>3D reconstruction requires careful memory management:</p>
 <ul class="simple">
 <li><p><strong>Gradient Checkpointing</strong>: Trade computation for memory in backpropagation</p></li>
@@ -162,14 +178,18 @@
 <li><p><strong>Batch Processing</strong>: Process volume slices when memory is extremely limited</p></li>
 <li><p><strong>Efficient Data Layout</strong>: Optimize tensor storage and access patterns</p></li>
 </ul>
-<p><strong>Convergence Characteristics</strong></p>
+</section>
+<section id="convergence-characteristics">
+<h2>Convergence Characteristics<a class="headerlink" href="#convergence-characteristics" title="Link to this heading"></a></h2>
 <p>3D cone beam reconstruction typically exhibits:</p>
 <ol class="arabic simple">
 <li><p><strong>Initial Convergence</strong> (0-100 iterations): Rapid loss decrease, basic 3D structure emerges</p></li>
 <li><p><strong>Detail Refinement</strong> (100-500 iterations): Fine 3D features develop progressively</p></li>
 <li><p><strong>Final Convergence</strong> (500+ iterations): Slow improvement, potential overfitting risk</p></li>
 </ol>
-<p><strong>Challenges in 3D Reconstruction</strong></p>
+</section>
+<section id="challenges-in-3d-reconstruction">
+<h2>Challenges in 3D Reconstruction<a class="headerlink" href="#challenges-in-3d-reconstruction" title="Link to this heading"></a></h2>
 <ul class="simple">
 <li><p><strong>Cone Beam Artifacts</strong>: Increased artifacts for large cone angles in 3D</p></li>
 <li><p><strong>Incomplete Sampling</strong>: Missing data in certain regions of 3D Fourier space</p></li>
@@ -177,7 +197,9 @@
 <li><p><strong>Memory Limitations</strong>: Large volumes may exceed available GPU memory</p></li>
 <li><p><strong>Convergence Complexity</strong>: Higher-dimensional optimization landscape</p></li>
 </ul>
-<p><strong>Applications</strong></p>
+</section>
+<section id="applications">
+<h2>Applications<a class="headerlink" href="#applications" title="Link to this heading"></a></h2>
 <p>3D cone beam iterative reconstruction is essential for:</p>
 <ul class="simple">
 <li><p><strong>Medical CBCT</strong>: Dental, orthopedic, and interventional imaging</p></li>
@@ -185,8 +207,11 @@
 <li><p><strong>Micro-CT</strong>: High-resolution imaging of small specimens and materials</p></li>
 <li><p><strong>Security Screening</strong>: Advanced baggage and cargo inspection systems</p></li>
 </ul>
-<div class="literal-block-wrapper docutils container" id="id3">
-<div class="code-block-caption"><span class="caption-text">3D Cone Beam Iterative Example</span><a class="headerlink" href="#id3" title="Link to this code"></a></div>
+</section>
+<section id="code-example">
+<h2>Code Example<a class="headerlink" href="#code-example" title="Link to this heading"></a></h2>
+<div class="literal-block-wrapper docutils container" id="id1">
+<div class="code-block-caption"><span class="caption-text">3D Cone Beam Iterative Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
 <span class="linenos">  2</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="linenos">  3</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>

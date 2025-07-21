@@ -8,7 +8,7 @@ Overview
 
 Fan beam FBP extends parallel beam reconstruction to the more realistic fan beam geometry used in clinical CT scanners. This example shows how to:
 
-- Configure fan beam geometry parameters (source distance, detector distance)
+- Configure fan beam geometry parameters (SID, SDD)
 - Generate fan beam projections with proper weighting
 - Apply ramp filtering with cosine weighting correction
 - Perform fan beam backprojection reconstruction
@@ -20,8 +20,8 @@ Mathematical Background
 
 Fan beam CT uses a point X-ray source creating a fan-shaped beam. Key geometric parameters:
 
-- **Source distance** :math:`D_s`: Distance from rotation center to X-ray source
-- **Detector distance** :math:`D_d`: Distance from rotation center to detector array  
+- **SDD** :math:`D_s`: Source-to-Detector Distance (distance from X-ray source to detector array)
+- **SID** :math:`D_{sid}`: Source-to-Isocenter Distance (distance from X-ray source to rotation center)
 - **Fan angle** :math:`\gamma`: Angle between central ray and detector element
 
 The detector position :math:`u` relates to fan angle :math:`\gamma` by:

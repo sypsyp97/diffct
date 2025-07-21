@@ -53,10 +53,11 @@ where :math:`A_{\text{cone}}^T` is the 3D cone beam backprojection operator (adj
 
 - **Memory Requirements**: :math:`O(N^3)` for volume storage vs :math:`O(N^2)` for 2D images
 - **Projection Data**: :math:`O(N_{\phi} \times N_u \times N_v)` 2D projections
-- **Forward/Backward Operations**: :math:`O(N^3 \times N_{\phi})$ computational complexity
+- **Forward/Backward Operations**: :math:`O(N^3 \times N_{\phi})` computational complexity
 - **Gradient Storage**: Additional memory for automatic differentiation
 
-**Implementation Steps**
+Implementation Steps
+--------------------
 
 1. **3D Problem Setup**: Define parameterized 3D volume as learnable tensor
 2. **Cone Beam Forward Model**: Use `ConeProjectorFunction` for 2D projection prediction
@@ -65,7 +66,8 @@ where :math:`A_{\text{cone}}^T` is the 3D cone beam backprojection operator (adj
 5. **Memory-Efficient Optimization**: Apply strategies to handle large 3D parameter space
 6. **Convergence Monitoring**: Track loss and 3D reconstruction quality
 
-**Model Architecture**
+Model Architecture
+------------------
 
 The 3D reconstruction model consists of:
 
@@ -73,7 +75,8 @@ The 3D reconstruction model consists of:
 - **Cone Beam Forward Model**: `ConeProjectorFunction` with 3D geometry parameters
 - **Loss Function**: Mean squared error between predicted and measured 2D projections
 
-**3D Regularization Options**
+3D Regularization Options
+-------------------------
 
 Common 3D regularization terms:
 
@@ -81,7 +84,8 @@ Common 3D regularization terms:
 2. **3D Smoothness**: :math:`R_{\text{smooth}}(f) = \sum_{x,y,z} \|\nabla f(x,y,z)\|_2^2`
 3. **L1 Sparsity**: :math:`R_{\text{L1}}(f) = \sum_{x,y,z} |f(x,y,z)|`
 
-**Memory Management Strategies**
+Memory Management Strategies
+----------------------------
 
 3D reconstruction requires careful memory management:
 
@@ -90,7 +94,8 @@ Common 3D regularization terms:
 - **Batch Processing**: Process volume slices when memory is extremely limited
 - **Efficient Data Layout**: Optimize tensor storage and access patterns
 
-**Convergence Characteristics**
+Convergence Characteristics
+---------------------------
 
 3D cone beam reconstruction typically exhibits:
 
@@ -98,7 +103,8 @@ Common 3D regularization terms:
 2. **Detail Refinement** (100-500 iterations): Fine 3D features develop progressively
 3. **Final Convergence** (500+ iterations): Slow improvement, potential overfitting risk
 
-**Challenges in 3D Reconstruction**
+Challenges in 3D Reconstruction
+-------------------------------
 
 - **Cone Beam Artifacts**: Increased artifacts for large cone angles in 3D
 - **Incomplete Sampling**: Missing data in certain regions of 3D Fourier space
@@ -106,7 +112,8 @@ Common 3D regularization terms:
 - **Memory Limitations**: Large volumes may exceed available GPU memory
 - **Convergence Complexity**: Higher-dimensional optimization landscape
 
-**Applications**
+Applications
+------------
 
 3D cone beam iterative reconstruction is essential for:
 
@@ -114,6 +121,9 @@ Common 3D regularization terms:
 - **Industrial CT**: Non-destructive testing and quality control
 - **Micro-CT**: High-resolution imaging of small specimens and materials
 - **Security Screening**: Advanced baggage and cargo inspection systems
+
+Code Example
+------------
 
 .. literalinclude:: ../../examples/iterative_reco_cone.py
    :language: python
