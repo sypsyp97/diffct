@@ -421,9 +421,9 @@ divergent ray geometry.</p>
 <li><p>Configurable source and detector distances for flexible geometry setup</p></li>
 </ul>
 </dd>
-<dt>Mathematical Background:</dt><dd><p>Fan beam projection involves rays from a point source at distance <cite>source_distance</cite>
-from the isocenter to detector elements at distance <cite>detector_distance</cite> from the source.
-The magnification factor M = detector_distance / source_distance determines the
+<dt>Mathematical Background:</dt><dd><p>Fan beam projection involves rays from a point source at distance <cite>sid</cite> (SID)
+from the isocenter to detector elements at distance <cite>sdd</cite> (SDD) from the source.
+The magnification factor M = sdd / sid determines the
 geometric scaling between object and detector coordinates.</p>
 <p>Each ray connects the source position (rotated around isocenter) to a specific
 detector element, creating a divergent beam pattern that covers the field of view.</p>
@@ -497,7 +497,7 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanProjectorFunction.forward">
-<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction.forward" title="Link to this definition"></a></dt>
+<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 2D fan beam forward projection of an image using CUDA acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -506,8 +506,10 @@ output.</p>
 <li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>image</cite>.</p></li>
 <li><p><strong>num_detectors</strong> (<em>int</em>) – Number of detector elements in the sinogram (columns).</p></li>
 <li><p><strong>detector_spacing</strong> (<em>float</em>) – Physical spacing between detector elements.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+<li><p><strong>sdd</strong> (<em>float</em>) – Source-to-Detector Distance (SDD). The total distance from the X-ray
+source to the detector, passing through the isocenter.</p></li>
+<li><p><strong>sid</strong> (<em>float</em>) – Source-to-Isocenter Distance (SID). The distance from the X-ray
+source to the center of rotation (isocenter).</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -527,7 +529,7 @@ output.</p>
 <p class="rubric">Example</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
@@ -572,13 +574,13 @@ a divergent pattern that reconstructs the object with geometric magnification.</
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">detector_spacing</span> <span class="o">=</span> <span class="mf">1.0</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span>  <span class="c1"># Reconstruction size</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">source_distance</span> <span class="o">=</span> <span class="mf">1000.0</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">isocenter_distance</span> <span class="o">=</span> <span class="mf">500.0</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sdd</span> <span class="o">=</span> <span class="mf">1500.0</span>  <span class="c1"># Source-to-Detector Distance</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sid</span> <span class="o">=</span> <span class="mf">1000.0</span>  <span class="c1"># Source-to-Isocenter Distance</span>
 <span class="gp">&gt;&gt;&gt;</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="c1"># Compute backprojection</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">backprojector</span> <span class="o">=</span> <span class="n">FanBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">reconstruction</span> <span class="o">=</span> <span class="n">backprojector</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span>
-<span class="gp">... </span>                              <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
+<span class="gp">... </span>                              <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt;</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="c1"># Compute loss and gradients</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">loss</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
@@ -630,7 +632,7 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanBackprojectorFunction.forward">
-<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="Link to this definition"></a></dt>
+<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 2D fan beam backprojection of a sinogram using CUDA acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -640,8 +642,10 @@ output.</p>
 <li><p><strong>detector_spacing</strong> (<em>float</em>) – Physical spacing between detector elements.</p></li>
 <li><p><strong>H</strong> (<em>int</em>) – Height of the output reconstruction image.</p></li>
 <li><p><strong>W</strong> (<em>int</em>) – Width of the output reconstruction image.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+<li><p><strong>sdd</strong> (<em>float</em>) – Source-to-Detector Distance (SDD). The total distance from the X-ray
+source to the detector, passing through the isocenter.</p></li>
+<li><p><strong>sid</strong> (<em>float</em>) – Source-to-Isocenter Distance (SID). The distance from the X-ray
+source to the center of rotation (isocenter).</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -713,13 +717,13 @@ reconstruction. For larger volumes, helical scanning may be required.</p>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span>  <span class="c1"># 2D detector array size</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">du</span><span class="p">,</span> <span class="n">dv</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span>       <span class="c1"># Detector pixel spacing</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">source_distance</span> <span class="o">=</span> <span class="mf">1000.0</span>    <span class="c1"># Source to isocenter distance</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">isocenter_distance</span> <span class="o">=</span> <span class="mf">500.0</span>  <span class="c1"># Isocenter to detector distance</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sdd</span> <span class="o">=</span> <span class="mf">1500.0</span>    <span class="c1"># Source-to-Detector Distance</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sid</span> <span class="o">=</span> <span class="mf">1000.0</span>  <span class="c1"># Source-to-Isocenter Distance</span>
 <span class="gp">&gt;&gt;&gt;</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="c1"># Compute 3D forward projection</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">projector</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">projections</span> <span class="o">=</span> <span class="n">projector</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
-<span class="gp">... </span>                       <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
+<span class="gp">... </span>                       <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt;</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="c1"># Compute loss and gradients</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">loss</span> <span class="o">=</span> <span class="n">projections</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
@@ -772,7 +776,7 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction.forward">
-<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction.forward" title="Link to this definition"></a></dt>
+<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 3D cone beam forward projection of a volume using CUDA acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -783,8 +787,10 @@ output.</p>
 <li><p><strong>det_v</strong> (<em>int</em>) – Number of detector elements along the v-axis (height).</p></li>
 <li><p><strong>du</strong> (<em>float</em>) – Physical spacing between detector elements along the u-axis.</p></li>
 <li><p><strong>dv</strong> (<em>float</em>) – Physical spacing between detector elements along the v-axis.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+<li><p><strong>sdd</strong> (<em>float</em>) – Source-to-Detector Distance (SDD). The total distance from the X-ray
+source to the detector, passing through the isocenter.</p></li>
+<li><p><strong>sid</strong> (<em>float</em>) – Source-to-Isocenter Distance (SID). The distance from the X-ray
+source to the center of rotation (isocenter).</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -804,7 +810,7 @@ output.</p>
 <p class="rubric">Example</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">sino</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sino</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
@@ -852,13 +858,13 @@ complexity and memory requirements among all projection operators in DiffCT.</p>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span>  <span class="c1"># 3D reconstruction size</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">du</span><span class="p">,</span> <span class="n">dv</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span>       <span class="c1"># Detector pixel spacing</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">source_distance</span> <span class="o">=</span> <span class="mf">1000.0</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">isocenter_distance</span> <span class="o">=</span> <span class="mf">500.0</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sdd</span> <span class="o">=</span> <span class="mf">1500.0</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sid</span> <span class="o">=</span> <span class="mf">1000.0</span>
 <span class="gp">&gt;&gt;&gt;</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="c1"># Compute 3D backprojection</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">backprojector</span> <span class="o">=</span> <span class="n">ConeBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">volume</span> <span class="o">=</span> <span class="n">backprojector</span><span class="p">(</span><span class="n">projections</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
-<span class="gp">... </span>                      <span class="n">source_distance</span><span class="p">,</span> <span class="n">isocenter_distance</span><span class="p">)</span>
+<span class="gp">... </span>                      <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt;</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="c1"># Compute loss and gradients</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">loss</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
@@ -912,7 +918,7 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeBackprojectorFunction.forward">
-<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">D</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_distance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter_distance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="Link to this definition"></a></dt>
+<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">D</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 3D cone beam backprojection of a projection sinogram using CUDA acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -924,8 +930,10 @@ output.</p>
 <li><p><strong>W</strong> (<em>int</em>) – Width (x-dimension) of the output reconstruction volume.</p></li>
 <li><p><strong>du</strong> (<em>float</em>) – Physical spacing between detector elements along the u-axis.</p></li>
 <li><p><strong>dv</strong> (<em>float</em>) – Physical spacing between detector elements along the v-axis.</p></li>
-<li><p><strong>source_distance</strong> (<em>float</em>) – Distance from the X-ray source to the isocenter (center of rotation).</p></li>
-<li><p><strong>isocenter_distance</strong> (<em>float</em>) – Distance from the isocenter to the detector array.</p></li>
+<li><p><strong>sdd</strong> (<em>float</em>) – Source-to-Detector Distance (SDD). The total distance from the X-ray
+source to the detector, passing through the isocenter.</p></li>
+<li><p><strong>sid</strong> (<em>float</em>) – Source-to-Isocenter Distance (SID). The distance from the X-ray
+source to the center of rotation (isocenter).</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -945,7 +953,7 @@ output.</p>
 <p class="rubric">Example</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">projections</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">360</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">vol</span> <span class="o">=</span> <span class="n">ConeBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">projections</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">vol</span> <span class="o">=</span> <span class="n">ConeBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">projections</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
