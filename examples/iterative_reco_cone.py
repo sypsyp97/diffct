@@ -112,7 +112,7 @@ class Pipeline:
 
 def main():
     Nx, Ny, Nz = 64, 64, 64
-    phantom_cpu = shepp_logan_3d((Nx, Ny, Nz))
+    phantom_cpu = shepp_logan_3d((Nz, Ny, Nx))
 
     num_views = 180
     angles_np = np.linspace(0, 2 * math.pi, num_views, endpoint=False).astype(np.float32)

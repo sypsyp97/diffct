@@ -73,7 +73,7 @@ def ramp_filter_3d(sinogram_tensor):
 
 def main():
     Nx, Ny, Nz = 128, 128, 128
-    phantom_cpu = shepp_logan_3d((Nx, Ny, Nz))
+    phantom_cpu = shepp_logan_3d((Nz, Ny, Nx))
 
     num_views = 360
     angles_np = np.linspace(0, 2*math.pi, num_views, endpoint=False).astype(np.float32)
@@ -108,7 +108,7 @@ def main():
     sino_weighted = sinogram * weights
     sinogram_filt = ramp_filter_3d(sino_weighted)
 
-    reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nx, Ny, Nz,
+    reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nz, Ny, Nx,
                                                     du, dv, sdd, sid)
     
     # --- FDK normalization ---
@@ -124,7 +124,7 @@ def main():
 
     print("Cone Beam Example with user-defined geometry:")
     print("Loss:", loss.item())
-    print("Volume center voxel gradient:", phantom_torch.grad[Nx//2, Ny//2, Nz//2].item())
+    print("Volume center voxel gradient:", phantom_torch.grad[Nz//2, Ny//2, Nx//2].item())
     print("Reconstruction shape:", reconstruction.shape)
 
     reconstruction_cpu = reconstruction.detach().cpu().numpy()
@@ -133,7 +133,7 @@ def main():
 
     plt.figure(figsize=(12,4))
     plt.subplot(1,3,1)
-    plt.imshow(phantom_cpu[:,:,mid_slice], cmap='gray')
+    plt.imshow(phantom_cpu[mid_slice, :,:], cmap='gray')
     plt.title("Phantom mid-slice")
     plt.axis('off')
     plt.subplot(1,3,2)
@@ -141,7 +141,7 @@ def main():
     plt.title("Sinogram mid-view")
     plt.axis('off')
     plt.subplot(1,3,3)
-    plt.imshow(reconstruction_cpu[:,:,mid_slice], cmap='gray')
+    plt.imshow(reconstruction_cpu[mid_slice, :, :], cmap='gray')
     plt.title("Recon mid-slice")
     plt.axis('off')
     plt.tight_layout()

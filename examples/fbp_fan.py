@@ -8,7 +8,7 @@ from diffct.differentiable import FanProjectorFunction, FanBackprojectorFunction
 def shepp_logan_2d(Nx, Ny):
     Nx = int(Nx)
     Ny = int(Ny)
-    phantom = np.zeros((Nx, Ny), dtype=np.float32)
+    phantom = np.zeros((Ny, Nx), dtype=np.float32)
     ellipses = [
         (0.0, 0.0, 0.69, 0.92, 0, 1.0),
         (0.0, -0.0184, 0.6624, 0.8740, 0, -0.8),
@@ -29,7 +29,7 @@ def shepp_logan_2d(Nx, Ny):
                 yprime = -(xnorm - x0)*np.sin(th) + (ynorm - y0)*np.cos(th)
                 if xprime*xprime/(a*a) + yprime*yprime/(b*b) <= 1.0:
                     val += ampl
-            phantom[ix, iy] = val
+            phantom[iy, ix] = val
     phantom = np.clip(phantom, 0.0, 1.0)
     return phantom
 
@@ -76,7 +76,7 @@ def main():
     sinogram_filt = ramp_filter(sino_weighted)
 
     reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                    detector_spacing, Nx, Ny,
+                                                    detector_spacing, Ny, Nx,
                                                     sdd, sid)
     
     # --- FBP normalization ---
@@ -91,7 +91,7 @@ def main():
     loss.backward()
 
     print("Loss:", loss.item())
-    print("Center pixel gradient:", image_torch.grad[Nx//2, Ny//2].item())
+    print("Center pixel gradient:", image_torch.grad[Ny//2, Nx//2].item())
 
     sinogram_cpu = sinogram.detach().cpu().numpy()
     reco_cpu = reconstruction.detach().cpu().numpy()
