@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "diffct"
-version = "1.2.0"
+version = "1.2.1"
 description = "A CUDA-based library for computed tomography (CT) projection and reconstruction with differentiable operators"
 readme = "README.md"
 authors = [
@@ -32,3 +32,9 @@ package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.hatch.envs.default]
+python = "python"
+
+[tool.hatch.envs.default.env-vars]
+PYTHONDONTWRITEBYTECODE = "1"
