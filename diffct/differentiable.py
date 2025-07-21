@@ -169,8 +169,17 @@ def _trig_tables(angles, dtype=_DTYPE):
         return cos.to(device), sin.to(device)
     else:
         # fallback for numpy arrays
-        cos_host = np.cos(angles).astype(dtype)
-        sin_host = np.sin(angles).astype(dtype)
+        # Convert torch.dtype to numpy.dtype if necessary
+        if isinstance(dtype, torch.dtype):
+            dtype_map = {
+                torch.float32: np.float32,
+                torch.float64: np.float64,
+            }
+            np_dtype = dtype_map.get(dtype, np.float32)
+        else:
+            np_dtype = dtype
+        cos_host = np.cos(angles).astype(np_dtype)
+        sin_host = np.sin(angles).astype(np_dtype)
         return torch.from_numpy(cos_host), torch.from_numpy(sin_host)
 
 
