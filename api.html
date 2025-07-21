@@ -190,8 +190,9 @@ discrete approximation of the line integral.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>This function requires CUDA-capable hardware and properly configured CUDA
-environment. All input tensors must be on the same CUDA device.</p>
+<p>This function requires CUDA-capable hardware and a properly
+configured CUDA environment. All input tensors must be on the same
+CUDA device.</p>
 </div>
 <p><strong>Parameters:</strong></p>
 <ul class="simple">
@@ -258,10 +259,12 @@ output.</p>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
 <li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
-<p class="rubric">Example</p>
+<p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">180</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span>
+<span class="gp">... </span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
@@ -321,8 +324,9 @@ through the reconstruction volume.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>This function requires CUDA-capable hardware and properly configured CUDA
-environment. All input tensors must be on the same CUDA device.</p>
+<p>This function requires CUDA-capable hardware and a properly
+configured CUDA environment. All input tensors must be on the same
+CUDA device.</p>
 </div>
 <p><strong>Parameters:</strong></p>
 <ul class="simple">
@@ -385,10 +389,12 @@ output.</p>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
 <li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
-<p class="rubric">Example</p>
+<p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">180</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">180</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">reco</span> <span class="o">=</span> <span class="n">ParallelBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">reco</span> <span class="o">=</span> <span class="n">ParallelBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span>
+<span class="gp">... </span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
@@ -456,9 +462,10 @@ detector element, creating a divergent beam pattern that covers the field of vie
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>Fan beam geometry requires 360° angular sampling (2π radians) for complete
-reconstruction, unlike parallel beam which only needs 180°. The source distance
-should be much larger than the object size to minimize geometric distortions.</p>
+<p>Fan beam geometry requires 360° angular sampling (2π radians) for
+complete reconstruction, unlike parallel beam, which only needs
+180°. The source distance should be significantly larger than the
+object size to minimize geometric distortions.</p>
 </div>
 <p><strong>Parameters:</strong></p>
 <ul class="simple">
@@ -526,10 +533,12 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>Fan beam geometry uses divergent rays from a point source to the detector.</p></li>
 <li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
-<p class="rubric">Example</p>
+<p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span>
+<span class="gp">... </span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
@@ -590,9 +599,10 @@ a divergent pattern that reconstructs the object with geometric magnification.</
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>Fan beam backprojection requires careful handling of ray convergence at the source,
-which can lead to higher atomic contention in CUDA kernels compared to parallel beam.
-The geometry parameters must match those used in forward projection for consistency.</p>
+<p>Fan beam backprojection requires careful handling of ray convergence
+at the source, which can lead to higher atomic contention in CUDA
+kernels compared to parallel beam. The geometry parameters must
+match those used in the forward projection for consistency.</p>
 </div>
 <p><strong>Parameters:</strong></p>
 <ul class="simple">
@@ -662,10 +672,12 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>Fan beam geometry uses divergent rays from a point source to the detector.</p></li>
 <li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
-<p class="rubric">Example</p>
+<p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">360</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">reco</span> <span class="o">=</span> <span class="n">FanBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">reco</span> <span class="o">=</span> <span class="n">FanBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">500.0</span>
+<span class="gp">... </span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
@@ -733,9 +745,10 @@ reconstruction. For larger volumes, helical scanning may be required.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>3D cone beam projection is computationally intensive and requires significant GPU
-memory. Consider using smaller volumes or gradient checkpointing for large-scale
-applications. The cone angle should be minimized to reduce reconstruction artifacts.</p>
+<p>3D cone-beam projection is computationally intensive and requires
+significant GPU memory. For large-scale applications, consider
+using smaller volumes or gradient checkpointing. The cone angle
+should be minimized to reduce reconstruction artifacts.</p>
 </div>
 <p><strong>Parameters:</strong></p>
 <ul class="simple">
@@ -807,10 +820,12 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>Cone beam geometry uses a point source and a 2D detector array.</p></li>
 <li><p>Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</p></li>
 </ul>
-<p class="rubric">Example</p>
+<p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">sino</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sino</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span>
+<span class="gp">... </span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
@@ -874,9 +889,10 @@ complexity and memory requirements among all projection operators in DiffCT.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>3D cone beam backprojection is the most memory and computationally intensive operation
-in DiffCT. Consider using gradient checkpointing, smaller volumes, or distributed
-computing for large-scale applications. Ensure sufficient GPU memory is available.</p>
+<p>3D cone-beam backprojection is the most memory- and computationally
+intensive operation in <code class="docutils literal notranslate"><span class="pre">diffct</span></code>. For large-scale applications,
+consider using gradient checkpointing, smaller volumes, or
+distributed computing. Ensure sufficient GPU memory is available.</p>
 </div>
 <p><strong>Parameters:</strong></p>
 <ul class="simple">
@@ -950,10 +966,12 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>Cone beam geometry uses a point source and a 2D detector array.</p></li>
 <li><p>Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</p></li>
 </ul>
-<p class="rubric">Example</p>
+<p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">projections</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">360</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">360</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">vol</span> <span class="o">=</span> <span class="n">ConeBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">projections</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">vol</span> <span class="o">=</span> <span class="n">ConeBackprojectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">projections</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1500.0</span><span class="p">,</span> <span class="mf">1000.0</span>
+<span class="gp">... </span><span class="p">)</span>
 </pre></div>
 </div>
 </dd></dl>
