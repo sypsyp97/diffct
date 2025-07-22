@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 from diffct.differentiable import ParallelProjectorFunction, ParallelBackprojectorFunction
 
 
@@ -64,8 +65,8 @@ def main():
     
     sinogram_filt = ramp_filter(sinogram)
 
-    reconstruction = ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                         detector_spacing, Ny, Nx, voxel_spacing)
+    reconstruction = F.relu(ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
+                                                         detector_spacing, Ny, Nx, voxel_spacing)) # ReLU to ensure non-negativity
     
     # --- FBP normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

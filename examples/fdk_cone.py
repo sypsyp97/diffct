@@ -2,6 +2,7 @@ import math
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 from diffct.differentiable import ConeProjectorFunction, ConeBackprojectorFunction
 
 
@@ -110,8 +111,8 @@ def main():
     sino_weighted = sinogram * weights
     sinogram_filt = ramp_filter_3d(sino_weighted).contiguous()
 
-    reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nz, Ny, Nx,
-                                                    du, dv, sdd, sid, voxel_spacing)
+    reconstruction = F.relu(ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nz, Ny, Nx,
+                                                    du, dv, sdd, sid, voxel_spacing)) # ReLU to ensure non-negativity
     
     # --- FDK normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

@@ -2,6 +2,7 @@ import math
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 from diffct.differentiable import FanProjectorFunction, FanBackprojectorFunction
 
 
@@ -76,9 +77,9 @@ def main():
     sino_weighted = sinogram * weights
     sinogram_filt = ramp_filter(sino_weighted)
 
-    reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
+    reconstruction = F.relu(FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                     detector_spacing, Ny, Nx,
-                                                    sdd, sid, voxel_spacing)
+                                                    sdd, sid, voxel_spacing)) # ReLU to ensure non-negativity
     
     # --- FBP normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,
