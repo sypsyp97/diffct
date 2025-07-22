@@ -270,14 +270,14 @@
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_validate_3d_memory_layout</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="n">expected_order</span><span class="o">=</span><span class="s1">&#39;DHW&#39;</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate 3D tensor memory layout to prevent coordinate system inconsistencies.</span>
-<span class="sd">    </span>
+
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    tensor : torch.Tensor</span>
 <span class="sd">        3D tensor to validate</span>
 <span class="sd">    expected_order : str, optional</span>
 <span class="sd">        Expected memory order (&#39;DHW&#39;, &#39;VHW&#39;, etc.). Default is &#39;DHW&#39;.</span>
-<span class="sd">        </span>
+
 <span class="sd">    Raises</span>
 <span class="sd">    ------</span>
 <span class="sd">    ValueError</span>
@@ -285,53 +285,50 @@
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected 3D tensor, got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">D&quot;</span><span class="p">)</span>
-    
+
     <span class="c1"># Check if tensor is contiguous to avoid memory duplication</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">():</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
             <span class="s2">&quot;Input tensor must be contiguous. Call .contiguous() before passing to &quot;</span>
             <span class="s2">&quot;cone beam functions to avoid memory duplication and ensure correct results.&quot;</span>
         <span class="p">)</span>
-    
-    <span class="c1"># Validate expected memory order based on stride patterns</span>
-    <span class="n">strides</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">stride</span><span class="p">()</span>
-    
-    <span class="c1"># Map expected orders to stride patterns</span>
-    <span class="n">order_mapping</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s1">&#39;DHW&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>  <span class="c1"># Depth, Height, Width</span>
-        <span class="s1">&#39;VHW&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>  <span class="c1"># Views, Height, Width (for sinograms)</span>
-        <span class="s1">&#39;WHD&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>  <span class="c1"># Width, Height, Depth (internal WHD format)</span>
-    <span class="p">}</span>
-    
-    <span class="k">if</span> <span class="n">expected_order</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">order_mapping</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported expected_order: </span><span class="si">{</span><span class="n">expected_order</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    
-    <span class="n">expected_stride_order</span> <span class="o">=</span> <span class="n">order_mapping</span><span class="p">[</span><span class="n">expected_order</span><span class="p">]</span>
-    
-    <span class="c1"># Check if actual strides match expected order</span>
-    <span class="n">sorted_strides</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">enumerate</span><span class="p">(</span><span class="n">strides</span><span class="p">),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">actual_order</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">idx</span> <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">sorted_strides</span><span class="p">)</span>
-    
-    <span class="k">if</span> <span class="n">actual_order</span> <span class="o">!=</span> <span class="n">expected_stride_order</span><span class="p">:</span>
-        <span class="c1"># Create appropriate error message based on context</span>
-        <span class="k">if</span> <span class="n">expected_order</span> <span class="o">==</span> <span class="s1">&#39;VHW&#39;</span><span class="p">:</span>
-            <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
-            <span class="n">expected_str</span> <span class="o">=</span> <span class="s2">&quot;(Views, Height, Width)&quot;</span>
-            <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;ensure your sinogram has shape (num_views, det_v, det_u)&quot;</span>
-        <span class="k">elif</span> <span class="n">expected_order</span> <span class="o">==</span> <span class="s1">&#39;DHW&#39;</span><span class="p">:</span>
-            <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
-            <span class="n">expected_str</span> <span class="o">=</span> <span class="s2">&quot;(Depth, Height, Width)&quot;</span>
-            <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;ensure your volume has shape (D, H, W)&quot;</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">actual_str</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">))</span>
-            <span class="n">expected_str</span> <span class="o">=</span> <span class="n">expected_order</span>
-            <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;check tensor dimensions&quot;</span>
-            
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;Memory layout mismatch: expected </span><span class="si">{</span><span class="n">expected_str</span><span class="si">}</span><span class="s2"> order, &quot;</span>
-            <span class="sa">f</span><span class="s2">&quot;but tensor has shape </span><span class="si">{</span><span class="n">actual_str</span><span class="si">}</span><span class="s2">. Please </span><span class="si">{</span><span class="n">fix_str</span><span class="si">}</span><span class="s2"> and ensure &quot;</span>
-            <span class="sa">f</span><span class="s2">&quot;the tensor is contiguous (.contiguous()) before passing to the function.&quot;</span>
-        <span class="p">)</span>
+
+    <span class="c1"># Only check memory order for DHW and VHW, not for internal WHD layout</span>
+    <span class="k">if</span> <span class="n">expected_order</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39;DHW&#39;</span><span class="p">,</span> <span class="s1">&#39;VHW&#39;</span><span class="p">):</span>
+        <span class="n">strides</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">stride</span><span class="p">()</span>
+        <span class="n">order_mapping</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;DHW&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>  <span class="c1"># Depth, Height, Width</span>
+            <span class="s1">&#39;VHW&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>  <span class="c1"># Views, Height, Width (for sinograms)</span>
+        <span class="p">}</span>
+        <span class="k">if</span> <span class="n">expected_order</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">order_mapping</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported expected_order: </span><span class="si">{</span><span class="n">expected_order</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">expected_stride_order</span> <span class="o">=</span> <span class="n">order_mapping</span><span class="p">[</span><span class="n">expected_order</span><span class="p">]</span>
+        <span class="c1"># Check if actual strides match expected order</span>
+        <span class="n">sorted_strides</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">enumerate</span><span class="p">(</span><span class="n">strides</span><span class="p">),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">actual_order</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">idx</span> <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">sorted_strides</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">actual_order</span> <span class="o">!=</span> <span class="n">expected_stride_order</span><span class="p">:</span>
+            <span class="c1"># Create appropriate error message based on context</span>
+            <span class="k">if</span> <span class="n">expected_order</span> <span class="o">==</span> <span class="s1">&#39;VHW&#39;</span><span class="p">:</span>
+                <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
+                <span class="n">expected_str</span> <span class="o">=</span> <span class="s2">&quot;(Views, Height, Width)&quot;</span>
+                <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;ensure your sinogram has shape (num_views, det_v, det_u)&quot;</span>
+            <span class="k">elif</span> <span class="n">expected_order</span> <span class="o">==</span> <span class="s1">&#39;DHW&#39;</span><span class="p">:</span>
+                <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
+                <span class="n">expected_str</span> <span class="o">=</span> <span class="s2">&quot;(Depth, Height, Width)&quot;</span>
+                <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;ensure your volume has shape (D, H, W)&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">actual_str</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">))</span>
+                <span class="n">expected_str</span> <span class="o">=</span> <span class="n">expected_order</span>
+                <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;check tensor dimensions&quot;</span>
+
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Memory layout mismatch: expected </span><span class="si">{</span><span class="n">expected_str</span><span class="si">}</span><span class="s2"> order, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;but tensor has shape </span><span class="si">{</span><span class="n">actual_str</span><span class="si">}</span><span class="s2">. Please </span><span class="si">{</span><span class="n">fix_str</span><span class="si">}</span><span class="s2"> and ensure &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;the tensor is contiguous (.contiguous()) before passing to the function.&quot;</span>
+            <span class="p">)</span>
+    <span class="c1"># For &#39;WHD&#39; (internal layout), skip stride check entirely</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_grid_2d</span><span class="p">(</span><span class="n">n1</span><span class="p">,</span> <span class="n">n2</span><span class="p">,</span> <span class="n">tpb</span><span class="o">=</span><span class="n">_TPB_2D</span><span class="p">):</span>
