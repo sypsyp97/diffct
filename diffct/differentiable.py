@@ -269,7 +269,7 @@ def _grid_3d(n1, n2, n3, tpb=_TPB_3D):
 def _parallel_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
-    det_spacing, d_cos, d_sin, cx, cy
+    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing
 ):
     """Compute the 2D parallel beam forward projection.
 
@@ -300,6 +300,8 @@ def _parallel_2d_forward_kernel(
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
+    voxel_spacing : float
+        Physical size of one voxel (in same units as det_spacing, sid, sdd).
 
     Notes
     -----
@@ -321,17 +323,18 @@ def _parallel_2d_forward_kernel(
     # Extract projection angle and compute detector position
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing  # Detector coordinate (centered)
+    # Normalize all physical distances to voxel units
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
 
     # Define ray direction and starting point for parallel beam geometry
     # Ray direction is perpendicular to detector array (cos_a, sin_a)
-    # Ray starting point is offset along detector by distance u
+    # Ray starting point is offset along detector by distance u in voxel units
     dir_x, dir_y = cos_a, sin_a
     pnt_x, pnt_y = u * -sin_a, u * cos_a
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
-    # Volume extends from [-cx, cx] x [-cy, cy] in image coordinate system
+    # Volume extends from [-cx, cx] x [-cy, cy] in voxel coordinate system
     # Mathematical basis: For ray r(t) = origin + t*direction, solve r(t) = boundary for parameter t
     t_min, t_max = -_INF, _INF  # Initialize ray parameter range to unbounded
     
@@ -434,7 +437,7 @@ def _parallel_2d_forward_kernel(
 def _parallel_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
-    det_spacing, d_cos, d_sin, cx, cy
+    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing
 ):
     """Compute the 2D parallel beam backprojection.
 
@@ -465,6 +468,8 @@ def _parallel_2d_backward_kernel(
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
+    voxel_spacing : float
+        Physical size of one voxel (in same units as det_spacing, sid, sdd).
 
     Notes
     -----
@@ -480,7 +485,8 @@ def _parallel_2d_backward_kernel(
     val   = d_sino[iang, idet]  # Sinogram value to backproject
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing  # Detector coordinate (centered)
+    # Normalize all physical distances to voxel units
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
 
     # Define ray direction and starting point for parallel beam geometry
     dir_x, dir_y = cos_a, sin_a
@@ -560,7 +566,7 @@ def _fan_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
     det_spacing, d_cos, d_sin,
-    sdd, sid, cx, cy
+    sdd, sid, cx, cy, voxel_spacing
 ):
     """Compute the 2D fan beam forward projection.
 
@@ -595,6 +601,8 @@ def _fan_2d_forward_kernel(
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
+    voxel_spacing : float
+        Physical size of one voxel (in same units as det_spacing, sid, sdd).
 
     Notes
     -----
@@ -609,17 +617,20 @@ def _fan_2d_forward_kernel(
     # === FAN BEAM GEOMETRY SETUP ===
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing  # Detector coordinate (centered)
+    # Normalize all physical distances to voxel units
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
+    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate source and detector positions for current projection angle
     # Source position: rotated by angle around isocenter at distance sid (SID)
-    src_x = -sid * sin_a  # Source x-coordinate in world space
-    src_y =  sid * cos_a  # Source y-coordinate in world space
+    src_x = -sid_v * sin_a  # Source x-coordinate in voxel units
+    src_y =  sid_v * cos_a  # Source y-coordinate in voxel units
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
-    idd = sdd - sid
-    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate
-    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate
+    idd = sdd_v - sid_v
+    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate in voxel units
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -707,7 +718,7 @@ def _fan_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
     det_spacing, d_cos, d_sin,
-    sdd, sid, cx, cy
+    sdd, sid, cx, cy, voxel_spacing
 ):
     """Compute the 2D fan beam backprojection.
 
@@ -742,6 +753,8 @@ def _fan_2d_backward_kernel(
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
+    voxel_spacing : float
+        Physical size of one voxel (in same units as det_spacing, sid, sdd).
 
     Notes
     -----
@@ -757,17 +770,20 @@ def _fan_2d_backward_kernel(
     val   = d_sino[iang, idet]  # Sinogram value to backproject along this ray
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing  # Detector coordinate (centered)
+    # Normalize all physical distances to voxel units
+    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
+    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate source and detector positions for current projection angle
     # Source position: rotated by angle around isocenter at distance sid (SID)
-    src_x = -sid * sin_a  # Source x-coordinate in world space
-    src_y =  sid * cos_a  # Source y-coordinate in world space
+    src_x = -sid_v * sin_a  # Source x-coordinate in voxel units
+    src_y =  sid_v * cos_a  # Source y-coordinate in voxel units
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
-    idd = sdd - sid
-    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate
-    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate
+    idd = sdd_v - sid_v
+    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate in voxel units
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -852,7 +868,7 @@ def _cone_3d_forward_kernel(
     d_vol, Nx, Ny, Nz,
     d_sino, n_views, n_u, n_v,
     du, dv, d_cos, d_sin,
-    sdd, sid, cx, cy, cz
+    sdd, sid, cx, cy, cz, voxel_spacing
 ):
     """Compute the 3D cone-beam forward projection.
 
@@ -895,6 +911,8 @@ def _cone_3d_forward_kernel(
         Half of volume height along y-axis (in voxels).
     cz : float
         Half of volume depth along z-axis (in voxels).
+    voxel_spacing : float
+        Physical size of one voxel (in same units as du, dv, sid, sdd).
 
     Notes
     -----
@@ -908,18 +926,22 @@ def _cone_3d_forward_kernel(
 
     # === 3D CONE BEAM GEOMETRY SETUP ===
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
-    u, v = (iu - (n_u - 1) * 0.5) * du, (iv - (n_v - 1) * 0.5) * dv  # Detector coordinates (centered)
+    # Normalize all physical distances to voxel units
+    u     = (iu - (n_u - 1) * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
+    v     = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
+    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
+    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate 3D source and detector positions
     # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -sid * sin_a, sid * cos_a, 0.0
+    src_x, src_y, src_z = -sid_v * sin_a, sid_v * cos_a, 0.0
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
-    idd = sdd - sid
-    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate
-    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate  
-    det_z = v                                           # Vertical z-coordinate
+    idd = sdd_v - sid_v
+    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate in voxel units
+    det_z = v                                           # Vertical z-coordinate in voxel units
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
@@ -1046,7 +1068,7 @@ def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
     du, dv, d_cos, d_sin,
-    sdd, sid, cx, cy, cz
+    sdd, sid, cx, cy, cz, voxel_spacing
 ):
     """Compute the 3D cone-beam backprojection.
 
@@ -1089,6 +1111,8 @@ def _cone_3d_backward_kernel(
         Half of volume height along y-axis (in voxels).
     cz : float
         Half of volume depth along z-axis (in voxels).
+    voxel_spacing : float
+        Physical size of one voxel (in same units as du, dv, sid, sdd).
 
     Notes
     -----
@@ -1103,18 +1127,22 @@ def _cone_3d_backward_kernel(
     # === 3D BACKPROJECTION VALUE AND GEOMETRY SETUP ===
     g = d_sino[iview, iu, iv]  # Sinogram value to backproject along this ray
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
-    u, v = (iu - (n_u - 1) * 0.5) * du, (iv - (n_v - 1) * 0.5) * dv  # Detector coordinates (centered)
+    # Normalize all physical distances to voxel units
+    u     = (iu - (n_u - 1) * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
+    v     = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
+    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
+    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate 3D source and detector positions
     # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -sid * sin_a, sid * cos_a, 0.0
+    src_x, src_y, src_z = -sid_v * sin_a, sid_v * cos_a, 0.0
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
-    idd = sdd - sid
-    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate
-    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate
-    det_z = v                                           # Vertical z-coordinate
+    idd = sdd_v - sid_v
+    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate in voxel units
+    det_z = v                                           # Vertical z-coordinate in voxel units
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
@@ -1261,7 +1289,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
     >>> print(f"Gradient shape: {image.grad.shape}")  # (128, 128)
     """
     @staticmethod
-    def forward(ctx, image, angles, num_detectors, detector_spacing=1.0):
+    def forward(ctx, image, angles, num_detectors, detector_spacing=1.0, voxel_spacing=1.0):
         """Compute the 2D parallel beam forward projection (Radon transform) of
         an image using CUDA acceleration.
 
@@ -1275,6 +1303,8 @@ class ParallelProjectorFunction(torch.autograd.Function):
             Number of detector elements in the sinogram (columns).
         detector_spacing : float, optional
             Physical spacing between detector elements (default: 1.0).
+        voxel_spacing : float, optional
+            Physical size of one voxel (in same units as detector_spacing, default: 1.0).
 
         Returns
         -------
@@ -1323,17 +1353,17 @@ class ParallelProjectorFunction(torch.autograd.Function):
 
         _parallel_2d_forward_kernel[grid, tpb](
             d_image, Nx, Ny, d_sino, n_angles, num_detectors,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx)
+        ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
         return sinogram
     
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        num_detectors, detector_spacing, Ny, Nx = ctx.intermediate
+        num_detectors, detector_spacing, Ny, Nx, voxel_spacing = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1356,10 +1386,10 @@ class ParallelProjectorFunction(torch.autograd.Function):
         _parallel_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_angles, num_detectors,
             d_img_grad, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        return grad_image, None, None, None
+        return grad_image, None, None, None, None
 
 
 class ParallelBackprojectorFunction(torch.autograd.Function):
@@ -1390,7 +1420,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     >>> print(sinogram.grad.shape)  # (180, 128)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128):
+    def forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128, voxel_spacing=1.0):
         """Compute the 2D parallel beam backprojection (adjoint Radon
         transform) of a sinogram using CUDA acceleration.
 
@@ -1406,6 +1436,8 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
             Height of the output reconstruction image (default: 128).
         W : int, optional
             Width of the output reconstruction image (default: 128).
+        voxel_spacing : float, optional
+            Physical size of one voxel (in same units as detector_spacing, default: 1.0).
 
         Returns
         -------
@@ -1454,17 +1486,17 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
 
         _parallel_2d_backward_kernel[grid, tpb](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1])
+        ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1], voxel_spacing)
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
-        H, W, detector_spacing, n_ang, n_det = ctx.intermediate
+        H, W, detector_spacing, n_ang, n_det, voxel_spacing = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1491,10 +1523,10 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
 
         _parallel_2d_forward_kernel[grid, tpb](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
-            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy
+            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        return grad_sino, None, None, None, None
+        return grad_sino, None, None, None, None, None
 
 
 class FanProjectorFunction(torch.autograd.Function):
@@ -1525,7 +1557,7 @@ class FanProjectorFunction(torch.autograd.Function):
     >>> print(image.grad.shape)  # (256, 256)
     """
     @staticmethod
-    def forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid):
+    def forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid, voxel_spacing=1.0):
         """Compute the 2D fan beam forward projection of an image using CUDA
         acceleration.
 
@@ -1545,6 +1577,8 @@ class FanProjectorFunction(torch.autograd.Function):
         sid : float
             Source-to-Isocenter Distance (SID). The distance from the X-ray
             source to the center of rotation (isocenter).
+        voxel_spacing : float, optional
+            Physical size of one voxel (in same units as detector_spacing, sdd, sid, default: 1.0).
 
         Returns
         -------
@@ -1590,18 +1624,18 @@ class FanProjectorFunction(torch.autograd.Function):
         _fan_2d_forward_kernel[grid, tpb](
             d_image, Nx, Ny, d_sino, n_ang, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx,
-                            sdd, sid)
+                            sdd, sid, voxel_spacing)
         return sinogram
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        (n_det, det_spacing, Ny, Nx, sdd, sid) = ctx.intermediate
+        (n_det, det_spacing, Ny, Nx, sdd, sid, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1624,10 +1658,10 @@ class FanProjectorFunction(torch.autograd.Function):
         _fan_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
 
-        return grad_img, None, None, None, None, None
+        return grad_img, None, None, None, None, None, None
 
 
 class FanBackprojectorFunction(torch.autograd.Function):
@@ -1659,7 +1693,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
     >>> print(sinogram.grad.shape)  # (360, 512)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid):
+    def forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid, voxel_spacing=1.0):
         """Compute the 2D fan beam backprojection of a sinogram using CUDA
         acceleration.
 
@@ -1681,6 +1715,8 @@ class FanBackprojectorFunction(torch.autograd.Function):
         sid : float
             Source-to-Isocenter Distance (SID). The distance from the X-ray
             source to the center of rotation (isocenter).
+        voxel_spacing : float, optional
+            Physical size of one voxel (in same units as detector_spacing, sdd, sid, default: 1.0).
 
         Returns
         -------
@@ -1726,17 +1762,17 @@ class FanBackprojectorFunction(torch.autograd.Function):
         _fan_2d_backward_kernel[grid, tpb](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, sdd, sid)
+        ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, sdd, sid, voxel_spacing)
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
-        (H, W, det_spacing, n_ang, n_det, sdd, sid) = ctx.intermediate
+        (H, W, det_spacing, n_ang, n_det, sdd, sid, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1760,10 +1796,10 @@ class FanBackprojectorFunction(torch.autograd.Function):
         _fan_2d_forward_kernel[grid, tpb](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
 
-        return grad_sino, None, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None
 
 
 class ConeProjectorFunction(torch.autograd.Function):
@@ -1794,7 +1830,7 @@ class ConeProjectorFunction(torch.autograd.Function):
     >>> print(volume.grad.shape)  # (128, 128, 128)
     """
     @staticmethod
-    def forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid):
+    def forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid, voxel_spacing=1.0):
         """Compute the 3D cone beam forward projection of a volume using CUDA
         acceleration.
 
@@ -1818,6 +1854,8 @@ class ConeProjectorFunction(torch.autograd.Function):
         sid : float
             Source-to-Isocenter Distance (SID). The distance from the X-ray
             source to the center of rotation (isocenter).
+        voxel_spacing : float, optional
+            Physical size of one voxel (in same units as du, dv, sdd, sid, default: 1.0).
 
         Returns
         -------
@@ -1865,19 +1903,19 @@ class ConeProjectorFunction(torch.autograd.Function):
             d_vol, W, H, D, d_sino, n_views, det_u, det_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid),
-            cx, cy, cz
+            cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
-                            sdd, sid)
+                            sdd, sid, voxel_spacing)
         return sino
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
         (D, H, W, det_u, det_v, du, dv,
-         sdd, sid) = ctx.intermediate
+         sdd, sid, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1901,11 +1939,11 @@ class ConeProjectorFunction(torch.autograd.Function):
         _cone_3d_backward_kernel[grid, tpb](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
-        return grad_vol, None, None, None, None, None, None, None
+        return grad_vol, None, None, None, None, None, None, None, None
 
 
 class ConeBackprojectorFunction(torch.autograd.Function):
@@ -1945,7 +1983,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     >>> print(f"Projection gradient shape: {projections.grad.shape}")  # (360, 256, 256)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid):
+    def forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid, voxel_spacing=1.0):
         """Compute the 3D cone beam backprojection of a projection sinogram
         using CUDA acceleration.
 
@@ -1971,6 +2009,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         sid : float
             Source-to-Isocenter Distance (SID). The distance from the X-ray
             source to the center of rotation (isocenter).
+        voxel_spacing : float, optional
+            Physical size of one voxel (in same units as du, dv, sdd, sid, default: 1.0).
 
         Returns
         -------
@@ -2015,12 +2055,12 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         _cone_3d_backward_kernel[grid, tpb](
             d_sino, n_views, n_u, n_v, d_reco, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
-                            sdd, sid)
+                            sdd, sid, voxel_spacing)
         vol = vol_perm.permute(2, 1, 0).contiguous()
         return vol
 
@@ -2028,7 +2068,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
         (D, H, W, n_u, n_v, du, dv,
-         sdd, sid) = ctx.intermediate
+         sdd, sid, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -2053,7 +2093,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         _cone_3d_forward_kernel[grid, tpb](
             d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
-        return grad_sino, None, None, None, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None, None, None

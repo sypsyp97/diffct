@@ -53,18 +53,19 @@ def main():
 
     num_detectors = 512
     detector_spacing = 1.0
+    voxel_spacing = 1.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = ParallelProjectorFunction.apply(image_torch, angles_torch,
-                                               num_detectors, detector_spacing)
+                                               num_detectors, detector_spacing, voxel_spacing)
     
     sinogram_filt = ramp_filter(sinogram)
 
     reconstruction = ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                         detector_spacing, Ny, Nx)
+                                                         detector_spacing, Ny, Nx, voxel_spacing)
     
     # --- FBP normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

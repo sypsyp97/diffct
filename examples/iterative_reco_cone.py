@@ -60,7 +60,7 @@ def shepp_logan_3d(shape):
     return shepp_logan
 
 class IterativeRecoModel(nn.Module):
-    def __init__(self, volume_shape, angles, det_u, det_v, du, dv, sdd, sid):
+    def __init__(self, volume_shape, angles, det_u, det_v, du, dv, sdd, sid, voxel_spacing):
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
         self.angles = angles
@@ -71,6 +71,7 @@ class IterativeRecoModel(nn.Module):
         self.sdd = sdd
         self.sid = sid
         self.relu = nn.ReLU() # non negative constraint
+        self.voxel_spacing = voxel_spacing
 
     def forward(self, x):
         updated_reco = x + self.reco
@@ -78,19 +79,19 @@ class IterativeRecoModel(nn.Module):
                                                    self.angles, 
                                                    self.det_u, self.det_v, 
                                                    self.du, self.dv, 
-                                                   self.sdd, self.sid)
+                                                   self.sdd, self.sid, self.voxel_spacing)
         return current_sino, self.relu(updated_reco)
 
 class Pipeline:
     def __init__(self, lr, volume_shape, angles, 
                  det_u, det_v, du, dv, 
-                 sdd, sid, 
+                 sdd, sid, voxel_spacing,
                  device, epoches=1000):
         
         self.epoches = epoches
         self.model = IterativeRecoModel(volume_shape, angles,
                                         det_u, det_v, du, dv, 
-                                        sdd, sid).to(device)
+                                        sdd, sid, voxel_spacing).to(device)
         
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
         self.loss = nn.MSELoss()
@@ -119,6 +120,7 @@ def main():
 
     det_u, det_v = 128, 128
     du, dv = 1.0, 1.0
+    voxel_spacing = 1.0
     sdd = 600.0
     sid = 400.0
 
@@ -129,13 +131,13 @@ def main():
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
     real_sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
                                                det_u, det_v, du, dv,
-                                               sdd, sid)
+                                               sdd, sid, voxel_spacing)
 
     pipeline_instance = Pipeline(lr=1e-1, 
                                  volume_shape=(Nz,Ny,Nx),
                                  angles=angles_torch,
                                  det_u=det_u, det_v=det_v,
-                                 du=du, dv=dv,
+                                 du=du, dv=dv, voxel_spacing=voxel_spacing,
                                  sdd=sdd,
                                  sid=sid,
                                  device=device, epoches=1000)

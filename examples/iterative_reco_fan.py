@@ -38,7 +38,7 @@ def shepp_logan_2d(Nx, Ny):
 class IterativeRecoModel(nn.Module):
     def __init__(self, volume_shape, angles, 
                  num_detectors, detector_spacing, 
-                 sdd, sid):
+                 sdd, sid, voxel_spacing):
         
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
@@ -48,24 +48,25 @@ class IterativeRecoModel(nn.Module):
         self.sdd = sdd
         self.sid = sid
         self.relu = nn.ReLU() # non negative constraint
+        self.voxel_spacing = voxel_spacing
 
     def forward(self, x):
         updated_reco = x + self.reco
         current_sino = FanProjectorFunction.apply(updated_reco, self.angles, 
                                                   self.num_detectors, self.detector_spacing, 
-                                                  self.sdd, self.sid)
+                                                  self.sdd, self.sid, self.voxel_spacing)
         return current_sino, self.relu(updated_reco)
 
 class Pipeline:
     def __init__(self, lr, volume_shape, angles, 
                  num_detectors, detector_spacing, 
-                 sdd, sid, 
+                 sdd, sid, voxel_spacing,
                  device, epoches=1000):
         
         self.epoches = epoches
         self.model = IterativeRecoModel(volume_shape, angles,
                                         num_detectors, detector_spacing, 
-                                        sdd, sid).to(device)
+                                        sdd, sid, voxel_spacing).to(device)
         
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
         self.loss = nn.MSELoss()
@@ -94,6 +95,7 @@ def main():
 
     num_detectors = 256
     detector_spacing = 1.0
+    voxel_spacing = 1.0
     sdd = 600.0
     sid = 400.0
 
@@ -104,14 +106,14 @@ def main():
     # Generate the "real" sinogram
     real_sinogram = FanProjectorFunction.apply(phantom_torch, angles_torch,
                                                num_detectors, detector_spacing,
-                                               sdd, sid)
+                                               sdd, sid, voxel_spacing)
 
     pipeline_instance = Pipeline(lr=1e-1,
                                  volume_shape=(Ny,Nx),
                                  angles=angles_torch,
                                  num_detectors=num_detectors,
                                  detector_spacing=detector_spacing,
-                                 sdd=sdd,
+                                 sdd=sdd, voxel_spacing=voxel_spacing,
                                  sid=sid,
                                  device=device, epoches=1000)
 

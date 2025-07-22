@@ -54,6 +54,7 @@ def main():
 
     num_detectors = 600
     detector_spacing = 1.0
+    voxel_spacing = 1.0
     sdd = 800.0
     sid = 500.0
 
@@ -62,7 +63,7 @@ def main():
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = FanProjectorFunction.apply(image_torch, angles_torch, num_detectors,
-                                          detector_spacing, sdd, sid)
+                                          detector_spacing, sdd, sid, voxel_spacing)
 
     # --- FBP weighting and filtering ---
     # For fan-beam FBP, projections must be weighted before filtering.
@@ -77,7 +78,7 @@ def main():
 
     reconstruction = FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                     detector_spacing, Ny, Nx,
-                                                    sdd, sid)
+                                                    sdd, sid, voxel_spacing)
     
     # --- FBP normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

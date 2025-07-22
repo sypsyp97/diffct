@@ -83,13 +83,15 @@ def main():
     sdd = 900.0
     sid = 600.0
 
+    voxel_spacing = 1.0
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32, requires_grad=True)
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
                                            det_u, det_v, du, dv,
-                                           sdd, sid)
+                                           sdd, sid, voxel_spacing)
 
     # --- FDK weighting and filtering ---
     # For FDK, projections must be weighted before filtering.
@@ -109,7 +111,7 @@ def main():
     sinogram_filt = ramp_filter_3d(sino_weighted)
 
     reconstruction = ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nz, Ny, Nx,
-                                                    du, dv, sdd, sid)
+                                                    du, dv, sdd, sid, voxel_spacing)
     
     # --- FDK normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

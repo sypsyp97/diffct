@@ -36,28 +36,29 @@ def shepp_logan_2d(Nx, Ny):
     return phantom
 
 class IterativeRecoModel(nn.Module):
-    def __init__(self, volume_shape, angles, num_detectors, detector_spacing):
+    def __init__(self, volume_shape, angles, num_detectors, detector_spacing, voxel_spacing):
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
         self.angles = angles
         self.num_detectors = num_detectors
         self.detector_spacing = detector_spacing
+        self.voxel_spacing = voxel_spacing
         self.relu = nn.ReLU() # non negative constraint
 
     def forward(self, x):
         updated_reco = x + self.reco
         current_sino = ParallelProjectorFunction.apply(updated_reco, self.angles, 
-                                                       self.num_detectors, self.detector_spacing)
+                                                       self.num_detectors, self.detector_spacing, self.voxel_spacing)
         return current_sino, self.relu(updated_reco)
 
 class Pipeline:
     def __init__(self, lr, volume_shape, angles, num_detectors, detector_spacing, 
-                 device, epoches=1000):
+                 voxel_spacing, device, epoches=1000):
         
         self.epoches = epoches
         self.model = IterativeRecoModel(volume_shape, angles, num_detectors, 
-                                        detector_spacing).to(device)
-        
+                                        detector_spacing, voxel_spacing).to(device)
+
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
         self.loss = nn.MSELoss()
 
@@ -85,6 +86,7 @@ def main():
 
     num_detectors = 256
     detector_spacing = 0.5
+    voxel_spacing = 1.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32)
@@ -92,13 +94,14 @@ def main():
 
     # Generate the "real" sinogram
     real_sinogram = ParallelProjectorFunction.apply(phantom_torch, angles_torch,
-                                                    num_detectors, detector_spacing)
+                                                    num_detectors, detector_spacing, voxel_spacing)
 
     pipeline_instance = Pipeline(lr=1e-1,
                                  volume_shape=(Ny, Nx),
                                  angles=angles_torch,
                                  num_detectors=num_detectors,
                                  detector_spacing=detector_spacing,
+                                 voxel_spacing=voxel_spacing,
                                  device=device, epoches=1000)
 
     ini_guess = torch.zeros_like(phantom_torch)
