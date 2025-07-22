@@ -382,7 +382,7 @@ def _parallel_2d_forward_kernel(
     # Step through voxels along ray path, accumulating weighted contributions
     while t < t_max:
         # Check if current voxel indices are within valid interpolation bounds
-        if 0 <= ix < Nx - 1 and 0 <= iy < Ny - 1:
+        if 0 <= ix < Nx and 0 <= iy < Ny:
             # Determine next voxel boundary crossing (minimum of x, y boundaries or ray exit)
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t  # Length of ray segment within current voxel region
@@ -398,6 +398,10 @@ def _parallel_2d_forward_kernel(
                 # Floor operation gives base voxel index, fractional part gives interpolation weights
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))  # Base voxel indices (bottom-left corner)
                 dx, dy = mid_x - ix0, mid_y - iy0  # Fractional parts: distance from base voxel center [0,1]
+                
+                # Clamp indices to stay in-bounds during interpolation
+                ix0 = min(ix0, Nx - 2)
+                iy0 = min(iy0, Ny - 2)
                 
                 # === BILINEAR INTERPOLATION WEIGHT CALCULATION ===
                 # Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)
@@ -510,7 +514,7 @@ def _parallel_2d_backward_kernel(
     # === BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along ray path using bilinear interpolation
     while t < t_max:
-        if 0 <= ix < Nx - 1 and 0 <= iy < Ny - 1:
+        if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
@@ -519,6 +523,10 @@ def _parallel_2d_backward_kernel(
                 mid_y = pnt_y + (t + seg_len * 0.5) * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
                 dx, dy = mid_x - ix0, mid_y - iy0
+                
+                # Clamp indices to stay in-bounds during interpolation
+                ix0 = min(ix0, Nx - 2)
+                iy0 = min(iy0, Ny - 2)
                 
                 # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
                 # Distribute contribution weighted by segment length and interpolation weights
@@ -659,7 +667,7 @@ def _fan_2d_forward_kernel(
 
     # Main traversal loop with bilinear interpolation (identical to parallel beam)
     while t < t_max:
-        if 0 <= ix < Nx - 1 and 0 <= iy < Ny - 1:
+        if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
@@ -668,6 +676,10 @@ def _fan_2d_forward_kernel(
                 mid_y = src_y + (t + seg_len * 0.5) * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
                 dx, dy = mid_x - ix0, mid_y - iy0
+                
+                # Clamp indices to stay in-bounds during interpolation
+                ix0 = min(ix0, Nx - 2)
+                iy0 = min(iy0, Ny - 2)
                 
                 # Bilinear interpolation (identical to parallel beam)
                 val = (
@@ -794,7 +806,7 @@ def _fan_2d_backward_kernel(
     # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along divergent ray path using bilinear interpolation
     while t < t_max:
-        if 0 <= ix < Nx - 1 and 0 <= iy < Ny - 1:
+        if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
@@ -803,6 +815,10 @@ def _fan_2d_backward_kernel(
                 mid_y = src_y + (t + seg_len * 0.5) * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
                 dx, dy = mid_x - ix0, mid_y - iy0
+                
+                # Clamp indices to stay in-bounds during interpolation
+                ix0 = min(ix0, Nx - 2)
+                iy0 = min(iy0, Ny - 2)
                 
                 # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
                 # Distribute contribution weighted by segment length and interpolation weights
@@ -967,7 +983,7 @@ def _cone_3d_forward_kernel(
     # === 3D TRAVERSAL LOOP WITH TRILINEAR INTERPOLATION ===
     while t < t_max:
         # Check if current 3D voxel indices are within valid interpolation bounds
-        if 0 <= ix < Nx - 1 and 0 <= iy < Ny - 1 and 0 <= iz < Nz - 1:
+        if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_max)
             seg_len = t_next - t
@@ -983,6 +999,11 @@ def _cone_3d_forward_kernel(
                 # Floor operation gives base voxel index, fractional part gives interpolation weights
                 ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))  # Base voxel indices (corner 0,0,0)
                 dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0  # Fractional parts: distance from base voxel center [0,1]
+                
+                # Clamp indices to stay in-bounds during interpolation
+                ix0 = min(ix0, Nx - 2)
+                iy0 = min(iy0, Ny - 2)
+                iz0 = min(iz0, Nz - 2)
                 
                 # === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===
                 # Mathematical basis: Trilinear interpolation formula f(x,y,z) = Σ f(xi,yi,zi) * wi(x,y,z)
@@ -1148,7 +1169,7 @@ def _cone_3d_backward_kernel(
     # Distribute sinogram value along divergent 3D ray path using trilinear interpolation
     while t < t_max:
         # Check if current 3D voxel indices are within valid interpolation bounds
-        if 0 <= ix < Nx - 1 and 0 <= iy < Ny - 1 and 0 <= iz < Nz - 1:
+        if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_max)
             seg_len = t_next - t
@@ -1162,6 +1183,11 @@ def _cone_3d_backward_kernel(
                 # Convert continuous 3D coordinates to voxel indices and interpolation weights
                 ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
                 dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0  # Fractional parts for 3D weights
+                
+                # Clamp indices to stay in-bounds during interpolation
+                ix0 = min(ix0, Nx - 2)
+                iy0 = min(iy0, Ny - 2)
+                iz0 = min(iz0, Nz - 2)
                 
                 # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
                 # Distribute contribution weighted by segment length and interpolation weights
