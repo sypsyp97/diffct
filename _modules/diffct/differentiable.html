@@ -345,7 +345,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">_parallel_2d_forward_kernel</span><span class="p">(</span>
     <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
-    <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+    <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam forward projection.</span>
 
@@ -376,6 +376,8 @@
 <span class="sd">        Half of image width in voxels.</span>
 <span class="sd">    cy : float</span>
 <span class="sd">        Half of image height in voxels.</span>
+<span class="sd">    voxel_spacing : float</span>
+<span class="sd">        Physical size of one voxel (in same units as det_spacing, sid, sdd).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -397,17 +399,18 @@
     <span class="c1"># Extract projection angle and compute detector position</span>
     <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>  <span class="c1"># Precomputed cosine of projection angle</span>
     <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>  <span class="c1"># Precomputed sine of projection angle</span>
-    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span>  <span class="c1"># Detector coordinate (centered)</span>
+    <span class="c1"># Normalize all physical distances to voxel units</span>
+    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector coordinate in voxel units</span>
 
     <span class="c1"># Define ray direction and starting point for parallel beam geometry</span>
     <span class="c1"># Ray direction is perpendicular to detector array (cos_a, sin_a)</span>
-    <span class="c1"># Ray starting point is offset along detector by distance u</span>
+    <span class="c1"># Ray starting point is offset along detector by distance u in voxel units</span>
     <span class="n">dir_x</span><span class="p">,</span> <span class="n">dir_y</span> <span class="o">=</span> <span class="n">cos_a</span><span class="p">,</span> <span class="n">sin_a</span>
     <span class="n">pnt_x</span><span class="p">,</span> <span class="n">pnt_y</span> <span class="o">=</span> <span class="n">u</span> <span class="o">*</span> <span class="o">-</span><span class="n">sin_a</span><span class="p">,</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>
 
     <span class="c1"># === RAY-VOLUME INTERSECTION CALCULATION ===</span>
     <span class="c1"># Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir</span>
-    <span class="c1"># Volume extends from [-cx, cx] x [-cy, cy] in image coordinate system</span>
+    <span class="c1"># Volume extends from [-cx, cx] x [-cy, cy] in voxel coordinate system</span>
     <span class="c1"># Mathematical basis: For ray r(t) = origin + t*direction, solve r(t) = boundary for parameter t</span>
     <span class="n">t_min</span><span class="p">,</span> <span class="n">t_max</span> <span class="o">=</span> <span class="o">-</span><span class="n">_INF</span><span class="p">,</span> <span class="n">_INF</span>  <span class="c1"># Initialize ray parameter range to unbounded</span>
     
@@ -510,7 +513,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">_parallel_2d_backward_kernel</span><span class="p">(</span>
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
     <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-    <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+    <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam backprojection.</span>
 
@@ -541,6 +544,8 @@
 <span class="sd">        Half of image width in voxels.</span>
 <span class="sd">    cy : float</span>
 <span class="sd">        Half of image height in voxels.</span>
+<span class="sd">    voxel_spacing : float</span>
+<span class="sd">        Physical size of one voxel (in same units as det_spacing, sid, sdd).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -556,7 +561,8 @@
     <span class="n">val</span>   <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet</span><span class="p">]</span>  <span class="c1"># Sinogram value to backproject</span>
     <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>         <span class="c1"># Precomputed cosine of projection angle</span>
     <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>         <span class="c1"># Precomputed sine of projection angle</span>
-    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span>  <span class="c1"># Detector coordinate (centered)</span>
+    <span class="c1"># Normalize all physical distances to voxel units</span>
+    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector coordinate in voxel units</span>
 
     <span class="c1"># Define ray direction and starting point for parallel beam geometry</span>
     <span class="n">dir_x</span><span class="p">,</span> <span class="n">dir_y</span> <span class="o">=</span> <span class="n">cos_a</span><span class="p">,</span> <span class="n">sin_a</span>
@@ -636,7 +642,7 @@
     <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
     <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
-    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam forward projection.</span>
 
@@ -671,6 +677,8 @@
 <span class="sd">        Half of image width in voxels.</span>
 <span class="sd">    cy : float</span>
 <span class="sd">        Half of image height in voxels.</span>
+<span class="sd">    voxel_spacing : float</span>
+<span class="sd">        Physical size of one voxel (in same units as det_spacing, sid, sdd).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -685,17 +693,20 @@
     <span class="c1"># === FAN BEAM GEOMETRY SETUP ===</span>
     <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>  <span class="c1"># Precomputed cosine of projection angle</span>
     <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>  <span class="c1"># Precomputed sine of projection angle</span>
-    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span>  <span class="c1"># Detector coordinate (centered)</span>
+    <span class="c1"># Normalize all physical distances to voxel units</span>
+    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector coordinate in voxel units</span>
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-isocenter distance in voxel units</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-detector distance in voxel units</span>
 
     <span class="c1"># Calculate source and detector positions for current projection angle</span>
     <span class="c1"># Source position: rotated by angle around isocenter at distance sid (SID)</span>
-    <span class="n">src_x</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Source x-coordinate in world space</span>
-    <span class="n">src_y</span> <span class="o">=</span>  <span class="n">sid</span> <span class="o">*</span> <span class="n">cos_a</span>  <span class="c1"># Source y-coordinate in world space</span>
+    <span class="n">src_x</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid_v</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Source x-coordinate in voxel units</span>
+    <span class="n">src_y</span> <span class="o">=</span>  <span class="n">sid_v</span> <span class="o">*</span> <span class="n">cos_a</span>  <span class="c1"># Source y-coordinate in voxel units</span>
     
     <span class="c1"># Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)</span>
-    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">-</span> <span class="n">sid</span>
-    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># Detector x-coordinate</span>
-    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Detector y-coordinate</span>
+    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">-</span> <span class="n">sid_v</span>
+    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># Detector x-coordinate in voxel units</span>
+    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Detector y-coordinate in voxel units</span>
 
     <span class="c1"># === RAY DIRECTION CALCULATION ===</span>
     <span class="c1"># Ray direction vector from source to detector element</span>
@@ -783,7 +794,7 @@
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
     <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
     <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
-    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam backprojection.</span>
 
@@ -818,6 +829,8 @@
 <span class="sd">        Half of image width in voxels.</span>
 <span class="sd">    cy : float</span>
 <span class="sd">        Half of image height in voxels.</span>
+<span class="sd">    voxel_spacing : float</span>
+<span class="sd">        Physical size of one voxel (in same units as det_spacing, sid, sdd).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -833,17 +846,20 @@
     <span class="n">val</span>   <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet</span><span class="p">]</span>  <span class="c1"># Sinogram value to backproject along this ray</span>
     <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>         <span class="c1"># Precomputed cosine of projection angle</span>
     <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>         <span class="c1"># Precomputed sine of projection angle</span>
-    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span>  <span class="c1"># Detector coordinate (centered)</span>
+    <span class="c1"># Normalize all physical distances to voxel units</span>
+    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">idet</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector coordinate in voxel units</span>
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-isocenter distance in voxel units</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-detector distance in voxel units</span>
 
     <span class="c1"># Calculate source and detector positions for current projection angle</span>
     <span class="c1"># Source position: rotated by angle around isocenter at distance sid (SID)</span>
-    <span class="n">src_x</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Source x-coordinate in world space</span>
-    <span class="n">src_y</span> <span class="o">=</span>  <span class="n">sid</span> <span class="o">*</span> <span class="n">cos_a</span>  <span class="c1"># Source y-coordinate in world space</span>
+    <span class="n">src_x</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid_v</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Source x-coordinate in voxel units</span>
+    <span class="n">src_y</span> <span class="o">=</span>  <span class="n">sid_v</span> <span class="o">*</span> <span class="n">cos_a</span>  <span class="c1"># Source y-coordinate in voxel units</span>
     
     <span class="c1"># Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)</span>
-    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">-</span> <span class="n">sid</span>
-    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># Detector x-coordinate</span>
-    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Detector y-coordinate</span>
+    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">-</span> <span class="n">sid_v</span>
+    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># Detector x-coordinate in voxel units</span>
+    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># Detector y-coordinate in voxel units</span>
 
     <span class="c1"># === RAY DIRECTION CALCULATION ===</span>
     <span class="c1"># Ray direction vector from source to detector element</span>
@@ -928,7 +944,7 @@
     <span class="n">d_vol</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
     <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
-    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">voxel_spacing</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone-beam forward projection.</span>
 
@@ -971,6 +987,8 @@
 <span class="sd">        Half of volume height along y-axis (in voxels).</span>
 <span class="sd">    cz : float</span>
 <span class="sd">        Half of volume depth along z-axis (in voxels).</span>
+<span class="sd">    voxel_spacing : float</span>
+<span class="sd">        Physical size of one voxel (in same units as du, dv, sid, sdd).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -984,18 +1002,22 @@
 
     <span class="c1"># === 3D CONE BEAM GEOMETRY SETUP ===</span>
     <span class="n">cos_a</span><span class="p">,</span> <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iview</span><span class="p">],</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>  <span class="c1"># Projection angle trigonometry</span>
-    <span class="n">u</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="p">(</span><span class="n">iu</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">du</span><span class="p">,</span> <span class="p">(</span><span class="n">iv</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dv</span>  <span class="c1"># Detector coordinates (centered)</span>
+    <span class="c1"># Normalize all physical distances to voxel units</span>
+    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">iu</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">du</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector u-coordinate in voxel units</span>
+    <span class="n">v</span>     <span class="o">=</span> <span class="p">(</span><span class="n">iv</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dv</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector v-coordinate in voxel units</span>
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-isocenter distance in voxel units</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-detector distance in voxel units</span>
 
     <span class="c1"># Calculate 3D source and detector positions</span>
     <span class="c1"># Source rotates in xy-plane around isocenter, z-coordinate is zero</span>
-    <span class="n">src_x</span><span class="p">,</span> <span class="n">src_y</span><span class="p">,</span> <span class="n">src_z</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">,</span> <span class="n">sid</span> <span class="o">*</span> <span class="n">cos_a</span><span class="p">,</span> <span class="mf">0.0</span>
+    <span class="n">src_x</span><span class="p">,</span> <span class="n">src_y</span><span class="p">,</span> <span class="n">src_z</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid_v</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">,</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">cos_a</span><span class="p">,</span> <span class="mf">0.0</span>
     
     <span class="c1"># Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)</span>
     <span class="c1"># u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)</span>
-    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">-</span> <span class="n">sid</span>
-    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># In-plane x-coordinate</span>
-    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># In-plane y-coordinate  </span>
-    <span class="n">det_z</span> <span class="o">=</span> <span class="n">v</span>                                           <span class="c1"># Vertical z-coordinate</span>
+    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">-</span> <span class="n">sid_v</span>
+    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># In-plane x-coordinate in voxel units</span>
+    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># In-plane y-coordinate in voxel units</span>
+    <span class="n">det_z</span> <span class="o">=</span> <span class="n">v</span>                                           <span class="c1"># Vertical z-coordinate in voxel units</span>
 
     <span class="c1"># === 3D RAY DIRECTION CALCULATION ===</span>
     <span class="c1"># Ray direction vector from source to detector element in 3D space</span>
@@ -1122,7 +1144,7 @@
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
     <span class="n">d_vol</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
     <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
-    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">voxel_spacing</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone-beam backprojection.</span>
 
@@ -1165,6 +1187,8 @@
 <span class="sd">        Half of volume height along y-axis (in voxels).</span>
 <span class="sd">    cz : float</span>
 <span class="sd">        Half of volume depth along z-axis (in voxels).</span>
+<span class="sd">    voxel_spacing : float</span>
+<span class="sd">        Physical size of one voxel (in same units as du, dv, sid, sdd).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -1179,18 +1203,22 @@
     <span class="c1"># === 3D BACKPROJECTION VALUE AND GEOMETRY SETUP ===</span>
     <span class="n">g</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iv</span><span class="p">]</span>  <span class="c1"># Sinogram value to backproject along this ray</span>
     <span class="n">cos_a</span><span class="p">,</span> <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iview</span><span class="p">],</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>  <span class="c1"># Projection angle trigonometry</span>
-    <span class="n">u</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="p">(</span><span class="n">iu</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">du</span><span class="p">,</span> <span class="p">(</span><span class="n">iv</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dv</span>  <span class="c1"># Detector coordinates (centered)</span>
+    <span class="c1"># Normalize all physical distances to voxel units</span>
+    <span class="n">u</span>     <span class="o">=</span> <span class="p">(</span><span class="n">iu</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">du</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector u-coordinate in voxel units</span>
+    <span class="n">v</span>     <span class="o">=</span> <span class="p">(</span><span class="n">iv</span> <span class="o">-</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dv</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Detector v-coordinate in voxel units</span>
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-isocenter distance in voxel units</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>  <span class="c1"># Source-to-detector distance in voxel units</span>
 
     <span class="c1"># Calculate 3D source and detector positions</span>
     <span class="c1"># Source rotates in xy-plane around isocenter, z-coordinate is zero</span>
-    <span class="n">src_x</span><span class="p">,</span> <span class="n">src_y</span><span class="p">,</span> <span class="n">src_z</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">,</span> <span class="n">sid</span> <span class="o">*</span> <span class="n">cos_a</span><span class="p">,</span> <span class="mf">0.0</span>
+    <span class="n">src_x</span><span class="p">,</span> <span class="n">src_y</span><span class="p">,</span> <span class="n">src_z</span> <span class="o">=</span> <span class="o">-</span><span class="n">sid_v</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">,</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">cos_a</span><span class="p">,</span> <span class="mf">0.0</span>
     
     <span class="c1"># Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)</span>
     <span class="c1"># u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)</span>
-    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">-</span> <span class="n">sid</span>
-    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># In-plane x-coordinate</span>
-    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># In-plane y-coordinate</span>
-    <span class="n">det_z</span> <span class="o">=</span> <span class="n">v</span>                                           <span class="c1"># Vertical z-coordinate</span>
+    <span class="n">idd</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">-</span> <span class="n">sid_v</span>
+    <span class="n">det_x</span> <span class="o">=</span> <span class="n">idd</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">cos_a</span>   <span class="c1"># In-plane x-coordinate in voxel units</span>
+    <span class="n">det_y</span> <span class="o">=</span> <span class="o">-</span><span class="n">idd</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">sin_a</span>  <span class="c1"># In-plane y-coordinate in voxel units</span>
+    <span class="n">det_z</span> <span class="o">=</span> <span class="n">v</span>                                           <span class="c1"># Vertical z-coordinate in voxel units</span>
 
     <span class="c1"># === 3D RAY DIRECTION CALCULATION ===</span>
     <span class="c1"># Ray direction vector from source to detector element in 3D space</span>
@@ -1341,7 +1369,7 @@
 <div class="viewcode-block" id="ParallelProjectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam forward projection (Radon transform) of</span>
 <span class="sd">        an image using CUDA acceleration.</span>
 
@@ -1355,6 +1383,8 @@
 <span class="sd">            Number of detector elements in the sinogram (columns).</span>
 <span class="sd">        detector_spacing : float, optional</span>
 <span class="sd">            Physical spacing between detector elements (default: 1.0).</span>
+<span class="sd">        voxel_spacing : float, optional</span>
+<span class="sd">            Physical size of one voxel (in same units as detector_spacing, default: 1.0).</span>
 
 <span class="sd">        Returns</span>
 <span class="sd">        -------</span>
@@ -1403,11 +1433,11 @@
 
         <span class="n">_parallel_2d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
-        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">)</span>
+        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">sinogram</span></div>
 
     
@@ -1416,7 +1446,7 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
-        <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
+        <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">voxel_spacing</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
         <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
         <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1439,10 +1469,10 @@
         <span class="n">_parallel_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span>
             <span class="n">d_img_grad</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
-        <span class="k">return</span> <span class="n">grad_image</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
+        <span class="k">return</span> <span class="n">grad_image</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
 
@@ -1479,7 +1509,7 @@
 <div class="viewcode-block" id="ParallelBackprojectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.differentiable.ParallelBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">H</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mi">128</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">H</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam backprojection (adjoint Radon</span>
 <span class="sd">        transform) of a sinogram using CUDA acceleration.</span>
 
@@ -1495,6 +1525,8 @@
 <span class="sd">            Height of the output reconstruction image (default: 128).</span>
 <span class="sd">        W : int, optional</span>
 <span class="sd">            Width of the output reconstruction image (default: 128).</span>
+<span class="sd">        voxel_spacing : float, optional</span>
+<span class="sd">            Physical size of one voxel (in same units as detector_spacing, default: 1.0).</span>
 
 <span class="sd">        Returns</span>
 <span class="sd">        -------</span>
@@ -1543,11 +1575,11 @@
 
         <span class="n">_parallel_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
-        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">reco</span></div>
 
 
@@ -1556,7 +1588,7 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
-        <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
+        <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">voxel_spacing</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
         <span class="n">grad_output</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
         <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1583,10 +1615,10 @@
 
         <span class="n">_parallel_2d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_out</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">d_sino_grad</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
-        <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
+        <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
 
@@ -1623,7 +1655,7 @@
 <div class="viewcode-block" id="FanProjectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.differentiable.FanProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam forward projection of an image using CUDA</span>
 <span class="sd">        acceleration.</span>
 
@@ -1643,6 +1675,8 @@
 <span class="sd">        sid : float</span>
 <span class="sd">            Source-to-Isocenter Distance (SID). The distance from the X-ray</span>
 <span class="sd">            source to the center of rotation (isocenter).</span>
+<span class="sd">        voxel_spacing : float, optional</span>
+<span class="sd">            Physical size of one voxel (in same units as detector_spacing, sdd, sid, default: 1.0).</span>
 
 <span class="sd">        Returns</span>
 <span class="sd">        -------</span>
@@ -1688,12 +1722,12 @@
         <span class="n">_fan_2d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span>
-                            <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span>
+                            <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">sinogram</span></div>
 
 
@@ -1702,7 +1736,7 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
-        <span class="p">(</span><span class="n">n_det</span><span class="p">,</span> <span class="n">det_spacing</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
+        <span class="p">(</span><span class="n">n_det</span><span class="p">,</span> <span class="n">det_spacing</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
         <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
         <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1725,10 +1759,10 @@
         <span class="n">_fan_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_img_grad</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
-        <span class="k">return</span> <span class="n">grad_img</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
+        <span class="k">return</span> <span class="n">grad_img</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
 
@@ -1766,7 +1800,7 @@
 <div class="viewcode-block" id="FanBackprojectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.differentiable.FanBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam backprojection of a sinogram using CUDA</span>
 <span class="sd">        acceleration.</span>
 
@@ -1788,6 +1822,8 @@
 <span class="sd">        sid : float</span>
 <span class="sd">            Source-to-Isocenter Distance (SID). The distance from the X-ray</span>
 <span class="sd">            source to the center of rotation (isocenter).</span>
+<span class="sd">        voxel_spacing : float, optional</span>
+<span class="sd">            Physical size of one voxel (in same units as detector_spacing, sdd, sid, default: 1.0).</span>
 
 <span class="sd">        Returns</span>
 <span class="sd">        -------</span>
@@ -1833,11 +1869,11 @@
         <span class="n">_fan_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
-        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span>
+        <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">reco</span></div>
 
 
@@ -1846,7 +1882,7 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
-        <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">det_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
+        <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">det_spacing</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
         <span class="n">grad_output</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
         <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -1870,10 +1906,10 @@
         <span class="n">_fan_2d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_out</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">d_sino_grad</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
-        <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
+        <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
 
@@ -1910,7 +1946,7 @@
 <div class="viewcode-block" id="ConeProjectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone beam forward projection of a volume using CUDA</span>
 <span class="sd">        acceleration.</span>
 
@@ -1934,6 +1970,8 @@
 <span class="sd">        sid : float</span>
 <span class="sd">            Source-to-Isocenter Distance (SID). The distance from the X-ray</span>
 <span class="sd">            source to the center of rotation (isocenter).</span>
+<span class="sd">        voxel_spacing : float, optional</span>
+<span class="sd">            Physical size of one voxel (in same units as du, dv, sdd, sid, default: 1.0).</span>
 
 <span class="sd">        Returns</span>
 <span class="sd">        -------</span>
@@ -1981,12 +2019,12 @@
             <span class="n">d_vol</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span>
-            <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
+            <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
-                            <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span>
+                            <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">sino</span></div>
 
 
@@ -1996,7 +2034,7 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_sinogram</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
         <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
-         <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
+         <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">)</span>
         <span class="n">grad_sinogram</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_sinogram</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
         <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -2020,11 +2058,11 @@
         <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">d_vol_grad</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">grad_vol</span> <span class="o">=</span> <span class="n">grad_vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
-        <span class="k">return</span> <span class="n">grad_vol</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
+        <span class="k">return</span> <span class="n">grad_vol</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
 
@@ -2070,7 +2108,7 @@
 <div class="viewcode-block" id="ConeBackprojectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.differentiable.ConeBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">angles</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone beam backprojection of a projection sinogram</span>
 <span class="sd">        using CUDA acceleration.</span>
 
@@ -2096,6 +2134,8 @@
 <span class="sd">        sid : float</span>
 <span class="sd">            Source-to-Isocenter Distance (SID). The distance from the X-ray</span>
 <span class="sd">            source to the center of rotation (isocenter).</span>
+<span class="sd">        voxel_spacing : float, optional</span>
+<span class="sd">            Physical size of one voxel (in same units as du, dv, sdd, sid, default: 1.0).</span>
 
 <span class="sd">        Returns</span>
 <span class="sd">        -------</span>
@@ -2140,12 +2180,12 @@
         <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
-                            <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span>
+                            <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="n">vol</span> <span class="o">=</span> <span class="n">vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
         <span class="k">return</span> <span class="n">vol</span></div>
 
@@ -2156,7 +2196,7 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">backward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">):</span>
         <span class="n">angles</span><span class="p">,</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
         <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span>
-         <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
+         <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">)</span>
         <span class="n">grad_output</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">grad_output</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
         <span class="n">angles</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
@@ -2181,10 +2221,10 @@
         <span class="n">_cone_3d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">](</span>
             <span class="n">d_grad_out</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">d_sino_grad</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="p">)</span>
 
-        <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
+        <span class="k">return</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
 </div>
 
 </pre></div>
