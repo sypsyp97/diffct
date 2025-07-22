@@ -471,8 +471,8 @@ def _parallel_2d_forward_kernel(
                 dx, dy = mid_x - ix0, mid_y - iy0  # Fractional parts: distance from base voxel center [0,1]
                 
                 # Clamp indices to stay in-bounds during interpolation
-                ix0 = min(ix0, Nx - 2)
-                iy0 = min(iy0, Ny - 2)
+                ix0 = max(0, min(ix0, Nx - 2))
+                iy0 = max(0, min(iy0, Ny - 2))
                 
                 # === BILINEAR INTERPOLATION WEIGHT CALCULATION ===
                 # Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)
@@ -599,8 +599,8 @@ def _parallel_2d_backward_kernel(
                 dx, dy = mid_x - ix0, mid_y - iy0
                 
                 # Clamp indices to stay in-bounds during interpolation
-                ix0 = min(ix0, Nx - 2)
-                iy0 = min(iy0, Ny - 2)
+                ix0 = max(0, min(ix0, Nx - 2))
+                iy0 = max(0, min(iy0, Ny - 2))
                 
                 # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
                 # Distribute contribution weighted by segment length and interpolation weights
@@ -757,8 +757,8 @@ def _fan_2d_forward_kernel(
                 dx, dy = mid_x - ix0, mid_y - iy0
                 
                 # Clamp indices to stay in-bounds during interpolation
-                ix0 = min(ix0, Nx - 2)
-                iy0 = min(iy0, Ny - 2)
+                ix0 = max(0, min(ix0, Nx - 2))
+                iy0 = max(0, min(iy0, Ny - 2))
                 
                 # Bilinear interpolation (identical to parallel beam)
                 val = (
@@ -901,8 +901,8 @@ def _fan_2d_backward_kernel(
                 dx, dy = mid_x - ix0, mid_y - iy0
                 
                 # Clamp indices to stay in-bounds during interpolation
-                ix0 = min(ix0, Nx - 2)
-                iy0 = min(iy0, Ny - 2)
+                ix0 = max(0, min(ix0, Nx - 2))
+                iy0 = max(0, min(iy0, Ny - 2))
                 
                 # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
                 # Distribute contribution weighted by segment length and interpolation weights
@@ -1091,9 +1091,9 @@ def _cone_3d_forward_kernel(
                 dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0  # Fractional parts: distance from base voxel center [0,1]
                 
                 # Clamp indices to stay in-bounds during interpolation
-                ix0 = min(ix0, Nx - 2)
-                iy0 = min(iy0, Ny - 2)
-                iz0 = min(iz0, Nz - 2)
+                ix0 = max(0, min(ix0, Nx - 2))
+                iy0 = max(0, min(iy0, Ny - 2))
+                iz0 = max(0, min(iz0, Nz - 2))
                 
                 # === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===
                 # Mathematical basis: Trilinear interpolation formula f(x,y,z) = Σ f(xi,yi,zi) * wi(x,y,z)
@@ -1281,9 +1281,9 @@ def _cone_3d_backward_kernel(
                 dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0  # Fractional parts for 3D weights
                 
                 # Clamp indices to stay in-bounds during interpolation
-                ix0 = min(ix0, Nx - 2)
-                iy0 = min(iy0, Ny - 2)
-                iz0 = min(iz0, Nz - 2)
+                ix0 = max(0, min(ix0, Nx - 2))
+                iy0 = max(0, min(iy0, Ny - 2))
+                iz0 = max(0, min(iz0, Nz - 2))
                 
                 # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
                 # Distribute contribution weighted by segment length and interpolation weights
