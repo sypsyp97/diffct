@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "diffct"
-version = "1.2.2"
+version = "1.2.3"
 description = "A CUDA-based library for computed tomography (CT) projection and reconstruction with differentiable operators"
 readme = "README.md"
 authors = [
