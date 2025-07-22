@@ -168,19 +168,21 @@ def _trig_tables(angles, dtype=_DTYPE):
         sin = torch.sin(angles).to(dtype=dtype)
         return cos.to(device), sin.to(device)
     else:
-        # fallback for numpy arrays
-        # Convert torch.dtype to numpy.dtype if necessary
+        # fallback for non-tensor inputs: compute via PyTorch on CPU for consistency
+        # Determine desired torch dtype
         if isinstance(dtype, torch.dtype):
-            dtype_map = {
-                torch.float32: np.float32,
-                torch.float64: np.float64,
-            }
-            np_dtype = dtype_map.get(dtype, np.float32)
+            torch_dtype = dtype
         else:
-            np_dtype = dtype
-        cos_host = np.cos(angles).astype(np_dtype)
-        sin_host = np.sin(angles).astype(np_dtype)
-        return torch.from_numpy(cos_host), torch.from_numpy(sin_host)
+            _NP_TO_TORCH = {
+                np.float32: torch.float32,
+                np.float64: torch.float64,
+            }
+            torch_dtype = _NP_TO_TORCH.get(dtype, torch.float32)
+        # Convert input angles to a CPU torch tensor
+        angles_cpu = torch.tensor(angles, dtype=torch_dtype)
+        cos_cpu = torch.cos(angles_cpu)
+        sin_cpu = torch.sin(angles_cpu)
+        return cos_cpu, sin_cpu
 
 
 
@@ -525,7 +527,6 @@ def _parallel_2d_backward_kernel(
                 # Atomic add operations serialize these writes, ensuring correct accumulation of contributions
                 # Performance impact: Atomic operations are slower than regular writes but necessary for correctness
                 # Memory access pattern: Global memory atomics with potential bank conflicts, but unavoidable
-                cval = val * seg_len  # Contribution value for this ray segment
                 cval = val * seg_len  # Contribution value for this ray segment
                 cuda.atomic.add(d_image, (iy0,     ix0),     cval * (1 - dx) * (1 - dy))
                 cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx       * (1 - dy))
@@ -1292,7 +1293,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_angles, num_detectors)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _parallel_2d_forward_kernel[grid, tpb](
             d_image, Nx, Ny, d_sino, n_angles, num_detectors,
@@ -1302,7 +1303,8 @@ class ParallelProjectorFunction(torch.autograd.Function):
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx)
         return sinogram
-
+    
+    @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
         num_detectors, detector_spacing, Ny, Nx = ctx.intermediate
@@ -1323,7 +1325,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_angles, num_detectors)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _parallel_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_angles, num_detectors,
@@ -1422,7 +1424,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _parallel_2d_backward_kernel[grid, tpb](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
@@ -1459,7 +1461,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         d_sin = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _parallel_2d_forward_kernel[grid, tpb](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
@@ -1557,7 +1559,7 @@ class FanProjectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, num_detectors)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _fan_2d_forward_kernel[grid, tpb](
             d_image, Nx, Ny, d_sino, n_ang, num_detectors,
@@ -1591,7 +1593,7 @@ class FanProjectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _fan_2d_backward_kernel[grid, tpb](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
@@ -1693,7 +1695,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _fan_2d_backward_kernel[grid, tpb](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
@@ -1727,7 +1729,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_2d(n_ang, n_det)
-        cx, cy = _DTYPE((Nx - 1) * 0.5), _DTYPE((Ny - 1) * 0.5)
+        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         _fan_2d_forward_kernel[grid, tpb](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
@@ -1831,7 +1833,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
-        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         _cone_3d_forward_kernel[grid, tpb](
             d_vol, W, H, D, d_sino, n_views, det_u, det_v,
@@ -1868,7 +1870,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
-        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         _cone_3d_backward_kernel[grid, tpb](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
@@ -1982,7 +1984,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
-        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         _cone_3d_backward_kernel[grid, tpb](
             d_sino, n_views, n_u, n_v, d_reco, W, H, D,
@@ -2020,7 +2022,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
-        cx, cy, cz = _DTYPE((W-1)*0.5), _DTYPE((H-1)*0.5), _DTYPE((D-1)*0.5)
+        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         _cone_3d_forward_kernel[grid, tpb](
             d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
