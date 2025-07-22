@@ -135,7 +135,7 @@ class TorchCUDABridge:
         return torch.as_tensor(cuda_array, device=tensor_template.device, dtype=tensor_template.dtype)
 
 # === GPU-aware Trigonometric Table Generation ===
-def _trig_tables(angles, dtype=_DTYPE):
+def _trig_tables(angles, dtype=_DTYPE, device=None):
     """Compute cosine and sine tables for input angles.
 
     Precompute cosine and sine values and return as torch tensors on the
@@ -163,7 +163,7 @@ def _trig_tables(angles, dtype=_DTYPE):
     device(type='cuda', index=0)
     """
     if isinstance(angles, torch.Tensor):
-        device = angles.device
+        device = angles.device if device is None else device
         cos = torch.cos(angles).to(dtype=dtype)
         sin = torch.sin(angles).to(dtype=dtype)
         return cos.to(device), sin.to(device)
@@ -182,7 +182,10 @@ def _trig_tables(angles, dtype=_DTYPE):
         angles_cpu = torch.tensor(angles, dtype=torch_dtype)
         cos_cpu = torch.cos(angles_cpu)
         sin_cpu = torch.sin(angles_cpu)
-        return cos_cpu, sin_cpu
+        if device is not None:
+            return cos_cpu.to(device), sin_cpu.to(device)
+        else:
+            return cos_cpu, sin_cpu
 
 
 # ############################################################################
@@ -1408,7 +1411,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         sinogram = torch.zeros((n_angles, num_detectors), dtype=image.dtype, device=device)
 
         # Prepare trigonometric tables on the correct device
-        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype, device=device)
 
         # Get Numba CUDA array views for kernel
         d_image = TorchCUDABridge.tensor_to_cuda_array(image)
@@ -1441,7 +1444,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
 
         n_angles = angles.shape[0]
         grad_image = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype, device=device)
 
         d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
         d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_image)
@@ -1541,7 +1544,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
 
         # Prepare trigonometric tables on the correct device
-        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
 
         # Get Numba CUDA array views for kernel
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
@@ -1578,7 +1581,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         grad_sino = torch.zeros((n_ang, n_det), dtype=grad_output.dtype, device=device)
 
         # Prepare trigonometric tables on the correct device
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype, device=device)
 
         # Get Numba CUDA array views for kernel
         d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
@@ -1679,7 +1682,7 @@ class FanProjectorFunction(torch.autograd.Function):
         n_ang = angles.shape[0]
 
         sinogram = torch.zeros((n_ang, num_detectors), dtype=image.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype, device=device)
 
         d_image = TorchCUDABridge.tensor_to_cuda_array(image)
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
@@ -1713,7 +1716,7 @@ class FanProjectorFunction(torch.autograd.Function):
 
         n_ang = angles.shape[0]
         grad_img = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype, device=device)
 
         d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
         d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_img)
@@ -1817,7 +1820,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         Ny, Nx = H, W
     
         reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
 
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
@@ -1851,7 +1854,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         Ny, Nx = grad_output.shape
 
         grad_sino = torch.zeros((n_ang, n_det), dtype=grad_output.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype, device=device)
 
         d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
         d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
@@ -1959,7 +1962,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         _validate_3d_memory_layout(volume, expected_order='DHW')
 
         sino = torch.zeros((n_views, det_u, det_v), dtype=volume.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=volume.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=volume.dtype, device=device)
 
         volume_perm = volume.permute(2, 1, 0).contiguous()
         d_vol = TorchCUDABridge.tensor_to_cuda_array(volume_perm)
@@ -1997,7 +2000,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         n_views = angles.shape[0]
 
         grad_vol_perm = torch.zeros((W, H, D), dtype=grad_sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype, device=device)
 
         d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
         d_vol_grad = TorchCUDABridge.tensor_to_cuda_array(grad_vol_perm)
@@ -2116,7 +2119,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         _validate_3d_memory_layout(sinogram, expected_order='VHW')
 
         vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
 
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         d_reco = TorchCUDABridge.tensor_to_cuda_array(vol_perm)
@@ -2153,7 +2156,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         n_views = angles.shape[0]
 
         grad_sino = torch.zeros((n_views, n_u, n_v), dtype=grad_output.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype)
+        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype, device=device)
 
         grad_output_perm = grad_output.permute(2, 1, 0).contiguous()
         d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output_perm)
