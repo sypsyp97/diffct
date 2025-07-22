@@ -547,8 +547,8 @@
                 <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">ix0</span><span class="p">,</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">iy0</span>  <span class="c1"># Fractional parts: distance from base voxel center [0,1]</span>
                 
                 <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 
                 <span class="c1"># === BILINEAR INTERPOLATION WEIGHT CALCULATION ===</span>
                 <span class="c1"># Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)</span>
@@ -675,8 +675,8 @@
                 <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">ix0</span><span class="p">,</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">iy0</span>
                 
                 <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 
                 <span class="c1"># === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===</span>
                 <span class="c1"># Distribute contribution weighted by segment length and interpolation weights</span>
@@ -833,8 +833,8 @@
                 <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">ix0</span><span class="p">,</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">iy0</span>
                 
                 <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 
                 <span class="c1"># Bilinear interpolation (identical to parallel beam)</span>
                 <span class="n">val</span> <span class="o">=</span> <span class="p">(</span>
@@ -977,8 +977,8 @@
                 <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">ix0</span><span class="p">,</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">iy0</span>
                 
                 <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 
                 <span class="c1"># === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===</span>
                 <span class="c1"># Distribute contribution weighted by segment length and interpolation weights</span>
@@ -1167,9 +1167,9 @@
                 <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span><span class="p">,</span> <span class="n">dz</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">ix0</span><span class="p">,</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">iy0</span><span class="p">,</span> <span class="n">mid_z</span> <span class="o">-</span> <span class="n">iz0</span>  <span class="c1"># Fractional parts: distance from base voxel center [0,1]</span>
                 
                 <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iz0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iz0</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iz0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iz0</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 
                 <span class="c1"># === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===</span>
                 <span class="c1"># Mathematical basis: Trilinear interpolation formula f(x,y,z) = Σ f(xi,yi,zi) * wi(x,y,z)</span>
@@ -1357,9 +1357,9 @@
                 <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span><span class="p">,</span> <span class="n">dz</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">ix0</span><span class="p">,</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">iy0</span><span class="p">,</span> <span class="n">mid_z</span> <span class="o">-</span> <span class="n">iz0</span>  <span class="c1"># Fractional parts for 3D weights</span>
                 
                 <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
-                <span class="n">iz0</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">iz0</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+                <span class="n">iz0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iz0</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 
                 <span class="c1"># === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===</span>
                 <span class="c1"># Distribute contribution weighted by segment length and interpolation weights</span>
