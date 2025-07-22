@@ -19,6 +19,8 @@ _TPB_3D             = (8,  8,  8)
 # Trades numerical precision for performance in ray-tracing calculations
 # Safe for CT reconstruction where slight precision loss is acceptable for speed gains
 _FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=True)
+# Disable fastmath for backward kernels to ensure gradient correctness
+_NON_FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=False) 
 _INF                = _DTYPE(np.inf)
 _EPSILON            = _DTYPE(1e-6)
 # === Device Management Utilities ===
@@ -106,33 +108,6 @@ class TorchCUDABridge:
             raise ValueError("Tensor must be on CUDA device")
         return cuda.as_cuda_array(tensor.detach())
 
-    @staticmethod
-    def cuda_array_to_tensor(cuda_array, tensor_template):
-        """Convert a Numba CUDA array to a PyTorch tensor.
-
-        Wrap a Numba CUDA DeviceNDArray as a PyTorch tensor with matching device
-        and dtype from a template tensor, sharing underlying memory.
-
-        Parameters
-        ----------
-        cuda_array : numba.cuda.cudadrv.devicearray.DeviceNDArray
-            Numba CUDA array to wrap.
-        tensor_template : torch.Tensor
-            Template tensor specifying device and dtype.
-
-        Returns
-        -------
-        torch.Tensor
-            PyTorch tensor sharing data with the CUDA array on the template's
-            device and dtype.
-
-        Examples
-        --------
-        >>> arr = cuda.device_array((10,), dtype=np.float32)
-        >>> t = torch.zeros(10, device='cuda')
-        >>> new_t = TorchCUDABridge.cuda_array_to_tensor(arr, t)
-        """
-        return torch.as_tensor(cuda_array, device=tensor_template.device, dtype=tensor_template.dtype)
 
 # === GPU-aware Trigonometric Table Generation ===
 def _trig_tables(angles, dtype=_DTYPE, device=None):
@@ -501,7 +476,7 @@ def _parallel_2d_forward_kernel(
     
     d_sino[iang, idet] = accum
 
-@_FASTMATH_DECORATOR
+@_NON_FASTMATH_DECORATOR
 def _parallel_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
@@ -781,7 +756,7 @@ def _fan_2d_forward_kernel(
     
     d_sino[iang, idet] = accum
 
-@_FASTMATH_DECORATOR
+@_NON_FASTMATH_DECORATOR
 def _fan_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
@@ -1131,7 +1106,7 @@ def _cone_3d_forward_kernel(
     
     d_sino[iview, iu, iv] = accum
 
-@_FASTMATH_DECORATOR
+@_NON_FASTMATH_DECORATOR
 def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
