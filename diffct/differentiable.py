@@ -185,6 +185,74 @@ def _trig_tables(angles, dtype=_DTYPE):
         return cos_cpu, sin_cpu
 
 
+# ############################################################################
+# MEMORY LAYOUT VALIDATION
+# ############################################################################
+
+def _validate_3d_memory_layout(tensor, expected_order='DHW'):
+    """Validate 3D tensor memory layout to prevent coordinate system inconsistencies.
+    
+    Parameters
+    ----------
+    tensor : torch.Tensor
+        3D tensor to validate
+    expected_order : str, optional
+        Expected memory order ('DHW', 'VHW', etc.). Default is 'DHW'.
+        
+    Raises
+    ------
+    ValueError
+        If tensor has unexpected memory layout or is non-contiguous
+    """
+    if len(tensor.shape) != 3:
+        raise ValueError(f"Expected 3D tensor, got {len(tensor.shape)}D")
+    
+    # Check if tensor is contiguous to avoid memory duplication
+    if not tensor.is_contiguous():
+        raise ValueError(
+            "Input tensor must be contiguous. Call .contiguous() before passing to "
+            "cone beam functions to avoid memory duplication and ensure correct results."
+        )
+    
+    # Validate expected memory order based on stride patterns
+    strides = tensor.stride()
+    
+    # Map expected orders to stride patterns
+    order_mapping = {
+        'DHW': (0, 1, 2),  # Depth, Height, Width
+        'VHW': (0, 1, 2),  # Views, Height, Width (for sinograms)
+        'WHD': (2, 1, 0),  # Width, Height, Depth (internal WHD format)
+    }
+    
+    if expected_order not in order_mapping:
+        raise ValueError(f"Unsupported expected_order: {expected_order}")
+    
+    expected_stride_order = order_mapping[expected_order]
+    
+    # Check if actual strides match expected order
+    sorted_strides = sorted(enumerate(strides), key=lambda x: x[1], reverse=True)
+    actual_order = tuple(idx for idx, _ in sorted_strides)
+    
+    if actual_order != expected_stride_order:
+        # Create appropriate error message based on context
+        if expected_order == 'VHW':
+            actual_str = f"({tensor.shape[0]}, {tensor.shape[1]}, {tensor.shape[2]})"
+            expected_str = "(Views, Height, Width)"
+            fix_str = "ensure your sinogram has shape (num_views, det_v, det_u)"
+        elif expected_order == 'DHW':
+            actual_str = f"({tensor.shape[0]}, {tensor.shape[1]}, {tensor.shape[2]})"
+            expected_str = "(Depth, Height, Width)"
+            fix_str = "ensure your volume has shape (D, H, W)"
+        else:
+            actual_str = str(tuple(tensor.shape))
+            expected_str = expected_order
+            fix_str = "check tensor dimensions"
+            
+        raise ValueError(
+            f"Memory layout mismatch: expected {expected_str} order, "
+            f"but tensor has shape {actual_str}. Please {fix_str} and ensure "
+            f"the tensor is contiguous (.contiguous()) before passing to the function."
+        )
 
 
 def _grid_2d(n1, n2, tpb=_TPB_2D):
@@ -1886,6 +1954,9 @@ class ConeProjectorFunction(torch.autograd.Function):
 
         D, H, W = volume.shape
         n_views = angles.shape[0]
+        
+        # Validate memory layout to prevent coordinate system inconsistencies
+        _validate_3d_memory_layout(volume, expected_order='DHW')
 
         sino = torch.zeros((n_views, det_u, det_v), dtype=volume.dtype, device=device)
         d_cos, d_sin = _trig_tables(angles, dtype=volume.dtype)
@@ -2040,6 +2111,9 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         angles = angles.to(dtype=torch.float32)
 
         n_views, n_u, n_v = sinogram.shape
+        
+        # Validate memory layout to prevent coordinate system inconsistencies
+        _validate_3d_memory_layout(sinogram, expected_order='VHW')
 
         vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
         d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype)

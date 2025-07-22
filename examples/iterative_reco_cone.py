@@ -125,7 +125,7 @@ def main():
     sid = 400.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32)
+    phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32).contiguous()
 
     # Generate the "real" sinogram
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
