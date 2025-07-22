@@ -392,7 +392,7 @@ def _parallel_2d_forward_kernel(
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
 
     # Define ray direction and starting point for parallel beam geometry
     # Ray direction is perpendicular to detector array (cos_a, sin_a)
@@ -554,7 +554,7 @@ def _parallel_2d_backward_kernel(
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
 
     # Define ray direction and starting point for parallel beam geometry
     dir_x, dir_y = cos_a, sin_a
@@ -686,7 +686,7 @@ def _fan_2d_forward_kernel(
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
@@ -839,7 +839,7 @@ def _fan_2d_backward_kernel(
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
@@ -995,8 +995,8 @@ def _cone_3d_forward_kernel(
     # === 3D CONE BEAM GEOMETRY SETUP ===
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
     # Normalize all physical distances to voxel units
-    u     = (iu - (n_u - 1) * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
-    v     = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
+    u     = (iu - n_u * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
+    v     = (iv - n_v * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
@@ -1196,8 +1196,8 @@ def _cone_3d_backward_kernel(
     g = d_sino[iview, iu, iv]  # Sinogram value to backproject along this ray
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
     # Normalize all physical distances to voxel units
-    u     = (iu - (n_u - 1) * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
-    v     = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
+    u     = (iu - n_u * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
+    v     = (iv - n_v * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
