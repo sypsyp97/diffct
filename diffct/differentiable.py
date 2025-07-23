@@ -1398,6 +1398,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
             d_image, Nx, Ny, d_sino, n_angles, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
@@ -1431,6 +1432,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
             d_img_grad, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         return grad_image, None, None, None, None
 
@@ -1531,6 +1533,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1], voxel_spacing)
@@ -1568,6 +1571,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(detector_spacing), d_cos, d_sin, cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         return grad_sino, None, None, None, None, None
 
@@ -1669,6 +1673,7 @@ class FanProjectorFunction(torch.autograd.Function):
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx,
@@ -1703,6 +1708,7 @@ class FanProjectorFunction(torch.autograd.Function):
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         return grad_img, None, None, None, None, None, None
 
@@ -1807,6 +1813,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, sdd, sid, voxel_spacing)
@@ -1841,6 +1848,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         return grad_sino, None, None, None, None, None, None, None
 
@@ -1951,6 +1959,7 @@ class ConeProjectorFunction(torch.autograd.Function):
             _DTYPE(sdd), _DTYPE(sid),
             cx, cy, cz, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
@@ -1987,6 +1996,7 @@ class ConeProjectorFunction(torch.autograd.Function):
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
         return grad_vol, None, None, None, None, None, None, None, None
@@ -2106,6 +2116,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
@@ -2144,5 +2155,6 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
+        torch.cuda.synchronize()
 
         return grad_sino, None, None, None, None, None, None, None, None, None
