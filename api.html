@@ -143,8 +143,8 @@
 <h3>Summary<a class="headerlink" href="#summary" title="Link to this heading"></a></h3>
 <p>PyTorch autograd function for differentiable 2D parallel beam forward projection.</p>
 <p class="rubric">Notes</p>
-<p>Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-ray-tracing algorithm for parallel beam CT geometry. The forward pass computes
+<p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+method with interpolation for parallel beam CT geometry. The forward pass computes
 the sinogram from a 2D image using parallel beam geometry. The backward pass
 computes gradients using the adjoint backprojection operation. Requires
 CUDA-capable hardware and a properly configured CUDA environment; all input
@@ -216,7 +216,7 @@ an image using CUDA acceleration.</p>
 <ul class="simple">
 <li><p>All input tensors must be on the same CUDA device.</p></li>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
-<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+<li><p>Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -239,8 +239,8 @@ an image using CUDA acceleration.</p>
 <h3>Summary<a class="headerlink" href="#id1" title="Link to this heading"></a></h3>
 <p>PyTorch autograd function for differentiable 2D parallel beam backprojection.</p>
 <p class="rubric">Notes</p>
-<p>Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph ray-tracing
-algorithm for parallel beam backprojection. The forward pass computes a 2D
+<p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+method with interpolation for parallel beam backprojection. The forward pass computes a 2D
 reconstruction from sinogram data using parallel beam backprojection, and the
 backward pass computes gradients via forward projection as the adjoint operation.
 Requires CUDA-capable hardware and consistent device placements.</p>
@@ -305,7 +305,7 @@ transform) of a sinogram using CUDA acceleration.</p>
 <ul class="simple">
 <li><p>All input tensors must be on the same CUDA device.</p></li>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
-<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+<li><p>Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">180</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -332,8 +332,8 @@ transform) of a sinogram using CUDA acceleration.</p>
 <h3>Summary<a class="headerlink" href="#id2" title="Link to this heading"></a></h3>
 <p>PyTorch autograd function for differentiable 2D fan beam forward projection.</p>
 <p class="rubric">Notes</p>
-<p>Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-ray-tracing algorithm for fan beam geometry, where rays diverge from a point
+<p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+method with interpolation for fan beam geometry, where rays diverge from a point
 X-ray source to a linear detector array. The forward pass computes sinograms
 using divergent beam geometry, and the backward pass computes gradients via
 adjoint backprojection.</p>
@@ -402,7 +402,7 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>All input tensors must be on the same CUDA device.</p></li>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
 <li><p>Fan beam geometry uses divergent rays from a point source to the detector.</p></li>
-<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+<li><p>Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -425,8 +425,8 @@ source to the center of rotation (isocenter).</p></li>
 <h3>Summary<a class="headerlink" href="#id3" title="Link to this heading"></a></h3>
 <p>PyTorch autograd function for differentiable 2D fan beam backprojection.</p>
 <p class="rubric">Notes</p>
-<p>Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-ray-tracing algorithm for fan beam backprojection. Implements the adjoint
+<p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+method with interpolation for fan beam backprojection. Implements the adjoint
 of the fan beam projection operator, distributing sinogram values back into
 the reconstruction volume along divergent ray paths. The forward pass
 computes reconstruction from sinogram data, and the backward pass computes
@@ -497,7 +497,7 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>All input tensors must be on the same CUDA device.</p></li>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
 <li><p>Fan beam geometry uses divergent rays from a point source to the detector.</p></li>
-<li><p>Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</p></li>
+<li><p>Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</p></li>
 </ul>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">sinogram</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">360</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -524,8 +524,8 @@ source to the center of rotation (isocenter).</p></li>
 <h3>Summary<a class="headerlink" href="#id4" title="Link to this heading"></a></h3>
 <p>PyTorch autograd function for differentiable 3D cone beam forward projection.</p>
 <p class="rubric">Notes</p>
-<p>Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-ray-tracing algorithm for 3D cone beam geometry. Rays emanate from a point
+<p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+method with interpolation for 3D cone beam geometry. Rays emanate from a point
 X-ray source to a 2D detector array capturing volumetric projection data.
 The forward pass computes 3D projections, and the backward pass computes
 gradients via adjoint 3D backprojection. Requires significant GPU memory.</p>
@@ -596,7 +596,7 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>All input tensors must be on the same CUDA device.</p></li>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
 <li><p>Cone beam geometry uses a point source and a 2D detector array.</p></li>
-<li><p>Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</p></li>
+<li><p>Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.</p></li>
 </ul>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -619,8 +619,8 @@ source to the center of rotation (isocenter).</p></li>
 <h3>Summary<a class="headerlink" href="#id5" title="Link to this heading"></a></h3>
 <p>PyTorch autograd function for differentiable 3D cone beam backprojection.</p>
 <p class="rubric">Notes</p>
-<p>Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-ray-tracing algorithm for 3D cone beam backprojection. The forward pass
+<p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+method with interpolation for 3D cone beam backprojection. The forward pass
 computes a 3D reconstruction from cone beam projection data using
 backprojection as the adjoint operation. The backward pass computes gradients
 via 3D cone beam forward projection. Requires CUDA-capable hardware and
@@ -700,7 +700,7 @@ source to the center of rotation (isocenter).</p></li>
 <li><p>All input tensors must be on the same CUDA device.</p></li>
 <li><p>The operation is fully differentiable and supports autograd.</p></li>
 <li><p>Cone beam geometry uses a point source and a 2D detector array.</p></li>
-<li><p>Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</p></li>
+<li><p>Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.</p></li>
 </ul>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">projections</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">360</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>

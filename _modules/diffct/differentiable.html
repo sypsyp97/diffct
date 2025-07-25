@@ -401,7 +401,7 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam forward projection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon-Joseph ray-tracing algorithm for</span>
+<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
 <span class="sd">    2D parallel beam forward projection.</span>
 
 <span class="sd">    Parameters</span>
@@ -433,7 +433,7 @@
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    The Siddon-Joseph algorithm provides accurate ray-volume intersection by:</span>
+<span class="sd">    The Siddon method with interpolation provides accurate ray-volume intersection by:</span>
 <span class="sd">      - Calculating ray-volume boundary intersections to define traversal limits.</span>
 <span class="sd">      - Iterating through voxels along the ray path via parametric equations.</span>
 <span class="sd">      - Determining bilinear interpolation weights for sub-voxel sampling.</span>
@@ -492,7 +492,7 @@
     <span class="k">if</span> <span class="n">t_min</span> <span class="o">&gt;=</span> <span class="n">t_max</span><span class="p">:</span>
         <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">;</span> <span class="k">return</span>
 
-    <span class="c1"># === SIDDON-JOSEPH VOXEL TRAVERSAL INITIALIZATION ===</span>
+    <span class="c1"># === SIDDON METHOD VOXEL TRAVERSAL INITIALIZATION ===</span>
     <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># Accumulated projection value along ray</span>
     <span class="n">t</span> <span class="o">=</span> <span class="n">t_min</span>    <span class="c1"># Current ray parameter (distance from ray start)</span>
     
@@ -569,8 +569,8 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam backprojection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon-Joseph algorithm for 2D parallel</span>
-<span class="sd">    beam backprojection.</span>
+<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    2D parallel beam backprojection.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -634,7 +634,7 @@
 
     <span class="k">if</span> <span class="n">t_min</span> <span class="o">&gt;=</span> <span class="n">t_max</span><span class="p">:</span> <span class="k">return</span>
 
-    <span class="c1"># === SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===</span>
+    <span class="c1"># === SIDDON METHOD TRAVERSAL INITIALIZATION ===</span>
     <span class="n">t</span> <span class="o">=</span> <span class="n">t_min</span>
     <span class="n">ix</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">pnt_x</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span><span class="p">))</span>
     <span class="n">iy</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">pnt_y</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span><span class="p">))</span>
@@ -698,8 +698,8 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam forward projection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon-Joseph algorithm for 2D fan beam</span>
-<span class="sd">    forward projection.</span>
+<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    2D fan beam forward projection.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -789,7 +789,7 @@
     <span class="k">if</span> <span class="n">t_min</span> <span class="o">&gt;=</span> <span class="n">t_max</span><span class="p">:</span>  <span class="c1"># No valid intersection</span>
         <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">;</span> <span class="k">return</span>
 
-    <span class="c1"># === SIDDON-JOSEPH TRAVERSAL (same algorithm as parallel beam) ===</span>
+    <span class="c1"># === SIDDON METHOD TRAVERSAL (same algorithm as parallel beam) ===</span>
     <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># Accumulated projection value</span>
     <span class="n">t</span> <span class="o">=</span> <span class="n">t_min</span>    <span class="c1"># Current ray parameter</span>
     
@@ -850,8 +850,8 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam backprojection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon-Joseph algorithm for 2D fan beam</span>
-<span class="sd">    backprojection.</span>
+<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    2D fan beam backprojection.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -936,7 +936,7 @@
 
     <span class="k">if</span> <span class="n">t_min</span> <span class="o">&gt;=</span> <span class="n">t_max</span><span class="p">:</span> <span class="k">return</span>
 
-    <span class="c1"># === SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===</span>
+    <span class="c1"># === SIDDON METHOD TRAVERSAL INITIALIZATION ===</span>
     <span class="n">t</span> <span class="o">=</span> <span class="n">t_min</span>
     <span class="n">ix</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">src_x</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span><span class="p">))</span>
     <span class="n">iy</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">src_y</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span><span class="p">))</span>
@@ -1000,8 +1000,8 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone-beam forward projection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon-Joseph algorithm for 3D cone-beam</span>
-<span class="sd">    forward projection.</span>
+<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    3D cone-beam forward projection.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1110,7 +1110,7 @@
     <span class="k">if</span> <span class="n">t_min</span> <span class="o">&gt;=</span> <span class="n">t_max</span><span class="p">:</span>  <span class="c1"># No valid 3D intersection</span>
         <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iv</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">;</span> <span class="k">return</span>
 
-    <span class="c1"># === 3D SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===</span>
+    <span class="c1"># === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===</span>
     <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># Accumulated projection value</span>
     <span class="n">t</span> <span class="o">=</span> <span class="n">t_min</span>    <span class="c1"># Current ray parameter</span>
     
@@ -1200,8 +1200,8 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone-beam backprojection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon-Joseph algorithm for 3D cone-beam</span>
-<span class="sd">    backprojection.</span>
+<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    3D cone-beam backprojection.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1304,7 +1304,7 @@
 
     <span class="k">if</span> <span class="n">t_min</span> <span class="o">&gt;=</span> <span class="n">t_max</span><span class="p">:</span> <span class="k">return</span>
 
-    <span class="c1"># === 3D SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===</span>
+    <span class="c1"># === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===</span>
     <span class="n">t</span> <span class="o">=</span> <span class="n">t_min</span>
     <span class="n">ix</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">src_x</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span><span class="p">))</span>  <span class="c1"># Current voxel x-index</span>
     <span class="n">iy</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">src_y</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span><span class="p">))</span>  <span class="c1"># Current voxel y-index</span>
@@ -1392,8 +1392,8 @@
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph</span>
-<span class="sd">    ray-tracing algorithm for parallel beam CT geometry. The forward pass computes</span>
+<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
+<span class="sd">    method with interpolation for parallel beam CT geometry. The forward pass computes</span>
 <span class="sd">    the sinogram from a 2D image using parallel beam geometry. The backward pass</span>
 <span class="sd">    computes gradients using the adjoint backprojection operation. Requires</span>
 <span class="sd">    CUDA-capable hardware and a properly configured CUDA environment; all input</span>
@@ -1447,7 +1447,7 @@
 <span class="sd">        -----</span>
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
-<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -1541,8 +1541,8 @@
 <span class="sd">    </span>
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph ray-tracing</span>
-<span class="sd">    algorithm for parallel beam backprojection. The forward pass computes a 2D</span>
+<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
+<span class="sd">    method with interpolation for parallel beam backprojection. The forward pass computes a 2D</span>
 <span class="sd">    reconstruction from sinogram data using parallel beam backprojection, and the</span>
 <span class="sd">    backward pass computes gradients via forward projection as the adjoint operation.</span>
 <span class="sd">    Requires CUDA-capable hardware and consistent device placements.</span>
@@ -1591,7 +1591,7 @@
 <span class="sd">        -----</span>
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
-<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -1689,8 +1689,8 @@
 <span class="sd">    </span>
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph</span>
-<span class="sd">    ray-tracing algorithm for fan beam geometry, where rays diverge from a point</span>
+<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
+<span class="sd">    method with interpolation for fan beam geometry, where rays diverge from a point</span>
 <span class="sd">    X-ray source to a linear detector array. The forward pass computes sinograms</span>
 <span class="sd">    using divergent beam geometry, and the backward pass computes gradients via</span>
 <span class="sd">    adjoint backprojection.</span>
@@ -1744,7 +1744,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Fan beam geometry uses divergent rays from a point source to the detector.</span>
-<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -1835,8 +1835,8 @@
 <span class="sd">    </span>
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph</span>
-<span class="sd">    ray-tracing algorithm for fan beam backprojection. Implements the adjoint</span>
+<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
+<span class="sd">    method with interpolation for fan beam backprojection. Implements the adjoint</span>
 <span class="sd">    of the fan beam projection operator, distributing sinogram values back into</span>
 <span class="sd">    the reconstruction volume along divergent ray paths. The forward pass</span>
 <span class="sd">    computes reconstruction from sinogram data, and the backward pass computes</span>
@@ -1893,7 +1893,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Fan beam geometry uses divergent rays from a point source to the detector.</span>
-<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -1984,8 +1984,8 @@
 <span class="sd">    </span>
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph</span>
-<span class="sd">    ray-tracing algorithm for 3D cone beam geometry. Rays emanate from a point</span>
+<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
+<span class="sd">    method with interpolation for 3D cone beam geometry. Rays emanate from a point</span>
 <span class="sd">    X-ray source to a 2D detector array capturing volumetric projection data.</span>
 <span class="sd">    The forward pass computes 3D projections, and the backward pass computes</span>
 <span class="sd">    gradients via adjoint 3D backprojection. Requires significant GPU memory.</span>
@@ -2043,7 +2043,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Cone beam geometry uses a point source and a 2D detector array.</span>
-<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</span>
+<span class="sd">        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -2142,8 +2142,8 @@
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph</span>
-<span class="sd">    ray-tracing algorithm for 3D cone beam backprojection. The forward pass</span>
+<span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
+<span class="sd">    method with interpolation for 3D cone beam backprojection. The forward pass</span>
 <span class="sd">    computes a 3D reconstruction from cone beam projection data using</span>
 <span class="sd">    backprojection as the adjoint operation. The backward pass computes gradients</span>
 <span class="sd">    via 3D cone beam forward projection. Requires CUDA-capable hardware and</span>
@@ -2212,7 +2212,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Cone beam geometry uses a point source and a 2D detector array.</span>
-<span class="sd">        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.</span>
+<span class="sd">        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
