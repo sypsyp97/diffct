@@ -325,7 +325,7 @@ def _parallel_2d_forward_kernel(
 ):
     """Compute the 2D parallel beam forward projection.
 
-    This CUDA kernel implements the Siddon-Joseph ray-tracing algorithm for
+    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
     2D parallel beam forward projection.
 
     Parameters
@@ -357,7 +357,7 @@ def _parallel_2d_forward_kernel(
 
     Notes
     -----
-    The Siddon-Joseph algorithm provides accurate ray-volume intersection by:
+    The Siddon method with interpolation provides accurate ray-volume intersection by:
       - Calculating ray-volume boundary intersections to define traversal limits.
       - Iterating through voxels along the ray path via parametric equations.
       - Determining bilinear interpolation weights for sub-voxel sampling.
@@ -416,7 +416,7 @@ def _parallel_2d_forward_kernel(
     if t_min >= t_max:
         d_sino[iang, idet] = 0.0; return
 
-    # === SIDDON-JOSEPH VOXEL TRAVERSAL INITIALIZATION ===
+    # === SIDDON METHOD VOXEL TRAVERSAL INITIALIZATION ===
     accum = 0.0  # Accumulated projection value along ray
     t = t_min    # Current ray parameter (distance from ray start)
     
@@ -493,8 +493,8 @@ def _parallel_2d_backward_kernel(
 ):
     """Compute the 2D parallel beam backprojection.
 
-    This CUDA kernel implements the Siddon-Joseph algorithm for 2D parallel
-    beam backprojection.
+    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    2D parallel beam backprojection.
 
     Parameters
     ----------
@@ -558,7 +558,7 @@ def _parallel_2d_backward_kernel(
 
     if t_min >= t_max: return
 
-    # === SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===
+    # === SIDDON METHOD TRAVERSAL INITIALIZATION ===
     t = t_min
     ix = int(math.floor(pnt_x + t * dir_x + cx))
     iy = int(math.floor(pnt_y + t * dir_y + cy))
@@ -622,8 +622,8 @@ def _fan_2d_forward_kernel(
 ):
     """Compute the 2D fan beam forward projection.
 
-    This CUDA kernel implements the Siddon-Joseph algorithm for 2D fan beam
-    forward projection.
+    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    2D fan beam forward projection.
 
     Parameters
     ----------
@@ -713,7 +713,7 @@ def _fan_2d_forward_kernel(
     if t_min >= t_max:  # No valid intersection
         d_sino[iang, idet] = 0.0; return
 
-    # === SIDDON-JOSEPH TRAVERSAL (same algorithm as parallel beam) ===
+    # === SIDDON METHOD TRAVERSAL (same algorithm as parallel beam) ===
     accum = 0.0  # Accumulated projection value
     t = t_min    # Current ray parameter
     
@@ -774,8 +774,8 @@ def _fan_2d_backward_kernel(
 ):
     """Compute the 2D fan beam backprojection.
 
-    This CUDA kernel implements the Siddon-Joseph algorithm for 2D fan beam
-    backprojection.
+    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    2D fan beam backprojection.
 
     Parameters
     ----------
@@ -860,7 +860,7 @@ def _fan_2d_backward_kernel(
 
     if t_min >= t_max: return
 
-    # === SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===
+    # === SIDDON METHOD TRAVERSAL INITIALIZATION ===
     t = t_min
     ix = int(math.floor(src_x + t * dir_x + cx))
     iy = int(math.floor(src_y + t * dir_y + cy))
@@ -924,8 +924,8 @@ def _cone_3d_forward_kernel(
 ):
     """Compute the 3D cone-beam forward projection.
 
-    This CUDA kernel implements the Siddon-Joseph algorithm for 3D cone-beam
-    forward projection.
+    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    3D cone-beam forward projection.
 
     Parameters
     ----------
@@ -1034,7 +1034,7 @@ def _cone_3d_forward_kernel(
     if t_min >= t_max:  # No valid 3D intersection
         d_sino[iview, iu, iv] = 0.0; return
 
-    # === 3D SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===
+    # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     accum = 0.0  # Accumulated projection value
     t = t_min    # Current ray parameter
     
@@ -1124,8 +1124,8 @@ def _cone_3d_backward_kernel(
 ):
     """Compute the 3D cone-beam backprojection.
 
-    This CUDA kernel implements the Siddon-Joseph algorithm for 3D cone-beam
-    backprojection.
+    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    3D cone-beam backprojection.
 
     Parameters
     ----------
@@ -1228,7 +1228,7 @@ def _cone_3d_backward_kernel(
 
     if t_min >= t_max: return
 
-    # === 3D SIDDON-JOSEPH TRAVERSAL INITIALIZATION ===
+    # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     t = t_min
     ix = int(math.floor(src_x + t * dir_x + cx))  # Current voxel x-index
     iy = int(math.floor(src_y + t * dir_y + cy))  # Current voxel y-index
@@ -1314,8 +1314,8 @@ class ParallelProjectorFunction(torch.autograd.Function):
 
     Notes
     -----
-    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for parallel beam CT geometry. The forward pass computes
+    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+    method with interpolation for parallel beam CT geometry. The forward pass computes
     the sinogram from a 2D image using parallel beam geometry. The backward pass
     computes gradients using the adjoint backprojection operation. Requires
     CUDA-capable hardware and a properly configured CUDA environment; all input
@@ -1367,7 +1367,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
@@ -1454,8 +1454,8 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     
     Notes
     -----
-    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph ray-tracing
-    algorithm for parallel beam backprojection. The forward pass computes a 2D
+    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+    method with interpolation for parallel beam backprojection. The forward pass computes a 2D
     reconstruction from sinogram data using parallel beam backprojection, and the
     backward pass computes gradients via forward projection as the adjoint operation.
     Requires CUDA-capable hardware and consistent device placements.
@@ -1502,7 +1502,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
@@ -1593,8 +1593,8 @@ class FanProjectorFunction(torch.autograd.Function):
     
     Notes
     -----
-    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for fan beam geometry, where rays diverge from a point
+    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+    method with interpolation for fan beam geometry, where rays diverge from a point
     X-ray source to a linear detector array. The forward pass computes sinograms
     using divergent beam geometry, and the backward pass computes gradients via
     adjoint backprojection.
@@ -1646,7 +1646,7 @@ class FanProjectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Fan beam geometry uses divergent rays from a point source to the detector.
-        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
@@ -1730,8 +1730,8 @@ class FanBackprojectorFunction(torch.autograd.Function):
     
     Notes
     -----
-    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for fan beam backprojection. Implements the adjoint
+    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+    method with interpolation for fan beam backprojection. Implements the adjoint
     of the fan beam projection operator, distributing sinogram values back into
     the reconstruction volume along divergent ray paths. The forward pass
     computes reconstruction from sinogram data, and the backward pass computes
@@ -1786,7 +1786,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Fan beam geometry uses divergent rays from a point source to the detector.
-        - Uses the Siddon-Joseph algorithm for accurate ray tracing and bilinear interpolation.
+        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
@@ -1870,8 +1870,8 @@ class ConeProjectorFunction(torch.autograd.Function):
     
     Notes
     -----
-    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for 3D cone beam geometry. Rays emanate from a point
+    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+    method with interpolation for 3D cone beam geometry. Rays emanate from a point
     X-ray source to a 2D detector array capturing volumetric projection data.
     The forward pass computes 3D projections, and the backward pass computes
     gradients via adjoint 3D backprojection. Requires significant GPU memory.
@@ -1927,7 +1927,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Cone beam geometry uses a point source and a 2D detector array.
-        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.
+        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.
 
         Examples
         --------
@@ -2019,8 +2019,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
 
     Notes
     -----
-    Provides a differentiable interface to the CUDA-accelerated Siddon-Joseph
-    ray-tracing algorithm for 3D cone beam backprojection. The forward pass
+    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
+    method with interpolation for 3D cone beam backprojection. The forward pass
     computes a 3D reconstruction from cone beam projection data using
     backprojection as the adjoint operation. The backward pass computes gradients
     via 3D cone beam forward projection. Requires CUDA-capable hardware and
@@ -2087,7 +2087,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Cone beam geometry uses a point source and a 2D detector array.
-        - Uses the Siddon-Joseph algorithm for accurate 3D ray tracing and trilinear interpolation.
+        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.
 
         Examples
         --------
