@@ -2,6 +2,7 @@ import math
 import numpy as np
 import torch
 from numba import cuda
+from functools import lru_cache
 
 # ---------------------------------------------------------------------------
 # Global settings & helpers
@@ -110,6 +111,7 @@ class TorchCUDABridge:
 
 
 # === GPU-aware Trigonometric Table Generation ===
+@lru_cache(maxsize=2048)
 def _trig_tables(angles, dtype=_DTYPE, device=None):
     """Compute cosine and sine tables for input angles.
 
