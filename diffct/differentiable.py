@@ -71,8 +71,8 @@ class DeviceManager:
         ... )
         tensor([1, 2, 3], device='cuda:0')
         """
-        if hasattr(tensor, "to"):
-            return tensor if tensor.device == device else tensor.to(device)
+        if hasattr(tensor, "to") and tensor.device != device:
+            return tensor.to(device)
         return tensor
 
 # === PyTorch-CUDA Bridge ===
@@ -141,9 +141,11 @@ def _trig_tables(angles, dtype=_DTYPE, device=None):
     """
     if isinstance(angles, torch.Tensor):
         device = angles.device if device is None else device
-        cos = torch.cos(angles).to(dtype=dtype)
-        sin = torch.sin(angles).to(dtype=dtype)
-        return cos.to(device), sin.to(device)
+        # Compute both cos and sin in one call to avoid redundant kernel launches
+        angles_device = angles.to(dtype=dtype, device=device)
+        cos = torch.cos(angles_device)
+        sin = torch.sin(angles_device)
+        return cos, sin
     else:
         # fallback for non-tensor inputs: compute via PyTorch on CPU for consistency
         # Determine desired torch dtype
@@ -155,7 +157,7 @@ def _trig_tables(angles, dtype=_DTYPE, device=None):
                 np.float64: torch.float64,
             }
             torch_dtype = _NP_TO_TORCH.get(dtype, torch.float32)
-        # Convert input angles to a CPU torch tensor
+        # Convert input angles to a CPU torch tensor and compute both simultaneously
         angles_cpu = torch.tensor(angles, dtype=torch_dtype)
         cos_cpu = torch.cos(angles_cpu)
         sin_cpu = torch.sin(angles_cpu)
@@ -184,18 +186,23 @@ def _validate_3d_memory_layout(tensor, expected_order='DHW'):
     ValueError
         If tensor has unexpected memory layout or is non-contiguous
     """
-    if len(tensor.shape) != 3:
-        raise ValueError(f"Expected 3D tensor, got {len(tensor.shape)}D")
+    shape = tensor.shape
+    if len(shape) != 3:
+        raise ValueError(f"Expected 3D tensor, got {len(shape)}D")
 
-    # Check if tensor is contiguous to avoid memory duplication
-    if not tensor.is_contiguous():
-        raise ValueError(
-            "Input tensor must be contiguous. Call .contiguous() before passing to "
-            "cone beam functions to avoid memory duplication and ensure correct results."
-        )
-
+    # Early return for common case - contiguous tensor with expected ordering
+    if tensor.is_contiguous() and expected_order in ('DHW', 'VHW'):
+        # For DHW and VHW, the expected order matches memory layout when contiguous
+        return
+    
     # Only check memory order for DHW and VHW, not for internal WHD layout
     if expected_order in ('DHW', 'VHW'):
+        if not tensor.is_contiguous():
+            raise ValueError(
+                "Input tensor must be contiguous. Call .contiguous() before passing to "
+                "cone beam functions to avoid memory duplication and ensure correct results."
+            )
+
         strides = tensor.stride()
         order_mapping = {
             'DHW': (0, 1, 2),  # Depth, Height, Width
@@ -212,15 +219,15 @@ def _validate_3d_memory_layout(tensor, expected_order='DHW'):
         if actual_order != expected_stride_order:
             # Create appropriate error message based on context
             if expected_order == 'VHW':
-                actual_str = f"({tensor.shape[0]}, {tensor.shape[1]}, {tensor.shape[2]})"
+                actual_str = f"({shape[0]}, {shape[1]}, {shape[2]})"
                 expected_str = "(Views, Height, Width)"
                 fix_str = "ensure your sinogram has shape (num_views, det_v, det_u)"
             elif expected_order == 'DHW':
-                actual_str = f"({tensor.shape[0]}, {tensor.shape[1]}, {tensor.shape[2]})"
+                actual_str = f"({shape[0]}, {shape[1]}, {shape[2]})"
                 expected_str = "(Depth, Height, Width)"
                 fix_str = "ensure your volume has shape (D, H, W)"
             else:
-                actual_str = str(tuple(tensor.shape))
+                actual_str = str(tuple(shape))
                 expected_str = expected_order
                 fix_str = "check tensor dimensions"
 
