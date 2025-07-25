@@ -147,8 +147,8 @@
 <span class="sd">        ... )</span>
 <span class="sd">        tensor([1, 2, 3], device=&#39;cuda:0&#39;)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="s2">&quot;to&quot;</span><span class="p">):</span>
-            <span class="k">return</span> <span class="n">tensor</span> <span class="k">if</span> <span class="n">tensor</span><span class="o">.</span><span class="n">device</span> <span class="o">==</span> <span class="n">device</span> <span class="k">else</span> <span class="n">tensor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="s2">&quot;to&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">tensor</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">device</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">tensor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">tensor</span>
 
 <span class="c1"># === PyTorch-CUDA Bridge ===</span>
@@ -217,9 +217,11 @@
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">device</span> <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">device</span>
-        <span class="n">cos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
-        <span class="n">sin</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">cos</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">sin</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="c1"># Compute both cos and sin in one call to avoid redundant kernel launches</span>
+        <span class="n">angles_device</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">cos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angles_device</span><span class="p">)</span>
+        <span class="n">sin</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angles_device</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cos</span><span class="p">,</span> <span class="n">sin</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="c1"># fallback for non-tensor inputs: compute via PyTorch on CPU for consistency</span>
         <span class="c1"># Determine desired torch dtype</span>
@@ -231,7 +233,7 @@
                 <span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
             <span class="p">}</span>
             <span class="n">torch_dtype</span> <span class="o">=</span> <span class="n">_NP_TO_TORCH</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-        <span class="c1"># Convert input angles to a CPU torch tensor</span>
+        <span class="c1"># Convert input angles to a CPU torch tensor and compute both simultaneously</span>
         <span class="n">angles_cpu</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch_dtype</span><span class="p">)</span>
         <span class="n">cos_cpu</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angles_cpu</span><span class="p">)</span>
         <span class="n">sin_cpu</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angles_cpu</span><span class="p">)</span>
@@ -260,18 +262,23 @@
 <span class="sd">    ValueError</span>
 <span class="sd">        If tensor has unexpected memory layout or is non-contiguous</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected 3D tensor, got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">D&quot;</span><span class="p">)</span>
+    <span class="n">shape</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected 3D tensor, got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">D&quot;</span><span class="p">)</span>
 
-    <span class="c1"># Check if tensor is contiguous to avoid memory duplication</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">():</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-            <span class="s2">&quot;Input tensor must be contiguous. Call .contiguous() before passing to &quot;</span>
-            <span class="s2">&quot;cone beam functions to avoid memory duplication and ensure correct results.&quot;</span>
-        <span class="p">)</span>
-
+    <span class="c1"># Early return for common case - contiguous tensor with expected ordering</span>
+    <span class="k">if</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">()</span> <span class="ow">and</span> <span class="n">expected_order</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39;DHW&#39;</span><span class="p">,</span> <span class="s1">&#39;VHW&#39;</span><span class="p">):</span>
+        <span class="c1"># For DHW and VHW, the expected order matches memory layout when contiguous</span>
+        <span class="k">return</span>
+    
     <span class="c1"># Only check memory order for DHW and VHW, not for internal WHD layout</span>
     <span class="k">if</span> <span class="n">expected_order</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39;DHW&#39;</span><span class="p">,</span> <span class="s1">&#39;VHW&#39;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">():</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;Input tensor must be contiguous. Call .contiguous() before passing to &quot;</span>
+                <span class="s2">&quot;cone beam functions to avoid memory duplication and ensure correct results.&quot;</span>
+            <span class="p">)</span>
+
         <span class="n">strides</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">stride</span><span class="p">()</span>
         <span class="n">order_mapping</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s1">&#39;DHW&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>  <span class="c1"># Depth, Height, Width</span>
@@ -288,15 +295,15 @@
         <span class="k">if</span> <span class="n">actual_order</span> <span class="o">!=</span> <span class="n">expected_stride_order</span><span class="p">:</span>
             <span class="c1"># Create appropriate error message based on context</span>
             <span class="k">if</span> <span class="n">expected_order</span> <span class="o">==</span> <span class="s1">&#39;VHW&#39;</span><span class="p">:</span>
-                <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
+                <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
                 <span class="n">expected_str</span> <span class="o">=</span> <span class="s2">&quot;(Views, Height, Width)&quot;</span>
                 <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;ensure your sinogram has shape (num_views, det_v, det_u)&quot;</span>
             <span class="k">elif</span> <span class="n">expected_order</span> <span class="o">==</span> <span class="s1">&#39;DHW&#39;</span><span class="p">:</span>
-                <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
+                <span class="n">actual_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span>
                 <span class="n">expected_str</span> <span class="o">=</span> <span class="s2">&quot;(Depth, Height, Width)&quot;</span>
                 <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;ensure your volume has shape (D, H, W)&quot;</span>
             <span class="k">else</span><span class="p">:</span>
-                <span class="n">actual_str</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">))</span>
+                <span class="n">actual_str</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">shape</span><span class="p">))</span>
                 <span class="n">expected_str</span> <span class="o">=</span> <span class="n">expected_order</span>
                 <span class="n">fix_str</span> <span class="o">=</span> <span class="s2">&quot;check tensor dimensions&quot;</span>
 
