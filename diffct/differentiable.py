@@ -20,8 +20,7 @@ _TPB_3D             = (8,  8,  8)
 # Trades numerical precision for performance in ray-tracing calculations
 # Safe for CT reconstruction where slight precision loss is acceptable for speed gains
 _FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=True)
-# Disable fastmath for backward kernels to ensure gradient correctness
-_NON_FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=False) 
+
 _INF                = _DTYPE(np.inf)
 _EPSILON            = _DTYPE(1e-6)
 # === Device Management Utilities ===
@@ -485,7 +484,7 @@ def _parallel_2d_forward_kernel(
     
     d_sino[iang, idet] = accum
 
-@_NON_FASTMATH_DECORATOR
+@_FASTMATH_DECORATOR
 def _parallel_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
@@ -765,7 +764,7 @@ def _fan_2d_forward_kernel(
     
     d_sino[iang, idet] = accum
 
-@_NON_FASTMATH_DECORATOR
+@_FASTMATH_DECORATOR
 def _fan_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
@@ -1115,7 +1114,7 @@ def _cone_3d_forward_kernel(
     
     d_sino[iview, iu, iv] = accum
 
-@_NON_FASTMATH_DECORATOR
+@_FASTMATH_DECORATOR
 def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,

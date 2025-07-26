@@ -37,4 +37,3 @@ where = ["."]
 python = "python"
 
 [tool.hatch.envs.default.env-vars]
-PYTHONDONTWRITEBYTECODE = "1"
