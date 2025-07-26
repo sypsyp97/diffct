@@ -52,9 +52,41 @@ diffct/
 
 ### Installation
 
+To get started, create a Conda environment and install the necessary CUDA toolkit and PyTorch version.
+
+<details>
+<summary><b>🐍 For Conda Users</b></summary>
+
+**CUDA 12:**
 ```bash
+# Create and activate conda environment
+conda create -n diffct python=3.12
+conda activate diffct
+
+# Install CUDA Toolkit, PyTorch, and Numba
+conda install nvidia/label/cuda-12.8.1::cuda-toolkit
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip install numba-cuda[cu12]
+
+# Install diffct
 pip install diffct
 ```
+
+**CUDA 11:**
+```bash
+# Create and activate conda environment
+conda create -n diffct python=3.12
+conda activate diffct
+
+# Install CUDA Toolkit, PyTorch, and Numba
+conda install nvidia/label/cuda-11.8.0::cuda-toolkit
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install numba-cuda[cu11]
+
+# Install diffct
+pip install diffct
+```
+</details>
 
 ## 📝 Citation
 
