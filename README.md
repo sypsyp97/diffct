@@ -52,11 +52,6 @@ diffct/
 
 ### Installation
 
-To get started, create a Conda environment and install the necessary CUDA toolkit and PyTorch version.
-
-<details>
-<summary><b>🐍 For Conda Users</b></summary>
-
 **CUDA 12:**
 ```bash
 # Create and activate conda environment
@@ -86,7 +81,6 @@ pip install numba-cuda[cu11]
 # Install diffct
 pip install diffct
 ```
-</details>
 
 ## 📝 Citation
 
