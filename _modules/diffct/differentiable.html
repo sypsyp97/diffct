@@ -96,8 +96,7 @@
 <span class="c1"># Trades numerical precision for performance in ray-tracing calculations</span>
 <span class="c1"># Safe for CT reconstruction where slight precision loss is acceptable for speed gains</span>
 <span class="n">_FASTMATH_DECORATOR</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fastmath</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="c1"># Disable fastmath for backward kernels to ensure gradient correctness</span>
-<span class="n">_NON_FASTMATH_DECORATOR</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fastmath</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> 
+
 <span class="n">_INF</span>                <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
 <span class="n">_EPSILON</span>            <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1e-6</span><span class="p">)</span>
 <span class="c1"># === Device Management Utilities ===</span>
@@ -561,7 +560,7 @@
     
     <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
 
-<span class="nd">@_NON_FASTMATH_DECORATOR</span>
+<span class="nd">@_FASTMATH_DECORATOR</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_parallel_2d_backward_kernel</span><span class="p">(</span>
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
     <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
@@ -841,7 +840,7 @@
     
     <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
 
-<span class="nd">@_NON_FASTMATH_DECORATOR</span>
+<span class="nd">@_FASTMATH_DECORATOR</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_fan_2d_backward_kernel</span><span class="p">(</span>
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
     <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
@@ -1191,7 +1190,7 @@
     
     <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iv</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
 
-<span class="nd">@_NON_FASTMATH_DECORATOR</span>
+<span class="nd">@_FASTMATH_DECORATOR</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_cone_3d_backward_kernel</span><span class="p">(</span>
     <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
     <span class="n">d_vol</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
