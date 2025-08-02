@@ -1402,11 +1402,12 @@ class ParallelProjectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_angles, num_detectors)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _parallel_2d_forward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _parallel_2d_forward_kernel[grid, tpb, numba_stream](
             d_image, Nx, Ny, d_sino, n_angles, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
@@ -1435,12 +1436,13 @@ class ParallelProjectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_angles, num_detectors)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _parallel_2d_backward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _parallel_2d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_angles, num_detectors,
             d_img_grad, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         return grad_image, None, None, None, None
 
@@ -1537,11 +1539,12 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _parallel_2d_backward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _parallel_2d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1], voxel_spacing)
@@ -1575,11 +1578,12 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _parallel_2d_forward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _parallel_2d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(detector_spacing), d_cos, d_sin, cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         return grad_sino, None, None, None, None, None
 
@@ -1676,12 +1680,13 @@ class FanProjectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_ang, num_detectors)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _fan_2d_forward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _fan_2d_forward_kernel[grid, tpb, numba_stream](
             d_image, Nx, Ny, d_sino, n_ang, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx,
@@ -1711,12 +1716,13 @@ class FanProjectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _fan_2d_backward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         return grad_img, None, None, None, None, None, None
 
@@ -1816,12 +1822,13 @@ class FanBackprojectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _fan_2d_backward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, sdd, sid, voxel_spacing)
@@ -1851,12 +1858,13 @@ class FanBackprojectorFunction(torch.autograd.Function):
         grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
-        _fan_2d_forward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _fan_2d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         return grad_sino, None, None, None, None, None, None, None
 
@@ -1961,13 +1969,14 @@ class ConeProjectorFunction(torch.autograd.Function):
         grid, tpb = _grid_3d(n_views, det_u, det_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
-        _cone_3d_forward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_vol, W, H, D, d_sino, n_views, det_u, det_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid),
             cx, cy, cz, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
@@ -1999,12 +2008,13 @@ class ConeProjectorFunction(torch.autograd.Function):
         grid, tpb = _grid_3d(n_views, det_u, det_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
-        _cone_3d_backward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
         return grad_vol, None, None, None, None, None, None, None, None
@@ -2119,12 +2129,13 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         grid, tpb = _grid_3d(n_views, n_u, n_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
-        _cone_3d_backward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_views, n_u, n_v, d_reco, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
@@ -2158,11 +2169,12 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         grid, tpb = _grid_3d(n_views, n_u, n_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
-        _cone_3d_forward_kernel[grid, tpb](
+        pt_stream = torch.cuda.current_stream()
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
         )
-        torch.cuda.synchronize()
 
         return grad_sino, None, None, None, None, None, None, None, None, None
