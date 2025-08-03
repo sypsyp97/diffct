@@ -425,12 +425,15 @@ def _parallel_2d_forward_kernel(
 
     # Determine traversal direction and step sizes for each axis
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)  # Voxel stepping direction
-    dt_x = abs(1.0 / dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment to cross one voxel in x
-    dt_y = abs(1.0 / dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment to cross one voxel in y
-    
-    # Calculate parameter values for next voxel boundary crossings
-    tx = ((ix + (step_x > 0)) - cx - pnt_x) / dir_x if abs(dir_x) > _EPSILON else _INF  # Next x-boundary crossing
-    ty = ((iy + (step_y > 0)) - cy - pnt_y) / dir_y if abs(dir_y) > _EPSILON else _INF  # Next y-boundary crossing
+    # Hoist inverse directions to reduce divisions and branches
+    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
+    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
+    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
+
+    # Calculate parameter values for next voxel boundary crossings using inv_dir_*
+    tx = ((ix + (step_x > 0)) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = ((iy + (step_y > 0)) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === MAIN RAY TRAVERSAL LOOP ===
     # Step through voxels along ray path, accumulating weighted contributions
@@ -445,9 +448,10 @@ def _parallel_2d_forward_kernel(
                 # === BILINEAR INTERPOLATION SAMPLING ===
                 # Sample volume at ray segment midpoint for accurate integration
                 # Mathematical basis: Midpoint rule for numerical integration along ray segments
-                mid_x = pnt_x + (t + seg_len * 0.5) * dir_x + cx  # Midpoint x-coordinate in image space
-                mid_y = pnt_y + (t + seg_len * 0.5) * dir_y + cy  # Midpoint y-coordinate in image space
-                
+                t_mid = t + seg_len * 0.5
+                mid_x = pnt_x + t_mid * dir_x + cx  # Midpoint x-coordinate in image space
+                mid_y = pnt_y + t_mid * dir_y + cy  # Midpoint y-coordinate in image space
+
                 # Convert continuous coordinates to discrete voxel indices and fractional weights
                 # Floor operation gives base voxel index, fractional part gives interpolation weights
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))  # Base voxel indices (bottom-left corner)
@@ -563,10 +567,12 @@ def _parallel_2d_backward_kernel(
     iy = int(math.floor(pnt_y + t * dir_y + cy))
 
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    dt_x = abs(1.0 / dir_x) if abs(dir_x) > _EPSILON else _INF
-    dt_y = abs(1.0 / dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - pnt_x) / dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - pnt_y) / dir_y if abs(dir_y) > _EPSILON else _INF
+    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
+    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
+    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
+    tx = ((ix + (step_x > 0)) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = ((iy + (step_y > 0)) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along ray path using bilinear interpolation
@@ -576,8 +582,9 @@ def _parallel_2d_backward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at ray segment midpoint (same as forward projection)
-                mid_x = pnt_x + (t + seg_len * 0.5) * dir_x + cx
-                mid_y = pnt_y + (t + seg_len * 0.5) * dir_y + cy
+                t_mid = t + seg_len * 0.5
+                mid_x = pnt_x + t_mid * dir_x + cx
+                mid_y = pnt_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
                 dx, dy = mid_x - ix0, mid_y - iy0
                 
@@ -593,10 +600,12 @@ def _parallel_2d_backward_kernel(
                 # Performance impact: Atomic operations are slower than regular writes but necessary for correctness
                 # Memory access pattern: Global memory atomics with potential bank conflicts, but unavoidable
                 cval = val * seg_len  # Contribution value for this ray segment
-                cuda.atomic.add(d_image, (iy0,     ix0),     cval * (1 - dx) * (1 - dy))
-                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx       * (1 - dy))
-                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * (1 - dx) * dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx       * dy)
+                one_minus_dx = 1.0 - dx
+                one_minus_dy = 1.0 - dy
+                cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
+                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
+                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
+                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx          * dy)
 
         # Advance to next voxel (identical logic to forward projection)
         if tx <= ty:
@@ -722,10 +731,12 @@ def _fan_2d_forward_kernel(
 
     # Traversal parameters (identical to parallel beam implementation)
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    dt_x = abs(1.0 / dir_x) if abs(dir_x) > _EPSILON else _INF
-    dt_y = abs(1.0 / dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - src_x) / dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) / dir_y if abs(dir_y) > _EPSILON else _INF
+    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
+    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
+    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
+    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # Main traversal loop with bilinear interpolation (identical to parallel beam)
     while t < t_max:
@@ -734,8 +745,9 @@ def _fan_2d_forward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at midpoint using source as ray origin
-                mid_x = src_x + (t + seg_len * 0.5) * dir_x + cx
-                mid_y = src_y + (t + seg_len * 0.5) * dir_y + cy
+                t_mid = t + seg_len * 0.5
+                mid_x = src_x + t_mid * dir_x + cx
+                mid_y = src_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
                 dx, dy = mid_x - ix0, mid_y - iy0
                 
@@ -865,10 +877,12 @@ def _fan_2d_backward_kernel(
     iy = int(math.floor(src_y + t * dir_y + cy))
 
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    dt_x = abs(1.0 / dir_x) if abs(dir_x) > _EPSILON else _INF
-    dt_y = abs(1.0 / dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - src_x) / dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) / dir_y if abs(dir_y) > _EPSILON else _INF
+    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
+    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
+    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
+    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along divergent ray path using bilinear interpolation
@@ -878,8 +892,9 @@ def _fan_2d_backward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at ray segment midpoint using source as ray origin
-                mid_x = src_x + (t + seg_len * 0.5) * dir_x + cx
-                mid_y = src_y + (t + seg_len * 0.5) * dir_y + cy
+                t_mid = t + seg_len * 0.5
+                mid_x = src_x + t_mid * dir_x + cx
+                mid_y = src_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
                 dx, dy = mid_x - ix0, mid_y - iy0
                 
@@ -894,10 +909,12 @@ def _fan_2d_backward_kernel(
                 # Atomic operations prevent race conditions when multiple divergent rays write to same voxel
                 # Performance consideration: Fan beam geometry may have more atomic contention than parallel beam
                 cval = val * seg_len  # Contribution value for this ray segment
-                cuda.atomic.add(d_image, (iy0,     ix0),     cval * (1 - dx) * (1 - dy))
-                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx       * (1 - dy))
-                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * (1 - dx) * dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx       * dy)
+                one_minus_dx = 1.0 - dx
+                one_minus_dy = 1.0 - dy
+                cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
+                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
+                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
+                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx          * dy)
 
         # === VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first
@@ -1044,14 +1061,17 @@ def _cone_3d_forward_kernel(
 
     # 3D traversal parameters (extends 2D algorithm)
     step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    dt_x = abs(1.0 / dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
-    dt_y = abs(1.0 / dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
-    dt_z = abs(1.0 / dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
-    
+    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
+    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_z = (1.0 / dir_z) if abs(dir_z) > _EPSILON else 0.0
+    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
+    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
+    dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
+
     # Calculate parameter values for next 3D voxel boundary crossings
-    tx = ((ix + (step_x > 0)) - cx - src_x) / dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) / dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = ((iz + (step_z > 0)) - cz - src_z) / dir_z if abs(dir_z) > _EPSILON else _INF
+    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tz = ((iz + (step_z > 0)) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D TRAVERSAL LOOP WITH TRILINEAR INTERPOLATION ===
     while t < t_max:
@@ -1064,34 +1084,35 @@ def _cone_3d_forward_kernel(
                 # === TRILINEAR INTERPOLATION SAMPLING ===
                 # Sample 3D volume at ray segment midpoint for accurate integration
                 # Mathematical basis: Midpoint rule for numerical integration along 3D ray segments
-                mid_x = src_x + (t + seg_len * 0.5) * dir_x + cx  # Midpoint x-coordinate in volume space
-                mid_y = src_y + (t + seg_len * 0.5) * dir_y + cy  # Midpoint y-coordinate in volume space
-                mid_z = src_z + (t + seg_len * 0.5) * dir_z + cz  # Midpoint z-coordinate in volume space
-                
+                t_mid = t + seg_len * 0.5
+                mid_x = src_x + t_mid * dir_x + cx  # Midpoint x-coordinate in volume space
+                mid_y = src_y + t_mid * dir_y + cy  # Midpoint y-coordinate in volume space
+                mid_z = src_z + t_mid * dir_z + cz  # Midpoint z-coordinate in volume space
+
                 # Convert continuous 3D coordinates to discrete voxel indices and fractional weights
-                # Floor operation gives base voxel index, fractional part gives interpolation weights
-                ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))  # Base voxel indices (corner 0,0,0)
-                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0  # Fractional parts: distance from base voxel center [0,1]
-                
+                ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
+                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0
+
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
                 iy0 = max(0, min(iy0, Ny - 2))
                 iz0 = max(0, min(iz0, Nz - 2))
-                
+
+                # Precompute complements
+                omdx = 1.0 - dx
+                omdy = 1.0 - dy
+                omdz = 1.0 - dz
+
                 # === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===
-                # Mathematical basis: Trilinear interpolation formula f(x,y,z) = Σ f(xi,yi,zi) * wi(x,y,z)
-                # where wi(x,y,z) are the trilinear basis functions for each corner voxel of the 3D cube
-                # Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy, (1-dz) or dz
-                # Each of the 8 cube corners gets a weight proportional to its distance from the sample point
                 val = (
-                    d_vol[ix0,     iy0,     iz0]     * (1-dx)*(1-dy)*(1-dz) +  # Corner (0,0,0): weight = product of distances from opposite faces
-                    d_vol[ix0 + 1, iy0,     iz0]     * dx*(1-dy)*(1-dz) +     # Corner (1,0,0): weight = dx * (1-dy) * (1-dz)
-                    d_vol[ix0,     iy0 + 1, iz0]     * (1-dx)*dy*(1-dz) +     # Corner (0,1,0): weight = (1-dx) * dy * (1-dz)
-                    d_vol[ix0,     iy0,     iz0 + 1] * (1-dx)*(1-dy)*dz +     # Corner (0,0,1): weight = (1-dx) * (1-dy) * dz
-                    d_vol[ix0 + 1, iy0 + 1, iz0]     * dx*dy*(1-dz) +         # Corner (1,1,0): weight = dx * dy * (1-dz)
-                    d_vol[ix0 + 1, iy0,     iz0 + 1] * dx*(1-dy)*dz +         # Corner (1,0,1): weight = dx * (1-dy) * dz
-                    d_vol[ix0,     iy0 + 1, iz0 + 1] * (1-dx)*dy*dz +         # Corner (0,1,1): weight = (1-dx) * dy * dz
-                    d_vol[ix0 + 1, iy0 + 1, iz0 + 1] * dx*dy*dz               # Corner (1,1,1): weight = dx * dy * dz
+                    d_vol[ix0,     iy0,     iz0]     * omdx*omdy*omdz +
+                    d_vol[ix0 + 1, iy0,     iz0]     * dx  *omdy*omdz +
+                    d_vol[ix0,     iy0 + 1, iz0]     * omdx*dy  *omdz +
+                    d_vol[ix0,     iy0,     iz0 + 1] * omdx*omdy*dz   +
+                    d_vol[ix0 + 1, iy0 + 1, iz0]     * dx  *dy  *omdz +
+                    d_vol[ix0 + 1, iy0,     iz0 + 1] * dx  *omdy*dz   +
+                    d_vol[ix0,     iy0 + 1, iz0 + 1] * omdx*dy  *dz   +
+                    d_vol[ix0 + 1, iy0 + 1, iz0 + 1] * dx  *dy  *dz
                 )
                 # Accumulate contribution weighted by 3D ray segment length (discrete line integral approximation)
                 # This implements the 3D Radon transform: integral of f(x,y,z) along the ray path
@@ -1235,14 +1256,17 @@ def _cone_3d_backward_kernel(
 
     # 3D traversal parameters (extends 2D algorithm)
     step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    dt_x = abs(1.0 / dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
-    dt_y = abs(1.0 / dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
-    dt_z = abs(1.0 / dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
-    
+    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
+    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_z = (1.0 / dir_z) if abs(dir_z) > _EPSILON else 0.0
+    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
+    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
+    dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
+
     # Calculate parameter values for next 3D voxel boundary crossings
-    tx = ((ix + (step_x > 0)) - cx - src_x) / dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) / dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = ((iz + (step_z > 0)) - cz - src_z) / dir_z if abs(dir_z) > _EPSILON else _INF
+    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tz = ((iz + (step_z > 0)) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along divergent 3D ray path using trilinear interpolation
@@ -1255,35 +1279,35 @@ def _cone_3d_backward_kernel(
             if seg_len > _EPSILON:
                 # === TRILINEAR INTERPOLATION SAMPLING ===
                 # Sample 3D volume at ray segment midpoint using source as ray origin
-                mid_x = src_x + (t + seg_len * 0.5) * dir_x + cx  # Midpoint x-coordinate
-                mid_y = src_y + (t + seg_len * 0.5) * dir_y + cy  # Midpoint y-coordinate
-                mid_z = src_z + (t + seg_len * 0.5) * dir_z + cz  # Midpoint z-coordinate
-                
+                t_mid = t + seg_len * 0.5
+                mid_x = src_x + t_mid * dir_x + cx
+                mid_y = src_y + t_mid * dir_y + cy
+                mid_z = src_z + t_mid * dir_z + cz
+
                 # Convert continuous 3D coordinates to voxel indices and interpolation weights
                 ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0  # Fractional parts for 3D weights
-                
+                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0
+
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
                 iy0 = max(0, min(iy0, Ny - 2))
                 iz0 = max(0, min(iz0, Nz - 2))
-                
+
+                # Precompute complements and contribution
+                omdx = 1.0 - dx
+                omdy = 1.0 - dy
+                omdz = 1.0 - dz
+                cval = g * seg_len
+
                 # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
-                # Distribute contribution weighted by segment length and interpolation weights
-                # CUDA 3D ATOMIC OPERATIONS: Most complex atomic pattern in cone beam backprojection
-                # 8 atomic writes per ray segment (one per cube corner) increases memory contention significantly
-                # Cone beam geometry creates maximum ray convergence, highest probability of write conflicts
-                # Performance impact: 3D atomics are most expensive due to volume of concurrent writes
-                # Memory bandwidth: 8 atomic operations per interpolation point can saturate memory subsystem
-                cval = g * seg_len  # Contribution value for this ray segment
-                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0),     cval * (1-dx)*(1-dy)*(1-dz))  # Corner (0,0,0) - atomic write
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0),     cval * dx*(1-dy)*(1-dz))      # Corner (1,0,0) - atomic write
-                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0),     cval * (1-dx)*dy*(1-dz))      # Corner (0,1,0) - atomic write
-                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0 + 1), cval * (1-dx)*(1-dy)*dz)      # Corner (0,0,1) - atomic write
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0),     cval * dx*dy*(1-dz))          # Corner (1,1,0) - atomic write
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0 + 1), cval * dx*(1-dy)*dz)          # Corner (1,0,1) - atomic write
-                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0 + 1), cval * (1-dx)*dy*dz)          # Corner (0,1,1) - atomic write
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx*dy*dz)              # Corner (1,1,1) - atomic write
+                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0),     cval * omdx*omdy*omdz)
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0),     cval * dx  *omdy*omdz)
+                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0),     cval * omdx*dy  *omdz)
+                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0 + 1), cval * omdx*omdy*dz)
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0),     cval * dx  *dy  *omdz)
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0 + 1), cval * dx  *omdy*dz)
+                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0 + 1), cval * omdx*dy  *dz)
+                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx  *dy  *dz)
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first in 3D
