@@ -2,7 +2,6 @@ import math
 import numpy as np
 import torch
 from numba import cuda
-from functools import lru_cache
 
 # ---------------------------------------------------------------------------
 # Global settings & helpers
@@ -108,9 +107,31 @@ class TorchCUDABridge:
             raise ValueError("Tensor must be on CUDA device")
         return cuda.as_cuda_array(tensor.detach())
 
+# ---------------------------------------------------------------------------
+# Stream helper (cached external Numba stream)
+# ---------------------------------------------------------------------------
+_cached_stream_ptr = None
+_cached_numba_stream = None
+
+def _get_numba_external_stream_for(pt_stream=None):
+    """
+    Return a cached numba.cuda.external_stream for the current PyTorch CUDA stream.
+    Caches by the underlying CUDA stream pointer to avoid repeated construction.
+    """
+    global _cached_stream_ptr, _cached_numba_stream
+    if pt_stream is None:
+        pt_stream = torch.cuda.current_stream()
+    # Torch exposes an underlying CUDA stream handle via .cuda_stream
+    ptr = int(pt_stream.cuda_stream)
+    if _cached_stream_ptr == ptr and _cached_numba_stream is not None:
+        return _cached_numba_stream
+    numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+    _cached_stream_ptr = ptr
+    _cached_numba_stream = numba_stream
+    return numba_stream
 
 # === GPU-aware Trigonometric Table Generation ===
-@lru_cache(maxsize=2048)
+# Caching removed: torch.Tensor is unhashable for lru_cache
 def _trig_tables(angles, dtype=_DTYPE, device=None):
     """Compute cosine and sine tables for input angles.
 
@@ -465,12 +486,15 @@ def _parallel_2d_forward_kernel(
                 # Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)
                 # where wi(x,y) are the bilinear basis functions for each corner voxel
                 # Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy
-                val = (
-                    d_image[iy0,     ix0]     * (1 - dx) * (1 - dy) +
-                    d_image[iy0,     ix0 + 1] * dx       * (1 - dy) +
-                    d_image[iy0 + 1, ix0]     * (1 - dx) * dy       +
-                    d_image[iy0 + 1, ix0 + 1] * dx       * dy
-                )
+                one_minus_dx = 1.0 - dx
+                one_minus_dy = 1.0 - dy
+                v00 = d_image[iy0, ix0]
+                v10 = d_image[iy0, ix0 + 1]
+                v01 = d_image[iy0 + 1, ix0]
+                v11 = d_image[iy0 + 1, ix0 + 1]
+                row0 = (v00 * one_minus_dx + v10 * dx) * one_minus_dy
+                row1 = (v01 * one_minus_dx + v11 * dx) * dy
+                val = row0 + row1
                 # Accumulate contribution weighted by ray segment length (discrete line integral approximation)
                 # This implements the Radon transform: integral of f(x,y) along the ray path
                 accum += val * seg_len
@@ -756,12 +780,15 @@ def _fan_2d_forward_kernel(
                 iy0 = max(0, min(iy0, Ny - 2))
                 
                 # Bilinear interpolation (identical to parallel beam)
-                val = (
-                    d_image[iy0,     ix0]     * (1 - dx) * (1 - dy) +
-                    d_image[iy0,     ix0 + 1] * dx       * (1 - dy) +
-                    d_image[iy0 + 1, ix0]     * (1 - dx) * dy       +
-                    d_image[iy0 + 1, ix0 + 1] * dx       * dy
-                )
+                one_minus_dx = 1.0 - dx
+                one_minus_dy = 1.0 - dy
+                v00 = d_image[iy0, ix0]
+                v10 = d_image[iy0, ix0 + 1]
+                v01 = d_image[iy0 + 1, ix0]
+                v11 = d_image[iy0 + 1, ix0 + 1]
+                row0 = (v00 * one_minus_dx + v10 * dx) * one_minus_dy
+                row1 = (v01 * one_minus_dx + v11 * dx) * dy
+                val = row0 + row1
                 accum += val * seg_len
         
         # Voxel boundary crossing logic (identical to parallel beam)
@@ -1405,8 +1432,8 @@ class ParallelProjectorFunction(torch.autograd.Function):
         angles = DeviceManager.ensure_device(angles, device)
 
         # Ensure input is float32 for kernel compatibility
-        image = image.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        image = image.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = image.shape
         n_angles = angles.shape[0]
@@ -1427,7 +1454,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_forward_kernel[grid, tpb, numba_stream](
             d_image, Nx, Ny, d_sino, n_angles, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
@@ -1445,8 +1472,8 @@ class ParallelProjectorFunction(torch.autograd.Function):
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        grad_sinogram = grad_sinogram.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         n_angles = angles.shape[0]
         grad_image = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
@@ -1461,7 +1488,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_angles, num_detectors,
             d_img_grad, Nx, Ny,
@@ -1542,8 +1569,8 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         angles = DeviceManager.ensure_device(angles, device)
 
         # Ensure input is float32 for kernel compatibility
-        sinogram = sinogram.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        sinogram = sinogram.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         n_ang, n_det = sinogram.shape
         Ny, Nx = H, W
@@ -1564,7 +1591,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
@@ -1582,8 +1609,8 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        grad_output = grad_output.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        grad_output = grad_output.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = grad_output.shape
 
@@ -1603,7 +1630,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(detector_spacing), d_cos, d_sin, cx, cy, _DTYPE(voxel_spacing)
@@ -1687,8 +1714,8 @@ class FanProjectorFunction(torch.autograd.Function):
         image = DeviceManager.ensure_device(image, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        image = image.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        image = image.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = image.shape
         n_ang = angles.shape[0]
@@ -1705,7 +1732,7 @@ class FanProjectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_forward_kernel[grid, tpb, numba_stream](
             d_image, Nx, Ny, d_sino, n_ang, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
@@ -1725,8 +1752,8 @@ class FanProjectorFunction(torch.autograd.Function):
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        grad_sinogram = grad_sinogram.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         n_ang = angles.shape[0]
         grad_img = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
@@ -1741,7 +1768,7 @@ class FanProjectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
@@ -1829,8 +1856,8 @@ class FanBackprojectorFunction(torch.autograd.Function):
         sinogram = DeviceManager.ensure_device(sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        sinogram = sinogram.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        sinogram = sinogram.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         n_ang, n_det = sinogram.shape
         Ny, Nx = H, W
@@ -1847,7 +1874,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
@@ -1866,8 +1893,8 @@ class FanBackprojectorFunction(torch.autograd.Function):
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        grad_output = grad_output.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        grad_output = grad_output.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = grad_output.shape
 
@@ -1883,7 +1910,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
@@ -1972,8 +1999,8 @@ class ConeProjectorFunction(torch.autograd.Function):
         volume = DeviceManager.ensure_device(volume, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        volume = volume.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        volume = volume.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         D, H, W = volume.shape
         n_views = angles.shape[0]
@@ -1994,7 +2021,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_vol, W, H, D, d_sino, n_views, det_u, det_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
@@ -2016,8 +2043,8 @@ class ConeProjectorFunction(torch.autograd.Function):
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        grad_sinogram = grad_sinogram.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         n_views = angles.shape[0]
 
@@ -2033,7 +2060,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
@@ -2134,8 +2161,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         sinogram = DeviceManager.ensure_device(sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        sinogram = sinogram.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        sinogram = sinogram.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         n_views, n_u, n_v = sinogram.shape
         
@@ -2154,7 +2181,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_views, n_u, n_v, d_reco, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
@@ -2176,8 +2203,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
 
-        grad_output = grad_output.to(dtype=torch.float32)
-        angles = angles.to(dtype=torch.float32)
+        grad_output = grad_output.to(dtype=torch.float32).contiguous()
+        angles = angles.to(dtype=torch.float32).contiguous()
 
         n_views = angles.shape[0]
 
@@ -2194,7 +2221,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
-        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
