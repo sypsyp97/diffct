@@ -1,7 +1,7 @@
 Examples
 ========
 
-This section demonstrates practical applications of the `diffct` library for various computed tomography (CT) reconstruction tasks. Each example provides comprehensive mathematical background, implementation details, and complete working code.
+This section demonstrates practical applications of the `diffct` library for various computed tomography (CT) reconstruction tasks. Each example provides comprehensive mathematical background, implementation details, and complete working code. The supporting Python scripts live under ``examples/circular_trajectory`` and ``examples/non_circular_trajectory`` in the repository.
 
 The examples are organized into two main categories:
 

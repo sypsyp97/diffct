@@ -60,7 +60,7 @@ Implementation Steps
 --------------------
 
 1. **3D Problem Setup**: Define parameterized 3D volume as learnable tensor
-2. **Cone Beam Forward Model**: Use `ConeProjectorFunction` for 2D projection prediction
+2. **Cone Beam Forward Model**: Generate source and detector trajectories (e.g., with ``diffct.geometry.circular_trajectory_3d`` or ``spiral_trajectory_3d``) and use `ConeProjectorFunction` for 2D projection prediction
 3. **Loss Computation**: Calculate L2 distance between predicted and measured projections
 4. **3D Gradient Computation**: Use automatic differentiation through cone beam operators
 5. **Memory-Efficient Optimization**: Apply strategies to handle large 3D parameter space
@@ -125,7 +125,7 @@ Applications
 Code Example
 ------------
 
-.. literalinclude:: ../../examples/iterative_reco_cone.py
+.. literalinclude:: ../../examples/circular_trajectory/iterative_reco_cone.py
    :language: python
    :linenos:
    :caption: 3D Cone Beam Iterative Example

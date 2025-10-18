@@ -54,7 +54,7 @@ Fan beam geometry introduces complexities compared to parallel beam:
 
 **Implementation Steps**
 
-1. **Geometry Setup**: Configure fan beam parameters (SID, SDD)
+1. **Geometry Setup**: Configure fan beam parameters (SID, SDD) using helpers such as ``diffct.geometry.circular_trajectory_2d_fan``
 2. **Problem Formulation**: Define parameterized image and fan beam forward model
 3. **Loss Computation**: Calculate L2 distance using `FanProjectorFunction`
 4. **Gradient Computation**: Use automatic differentiation through fan beam operators
@@ -84,7 +84,7 @@ Fan beam reconstruction typically exhibits:
 - **Parameter Tuning**: Learning rate may need adjustment for optimal convergence
 - **Memory Usage**: Similar to parallel beam but with additional geometric computations
 
-.. literalinclude:: ../../examples/iterative_reco_fan.py
+.. literalinclude:: ../../examples/circular_trajectory/iterative_reco_fan.py
    :language: python
    :linenos:
    :caption: 2D Fan Beam Iterative Example

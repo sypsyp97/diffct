@@ -47,7 +47,7 @@ where :math:`p_f(t, \theta)` is the filtered projection:
 **Implementation Steps**
 
 1. **Phantom Generation**: Create Shepp-Logan phantom with 5 ellipses
-2. **Forward Projection**: Generate sinogram using `ParallelProjectorFunction`
+2. **Forward Projection**: Generate sinogram using `ParallelProjectorFunction` with geometry from ``diffct.geometry.circular_trajectory_2d_parallel``
 3. **Ramp Filtering**: Apply :math:`H(\omega) = |\omega|` filter in frequency domain
 4. **Backprojection**: Reconstruct using `ParallelBackprojectorFunction`
 5. **Normalization**: Scale by :math:`\frac{\pi}{N_{\text{angles}}}` factor
@@ -63,7 +63,7 @@ The phantom consists of 5 ellipses representing brain tissue structures:
 
 Each ellipse is defined by center position, semi-axes, rotation angle, and attenuation coefficient.
 
-.. literalinclude:: ../../examples/fbp_parallel.py
+.. literalinclude:: ../../examples/circular_trajectory/fbp_parallel.py
    :language: python
    :linenos:
    :caption: 2D Parallel Beam FBP Example

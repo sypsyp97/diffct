@@ -60,7 +60,7 @@ where :math:`m^{(k)}` and :math:`v^{(k)}` are biased first and second moment est
 **Implementation Steps**
 
 1. **Problem Setup**: Define parameterized 2D image as learnable tensor
-2. **Forward Model**: Compute predicted sinogram using `ParallelProjectorFunction`
+2. **Forward Model**: Generate ray geometry (e.g., with ``diffct.geometry.circular_trajectory_2d_parallel``) and compute the predicted sinogram using `ParallelProjectorFunction`
 3. **Loss Computation**: Calculate L2 distance between predicted and measured data
 4. **Gradient Computation**: Use automatic differentiation for gradient calculation
 5. **Parameter Update**: Apply Adam optimizer for iterative improvement
@@ -90,7 +90,7 @@ Typical convergence behavior:
 2. **Refinement Phase** (100-500 iterations): Fine details develop, slower convergence
 3. **Convergence Phase** (500+ iterations): Minimal improvement, potential overfitting
 
-.. literalinclude:: ../../examples/iterative_reco_parallel.py
+.. literalinclude:: ../../examples/circular_trajectory/iterative_reco_parallel.py
    :language: python
    :linenos:
    :caption: 2D Parallel Beam Iterative Example

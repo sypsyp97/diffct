@@ -1,86 +1,110 @@
 API Reference
 =============
 
-This section provides comprehensive documentation for all differentiable CT operators in `diffct`. Each function is implemented as a PyTorch autograd Function, enabling seamless gradient computation through the CT reconstruction pipeline.
+The `diffct` package is organised into focused modules that can be combined to build differentiable CT pipelines:
 
-Overview
---------
+- ``diffct.projectors`` – PyTorch ``autograd.Function`` implementations for forward and backward projectors
+- ``diffct.geometry`` – helpers to generate detector/source trajectories for 2D and 3D scans
+- ``diffct.utils`` – CUDA device management and tensor bridge utilities
+- ``diffct.constants`` – low-level configuration values for advanced tuning
+- ``diffct.differentiable`` – deprecated compatibility shim that re-exports the public API
 
-The `diffct` library provides six main differentiable operators organized by geometry type:
-
-- **Parallel Beam (2D):** Traditional parallel-beam CT geometry
-- **Fan Beam (2D):** Fan-beam geometry with configurable source-detector setup  
-- **Cone Beam (3D):** Full 3D cone-beam geometry for volumetric reconstruction
-
-Each geometry type includes both forward projection and backprojection operators that are fully differentiable and CUDA-accelerated.
-
-Parallel Beam Operators
+Core Projector Functions
 ------------------------
 
-The parallel beam geometry assumes parallel X-ray beams, commonly used in synchrotron CT and some medical CT scanners.
+.. currentmodule:: diffct
 
-.. autoclass:: diffct.differentiable.ParallelProjectorFunction
+.. autoclass:: ParallelProjectorFunction
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: diffct.differentiable.ParallelBackprojectorFunction
+.. autoclass:: ParallelBackprojectorFunction
    :members:
    :undoc-members:
    :show-inheritance:
 
-
-Fan Beam Operators
--------------------
-
-Fan beam geometry uses a point X-ray source with a fan-shaped beam, typical in medical CT scanners.
-
-.. autoclass:: diffct.differentiable.FanProjectorFunction
+.. autoclass:: FanProjectorFunction
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: diffct.differentiable.FanBackprojectorFunction
+.. autoclass:: FanBackprojectorFunction
    :members:
    :undoc-members:
    :show-inheritance:
 
-
-Cone Beam Operators
---------------------
-
-Cone beam geometry extends fan beam to 3D with a cone-shaped X-ray beam for volumetric reconstruction.
-
-.. autoclass:: diffct.differentiable.ConeProjectorFunction
+.. autoclass:: ConeProjectorFunction
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: diffct.differentiable.ConeBackprojectorFunction
+.. autoclass:: ConeBackprojectorFunction
    :members:
    :undoc-members:
    :show-inheritance:
 
+Geometry Helpers
+----------------
+
+.. currentmodule:: diffct.geometry
+
+**3D trajectories**
+
+.. autofunction:: circular_trajectory_3d
+.. autofunction:: random_trajectory_3d
+.. autofunction:: spiral_trajectory_3d
+.. autofunction:: sinusoidal_trajectory_3d
+.. autofunction:: saddle_trajectory_3d
+.. autofunction:: custom_trajectory_3d
+
+**2D trajectories**
+
+.. autofunction:: circular_trajectory_2d_parallel
+.. autofunction:: sinusoidal_trajectory_2d_parallel
+.. autofunction:: custom_trajectory_2d_parallel
+.. autofunction:: circular_trajectory_2d_fan
+.. autofunction:: sinusoidal_trajectory_2d_fan
+.. autofunction:: custom_trajectory_2d_fan
+
+Utilities
+---------
+
+.. currentmodule:: diffct.utils
+
+.. autoclass:: DeviceManager
+   :members:
+
+.. autoclass:: TorchCUDABridge
+   :members:
+
+Additional helper functions (prefixed with an underscore) remain available for advanced integrations that require direct control over CUDA streams or interpolation buffers.
+
+Constants
+---------
+
+.. currentmodule:: diffct.constants
+
+.. autodata:: _DTYPE
+.. autodata:: _TPB_2D
+.. autodata:: _TPB_3D
+.. autodata:: _FASTMATH_DECORATOR
+.. autodata:: _INF
+.. autodata:: _EPSILON
+
+These values mirror the defaults used by the CUDA kernels. They are exposed for power users who need to fine-tune launch parameters or numeric tolerances; most applications should rely on the defaults.
+
+Backward Compatibility
+----------------------
+
+.. currentmodule:: diffct.differentiable
+
+``diffct.differentiable`` continues to expose the legacy API surface for existing code bases. New projects should import from ``diffct`` (top level) or the specific submodules shown above.
 
 Usage Notes
 -----------
 
-**Memory Management:**
-- All operators work with GPU tensors for optimal performance
-- Ensure sufficient GPU memory for your problem size
-- Use ``torch.cuda.empty_cache()`` if encountering memory issues
-
-**Gradient Computation:**
-- All operators support automatic differentiation
-- Gradients flow through both forward and backward passes
-- Set ``requires_grad=True`` on input tensors to enable gradients
-
-**Performance Considerations:**
-- Use contiguous tensors for optimal memory access
-- Consider batch processing for multiple reconstructions
-- Profile your code to identify bottlenecks
-
-**Coordinate Systems:**
-- Image/volume coordinates: (0,0) at top-left corner
-- Detector coordinates: centered at detector array center
-- Rotation: counter-clockwise around z-axis (right-hand rule)
+- All projector operators accept tensors on CUDA devices and return results on the same device. Use ``diffct.utils.DeviceManager`` helpers when integrating into larger code bases.
+- Geometry helper functions build the ``ray_dir``, ``det_origin``, and detector orientation vectors expected by the projector operators.
+- Gradients flow through both forward and backward passes; set ``requires_grad=True`` on inputs that participate in optimisation loops.
+- Ensure tensors are contiguous and use consistent dtype (``torch.float32``) for maximum kernel performance.

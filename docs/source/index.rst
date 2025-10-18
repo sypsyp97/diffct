@@ -7,6 +7,7 @@ A high-performance, CUDA-accelerated library for circular orbit CT reconstructio
 ----------------
 - **High Performance:** CUDA-accelerated projection and backprojection operations with optimized memory management
 - **Fully Differentiable:** End-to-end gradient propagation through all CT operations for seamless deep learning integration
+- **Modular API:** Clear separation of projector operators, geometry builders, and utility helpers
 - **Multiple Geometries:** Support for 2D parallel-beam, 2D fan-beam, and 3D cone-beam geometries
 - **PyTorch Integration:** Native PyTorch autograd support with custom CUDA kernels
 - **Research Ready:** Optimized for both analytical reconstruction (FBP/FDK) and iterative methods

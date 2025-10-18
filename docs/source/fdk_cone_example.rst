@@ -66,7 +66,7 @@ The Feldkamp-Davis-Kress algorithm performs approximate 3D reconstruction in thr
 **Implementation Steps**
 
 1. **3D Phantom Generation**: Create 3D Shepp-Logan phantom with 10 ellipsoids
-2. **Cone Beam Projection**: Generate 2D projections using `ConeProjectorFunction`
+2. **Cone Beam Projection**: Generate 2D projections using `ConeProjectorFunction` with geometry from helpers such as ``diffct.geometry.circular_trajectory_3d``
 3. **Cosine Weighting**: Apply distance-dependent weights
 4. **Row-wise Filtering**: Apply ramp filter to each detector row
 5. **3D Backprojection**: Reconstruct volume using `ConeBackprojectorFunction`
@@ -93,7 +93,7 @@ The FDK algorithm makes several approximations:
 
 These approximations introduce cone beam artifacts for large cone angles, but FDK remains widely used due to computational efficiency.
 
-.. literalinclude:: ../../examples/fdk_cone.py
+.. literalinclude:: ../../examples/circular_trajectory/fdk_cone.py
    :language: python
    :linenos:
    :caption: 3D Cone Beam FDK Example

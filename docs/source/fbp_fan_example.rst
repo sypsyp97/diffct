@@ -65,7 +65,7 @@ Fan beam FBP reconstruction involves three sequential steps:
 **Implementation Steps**
 
 1. **Phantom Generation**: Create Shepp-Logan phantom for testing
-2. **Fan Beam Projection**: Generate sinogram using `FanProjectorFunction`
+2. **Fan Beam Projection**: Generate sinogram using `FanProjectorFunction` with geometry from helpers such as ``diffct.geometry.circular_trajectory_2d_fan``
 3. **Cosine Weighting**: Apply divergence correction weights
 4. **Ramp Filtering**: Filter each projection in frequency domain
 5. **Fan Beam Backprojection**: Reconstruct using `FanBackprojectorFunction`
@@ -78,7 +78,7 @@ Fan beam FBP reconstruction involves three sequential steps:
 - **Natural Magnification**: Improved spatial resolution
 - **Faster Acquisition**: Wider coverage per projection angle
 
-.. literalinclude:: ../../examples/fbp_fan.py
+.. literalinclude:: ../../examples/circular_trajectory/fbp_fan.py
    :language: python
    :linenos:
    :caption: 2D Fan Beam FBP Example

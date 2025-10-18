@@ -15,6 +15,7 @@ A high-performance, CUDA-accelerated library for CT reconstruction with end-to-e
 
 - **Fast:** CUDA-accelerated projection and backprojection operations
 - **Differentiable:** End-to-end gradient propagation for deep learning workflows
+- **Modular:** Dedicated `projectors`, `geometry`, and `utils` submodules with `diffct.differentiable` retained for backward compatibility
 
 ## 📐 Supported Geometries
 
