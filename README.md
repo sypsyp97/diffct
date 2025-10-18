@@ -32,10 +32,12 @@ A high-performance, CUDA-accelerated library for CT reconstruction with end-to-e
 
 ### Installation
 
-Clone the repository and install the package using pip. Choose the appropriate CUDA version for your system.
-
 **CUDA 12:**
 ```bash
+# Clone the repository
+git clone https://github.com/sypsyp97/diffct.git
+cd diffct
+
 # Create and activate conda environment
 conda create -n diffct python=3.12
 conda activate diffct
@@ -54,6 +56,10 @@ pip install -e .
 
 **CUDA 11:**
 ```bash
+# Clone the repository
+git clone https://github.com/sypsyp97/diffct.git
+cd diffct
+
 # Create and activate conda environment
 conda create -n diffct python=3.12
 conda activate diffct
