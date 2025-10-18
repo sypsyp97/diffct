@@ -7,7 +7,7 @@
 [![CI/CD](https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square)](https://github.com/sypsyp97/diffct/actions)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sypsyp97/diffct)
 
-A high-performance, CUDA-accelerated library for circular orbits CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
+A high-performance, CUDA-accelerated library for CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
 
 ⭐ **Please star this project if you find it is useful!**
 
@@ -22,26 +22,6 @@ A high-performance, CUDA-accelerated library for circular orbits CT reconstructi
 - **Fan Beam:** 2D fan-beam geometry
 - **Cone Beam:** 3D cone-beam geometry
 
-## 🧩 Code Structure
-
-```bash
-diffct/
-├── diffct/
-│   ├── __init__.py            # Package initialization
-│   ├── differentiable.py      # Differentiable CT operators
-├── examples/                  # Example usages
-│   ├── fbp_parallel.py
-│   ├── fbp_fan.py
-│   ├── fdk_cone.py
-│   ├── iterative_reco_cone.py
-│   ├── iterative_reco_fan.py
-│   ├── iterative_reco_parallel.py
-├── pyproject.toml             # Project metadata
-├── README.md                  # README
-├── LICENSE                    # License
-├── requirements.txt           # Dependencies
-```
-
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -52,19 +32,24 @@ diffct/
 
 ### Installation
 
+Clone the repository and install the package using pip. Choose the appropriate CUDA version for your system.
+
 **CUDA 12:**
 ```bash
 # Create and activate conda environment
 conda create -n diffct python=3.12
 conda activate diffct
 
-# Install CUDA Toolkit, PyTorch, and Numba
+# Install CUDA (here 12.8.1 as example) PyTorch, and Numba
 conda install nvidia/label/cuda-12.8.1::cuda-toolkit
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
+
+# Install Numba with CUDA 12
 pip install numba-cuda[cu12]
 
 # Install diffct
-pip install diffct
+pip install -e .
 ```
 
 **CUDA 11:**
@@ -73,13 +58,16 @@ pip install diffct
 conda create -n diffct python=3.12
 conda activate diffct
 
-# Install CUDA Toolkit, PyTorch, and Numba
+# Install CUDA (here 11.8.0 as example) PyTorch, and Numba
 conda install nvidia/label/cuda-11.8.0::cuda-toolkit
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
+
+# Install Numba with CUDA 11
 pip install numba-cuda[cu11]
 
 # Install diffct
-pip install diffct
+pip install -e .
 ```
 
 ## 📝 Citation
