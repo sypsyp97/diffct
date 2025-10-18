@@ -18,12 +18,13 @@ from ..constants import _FASTMATH_DECORATOR, _INF, _EPSILON
 def _parallel_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
-    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing
+    det_spacing, d_ray_dir, d_det_origin, d_det_u_vec, cx, cy, voxel_spacing
 ):
-    """Compute the 2D parallel beam forward projection.
+    """Compute the 2D parallel beam forward projection with arbitrary ray trajectories.
 
     This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    2D parallel beam forward projection.
+    2D parallel beam forward projection. Supports arbitrary ray directions and detector
+    positions for each view, enabling non-circular trajectories.
 
     Parameters
     ----------
@@ -41,45 +42,47 @@ def _parallel_2d_forward_kernel(
         Number of detector elements.
     det_spacing : float
         Physical spacing between detector elements.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
+    d_ray_dir : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Ray direction unit vectors for each view, shape (n_ang, 2).
+    d_det_origin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector origin positions for each view, shape (n_ang, 2), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_ang, 2).
     cx : float
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
     voxel_spacing : float
-        Physical size of one voxel (in same units as det_spacing, sid, sdd).
+        Physical size of one voxel (in same units as det_spacing).
 
     Notes
     -----
-    The Siddon method with interpolation provides accurate ray-volume intersection by:
-      - Calculating ray-volume boundary intersections to define traversal limits.
-      - Iterating through voxels along the ray path via parametric equations.
-      - Determining bilinear interpolation weights for sub-voxel sampling.
-      - Aggregating weighted voxel values based on ray segment lengths.
+    Supports arbitrary parallel beam geometries by specifying ray direction,
+    detector origin, and detector orientation vectors for each view.
+    Uses bilinear interpolation for accurate volumetric sampling.
     """
-    # CUDA THREAD ORGANIZATION: 2D grid maps directly to ray geometry
-    # Each thread processes one ray defined by (projection_angle, detector_element) pair
-    # Thread indexing: iang = projection angle index, idet = detector element index
-    # Memory access pattern: Threads in same warp access consecutive detector elements (coalesced)
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
         return
 
-    # === RAY GEOMETRY SETUP ===
-    # Extract projection angle and compute detector position
-    cos_a = d_cos[iang]  # Precomputed cosine of projection angle
-    sin_a = d_sin[iang]  # Precomputed sine of projection angle
-    # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    # === 2D PARALLEL BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
+    # Read ray direction (parallel for all rays in this view)
+    dir_x = d_ray_dir[iang, 0]
+    dir_y = d_ray_dir[iang, 1]
 
-    # Define ray direction and starting point for parallel beam geometry
-    # Ray direction is perpendicular to detector array (cos_a, sin_a)
-    # Ray starting point is offset along detector by distance u in voxel units
-    dir_x, dir_y = cos_a, sin_a
-    pnt_x, pnt_y = u * -sin_a, u * cos_a
+    # Read detector origin and orientation vector
+    det_ox = d_det_origin[iang, 0] / voxel_spacing
+    det_oy = d_det_origin[iang, 1] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
+
+    # Calculate detector element offset from origin
+    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+
+    # Ray starting point: detector origin + offset along u-direction
+    pnt_x = det_ox + u_offset * u_vec_x
+    pnt_y = det_oy + u_offset * u_vec_y
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
@@ -198,12 +201,13 @@ def _parallel_2d_forward_kernel(
 def _parallel_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
-    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing
+    det_spacing, d_ray_dir, d_det_origin, d_det_u_vec, cx, cy, voxel_spacing
 ):
-    """Compute the 2D parallel beam backprojection.
+    """Compute the 2D parallel beam backprojection with arbitrary ray trajectories.
 
     This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    2D parallel beam backprojection.
+    2D parallel beam backprojection. Supports arbitrary ray directions and detector
+    positions for each view, enabling non-circular trajectories.
 
     Parameters
     ----------
@@ -221,37 +225,50 @@ def _parallel_2d_backward_kernel(
         Number of voxels along the y-axis.
     det_spacing : float
         Physical spacing between detector elements.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
+    d_ray_dir : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Ray direction unit vectors for each view, shape (n_ang, 2).
+    d_det_origin : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector origin positions for each view, shape (n_ang, 2), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_ang, 2).
     cx : float
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
     voxel_spacing : float
-        Physical size of one voxel (in same units as det_spacing, sid, sdd).
+        Physical size of one voxel (in same units as det_spacing).
 
     Notes
     -----
     This operation is the adjoint of the forward projection. Sinogram values
     are distributed back into the volume along identical ray paths using
     atomic operations to ensure thread-safe accumulation.
+    Supports arbitrary parallel beam geometries.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
         return
 
-    # === RAY GEOMETRY SETUP (identical to forward projection) ===
-    val   = d_sino[iang, idet]  # Sinogram value to backproject
-    cos_a = d_cos[iang]         # Precomputed cosine of projection angle
-    sin_a = d_sin[iang]         # Precomputed sine of projection angle
-    # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    # === 2D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
+    val = d_sino[iang, idet]  # Sinogram value to backproject
 
-    # Define ray direction and starting point for parallel beam geometry
-    dir_x, dir_y = cos_a, sin_a
-    pnt_x, pnt_y = u * -sin_a, u * cos_a
+    # Read ray direction (parallel for all rays in this view)
+    dir_x = d_ray_dir[iang, 0]
+    dir_y = d_ray_dir[iang, 1]
+
+    # Read detector origin and orientation vector
+    det_ox = d_det_origin[iang, 0] / voxel_spacing
+    det_oy = d_det_origin[iang, 1] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
+
+    # Calculate detector element offset from origin
+    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+
+    # Ray starting point: detector origin + offset along u-direction
+    pnt_x = det_ox + u_offset * u_vec_x
+    pnt_y = det_oy + u_offset * u_vec_y
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
     t_min, t_max = -_INF, _INF

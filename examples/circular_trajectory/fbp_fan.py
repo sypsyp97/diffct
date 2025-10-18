@@ -4,6 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from diffct.differentiable import FanProjectorFunction, FanBackprojectorFunction
+from diffct.geometry import circular_trajectory_2d_fan
 
 
 def shepp_logan_2d(Nx, Ny):
@@ -61,10 +62,12 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
-    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
-    sinogram = FanProjectorFunction.apply(image_torch, angles_torch, num_detectors,
-                                          detector_spacing, sdd, sid, voxel_spacing)
+    # Generate trajectory geometry for fan beam
+    src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(num_angles, sid, sdd, device=device)
+
+    sinogram = FanProjectorFunction.apply(image_torch, src_pos, det_center, det_u_vec, num_detectors,
+                                          detector_spacing, voxel_spacing)
 
     # --- FBP weighting and filtering ---
     # For fan-beam FBP, projections must be weighted before filtering.
@@ -77,9 +80,8 @@ def main():
     sino_weighted = sinogram * weights
     sinogram_filt = ramp_filter(sino_weighted)
 
-    reconstruction = F.relu(FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                    detector_spacing, Ny, Nx,
-                                                    sdd, sid, voxel_spacing)) # ReLU to ensure non-negativity
+    reconstruction = F.relu(FanBackprojectorFunction.apply(sinogram_filt, src_pos, det_center, det_u_vec,
+                                                    detector_spacing, Ny, Nx, voxel_spacing)) # ReLU to ensure non-negativity
     
     # --- FBP normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

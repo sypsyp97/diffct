@@ -3,6 +3,7 @@ import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from diffct.differentiable import ParallelProjectorFunction, ParallelBackprojectorFunction
+from diffct.geometry import circular_trajectory_2d_parallel
 
 
 def shepp_logan_2d(Nx, Ny):
@@ -58,14 +59,16 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
-    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
-    sinogram = ParallelProjectorFunction.apply(image_torch, angles_torch,
+    # Generate trajectory geometry for parallel beam
+    ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(num_angles, device=device)
+
+    sinogram = ParallelProjectorFunction.apply(image_torch, ray_dir, det_origin, det_u_vec,
                                                num_detectors, detector_spacing, voxel_spacing)
     
     sinogram_filt = ramp_filter(sinogram)
 
-    reconstruction = F.relu(ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
+    reconstruction = F.relu(ParallelBackprojectorFunction.apply(sinogram_filt, ray_dir, det_origin, det_u_vec,
                                                          detector_spacing, Ny, Nx, voxel_spacing)) # ReLU to ensure non-negativity
     
     # --- FBP normalization ---

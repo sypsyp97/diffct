@@ -18,13 +18,14 @@ from ..constants import _FASTMATH_DECORATOR, _INF, _EPSILON
 def _fan_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
-    det_spacing, d_cos, d_sin,
-    sdd, sid, cx, cy, voxel_spacing
+    det_spacing, d_src_pos, d_det_center, d_det_u_vec,
+    cx, cy, voxel_spacing
 ):
-    """Compute the 2D fan beam forward projection.
+    """Compute the 2D fan beam forward projection with arbitrary source-detector trajectories.
 
     This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    2D fan beam forward projection.
+    2D fan beam forward projection. Supports arbitrary source and detector positions
+    for each view, enabling non-circular trajectories.
 
     Parameters
     ----------
@@ -42,48 +43,47 @@ def _fan_2d_forward_kernel(
         Number of detector elements.
     det_spacing : float
         Physical spacing between detector elements.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
-    sdd : float
-        Source-to-Detector Distance (SDD), total distance from source to detector.
-    sid : float
-        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    d_src_pos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Source positions for each view, shape (n_ang, 2), in physical units.
+    d_det_center : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector center positions for each view, shape (n_ang, 2), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_ang, 2).
     cx : float
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
     voxel_spacing : float
-        Physical size of one voxel (in same units as det_spacing, sid, sdd).
+        Physical size of one voxel (in same units as det_spacing).
 
     Notes
     -----
-    Fan beam geometry diverges from parallel beam in that its rays originate
-    from a single point source to a linear detector array. Rays connect the
-    rotated source position around the isocenter to each detector pixel.
+    Supports arbitrary fan beam geometries by specifying source position,
+    detector center, and detector orientation vectors for each view.
+    Uses bilinear interpolation for accurate volumetric sampling.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
         return
 
-    # === FAN BEAM GEOMETRY SETUP ===
-    cos_a = d_cos[iang]  # Precomputed cosine of projection angle
-    sin_a = d_sin[iang]  # Precomputed sine of projection angle
-    # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
-    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
-    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
+    # === 2D FAN BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
+    # Read source position from position matrix (in physical units)
+    src_x = d_src_pos[iang, 0] / voxel_spacing
+    src_y = d_src_pos[iang, 1] / voxel_spacing
 
-    # Calculate source and detector positions for current projection angle
-    # Source position: rotated by angle around isocenter at distance sid (SID)
-    src_x = -sid_v * sin_a  # Source x-coordinate in voxel units
-    src_y =  sid_v * cos_a  # Source y-coordinate in voxel units
-    
-    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
-    idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate in voxel units
+    # Read detector center and orientation vector
+    det_cx = d_det_center[iang, 0] / voxel_spacing
+    det_cy = d_det_center[iang, 1] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
+
+    # Calculate detector element offset from center
+    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+
+    # Calculate 2D detector element position using center + u*u_vec
+    det_x = det_cx + u_offset * u_vec_x
+    det_y = det_cy + u_offset * u_vec_y
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -181,13 +181,14 @@ def _fan_2d_forward_kernel(
 def _fan_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
-    det_spacing, d_cos, d_sin,
-    sdd, sid, cx, cy, voxel_spacing
+    det_spacing, d_src_pos, d_det_center, d_det_u_vec,
+    cx, cy, voxel_spacing
 ):
-    """Compute the 2D fan beam backprojection.
+    """Compute the 2D fan beam backprojection with arbitrary source-detector trajectories.
 
     This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    2D fan beam backprojection.
+    2D fan beam backprojection. Supports arbitrary source and detector positions
+    for each view, enabling non-circular trajectories.
 
     Parameters
     ----------
@@ -205,49 +206,50 @@ def _fan_2d_backward_kernel(
         Number of voxels along the y-axis.
     det_spacing : float
         Physical spacing between detector elements.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
-    sdd : float
-        Source-to-Detector Distance (SDD), total distance from source to detector.
-    sid : float
-        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    d_src_pos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Source positions for each view, shape (n_ang, 2), in physical units.
+    d_det_center : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector center positions for each view, shape (n_ang, 2), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_ang, 2).
     cx : float
         Half of image width in voxels.
     cy : float
         Half of image height in voxels.
     voxel_spacing : float
-        Physical size of one voxel (in same units as det_spacing, sid, sdd).
+        Physical size of one voxel (in same units as det_spacing).
 
     Notes
     -----
     As the adjoint to the fan beam forward projection, this operation
     distributes sinogram values back into the volume along divergent ray
     paths using atomic operations for thread-safe accumulation.
+    Supports arbitrary fan beam geometries.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
         return
 
-    # === BACKPROJECTION VALUE AND GEOMETRY SETUP ===
-    val   = d_sino[iang, idet]  # Sinogram value to backproject along this ray
-    cos_a = d_cos[iang]         # Precomputed cosine of projection angle
-    sin_a = d_sin[iang]         # Precomputed sine of projection angle
-    # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
-    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
-    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
+    # === 2D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
+    val = d_sino[iang, idet]  # Sinogram value to backproject along this ray
 
-    # Calculate source and detector positions for current projection angle
-    # Source position: rotated by angle around isocenter at distance sid (SID)
-    src_x = -sid_v * sin_a  # Source x-coordinate in voxel units
-    src_y =  sid_v * cos_a  # Source y-coordinate in voxel units
-    
-    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
-    idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate in voxel units
+    # Read source position from position matrix (in physical units)
+    src_x = d_src_pos[iang, 0] / voxel_spacing
+    src_y = d_src_pos[iang, 1] / voxel_spacing
+
+    # Read detector center and orientation vector
+    det_cx = d_det_center[iang, 0] / voxel_spacing
+    det_cy = d_det_center[iang, 1] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
+
+    # Calculate detector element offset from center
+    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+
+    # Calculate 2D detector element position using center + u*u_vec
+    det_x = det_cx + u_offset * u_vec_x
+    det_y = det_cy + u_offset * u_vec_y
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
 from diffct.differentiable import FanProjectorFunction
+from diffct.geometry import circular_trajectory_2d_fan
 
 
 def shepp_logan_2d(Nx, Ny):
@@ -36,37 +37,33 @@ def shepp_logan_2d(Nx, Ny):
     return phantom
 
 class IterativeRecoModel(nn.Module):
-    def __init__(self, volume_shape, angles, 
-                 num_detectors, detector_spacing, 
-                 sdd, sid, voxel_spacing):
-        
+    def __init__(self, volume_shape, src_pos, det_center, det_u_vec,
+                 num_detectors, detector_spacing, voxel_spacing):
+
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
-        self.angles = angles
+        self.src_pos = src_pos
+        self.det_center = det_center
+        self.det_u_vec = det_u_vec
         self.num_detectors = num_detectors
         self.detector_spacing = detector_spacing
-        self.sdd = sdd
-        self.sid = sid
         self.relu = nn.ReLU() # non negative constraint
         self.voxel_spacing = voxel_spacing
 
     def forward(self, x):
         updated_reco = x + self.reco
-        current_sino = FanProjectorFunction.apply(updated_reco, self.angles, 
-                                                  self.num_detectors, self.detector_spacing, 
-                                                  self.sdd, self.sid, self.voxel_spacing)
+        current_sino = FanProjectorFunction.apply(updated_reco, self.src_pos, self.det_center, self.det_u_vec,
+                                                  self.num_detectors, self.detector_spacing, self.voxel_spacing)
         return current_sino, self.relu(updated_reco)
 
 class Pipeline:
-    def __init__(self, lr, volume_shape, angles, 
-                 num_detectors, detector_spacing, 
-                 sdd, sid, voxel_spacing,
+    def __init__(self, lr, volume_shape, src_pos, det_center, det_u_vec,
+                 num_detectors, detector_spacing, voxel_spacing,
                  device, epoches=1000):
-        
+
         self.epoches = epoches
-        self.model = IterativeRecoModel(volume_shape, angles,
-                                        num_detectors, detector_spacing, 
-                                        sdd, sid, voxel_spacing).to(device)
+        self.model = IterativeRecoModel(volume_shape, src_pos, det_center, det_u_vec,
+                                        num_detectors, detector_spacing, voxel_spacing).to(device)
         
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
         self.loss = nn.MSELoss()
@@ -91,8 +88,6 @@ def main():
     phantom_cpu = shepp_logan_2d(Nx, Ny)
 
     num_views = 360
-    angles_np = np.linspace(0, 2 * math.pi, num_views, endpoint=False).astype(np.float32)
-
     num_detectors = 256
     detector_spacing = 1.0
     voxel_spacing = 1.0
@@ -101,20 +96,22 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32)
-    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
+
+    # Generate trajectory geometry for fan beam
+    src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(num_views, sid, sdd, device=device)
 
     # Generate the "real" sinogram
-    real_sinogram = FanProjectorFunction.apply(phantom_torch, angles_torch,
-                                               num_detectors, detector_spacing,
-                                               sdd, sid, voxel_spacing)
+    real_sinogram = FanProjectorFunction.apply(phantom_torch, src_pos, det_center, det_u_vec,
+                                               num_detectors, detector_spacing, voxel_spacing)
 
     pipeline_instance = Pipeline(lr=1e-1,
-                                 volume_shape=(Ny,Nx),
-                                 angles=angles_torch,
+                                 volume_shape=(Ny, Nx),
+                                 src_pos=src_pos,
+                                 det_center=det_center,
+                                 det_u_vec=det_u_vec,
                                  num_detectors=num_detectors,
                                  detector_spacing=detector_spacing,
-                                 sdd=sdd, voxel_spacing=voxel_spacing,
-                                 sid=sid,
+                                 voxel_spacing=voxel_spacing,
                                  device=device, epoches=1000)
 
     ini_guess = torch.zeros_like(phantom_torch)

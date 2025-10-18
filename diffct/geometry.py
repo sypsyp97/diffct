@@ -553,3 +553,454 @@ def custom_trajectory_3d(n_views, sid, sdd,
         det_v_vec[i] = det_v_vec[i] / torch.norm(det_v_vec[i])
 
     return src_pos, det_center, det_u_vec, det_v_vec
+
+
+# ============================================================================
+# 2D Fan Beam Trajectory Generation Functions
+# ============================================================================
+
+def circular_trajectory_2d_fan(n_views, sid, sdd, start_angle=0.0, end_angle=None, device='cuda', dtype=torch.float32):
+    """Generate circular trajectory geometry for 2D fan-beam CT.
+
+    Creates source and detector position matrices for a standard circular
+    orbit around the origin, commonly used in 2D fan-beam CT imaging.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    sid : float
+        Source-to-Isocenter Distance (SID), in physical units.
+    sdd : float
+        Source-to-Detector Distance (SDD), in physical units.
+    start_angle : float, optional
+        Starting angle in radians (default: 0.0).
+    end_angle : float, optional
+        Ending angle in radians (default: 2*pi, full rotation).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+
+    Returns
+    -------
+    src_pos : torch.Tensor
+        Source positions, shape (n_views, 2).
+    det_center : torch.Tensor
+        Detector center positions, shape (n_views, 2).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors, shape (n_views, 2).
+
+    Examples
+    --------
+    >>> src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(
+    ...     n_views=360, sid=1000.0, sdd=1500.0, device='cuda'
+    ... )
+    >>> print(src_pos.shape)  # (360, 2)
+    """
+    if end_angle is None:
+        end_angle = 2 * math.pi
+
+    # Generate angles
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+
+    # Preallocate position matrices
+    src_pos = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_center = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_u_vec = torch.zeros((n_views, 2), device=device, dtype=dtype)
+
+    # Compute trigonometric values
+    cos_angles = torch.cos(angles)
+    sin_angles = torch.sin(angles)
+
+    # Source rotates around isocenter at distance sid
+    src_pos[:, 0] = -sid * sin_angles  # x
+    src_pos[:, 1] = sid * cos_angles   # y
+
+    # Detector center is opposite to source at distance (sdd - sid) from isocenter
+    idd = sdd - sid  # Isocenter-to-Detector Distance
+    det_center[:, 0] = idd * sin_angles   # x
+    det_center[:, 1] = -idd * cos_angles  # y
+
+    # Detector u-direction (tangent to rotation)
+    det_u_vec[:, 0] = cos_angles   # x
+    det_u_vec[:, 1] = sin_angles   # y
+
+    return src_pos, det_center, det_u_vec
+
+
+def sinusoidal_trajectory_2d_fan(n_views, sid, sdd, amplitude=50.0, frequency=2.0,
+                                 start_angle=0.0, device='cuda', dtype=torch.float32):
+    """Generate sinusoidal trajectory geometry for 2D fan-beam CT.
+
+    Creates a trajectory where the source follows a sinusoidal path,
+    with radial oscillations as it rotates around the origin.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    sid : float
+        Mean Source-to-Isocenter Distance (SID), in physical units.
+    sdd : float
+        Source-to-Detector Distance (SDD), in physical units.
+    amplitude : float, optional
+        Amplitude of sinusoidal radial variation (default: 50.0).
+    frequency : float, optional
+        Number of oscillation cycles per full rotation (default: 2.0).
+    start_angle : float, optional
+        Starting angle in radians (default: 0.0).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+
+    Returns
+    -------
+    src_pos : torch.Tensor
+        Source positions, shape (n_views, 2).
+    det_center : torch.Tensor
+        Detector center positions, shape (n_views, 2).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors, shape (n_views, 2).
+
+    Examples
+    --------
+    >>> src_pos, det_center, det_u_vec = sinusoidal_trajectory_2d_fan(
+    ...     n_views=360, sid=1000.0, sdd=1500.0, amplitude=100.0, frequency=3.0
+    ... )
+    """
+    # Generate angles
+    end_angle = start_angle + 2 * math.pi
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+
+    # Compute sinusoidal radial variation
+    radial_variation = amplitude * torch.sin(frequency * angles)
+    sid_varying = sid + radial_variation
+
+    # Preallocate position matrices
+    src_pos = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_center = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_u_vec = torch.zeros((n_views, 2), device=device, dtype=dtype)
+
+    # Compute trigonometric values
+    cos_angles = torch.cos(angles)
+    sin_angles = torch.sin(angles)
+
+    # Source with sinusoidal radial variation
+    src_pos[:, 0] = -sid_varying * sin_angles
+    src_pos[:, 1] = sid_varying * cos_angles
+
+    # Detector center
+    idd = sdd - sid_varying
+    det_center[:, 0] = idd * sin_angles
+    det_center[:, 1] = -idd * cos_angles
+
+    # Detector u-direction
+    det_u_vec[:, 0] = cos_angles
+    det_u_vec[:, 1] = sin_angles
+
+    return src_pos, det_center, det_u_vec
+
+
+def custom_trajectory_2d_fan(n_views, sid, sdd,
+                             source_path_fn: Callable[[torch.Tensor, float], torch.Tensor],
+                             start_angle=0.0, device='cuda', dtype=torch.float32):
+    """Generate custom trajectory geometry for 2D fan-beam CT using user-defined function.
+
+    Creates a trajectory based on a user-provided function that defines the source
+    position as a function of angle and SID.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    sid : float
+        Source-to-Isocenter Distance (SID), in physical units.
+    sdd : float
+        Source-to-Detector Distance (SDD), in physical units.
+    source_path_fn : Callable[[torch.Tensor, float], torch.Tensor]
+        Function that takes (angles, sid) and returns source positions (n_views, 2).
+        The function signature should be: f(angles: torch.Tensor, sid: float) -> torch.Tensor
+        where angles has shape (n_views,) and output has shape (n_views, 2).
+    start_angle : float, optional
+        Starting angle in radians (default: 0.0).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+
+    Returns
+    -------
+    src_pos : torch.Tensor
+        Source positions, shape (n_views, 2).
+    det_center : torch.Tensor
+        Detector center positions, shape (n_views, 2).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors, shape (n_views, 2).
+
+    Examples
+    --------
+    >>> # Define a custom elliptical trajectory
+    >>> def ellipse_path(angles, sid):
+    ...     src_pos = torch.zeros((len(angles), 2), device=angles.device, dtype=angles.dtype)
+    ...     src_pos[:, 0] = -sid * 1.5 * torch.sin(angles)  # wider in x
+    ...     src_pos[:, 1] = sid * torch.cos(angles)
+    ...     return src_pos
+    >>>
+    >>> src_pos, det_center, det_u_vec = custom_trajectory_2d_fan(
+    ...     n_views=360, sid=1000.0, sdd=1500.0, source_path_fn=ellipse_path
+    ... )
+    """
+    # Generate angles
+    end_angle = start_angle + 2 * math.pi
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+
+    # Get source positions from user-defined function
+    src_pos = source_path_fn(angles, sid)
+
+    if src_pos.shape != (n_views, 2):
+        raise ValueError(f"source_path_fn must return tensor of shape ({n_views}, 2), "
+                        f"got {src_pos.shape}")
+
+    # Preallocate remaining position matrices
+    det_center = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_u_vec = torch.zeros((n_views, 2), device=device, dtype=dtype)
+
+    # For each view, compute detector position and orientation
+    for i in range(n_views):
+        # Vector from isocenter to source
+        src_vec = src_pos[i]
+        src_vec_norm = torch.norm(src_vec)
+        src_unit = src_vec / src_vec_norm
+
+        # Detector center is opposite to source
+        det_center[i] = -src_unit * (sdd - src_vec_norm)
+
+        # Detector u-direction: perpendicular to source direction (rotate 90 degrees)
+        det_u_vec[i, 0] = -src_unit[1]  # perpendicular: (-y, x)
+        det_u_vec[i, 1] = src_unit[0]
+
+    return src_pos, det_center, det_u_vec
+
+
+# ============================================================================
+# 2D Parallel Beam Trajectory Generation Functions
+# ============================================================================
+
+def circular_trajectory_2d_parallel(n_views, detector_distance=0.0, start_angle=0.0, end_angle=None,
+                                   device='cuda', dtype=torch.float32):
+    """Generate circular trajectory geometry for 2D parallel-beam CT.
+
+    Creates ray direction and detector position matrices for a standard circular
+    scanning geometry, commonly used in 2D parallel-beam CT imaging.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    detector_distance : float, optional
+        Distance from isocenter to detector origin (default: 0.0).
+    start_angle : float, optional
+        Starting angle in radians (default: 0.0).
+    end_angle : float, optional
+        Ending angle in radians (default: pi, half rotation for parallel beam).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+
+    Returns
+    -------
+    ray_dir : torch.Tensor
+        Ray direction unit vectors for each view, shape (n_views, 2).
+    det_origin : torch.Tensor
+        Detector origin positions for each view, shape (n_views, 2).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors for each view, shape (n_views, 2).
+
+    Examples
+    --------
+    >>> ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(
+    ...     n_views=180, device='cuda'
+    ... )
+    >>> print(ray_dir.shape)  # (180, 2)
+    """
+    if end_angle is None:
+        end_angle = math.pi  # Half rotation for parallel beam
+
+    # Generate angles
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+
+    # Preallocate position matrices
+    ray_dir = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_origin = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_u_vec = torch.zeros((n_views, 2), device=device, dtype=dtype)
+
+    # Compute trigonometric values
+    cos_angles = torch.cos(angles)
+    sin_angles = torch.sin(angles)
+
+    # Ray direction: perpendicular to detector
+    ray_dir[:, 0] = cos_angles
+    ray_dir[:, 1] = sin_angles
+
+    # Detector origin: offset from isocenter perpendicular to ray direction
+    det_origin[:, 0] = -detector_distance * sin_angles
+    det_origin[:, 1] = detector_distance * cos_angles
+
+    # Detector u-direction: tangent to rotation (perpendicular to ray)
+    det_u_vec[:, 0] = -sin_angles
+    det_u_vec[:, 1] = cos_angles
+
+    return ray_dir, det_origin, det_u_vec
+
+
+def sinusoidal_trajectory_2d_parallel(n_views, amplitude=50.0, frequency=2.0,
+                                     start_angle=0.0, device='cuda', dtype=torch.float32):
+    """Generate sinusoidal trajectory geometry for 2D parallel-beam CT.
+
+    Creates a trajectory where the detector follows a sinusoidal path
+    while maintaining parallel rays.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    amplitude : float, optional
+        Amplitude of sinusoidal detector displacement (default: 50.0).
+    frequency : float, optional
+        Number of oscillation cycles per rotation (default: 2.0).
+    start_angle : float, optional
+        Starting angle in radians (default: 0.0).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+
+    Returns
+    -------
+    ray_dir : torch.Tensor
+        Ray direction unit vectors for each view, shape (n_views, 2).
+    det_origin : torch.Tensor
+        Detector origin positions for each view, shape (n_views, 2).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors for each view, shape (n_views, 2).
+
+    Examples
+    --------
+    >>> ray_dir, det_origin, det_u_vec = sinusoidal_trajectory_2d_parallel(
+    ...     n_views=180, amplitude=100.0, frequency=3.0
+    ... )
+    """
+    # Generate angles
+    end_angle = start_angle + math.pi
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+
+    # Compute sinusoidal detector displacement
+    detector_offset = amplitude * torch.sin(frequency * angles)
+
+    # Preallocate position matrices
+    ray_dir = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_origin = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_u_vec = torch.zeros((n_views, 2), device=device, dtype=dtype)
+
+    # Compute trigonometric values
+    cos_angles = torch.cos(angles)
+    sin_angles = torch.sin(angles)
+
+    # Ray direction: perpendicular to detector
+    ray_dir[:, 0] = cos_angles
+    ray_dir[:, 1] = sin_angles
+
+    # Detector origin with sinusoidal offset
+    det_origin[:, 0] = -detector_offset * sin_angles
+    det_origin[:, 1] = detector_offset * cos_angles
+
+    # Detector u-direction: tangent to rotation
+    det_u_vec[:, 0] = -sin_angles
+    det_u_vec[:, 1] = cos_angles
+
+    return ray_dir, det_origin, det_u_vec
+
+
+def custom_trajectory_2d_parallel(n_views,
+                                  ray_dir_fn: Callable[[torch.Tensor], torch.Tensor],
+                                  det_origin_fn: Callable[[torch.Tensor], torch.Tensor],
+                                  start_angle=0.0, device='cuda', dtype=torch.float32):
+    """Generate custom trajectory geometry for 2D parallel-beam CT using user-defined functions.
+
+    Creates a trajectory based on user-provided functions that define the ray
+    direction and detector origin as functions of angle.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    ray_dir_fn : Callable[[torch.Tensor], torch.Tensor]
+        Function that takes angles and returns ray directions (n_views, 2).
+    det_origin_fn : Callable[[torch.Tensor], torch.Tensor]
+        Function that takes angles and returns detector origins (n_views, 2).
+    start_angle : float, optional
+        Starting angle in radians (default: 0.0).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+
+    Returns
+    -------
+    ray_dir : torch.Tensor
+        Ray direction unit vectors for each view, shape (n_views, 2).
+    det_origin : torch.Tensor
+        Detector origin positions for each view, shape (n_views, 2).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors for each view, shape (n_views, 2).
+
+    Examples
+    --------
+    >>> # Define custom trajectory functions
+    >>> def ray_dirs(angles):
+    ...     dirs = torch.zeros((len(angles), 2), device=angles.device, dtype=angles.dtype)
+    ...     dirs[:, 0] = torch.cos(angles)
+    ...     dirs[:, 1] = torch.sin(angles)
+    ...     return dirs
+    >>>
+    >>> def det_origins(angles):
+    ...     origins = torch.zeros((len(angles), 2), device=angles.device, dtype=angles.dtype)
+    ...     return origins
+    >>>
+    >>> ray_dir, det_origin, det_u_vec = custom_trajectory_2d_parallel(
+    ...     n_views=180, ray_dir_fn=ray_dirs, det_origin_fn=det_origins
+    ... )
+    """
+    # Generate angles
+    end_angle = start_angle + math.pi
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+
+    # Get ray directions and detector origins from user-defined functions
+    ray_dir = ray_dir_fn(angles)
+    det_origin = det_origin_fn(angles)
+
+    if ray_dir.shape != (n_views, 2):
+        raise ValueError(f"ray_dir_fn must return tensor of shape ({n_views}, 2), "
+                        f"got {ray_dir.shape}")
+    if det_origin.shape != (n_views, 2):
+        raise ValueError(f"det_origin_fn must return tensor of shape ({n_views}, 2), "
+                        f"got {det_origin.shape}")
+
+    # Normalize ray directions
+    ray_dir = ray_dir / torch.norm(ray_dir, dim=1, keepdim=True)
+
+    # Detector u-direction: perpendicular to ray direction (rotate 90 degrees)
+    det_u_vec = torch.zeros((n_views, 2), device=device, dtype=dtype)
+    det_u_vec[:, 0] = -ray_dir[:, 1]  # perpendicular: (-y, x)
+    det_u_vec[:, 1] = ray_dir[:, 0]
+
+    return ray_dir, det_origin, det_u_vec

@@ -66,16 +66,19 @@ class ParallelProjectorFunction(torch.autograd.Function):
     >>> print(f"Gradient shape: {image.grad.shape}")  # (128, 128)
     """
     @staticmethod
-    def forward(ctx, image, angles, num_detectors, detector_spacing=1.0, voxel_spacing=1.0):
-        """Compute the 2D parallel beam forward projection (Radon transform) of
-        an image using CUDA acceleration.
+    def forward(ctx, image, ray_dir, det_origin, det_u_vec, num_detectors, detector_spacing=1.0, voxel_spacing=1.0):
+        """Compute the 2D parallel beam forward projection with arbitrary trajectories using CUDA acceleration.
 
         Parameters
         ----------
         image : torch.Tensor
             2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.
-        angles : torch.Tensor
-            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `image`.
+        ray_dir : torch.Tensor
+            Ray direction unit vectors for each view, shape (n_views, 2).
+        det_origin : torch.Tensor
+            Detector origin positions for each view, shape (n_views, 2), in physical units.
+        det_u_vec : torch.Tensor
+            Detector u-direction unit vectors for each view, shape (n_views, 2).
         num_detectors : int
             Number of detector elements in the sinogram (columns).
         detector_spacing : float, optional
@@ -86,91 +89,98 @@ class ParallelProjectorFunction(torch.autograd.Function):
         Returns
         -------
         sinogram : torch.Tensor
-            2D tensor of shape (num_angles, num_detectors) containing the forward projection (sinogram) on the same device as `image`.
+            2D tensor of shape (n_views, num_detectors) containing the forward projection (sinogram) on the same device as `image`.
 
         Notes
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
+        - Supports arbitrary parallel beam geometries.
         - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
         >>> image = torch.randn(128, 128, device='cuda', requires_grad=True)
-        >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
+        >>> ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(180, device='cuda')
         >>> sinogram = ParallelProjectorFunction.apply(
-        ...     image, angles, 128, 1.0
+        ...     image, ray_dir, det_origin, det_u_vec, 128, 1.0
         ... )
         """
         device = DeviceManager.get_device(image)
         image = DeviceManager.ensure_device(image, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        ray_dir = DeviceManager.ensure_device(ray_dir, device)
+        det_origin = DeviceManager.ensure_device(det_origin, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         # Ensure input is float32 for kernel compatibility
         image = image.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        ray_dir = ray_dir.to(dtype=torch.float32).contiguous()
+        det_origin = det_origin.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = image.shape
-        n_angles = angles.shape[0]
+        n_views = ray_dir.shape[0]
 
         # Allocate output tensor on the same device
-        sinogram = torch.zeros((n_angles, num_detectors), dtype=image.dtype, device=device)
-
-        # Prepare trigonometric tables on the correct device
-        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype, device=device)
+        sinogram = torch.zeros((n_views, num_detectors), dtype=image.dtype, device=device)
 
         # Get Numba CUDA array views for kernel
         d_image = TorchCUDABridge.tensor_to_cuda_array(image)
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
+        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_angles, num_detectors)
+        grid, tpb = _grid_2d(n_views, num_detectors)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_forward_kernel[grid, tpb, numba_stream](
-            d_image, Nx, Ny, d_sino, n_angles, num_detectors,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
+            d_image, Nx, Ny, d_sino, n_views, num_detectors,
+            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(angles)
+        ctx.save_for_backward(ray_dir, det_origin, det_u_vec)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
         return sinogram
     
     @staticmethod
     def backward(ctx, grad_sinogram):
-        angles, = ctx.saved_tensors
+        ray_dir, det_origin, det_u_vec = ctx.saved_tensors
         num_detectors, detector_spacing, Ny, Nx, voxel_spacing = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        ray_dir = DeviceManager.ensure_device(ray_dir, device)
+        det_origin = DeviceManager.ensure_device(det_origin, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        ray_dir = ray_dir.to(dtype=torch.float32).contiguous()
+        det_origin = det_origin.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
-        n_angles = angles.shape[0]
+        n_views = ray_dir.shape[0]
         grad_image = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype, device=device)
 
         d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
         d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_image)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
+        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_angles, num_detectors)
+        grid, tpb = _grid_2d(n_views, num_detectors)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_backward_kernel[grid, tpb, numba_stream](
-            d_grad_sino, n_angles, num_detectors,
+            d_grad_sino, n_views, num_detectors,
             d_img_grad, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        return grad_image, None, None, None, None
+        return grad_image, None, None, None, None, None, None
 
 
 class ParallelBackprojectorFunction(torch.autograd.Function):
@@ -201,16 +211,19 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     >>> print(sinogram.grad.shape)  # (180, 128)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128, voxel_spacing=1.0):
-        """Compute the 2D parallel beam backprojection (adjoint Radon
-        transform) of a sinogram using CUDA acceleration.
+    def forward(ctx, sinogram, ray_dir, det_origin, det_u_vec, detector_spacing=1.0, H=128, W=128, voxel_spacing=1.0):
+        """Compute the 2D parallel beam backprojection with arbitrary trajectories using CUDA acceleration.
 
         Parameters
         ----------
         sinogram : torch.Tensor
-            2D input sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.
-        angles : torch.Tensor
-            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `sinogram`.
+            2D input sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.
+        ray_dir : torch.Tensor
+            Ray direction unit vectors for each view, shape (n_views, 2).
+        det_origin : torch.Tensor
+            Detector origin positions for each view, shape (n_views, 2), in physical units.
+        det_u_vec : torch.Tensor
+            Detector u-direction unit vectors for each view, shape (n_views, 2).
         detector_spacing : float, optional
             Physical spacing between detector elements (default: 1.0).
         H : int, optional
@@ -229,89 +242,94 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
+        - Supports arbitrary parallel beam geometries.
         - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
         >>> sinogram = torch.randn(180, 128, device='cuda', requires_grad=True)
-        >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
+        >>> ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(180, device='cuda')
         >>> reco = ParallelBackprojectorFunction.apply(
-        ...     sinogram, angles, 1.0, 128, 128
+        ...     sinogram, ray_dir, det_origin, det_u_vec, 1.0, 128, 128
         ... )
         """
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        ray_dir = DeviceManager.ensure_device(ray_dir, device)
+        det_origin = DeviceManager.ensure_device(det_origin, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         # Ensure input is float32 for kernel compatibility
         sinogram = sinogram.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        ray_dir = ray_dir.to(dtype=torch.float32).contiguous()
+        det_origin = det_origin.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
-        n_ang, n_det = sinogram.shape
+        n_views, n_det = sinogram.shape
         Ny, Nx = H, W
-    
+
         # Allocate output tensor on the same device
         reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
-
-        # Prepare trigonometric tables on the correct device
-        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
 
         # Get Numba CUDA array views for kernel
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
+        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
+        grid, tpb = _grid_2d(n_views, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_backward_kernel[grid, tpb, numba_stream](
-            d_sino, n_ang, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
+            d_sino, n_views, n_det, d_reco, Nx, Ny,
+            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(angles)
+        ctx.save_for_backward(ray_dir, det_origin, det_u_vec)
         ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1], voxel_spacing)
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
-        angles, = ctx.saved_tensors
-        H, W, detector_spacing, n_ang, n_det, voxel_spacing = ctx.intermediate
+        ray_dir, det_origin, det_u_vec = ctx.saved_tensors
+        H, W, detector_spacing, n_views, n_det, voxel_spacing = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        ray_dir = DeviceManager.ensure_device(ray_dir, device)
+        det_origin = DeviceManager.ensure_device(det_origin, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         grad_output = grad_output.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        ray_dir = ray_dir.to(dtype=torch.float32).contiguous()
+        det_origin = det_origin.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = grad_output.shape
 
         # Allocate output tensor on the same device
-        grad_sino = torch.zeros((n_ang, n_det), dtype=grad_output.dtype, device=device)
-
-        # Prepare trigonometric tables on the correct device
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype, device=device)
+        grad_sino = torch.zeros((n_views, n_det), dtype=grad_output.dtype, device=device)
 
         # Get Numba CUDA array views for kernel
         d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
         d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
-        d_cos = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
+        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
+        grid, tpb = _grid_2d(n_views, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _parallel_2d_forward_kernel[grid, tpb, numba_stream](
-            d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
-            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy, _DTYPE(voxel_spacing)
+            d_grad_out, Nx, Ny, d_sino_grad, n_views, n_det,
+            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        return grad_sino, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None
 
 
 class FanProjectorFunction(torch.autograd.Function):
@@ -342,112 +360,116 @@ class FanProjectorFunction(torch.autograd.Function):
     >>> print(image.grad.shape)  # (256, 256)
     """
     @staticmethod
-    def forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid, voxel_spacing=1.0):
-        """Compute the 2D fan beam forward projection of an image using CUDA
-        acceleration.
+    def forward(ctx, image, src_pos, det_center, det_u_vec, num_detectors, detector_spacing, voxel_spacing=1.0):
+        """Compute the 2D fan beam forward projection with arbitrary trajectories using CUDA acceleration.
 
         Parameters
         ----------
         image : torch.Tensor
             2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.
-        angles : torch.Tensor
-            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `image`.
+        src_pos : torch.Tensor
+            Source positions for each view, shape (n_views, 2), in physical units.
+        det_center : torch.Tensor
+            Detector center positions for each view, shape (n_views, 2), in physical units.
+        det_u_vec : torch.Tensor
+            Detector u-direction unit vectors for each view, shape (n_views, 2).
         num_detectors : int
             Number of detector elements in the sinogram (columns).
         detector_spacing : float
             Physical spacing between detector elements.
-        sdd : float
-            Source-to-Detector Distance (SDD). The total distance from the X-ray
-            source to the detector, passing through the isocenter.
-        sid : float
-            Source-to-Isocenter Distance (SID). The distance from the X-ray
-            source to the center of rotation (isocenter).
         voxel_spacing : float, optional
-            Physical size of one voxel (in same units as detector_spacing, sdd, sid, default: 1.0).
+            Physical size of one voxel (in same units as detector_spacing, default: 1.0).
 
         Returns
         -------
         sinogram : torch.Tensor
-            2D tensor of shape (num_angles, num_detectors) containing the fan beam sinogram on the same device as `image`.
+            2D tensor of shape (n_views, num_detectors) containing the fan beam sinogram on the same device as `image`.
 
         Notes
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Fan beam geometry uses divergent rays from a point source to the detector.
+        - Supports arbitrary fan beam geometries.
         - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
         >>> image = torch.randn(256, 256, device='cuda', requires_grad=True)
-        >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
+        >>> src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(360, 1000.0, 1500.0, device='cuda')
         >>> sinogram = FanProjectorFunction.apply(
-        ...     image, angles, 512, 1.0, 1500.0, 1000.0
+        ...     image, src_pos, det_center, det_u_vec, 512, 1.0
         ... )
         """
         device = DeviceManager.get_device(image)
         image = DeviceManager.ensure_device(image, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         image = image.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = image.shape
-        n_ang = angles.shape[0]
+        n_views = src_pos.shape[0]
 
-        sinogram = torch.zeros((n_ang, num_detectors), dtype=image.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=image.dtype, device=device)
+        sinogram = torch.zeros((n_views, num_detectors), dtype=image.dtype, device=device)
 
         d_image = TorchCUDABridge.tensor_to_cuda_array(image)
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_ang, num_detectors)
+        grid, tpb = _grid_2d(n_views, num_detectors)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_forward_kernel[grid, tpb, numba_stream](
-            d_image, Nx, Ny, d_sino, n_ang, num_detectors,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            d_image, Nx, Ny, d_sino, n_views, num_detectors,
+            _DTYPE(detector_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
+            cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(angles)
-        ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx,
-                            sdd, sid, voxel_spacing)
+        ctx.save_for_backward(src_pos, det_center, det_u_vec)
+        ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
         return sinogram
 
     @staticmethod
     def backward(ctx, grad_sinogram):
-        angles, = ctx.saved_tensors
-        (n_det, det_spacing, Ny, Nx, sdd, sid, voxel_spacing) = ctx.intermediate
+        src_pos, det_center, det_u_vec = ctx.saved_tensors
+        (n_det, det_spacing, Ny, Nx, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
-        n_ang = angles.shape[0]
+        n_views = src_pos.shape[0]
         grad_img = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype, device=device)
 
         d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
         d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_img)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
+        grid, tpb = _grid_2d(n_views, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
-            d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
-            _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            d_grad_sino, n_views, n_det, d_img_grad, Nx, Ny,
+            _DTYPE(det_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
+            cx, cy, _DTYPE(voxel_spacing)
         )
 
         return grad_img, None, None, None, None, None, None
@@ -482,30 +504,27 @@ class FanBackprojectorFunction(torch.autograd.Function):
     >>> print(sinogram.grad.shape)  # (360, 512)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid, voxel_spacing=1.0):
-        """Compute the 2D fan beam backprojection of a sinogram using CUDA
-        acceleration.
+    def forward(ctx, sinogram, src_pos, det_center, det_u_vec, detector_spacing, H, W, voxel_spacing=1.0):
+        """Compute the 2D fan beam backprojection with arbitrary trajectories using CUDA acceleration.
 
         Parameters
         ----------
         sinogram : torch.Tensor
-            2D input fan beam sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.
-        angles : torch.Tensor
-            1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as `sinogram`.
+            2D input fan beam sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.
+        src_pos : torch.Tensor
+            Source positions for each view, shape (n_views, 2), in physical units.
+        det_center : torch.Tensor
+            Detector center positions for each view, shape (n_views, 2), in physical units.
+        det_u_vec : torch.Tensor
+            Detector u-direction unit vectors for each view, shape (n_views, 2).
         detector_spacing : float
             Physical spacing between detector elements.
         H : int
             Height of the output reconstruction image.
         W : int
             Width of the output reconstruction image.
-        sdd : float
-            Source-to-Detector Distance (SDD). The total distance from the X-ray
-            source to the detector, passing through the isocenter.
-        sid : float
-            Source-to-Isocenter Distance (SID). The distance from the X-ray
-            source to the center of rotation (isocenter).
         voxel_spacing : float, optional
-            Physical size of one voxel (in same units as detector_spacing, sdd, sid, default: 1.0).
+            Physical size of one voxel (in same units as detector_spacing, default: 1.0).
 
         Returns
         -------
@@ -516,80 +535,88 @@ class FanBackprojectorFunction(torch.autograd.Function):
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Fan beam geometry uses divergent rays from a point source to the detector.
+        - Supports arbitrary fan beam geometries.
         - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
 
         Examples
         --------
         >>> sinogram = torch.randn(360, 512, device='cuda', requires_grad=True)
-        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
+        >>> src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(360, 1000.0, 1500.0, device='cuda')
         >>> reco = FanBackprojectorFunction.apply(
-        ...     sinogram, angles, 1.0, 256, 256, 1000.0, 500.0
+        ...     sinogram, src_pos, det_center, det_u_vec, 1.0, 256, 256
         ... )
         """
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         sinogram = sinogram.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
-        n_ang, n_det = sinogram.shape
+        n_views, n_det = sinogram.shape
         Ny, Nx = H, W
-    
+
         reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
 
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
+        grid, tpb = _grid_2d(n_views, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
-            d_sino, n_ang, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            d_sino, n_views, n_det, d_reco, Nx, Ny,
+            _DTYPE(detector_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
+            cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(angles)
-        ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, sdd, sid, voxel_spacing)
+        ctx.save_for_backward(src_pos, det_center, det_u_vec)
+        ctx.intermediate = (H, W, detector_spacing, n_views, n_det, voxel_spacing)
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
-        angles, = ctx.saved_tensors
-        (H, W, det_spacing, n_ang, n_det, sdd, sid, voxel_spacing) = ctx.intermediate
+        src_pos, det_center, det_u_vec = ctx.saved_tensors
+        (H, W, det_spacing, n_views, n_det, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
 
         grad_output = grad_output.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
 
         Ny, Nx = grad_output.shape
 
-        grad_sino = torch.zeros((n_ang, n_det), dtype=grad_output.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype, device=device)
+        grad_sino = torch.zeros((n_views, n_det), dtype=grad_output.dtype, device=device)
 
         d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
         d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
+        grid, tpb = _grid_2d(n_views, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _fan_2d_forward_kernel[grid, tpb, numba_stream](
-            d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
-            _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            d_grad_out, Nx, Ny, d_sino_grad, n_views, n_det,
+            _DTYPE(det_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
+            cx, cy, _DTYPE(voxel_spacing)
         )
 
         return grad_sino, None, None, None, None, None, None, None

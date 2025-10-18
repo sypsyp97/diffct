@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
 from diffct.differentiable import ParallelProjectorFunction
+from diffct.geometry import circular_trajectory_2d_parallel
 
 
 def shepp_logan_2d(Nx, Ny):
@@ -36,10 +37,12 @@ def shepp_logan_2d(Nx, Ny):
     return phantom
 
 class IterativeRecoModel(nn.Module):
-    def __init__(self, volume_shape, angles, num_detectors, detector_spacing, voxel_spacing):
+    def __init__(self, volume_shape, ray_dir, det_origin, det_u_vec, num_detectors, detector_spacing, voxel_spacing):
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
-        self.angles = angles
+        self.ray_dir = ray_dir
+        self.det_origin = det_origin
+        self.det_u_vec = det_u_vec
         self.num_detectors = num_detectors
         self.detector_spacing = detector_spacing
         self.voxel_spacing = voxel_spacing
@@ -47,16 +50,16 @@ class IterativeRecoModel(nn.Module):
 
     def forward(self, x):
         updated_reco = x + self.reco
-        current_sino = ParallelProjectorFunction.apply(updated_reco, self.angles, 
+        current_sino = ParallelProjectorFunction.apply(updated_reco, self.ray_dir, self.det_origin, self.det_u_vec,
                                                        self.num_detectors, self.detector_spacing, self.voxel_spacing)
         return current_sino, self.relu(updated_reco)
 
 class Pipeline:
-    def __init__(self, lr, volume_shape, angles, num_detectors, detector_spacing, 
+    def __init__(self, lr, volume_shape, ray_dir, det_origin, det_u_vec, num_detectors, detector_spacing,
                  voxel_spacing, device, epoches=1000):
-        
+
         self.epoches = epoches
-        self.model = IterativeRecoModel(volume_shape, angles, num_detectors, 
+        self.model = IterativeRecoModel(volume_shape, ray_dir, det_origin, det_u_vec, num_detectors,
                                         detector_spacing, voxel_spacing).to(device)
 
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
@@ -82,23 +85,25 @@ def main():
     phantom_cpu = shepp_logan_2d(Nx, Ny)
 
     num_views = 360
-    angles_np = np.linspace(0, 2 * math.pi, num_views, endpoint=False).astype(np.float32)
-
     num_detectors = 256
     detector_spacing = 0.5
     voxel_spacing = 1.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32)
-    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
+
+    # Generate trajectory geometry for parallel beam
+    ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(num_views, device=device)
 
     # Generate the "real" sinogram
-    real_sinogram = ParallelProjectorFunction.apply(phantom_torch, angles_torch,
+    real_sinogram = ParallelProjectorFunction.apply(phantom_torch, ray_dir, det_origin, det_u_vec,
                                                     num_detectors, detector_spacing, voxel_spacing)
 
     pipeline_instance = Pipeline(lr=1e-1,
                                  volume_shape=(Ny, Nx),
-                                 angles=angles_torch,
+                                 ray_dir=ray_dir,
+                                 det_origin=det_origin,
+                                 det_u_vec=det_u_vec,
                                  num_detectors=num_detectors,
                                  detector_spacing=detector_spacing,
                                  voxel_spacing=voxel_spacing,
