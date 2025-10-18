@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
-from diffct.differentiable import ConeProjectorFunction, circular_trajectory_3d
+from diffct.differentiable import ConeProjectorFunction, random_trajectory_3d
 
 def shepp_logan_3d(shape):
     zz, yy, xx = np.mgrid[:shape[0], :shape[1], :shape[2]]
@@ -124,16 +124,31 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32).contiguous()
 
-    # Generate circular trajectory geometry
-    src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
-        n_views=num_views, sid=sid, sdd=sdd, device=device
+    # Generate random trajectory with perturbations
+    # sid_std: 5% variation in source-to-isocenter distance
+    # pos_std: 5mm random position offsets
+    # angle_std: 0.05 radians (~3 degrees) angular perturbations
+    print("Generating random trajectory with perturbations...")
+    src_pos, det_center, det_u_vec, det_v_vec = random_trajectory_3d(
+        n_views=num_views, sid_mean=sid, sdd_mean=sdd,
+        sid_std=20.0,  # 5% of 400mm
+        pos_std=5.0,   # 5mm position noise
+        angle_std=0.05,  # ~3 degrees
+        seed=42,  # for reproducibility
+        device=device
     )
 
-    # Generate the "real" sinogram
+    print(f"Source positions range: x=[{src_pos[:, 0].min():.2f}, {src_pos[:, 0].max():.2f}], "
+          f"y=[{src_pos[:, 1].min():.2f}, {src_pos[:, 1].max():.2f}], "
+          f"z=[{src_pos[:, 2].min():.2f}, {src_pos[:, 2].max():.2f}]")
+
+    # Generate the "real" sinogram using the random trajectory
+    print("Generating sinogram...")
     real_sinogram = ConeProjectorFunction.apply(phantom_torch, src_pos, det_center,
                                                det_u_vec, det_v_vec,
                                                det_u, det_v, du, dv, voxel_spacing)
 
+    print("Starting iterative reconstruction...")
     pipeline_instance = Pipeline(lr=1e-1,
                                  volume_shape=(Nz, Ny, Nx),
                                  src_pos=src_pos,
@@ -143,32 +158,52 @@ def main():
                                  det_u=det_u, det_v=det_v,
                                  du=du, dv=dv, voxel_spacing=voxel_spacing,
                                  device=device, epoches=1000)
-    
+
     ini_guess = torch.zeros_like(phantom_torch)
-    
+
     loss_values, trained_model = pipeline_instance.train(ini_guess, real_sinogram)
-    
+
     reco = trained_model(ini_guess)[1].squeeze().cpu().detach().numpy()
 
-    plt.figure()
+    # Plot results
+    plt.figure(figsize=(15, 5))
+
+    # Loss curve
+    plt.subplot(1, 3, 1)
     plt.plot(loss_values)
-    plt.title("Loss Curve")
+    plt.title("Loss Curve (Random Trajectory)")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.show()
+    plt.yscale('log')
+    plt.grid(True)
 
+    # Original phantom
     mid_slice = Nz // 2
-    plt.figure(figsize=(12, 6))
-    plt.subplot(1, 2, 1)
+    plt.subplot(1, 3, 2)
     plt.imshow(phantom_cpu[mid_slice, :, :], cmap="gray")
     plt.title("Original Phantom Mid-Slice")
     plt.axis("off")
+    plt.colorbar()
 
-    plt.subplot(1, 2, 2)
+    # Reconstruction
+    plt.subplot(1, 3, 3)
     plt.imshow(reco[mid_slice, :, :], cmap="gray")
-    plt.title("Reconstructed Mid-Slice")
+    plt.title("Reconstructed Mid-Slice\n(Random Trajectory)")
     plt.axis("off")
+    plt.colorbar()
+
+    plt.tight_layout()
+    plt.savefig("random_trajectory_reconstruction.png", dpi=150)
     plt.show()
+
+    # Compute reconstruction metrics
+    mse = np.mean((reco - phantom_cpu) ** 2)
+    psnr = 10 * np.log10(1.0 / mse)
+    print(f"\nReconstruction Metrics:")
+    print(f"MSE: {mse:.6f}")
+    print(f"PSNR: {psnr:.2f} dB")
+    print(f"Phantom range: [{phantom_cpu.min():.3f}, {phantom_cpu.max():.3f}]")
+    print(f"Reconstruction range: [{reco.min():.3f}, {reco.max():.3f}]")
 
 if __name__ == "__main__":
     main()

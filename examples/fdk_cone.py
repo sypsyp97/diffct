@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
-from diffct.differentiable import ConeProjectorFunction, ConeBackprojectorFunction
+from diffct.differentiable import ConeProjectorFunction, ConeBackprojectorFunction, circular_trajectory_3d
 
 
 def shepp_logan_3d(shape):
@@ -77,8 +77,6 @@ def main():
     phantom_cpu = shepp_logan_3d((Nz, Ny, Nx))
 
     num_views = 360
-    angles_np = np.linspace(0, 2*math.pi, num_views, endpoint=False).astype(np.float32)
-
     det_u, det_v = 256, 256
     du, dv = 1.0, 1.0
     sdd = 900.0
@@ -88,11 +86,15 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32, requires_grad=True).contiguous()
-    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
-    sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
-                                           det_u, det_v, du, dv,
-                                           sdd, sid, voxel_spacing)
+    # Generate circular trajectory geometry
+    src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
+        n_views=num_views, sid=sid, sdd=sdd, device=device
+    )
+
+    sinogram = ConeProjectorFunction.apply(phantom_torch, src_pos, det_center,
+                                           det_u_vec, det_v_vec,
+                                           det_u, det_v, du, dv, voxel_spacing)
 
     # --- FDK weighting and filtering ---
     # For FDK, projections must be weighted before filtering.
@@ -111,8 +113,9 @@ def main():
     sino_weighted = sinogram * weights
     sinogram_filt = ramp_filter_3d(sino_weighted).contiguous()
 
-    reconstruction = F.relu(ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nz, Ny, Nx,
-                                                    du, dv, sdd, sid, voxel_spacing)) # ReLU to ensure non-negativity
+    reconstruction = F.relu(ConeBackprojectorFunction.apply(sinogram_filt, src_pos, det_center,
+                                                    det_u_vec, det_v_vec, Nz, Ny, Nx,
+                                                    du, dv, voxel_spacing)) # ReLU to ensure non-negativity
     
     # --- FDK normalization ---
     # The backprojection is a sum over all angles. To approximate the integral,

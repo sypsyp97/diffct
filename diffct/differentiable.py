@@ -962,13 +962,14 @@ def _fan_2d_backward_kernel(
 def _cone_3d_forward_kernel(
     d_vol, Nx, Ny, Nz,
     d_sino, n_views, n_u, n_v,
-    du, dv, d_cos, d_sin,
-    sdd, sid, cx, cy, cz, voxel_spacing
+    du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
+    cx, cy, cz, voxel_spacing
 ):
-    """Compute the 3D cone-beam forward projection.
+    """Compute the 3D cone-beam forward projection with arbitrary source-detector trajectories.
 
     This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    3D cone-beam forward projection.
+    3D cone-beam forward projection. Supports arbitrary source and detector positions
+    for each view, enabling non-circular trajectories.
 
     Parameters
     ----------
@@ -992,14 +993,14 @@ def _cone_3d_forward_kernel(
         Physical spacing between detector elements along the u-axis.
     dv : float
         Physical spacing between detector elements along the v-axis.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
-    sdd : float
-        Source-to-Detector Distance (SDD), total distance from source to detector.
-    sid : float
-        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    d_src_pos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Source positions for each view, shape (n_views, 3), in physical units.
+    d_det_center : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector center positions for each view, shape (n_views, 3), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_views, 3).
+    d_det_v_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector v-direction unit vectors for each view, shape (n_views, 3).
     cx : float
         Half of volume width along x-axis (in voxels).
     cy : float
@@ -1007,36 +1008,45 @@ def _cone_3d_forward_kernel(
     cz : float
         Half of volume depth along z-axis (in voxels).
     voxel_spacing : float
-        Physical size of one voxel (in same units as du, dv, sid, sdd).
+        Physical size of one voxel (in same units as source/detector positions).
 
     Notes
     -----
-    Cone-beam geometry extends the fan-beam configuration to 3D by employing
-    a 2D detector array and trilinear interpolation for accurate volumetric
-    sampling.
+    Supports arbitrary cone-beam geometries by specifying source position,
+    detector center, and detector orientation vectors for each view.
+    Uses trilinear interpolation for accurate volumetric sampling.
     """
     iview, iu, iv = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
         return
 
-    # === 3D CONE BEAM GEOMETRY SETUP ===
-    cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
-    # Normalize all physical distances to voxel units
-    u     = (iu - n_u * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
-    v     = (iv - n_v * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
-    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
-    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
+    # === 3D CONE BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
+    # Read source position from position matrix (in physical units)
+    src_x = d_src_pos[iview, 0] / voxel_spacing
+    src_y = d_src_pos[iview, 1] / voxel_spacing
+    src_z = d_src_pos[iview, 2] / voxel_spacing
 
-    # Calculate 3D source and detector positions
-    # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -sid_v * sin_a, sid_v * cos_a, 0.0
-    
-    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
-    # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
-    idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate in voxel units
-    det_z = v                                           # Vertical z-coordinate in voxel units
+    # Read detector center and orientation vectors
+    det_cx = d_det_center[iview, 0] / voxel_spacing
+    det_cy = d_det_center[iview, 1] / voxel_spacing
+    det_cz = d_det_center[iview, 2] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iview, 0]
+    u_vec_y = d_det_u_vec[iview, 1]
+    u_vec_z = d_det_u_vec[iview, 2]
+
+    v_vec_x = d_det_v_vec[iview, 0]
+    v_vec_y = d_det_v_vec[iview, 1]
+    v_vec_z = d_det_v_vec[iview, 2]
+
+    # Calculate detector element offset from center
+    u_offset = (iu - n_u * 0.5) * du / voxel_spacing
+    v_offset = (iv - n_v * 0.5) * dv / voxel_spacing
+
+    # Calculate 3D detector element position using center + u*u_vec + v*v_vec
+    det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+    det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+    det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
@@ -1166,13 +1176,14 @@ def _cone_3d_forward_kernel(
 def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
-    du, dv, d_cos, d_sin,
-    sdd, sid, cx, cy, cz, voxel_spacing
+    du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
+    cx, cy, cz, voxel_spacing
 ):
-    """Compute the 3D cone-beam backprojection.
+    """Compute the 3D cone-beam backprojection with arbitrary source-detector trajectories.
 
     This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    3D cone-beam backprojection.
+    3D cone-beam backprojection. Supports arbitrary source and detector positions
+    for each view, enabling non-circular trajectories.
 
     Parameters
     ----------
@@ -1196,14 +1207,14 @@ def _cone_3d_backward_kernel(
         Physical spacing between detector elements along the u-axis.
     dv : float
         Physical spacing between detector elements along the v-axis.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
-    sdd : float
-        Source-to-Detector Distance (SDD), total distance from source to detector.
-    sid : float
-        Source-to-Isocenter Distance (SID), distance from source to isocenter.
+    d_src_pos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Source positions for each view, shape (n_views, 3), in physical units.
+    d_det_center : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector center positions for each view, shape (n_views, 3), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_views, 3).
+    d_det_v_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector v-direction unit vectors for each view, shape (n_views, 3).
     cx : float
         Half of volume width along x-axis (in voxels).
     cy : float
@@ -1211,37 +1222,48 @@ def _cone_3d_backward_kernel(
     cz : float
         Half of volume depth along z-axis (in voxels).
     voxel_spacing : float
-        Physical size of one voxel (in same units as du, dv, sid, sdd).
+        Physical size of one voxel (in same units as source/detector positions).
 
     Notes
     -----
     As the adjoint to the cone-beam forward projection, this operation
     distributes sinogram values back into the 3D volume along ray paths using
     atomic operations for thread-safe accumulation.
+    Supports arbitrary cone-beam geometries.
     """
     iview, iu, iv = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
         return
 
-    # === 3D BACKPROJECTION VALUE AND GEOMETRY SETUP ===
+    # === 3D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     g = d_sino[iview, iu, iv]  # Sinogram value to backproject along this ray
-    cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
-    # Normalize all physical distances to voxel units
-    u     = (iu - n_u * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
-    v     = (iv - n_v * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
-    sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
-    sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
-    # Calculate 3D source and detector positions
-    # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -sid_v * sin_a, sid_v * cos_a, 0.0
-    
-    # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
-    # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
-    idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate in voxel units
-    det_z = v                                           # Vertical z-coordinate in voxel units
+    # Read source position from position matrix (in physical units)
+    src_x = d_src_pos[iview, 0] / voxel_spacing
+    src_y = d_src_pos[iview, 1] / voxel_spacing
+    src_z = d_src_pos[iview, 2] / voxel_spacing
+
+    # Read detector center and orientation vectors
+    det_cx = d_det_center[iview, 0] / voxel_spacing
+    det_cy = d_det_center[iview, 1] / voxel_spacing
+    det_cz = d_det_center[iview, 2] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iview, 0]
+    u_vec_y = d_det_u_vec[iview, 1]
+    u_vec_z = d_det_u_vec[iview, 2]
+
+    v_vec_x = d_det_v_vec[iview, 0]
+    v_vec_y = d_det_v_vec[iview, 1]
+    v_vec_z = d_det_v_vec[iview, 2]
+
+    # Calculate detector element offset from center
+    u_offset = (iu - n_u * 0.5) * du / voxel_spacing
+    v_offset = (iv - n_v * 0.5) * dv / voxel_spacing
+
+    # Calculate 3D detector element position using center + u*u_vec + v*v_vec
+    det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+    det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+    det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
@@ -1948,16 +1970,21 @@ class ConeProjectorFunction(torch.autograd.Function):
     >>> print(volume.grad.shape)  # (128, 128, 128)
     """
     @staticmethod
-    def forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid, voxel_spacing=1.0):
-        """Compute the 3D cone beam forward projection of a volume using CUDA
-        acceleration.
+    def forward(ctx, volume, src_pos, det_center, det_u_vec, det_v_vec, det_u, det_v, du, dv, voxel_spacing=1.0):
+        """Compute the 3D cone beam forward projection with arbitrary trajectories using CUDA acceleration.
 
         Parameters
         ----------
         volume : torch.Tensor
             3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.
-        angles : torch.Tensor
-            1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as `volume`.
+        src_pos : torch.Tensor
+            Source positions for each view, shape (n_views, 3), in physical units.
+        det_center : torch.Tensor
+            Detector center positions for each view, shape (n_views, 3), in physical units.
+        det_u_vec : torch.Tensor
+            Detector u-direction unit vectors for each view, shape (n_views, 3).
+        det_v_vec : torch.Tensor
+            Detector v-direction unit vectors for each view, shape (n_views, 3).
         det_u : int
             Number of detector elements along the u-axis (width).
         det_v : int
@@ -1966,56 +1993,58 @@ class ConeProjectorFunction(torch.autograd.Function):
             Physical spacing between detector elements along the u-axis.
         dv : float
             Physical spacing between detector elements along the v-axis.
-        sdd : float
-            Source-to-Detector Distance (SDD). The total distance from the X-ray
-            source to the detector, passing through the isocenter.
-        sid : float
-            Source-to-Isocenter Distance (SID). The distance from the X-ray
-            source to the center of rotation (isocenter).
         voxel_spacing : float, optional
-            Physical size of one voxel (in same units as du, dv, sdd, sid, default: 1.0).
+            Physical size of one voxel (in same units as positions, default: 1.0).
 
         Returns
         -------
         sino : torch.Tensor
-            3D tensor of shape (num_views, det_u, det_v) containing the cone beam projections on the same device as `volume`.
+            3D tensor of shape (n_views, det_u, det_v) containing the cone beam projections on the same device as `volume`.
 
         Notes
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Cone beam geometry uses a point source and a 2D detector array.
-        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.
+        - Supports arbitrary source and detector trajectories, not limited to circular orbits.
+        - Uses the Siddon method with trilinear interpolation for accurate 3D ray tracing.
 
         Examples
         --------
         >>> volume = torch.randn(128, 128, 128, device='cuda', requires_grad=True)
-        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
+        >>> # Create circular trajectory
+        >>> src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(360, 1000.0, 1500.0, device='cuda')
         >>> sino = ConeProjectorFunction.apply(
-        ...     volume, angles, 256, 256, 1.0, 1.0, 1500.0, 1000.0
+        ...     volume, src_pos, det_center, det_u_vec, det_v_vec, 256, 256, 1.0, 1.0
         ... )
         """
         device = DeviceManager.get_device(volume)
         volume = DeviceManager.ensure_device(volume, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
+        det_v_vec = DeviceManager.ensure_device(det_v_vec, device)
 
         volume = volume.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
+        det_v_vec = det_v_vec.to(dtype=torch.float32).contiguous()
 
         D, H, W = volume.shape
-        n_views = angles.shape[0]
-        
+        n_views = src_pos.shape[0]
+
         # Validate memory layout to prevent coordinate system inconsistencies
         _validate_3d_memory_layout(volume, expected_order='DHW')
 
         sino = torch.zeros((n_views, det_u, det_v), dtype=volume.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=volume.dtype, device=device)
 
         volume_perm = volume.permute(2, 1, 0).contiguous()
         d_vol = TorchCUDABridge.tensor_to_cuda_array(volume_perm)
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sino)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
+        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
@@ -2024,37 +2053,41 @@ class ConeProjectorFunction(torch.autograd.Function):
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_vol, W, H, D, d_sino, n_views, det_u, det_v,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid),
+            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
             cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(angles)
-        ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
-                            sdd, sid, voxel_spacing)
+        ctx.save_for_backward(src_pos, det_center, det_u_vec, det_v_vec)
+        ctx.intermediate = (D, H, W, det_u, det_v, du, dv, voxel_spacing)
         return sino
 
     @staticmethod
     def backward(ctx, grad_sinogram):
-        angles, = ctx.saved_tensors
-        (D, H, W, det_u, det_v, du, dv,
-         sdd, sid, voxel_spacing) = ctx.intermediate
+        src_pos, det_center, det_u_vec, det_v_vec = ctx.saved_tensors
+        (D, H, W, det_u, det_v, du, dv, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
+        det_v_vec = DeviceManager.ensure_device(det_v_vec, device)
 
         grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
+        det_v_vec = det_v_vec.to(dtype=torch.float32).contiguous()
 
-        n_views = angles.shape[0]
+        n_views = src_pos.shape[0]
 
         grad_vol_perm = torch.zeros((W, H, D), dtype=grad_sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_sinogram.dtype, device=device)
 
         d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
         d_vol_grad = TorchCUDABridge.tensor_to_cuda_array(grad_vol_perm)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
+        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
         grid, tpb = _grid_3d(n_views, det_u, det_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
@@ -2063,12 +2096,12 @@ class ConeProjectorFunction(torch.autograd.Function):
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
+            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
+            cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
-        return grad_vol, None, None, None, None, None, None, None, None
+        return grad_vol, None, None, None, None, None, None, None, None, None
 
 
 class ConeBackprojectorFunction(torch.autograd.Function):
@@ -2108,16 +2141,21 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     >>> print(f"Projection gradient shape: {projections.grad.shape}")  # (360, 256, 256)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid, voxel_spacing=1.0):
-        """Compute the 3D cone beam backprojection of a projection sinogram
-        using CUDA acceleration.
+    def forward(ctx, sinogram, src_pos, det_center, det_u_vec, det_v_vec, D, H, W, du, dv, voxel_spacing=1.0):
+        """Compute the 3D cone beam backprojection with arbitrary trajectories using CUDA acceleration.
 
         Parameters
         ----------
         sinogram : torch.Tensor
-            3D input cone beam projection tensor of shape (num_views, det_u, det_v), must be on a CUDA device and of type float32.
-        angles : torch.Tensor
-            1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as `sinogram`.
+            3D input cone beam projection tensor of shape (n_views, det_u, det_v), must be on a CUDA device and of type float32.
+        src_pos : torch.Tensor
+            Source positions for each view, shape (n_views, 3), in physical units.
+        det_center : torch.Tensor
+            Detector center positions for each view, shape (n_views, 3), in physical units.
+        det_u_vec : torch.Tensor
+            Detector u-direction unit vectors for each view, shape (n_views, 3).
+        det_v_vec : torch.Tensor
+            Detector v-direction unit vectors for each view, shape (n_views, 3).
         D : int
             Depth (z-dimension) of the output reconstruction volume.
         H : int
@@ -2128,14 +2166,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             Physical spacing between detector elements along the u-axis.
         dv : float
             Physical spacing between detector elements along the v-axis.
-        sdd : float
-            Source-to-Detector Distance (SDD). The total distance from the X-ray
-            source to the detector, passing through the isocenter.
-        sid : float
-            Source-to-Isocenter Distance (SID). The distance from the X-ray
-            source to the center of rotation (isocenter).
         voxel_spacing : float, optional
-            Physical size of one voxel (in same units as du, dv, sdd, sid, default: 1.0).
+            Physical size of one voxel (in same units as positions, default: 1.0).
 
         Returns
         -------
@@ -2146,36 +2178,43 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Cone beam geometry uses a point source and a 2D detector array.
-        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.
+        - Supports arbitrary source and detector trajectories.
+        - Uses the Siddon method with trilinear interpolation for accurate 3D ray tracing.
 
         Examples
         --------
         >>> projections = torch.randn(360, 256, 256, device='cuda', requires_grad=True)
-        >>> angles = torch.linspace(0, 2*torch.pi, 360, device='cuda')
+        >>> src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(360, 1000.0, 1500.0, device='cuda')
         >>> vol = ConeBackprojectorFunction.apply(
-        ...     projections, angles, 128, 128, 128, 1.0, 1.0, 1500.0, 1000.0
+        ...     projections, src_pos, det_center, det_u_vec, det_v_vec, 128, 128, 128, 1.0, 1.0
         ... )
         """
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
+        det_v_vec = DeviceManager.ensure_device(det_v_vec, device)
 
         sinogram = sinogram.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
+        det_v_vec = det_v_vec.to(dtype=torch.float32).contiguous()
 
         n_views, n_u, n_v = sinogram.shape
-        
+
         # Validate memory layout to prevent coordinate system inconsistencies
         _validate_3d_memory_layout(sinogram, expected_order='VHW')
 
         vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
 
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         d_reco = TorchCUDABridge.tensor_to_cuda_array(vol_perm)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
+        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
@@ -2184,38 +2223,43 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_views, n_u, n_v, d_reco, W, H, D,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
+            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
+            cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(angles)
-        ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
-                            sdd, sid, voxel_spacing)
+        ctx.save_for_backward(src_pos, det_center, det_u_vec, det_v_vec)
+        ctx.intermediate = (D, H, W, n_u, n_v, du, dv, voxel_spacing)
         vol = vol_perm.permute(2, 1, 0).contiguous()
         return vol
 
     @staticmethod
     def backward(ctx, grad_output):
-        angles, = ctx.saved_tensors
-        (D, H, W, n_u, n_v, du, dv,
-         sdd, sid, voxel_spacing) = ctx.intermediate
+        src_pos, det_center, det_u_vec, det_v_vec = ctx.saved_tensors
+        (D, H, W, n_u, n_v, du, dv, voxel_spacing) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
-        angles = DeviceManager.ensure_device(angles, device)
+        src_pos = DeviceManager.ensure_device(src_pos, device)
+        det_center = DeviceManager.ensure_device(det_center, device)
+        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
+        det_v_vec = DeviceManager.ensure_device(det_v_vec, device)
 
         grad_output = grad_output.to(dtype=torch.float32).contiguous()
-        angles = angles.to(dtype=torch.float32).contiguous()
+        src_pos = src_pos.to(dtype=torch.float32).contiguous()
+        det_center = det_center.to(dtype=torch.float32).contiguous()
+        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
+        det_v_vec = det_v_vec.to(dtype=torch.float32).contiguous()
 
-        n_views = angles.shape[0]
+        n_views = src_pos.shape[0]
 
         grad_sino = torch.zeros((n_views, n_u, n_v), dtype=grad_output.dtype, device=device)
-        d_cos, d_sin = _trig_tables(angles, dtype=grad_output.dtype, device=device)
 
         grad_output_perm = grad_output.permute(2, 1, 0).contiguous()
         d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output_perm)
         d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
-        d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
-        d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
+        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
+        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
+        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
         grid, tpb = _grid_3d(n_views, n_u, n_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
@@ -2224,8 +2268,201 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         numba_stream = _get_numba_external_stream_for(pt_stream)
         _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
+            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
+            cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
-        return grad_sino, None, None, None, None, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None, None, None, None
+
+
+# ------------------------------------------------------------------
+# HELPER FUNCTIONS FOR ARBITRARY TRAJECTORIES
+# ------------------------------------------------------------------
+
+def circular_trajectory_3d(n_views, sid, sdd, start_angle=0.0, end_angle=None, device='cuda', dtype=torch.float32):
+    """Generate circular trajectory geometry for cone-beam CT.
+
+    Creates source and detector position matrices for a standard circular
+    orbit around the z-axis, commonly used in cone-beam CT imaging.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    sid : float
+        Source-to-Isocenter Distance (SID), in physical units.
+    sdd : float
+        Source-to-Detector Distance (SDD), in physical units.
+    start_angle : float, optional
+        Starting angle in radians (default: 0.0).
+    end_angle : float, optional
+        Ending angle in radians (default: 2*pi, full rotation).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+
+    Returns
+    -------
+    src_pos : torch.Tensor
+        Source positions, shape (n_views, 3).
+    det_center : torch.Tensor
+        Detector center positions, shape (n_views, 3).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors, shape (n_views, 3).
+    det_v_vec : torch.Tensor
+        Detector v-direction unit vectors, shape (n_views, 3).
+
+    Examples
+    --------
+    >>> src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
+    ...     n_views=360, sid=1000.0, sdd=1500.0, device='cuda'
+    ... )
+    >>> print(src_pos.shape)  # (360, 3)
+    """
+    import math
+
+    if end_angle is None:
+        end_angle = 2 * math.pi
+
+    # Generate angles (equivalent to linspace with endpoint=False)
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+
+    # Preallocate position matrices
+    src_pos = torch.zeros((n_views, 3), device=device, dtype=dtype)
+    det_center = torch.zeros((n_views, 3), device=device, dtype=dtype)
+    det_u_vec = torch.zeros((n_views, 3), device=device, dtype=dtype)
+    det_v_vec = torch.zeros((n_views, 3), device=device, dtype=dtype)
+
+    # Compute trigonometric values
+    cos_angles = torch.cos(angles)
+    sin_angles = torch.sin(angles)
+
+    # Source rotates around isocenter at distance sid
+    # Convention: source at (x, y, 0), rotating in xy-plane
+    src_pos[:, 0] = -sid * sin_angles  # x
+    src_pos[:, 1] = sid * cos_angles   # y
+    src_pos[:, 2] = 0.0                # z
+
+    # Detector center is opposite to source at distance (sdd - sid) from isocenter
+    idd = sdd - sid  # Isocenter-to-Detector Distance
+    det_center[:, 0] = idd * sin_angles   # x
+    det_center[:, 1] = -idd * cos_angles  # y
+    det_center[:, 2] = 0.0                # z
+
+    # Detector u-direction (tangent to rotation, in xy-plane)
+    det_u_vec[:, 0] = cos_angles   # x
+    det_u_vec[:, 1] = sin_angles   # y
+    det_u_vec[:, 2] = 0.0          # z
+
+    # Detector v-direction (vertical, along z-axis)
+    det_v_vec[:, 0] = 0.0   # x
+    det_v_vec[:, 1] = 0.0   # y
+    det_v_vec[:, 2] = 1.0   # z
+
+    return src_pos, det_center, det_u_vec, det_v_vec
+
+
+def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
+                         angle_std=0.0, device='cuda', dtype=torch.float32, seed=None):
+    """Generate random trajectory geometry for cone-beam CT.
+
+    Creates source and detector position matrices with random perturbations,
+    useful for testing reconstruction with non-ideal trajectories or for
+    simulating robotic C-arm systems with positioning uncertainties.
+
+    Parameters
+    ----------
+    n_views : int
+        Number of projection views.
+    sid_mean : float
+        Mean Source-to-Isocenter Distance, in physical units.
+    sdd_mean : float
+        Mean Source-to-Detector Distance, in physical units.
+    sid_std : float, optional
+        Standard deviation for SID variations (default: 0.0).
+    pos_std : float, optional
+        Standard deviation for random position offsets (default: 0.0).
+    angle_std : float, optional
+        Standard deviation for angular perturbations in radians (default: 0.0).
+    device : str or torch.device, optional
+        Device for tensors (default: 'cuda').
+    dtype : torch.dtype, optional
+        Data type for tensors (default: torch.float32).
+    seed : int, optional
+        Random seed for reproducibility (default: None).
+
+    Returns
+    -------
+    src_pos : torch.Tensor
+        Source positions, shape (n_views, 3).
+    det_center : torch.Tensor
+        Detector center positions, shape (n_views, 3).
+    det_u_vec : torch.Tensor
+        Detector u-direction unit vectors, shape (n_views, 3).
+    det_v_vec : torch.Tensor
+        Detector v-direction unit vectors, shape (n_views, 3).
+
+    Examples
+    --------
+    >>> # Generate random trajectory with 10% SID variation and 5mm position noise
+    >>> src_pos, det_center, det_u_vec, det_v_vec = random_trajectory_3d(
+    ...     n_views=180, sid_mean=1000.0, sdd_mean=1500.0,
+    ...     sid_std=100.0, pos_std=5.0, seed=42, device='cuda'
+    ... )
+    """
+    import math
+
+    if seed is not None:
+        torch.manual_seed(seed)
+
+    # Start with circular trajectory
+    src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
+        n_views, sid_mean, sdd_mean, device=device, dtype=dtype
+    )
+
+    # Add random perturbations
+    if sid_std > 0.0:
+        # Random SID variations
+        sid_perturbations = torch.randn(n_views, device=device, dtype=dtype) * sid_std
+        sdd_perturbations = sid_perturbations.clone()  # Keep SDD-SID distance approximately constant
+
+        # Compute angles from existing positions
+        angles = torch.atan2(-src_pos[:, 0], src_pos[:, 1])
+        cos_angles = torch.cos(angles)
+        sin_angles = torch.sin(angles)
+
+        # Apply SID perturbations
+        sid_actual = sid_mean + sid_perturbations
+        src_pos[:, 0] = -sid_actual * sin_angles
+        src_pos[:, 1] = sid_actual * cos_angles
+
+        # Apply SDD perturbations
+        sdd_actual = sdd_mean + sdd_perturbations
+        idd = sdd_actual - sid_actual
+        det_center[:, 0] = idd * sin_angles
+        det_center[:, 1] = -idd * cos_angles
+
+    if pos_std > 0.0:
+        # Random 3D position offsets
+        src_pos += torch.randn_like(src_pos) * pos_std
+        det_center += torch.randn_like(det_center) * pos_std
+
+    if angle_std > 0.0:
+        # Random angular perturbations (rotate detector orientation)
+        angle_perturbations = torch.randn(n_views, device=device, dtype=dtype) * angle_std
+        cos_perturb = torch.cos(angle_perturbations)
+        sin_perturb = torch.sin(angle_perturbations)
+
+        # Rotate u and v vectors
+        u_new_x = det_u_vec[:, 0] * cos_perturb - det_u_vec[:, 1] * sin_perturb
+        u_new_y = det_u_vec[:, 0] * sin_perturb + det_u_vec[:, 1] * cos_perturb
+        det_u_vec[:, 0] = u_new_x
+        det_u_vec[:, 1] = u_new_y
+
+    # Renormalize direction vectors to ensure they remain unit vectors
+    det_u_vec = det_u_vec / torch.norm(det_u_vec, dim=1, keepdim=True)
+    det_v_vec = det_v_vec / torch.norm(det_v_vec, dim=1, keepdim=True)
+
+    return src_pos, det_center, det_u_vec, det_v_vec
