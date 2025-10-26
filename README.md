@@ -64,35 +64,67 @@ diffct/
 
 ### Installation
 
-**CUDA 12:**
+**CUDA 12 (Recommended):**
 ```bash
 # Create and activate conda environment
 conda create -n diffct python=3.12
 conda activate diffct
 
-# Install CUDA Toolkit, PyTorch, and Numba
+# Install CUDA (here 12.8.1 as example) PyTorch, and Numba
 conda install nvidia/label/cuda-12.8.1::cuda-toolkit
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
+
+# Install Numba with CUDA 12
 pip install numba-cuda[cu12]
 
 # Install diffct
 pip install diffct
 ```
 
-**CUDA 11:**
+<details>
+<summary>CUDA 13 Installation</summary>
+
 ```bash
 # Create and activate conda environment
 conda create -n diffct python=3.12
 conda activate diffct
 
-# Install CUDA Toolkit, PyTorch, and Numba
+# Install CUDA (here 13.0.2 as example) PyTorch, and Numba
+conda install nvidia/label/cuda-13.0.2::cuda-toolkit
+
+# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
+
+# Install Numba with CUDA 13
+pip install numba-cuda[cu13]
+
+# Install diffct
+pip install diffct
+```
+
+</details>
+
+<details>
+<summary>CUDA 11 Installation</summary>
+
+```bash
+# Create and activate conda environment
+conda create -n diffct python=3.12
+conda activate diffct
+
+# Install CUDA (here 11.8.0 as example) PyTorch, and Numba
 conda install nvidia/label/cuda-11.8.0::cuda-toolkit
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
+
+# Install Numba with CUDA 11
 pip install numba-cuda[cu11]
 
 # Install diffct
 pip install diffct
 ```
+
+</details>
 
 ## 📝 Citation
 
@@ -101,7 +133,7 @@ If you use this library in your research, please cite:
 ```bibtex
 @software{diffct2025,
   author       = {Yipeng Sun},
-  title        = {diffct: Differentiable Computed Tomography 
+  title        = {diffct: Differentiable Computed Tomography
                  Reconstruction with CUDA},
   year         = 2025,
   publisher    = {Zenodo},
