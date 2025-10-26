@@ -11,6 +11,18 @@ A high-performance, CUDA-accelerated library for circular orbits CT reconstructi
 
 ⭐ **Please star this project if you find it is useful!**
 
+## 🔀 Branches
+
+### Main Branch (Stable)
+This is the **stable version** supporting circular trajectory CT reconstruction.
+
+### Dev Branch (Under Development)
+The `dev` branch includes experimental features:
+- **Random trajectory projection and backprojection operators**
+- **New examples with non-circular trajectories**
+
+⚠️ **Note:** The dev branch is under active development. If you find any bugs, please [raise an issue](https://github.com/sypsyp97/diffct/issues).
+
 ## ✨ Features
 
 - **Fast:** CUDA-accelerated projection and backprojection operations
