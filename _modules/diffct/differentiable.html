@@ -1997,7 +1997,7 @@
 <span class="sd">    method with interpolation for fan beam geometry, where rays diverge from a point</span>
 <span class="sd">    X-ray source to a linear detector array. The forward pass computes sinograms</span>
 <span class="sd">    using divergent beam geometry, and the backward pass computes gradients via</span>
-<span class="sd">    adjoint backprojection.</span>
+<span class="sd">    adjoint backprojection with geometric ``1/U^2`` distance weighting.</span>
 <span class="sd">    </span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
@@ -2167,7 +2167,7 @@
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="k">return</span> <span class="n">grad_img</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
@@ -2187,8 +2187,9 @@
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
 <span class="sd">    method with interpolation for fan beam backprojection. Implements the adjoint</span>
-<span class="sd">    of the fan beam projection operator, distributing sinogram values back into</span>
-<span class="sd">    the reconstruction volume along divergent ray paths. The forward pass</span>
+<span class="sd">    of the fan beam projection operator with geometric ``1/U^2`` distance weighting,</span>
+<span class="sd">    distributing sinogram values back into the reconstruction volume along divergent</span>
+<span class="sd">    ray paths. The forward pass</span>
 <span class="sd">    computes reconstruction from sinogram data, and the backward pass computes</span>
 <span class="sd">    gradients via forward projection.</span>
 <span class="sd">    </span>
@@ -2298,7 +2299,7 @@
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
@@ -2388,7 +2389,8 @@
 <span class="sd">    method with interpolation for 3D cone beam geometry. Rays emanate from a point</span>
 <span class="sd">    X-ray source to a 2D detector array capturing volumetric projection data.</span>
 <span class="sd">    The forward pass computes 3D projections, and the backward pass computes</span>
-<span class="sd">    gradients via adjoint 3D backprojection. Requires significant GPU memory.</span>
+<span class="sd">    gradients via adjoint 3D backprojection with geometric ``1/U^2`` distance</span>
+<span class="sd">    weighting. Requires significant GPU memory.</span>
 <span class="sd">    </span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
@@ -2588,7 +2590,7 @@
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
             <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">grad_vol</span> <span class="o">=</span> <span class="n">grad_vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
@@ -2609,10 +2611,10 @@
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
 <span class="sd">    method with interpolation for 3D cone beam backprojection. The forward pass</span>
-<span class="sd">    computes a 3D reconstruction from cone beam projection data using</span>
-<span class="sd">    backprojection as the adjoint operation. The backward pass computes gradients</span>
-<span class="sd">    via 3D cone beam forward projection. Requires CUDA-capable hardware and</span>
-<span class="sd">    consistent device placements.</span>
+<span class="sd">    computes a 3D reconstruction from cone beam projection data using weighted</span>
+<span class="sd">    backprojection (geometric ``1/U^2`` term) as the adjoint operation. The</span>
+<span class="sd">    backward pass computes gradients via 3D cone beam forward projection. Requires</span>
+<span class="sd">    CUDA-capable hardware and consistent device placements.</span>
 <span class="sd">    </span>
 <span class="sd">    This operation may be memory- and computationally-intensive due to 3D geometry.</span>
 <span class="sd">    Consider using gradient checkpointing, smaller volumes, or distributed computing</span>
@@ -2741,7 +2743,7 @@
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
             <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
