@@ -3,7 +3,14 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
-from diffct.differentiable import FanProjectorFunction, FanBackprojectorFunction
+from diffct.differentiable import (
+    FanProjectorFunction,
+    angular_integration_weights,
+    fan_cosine_weights,
+    fan_weighted_backproject,
+    parker_weights,
+    ramp_filter_1d,
+)
 
 
 def shepp_logan_2d(Nx, Ny):
@@ -34,19 +41,6 @@ def shepp_logan_2d(Nx, Ny):
     phantom = np.clip(phantom, 0.0, 1.0)
     return phantom
 
-def ramp_filter(sinogram_tensor):
-    device = sinogram_tensor.device
-    num_views, num_det = sinogram_tensor.shape
-    freqs = torch.fft.fftfreq(num_det, device=device)
-    omega = 2.0 * torch.pi * freqs
-    ramp = torch.abs(omega)
-    ramp_2d = ramp.reshape(1, num_det)
-    sino_fft = torch.fft.fft(sinogram_tensor, dim=1)
-    filtered_fft = sino_fft * ramp_2d
-    filtered = torch.real(torch.fft.ifft(filtered_fft, dim=1))
-    
-    return filtered
-
 def main():
     Nx, Ny = 256, 256
     phantom = shepp_logan_2d(Nx, Ny)
@@ -55,45 +49,61 @@ def main():
 
     num_detectors = 600
     detector_spacing = 1.0
+    detector_offset = 0.0
     voxel_spacing = 1.0
     sdd = 800.0
     sid = 500.0
+    apply_parker = False
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
+    image_torch = torch.tensor(phantom, device=device, dtype=torch.float32)
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = FanProjectorFunction.apply(image_torch, angles_torch, num_detectors,
                                           detector_spacing, sdd, sid, voxel_spacing)
 
     # --- FBP weighting and filtering ---
-    # For fan-beam FBP, projections must be weighted before filtering.
-    # Weight = cos(gamma), where gamma is the fan angle for each detector.
-    u = (torch.arange(num_detectors, dtype=image_torch.dtype, device=device) - (num_detectors - 1) / 2) * detector_spacing
-    gamma = torch.atan(u / sdd)
-    weights = torch.cos(gamma).unsqueeze(0)  # Shape (1, num_detectors) for broadcasting
+    # 1) Optional Parker redundancy weighting for short-scan trajectories
+    if apply_parker:
+        parker = parker_weights(angles_torch, num_detectors, detector_spacing, sdd, detector_offset)
+        sinogram = sinogram * parker
 
-    # Apply weights before filtering
+    # 2) Fan-beam cosine pre-weighting
+    weights = fan_cosine_weights(
+        num_detectors,
+        detector_spacing,
+        sdd,
+        detector_offset=detector_offset,
+        device=device,
+        dtype=image_torch.dtype,
+    ).unsqueeze(0)
     sino_weighted = sinogram * weights
-    sinogram_filt = ramp_filter(sino_weighted)
 
-    reconstruction = F.relu(FanBackprojectorFunction.apply(sinogram_filt, angles_torch,
-                                                    detector_spacing, Ny, Nx,
-                                                    sdd, sid, voxel_spacing)) # ReLU to ensure non-negativity
-    
-    # --- FBP normalization ---
-    # The backprojection is a sum over all angles. To approximate the integral,
-    # we need to multiply by the angular step d_beta.
-    # The fan-beam FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
-    # d_beta = 2 * pi / num_angles
-    # Normalization factor = (1/2) * d_beta = pi / num_angles
-    reconstruction = reconstruction * (math.pi / num_angles)
+    # 3) Ramp filter along detector axis
+    sinogram_filt = ramp_filter_1d(sino_weighted, dim=1)
+
+    # 4) Angle-integration weights
+    d_beta = angular_integration_weights(angles_torch, redundant_full_scan=(not apply_parker)).view(-1, 1)
+    sinogram_filt = sinogram_filt * d_beta
+
+    # 5) Weighted fan-beam backprojection
+    reconstruction = F.relu(
+        fan_weighted_backproject(
+            sinogram_filt,
+            angles_torch,
+            detector_spacing,
+            Ny,
+            Nx,
+            sdd,
+            sid,
+            voxel_spacing=voxel_spacing,
+            detector_offset=detector_offset,
+        )
+    )
 
     loss = torch.mean((reconstruction - image_torch)**2)
-    loss.backward()
 
     print("Loss:", loss.item())
-    print("Center pixel gradient:", image_torch.grad[Ny//2, Nx//2].item())
 
     sinogram_cpu = sinogram.detach().cpu().numpy()
     reco_cpu = reconstruction.detach().cpu().numpy()

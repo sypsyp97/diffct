@@ -329,6 +329,141 @@ def _grid_3d(n1, n2, n3, tpb=_TPB_3D):
     ), tpb
 
 
+def detector_coordinates_1d(num_detectors, detector_spacing, detector_offset=0.0, device=None, dtype=torch.float32):
+    """Return centered detector coordinates in physical units.
+
+    Coordinates follow the convention ``(i - (N-1)/2) * spacing + offset``.
+    This avoids a half-pixel center bias for even detector counts.
+    """
+    idx = torch.arange(num_detectors, device=device, dtype=dtype)
+    return (idx - (num_detectors - 1) * 0.5) * detector_spacing + detector_offset
+
+
+def angular_integration_weights(angles, redundant_full_scan=True):
+    """Compute per-view integration weights from the provided angle samples.
+
+    Parameters
+    ----------
+    angles : torch.Tensor
+        1D projection angles in radians.
+    redundant_full_scan : bool, optional
+        If ``True``, applies a 0.5 factor for near-``2*pi`` scans to account for
+        view redundancy in reconstruction formulas using full circular data.
+    """
+    if not isinstance(angles, torch.Tensor):
+        angles = torch.tensor(angles, dtype=torch.float32)
+    a = angles.to(dtype=torch.float32)
+    if a.ndim != 1 or a.numel() < 2:
+        raise ValueError("angles must be a 1D tensor with at least 2 elements")
+
+    coverage = torch.abs(a[-1] - a[0]) + torch.abs(a[1] - a[0])
+
+    if coverage >= (2.0 * torch.pi - 1e-3):
+        # Periodic boundary integration weights for full circular sampling.
+        d = torch.diff(a, append=(a[:1] + 2.0 * torch.pi))
+        d = torch.abs(d)
+        w = 0.5 * (d + torch.roll(d, shifts=1, dims=0))
+        if redundant_full_scan:
+            w = 0.5 * w
+    else:
+        # Non-periodic trapezoidal weights for partial scans.
+        w = torch.empty_like(a)
+        w[1:-1] = 0.5 * (a[2:] - a[:-2])
+        w[0] = 0.5 * (a[1] - a[0])
+        w[-1] = 0.5 * (a[-1] - a[-2])
+        w = torch.abs(w)
+    return w
+
+
+def fan_cosine_weights(num_detectors, detector_spacing, sdd, detector_offset=0.0, device=None, dtype=torch.float32):
+    """Return fan-beam cosine pre-weights ``cos(gamma)`` for each detector bin."""
+    u = detector_coordinates_1d(num_detectors, detector_spacing, detector_offset, device=device, dtype=dtype)
+    gamma = torch.atan(u / sdd)
+    return torch.cos(gamma)
+
+
+def cone_cosine_weights(det_u, det_v, du, dv, sdd, detector_offset_u=0.0, detector_offset_v=0.0, device=None, dtype=torch.float32):
+    """Return FDK cosine pre-weights ``D/sqrt(D^2 + u^2 + v^2)`` on a 2D detector."""
+    u = detector_coordinates_1d(det_u, du, detector_offset_u, device=device, dtype=dtype).view(det_u, 1)
+    v = detector_coordinates_1d(det_v, dv, detector_offset_v, device=device, dtype=dtype).view(1, det_v)
+    return sdd / torch.sqrt(sdd * sdd + u * u + v * v)
+
+
+def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset=0.0):
+    """Return Parker redundancy weights for fan/cone short-scan geometries.
+
+    For full scans (near ``2*pi``), this returns all ones.
+    """
+    if not isinstance(angles, torch.Tensor):
+        angles = torch.tensor(angles, dtype=torch.float32)
+    a = angles.to(dtype=torch.float32)
+    if a.ndim != 1 or a.numel() < 2:
+        raise ValueError("angles must be a 1D tensor with at least 2 elements")
+
+    # Approximate covered range including the final sample interval.
+    coverage = torch.abs(a[-1] - a[0]) + torch.abs(a[1] - a[0])
+    if coverage >= (2.0 * torch.pi - 1e-3):
+        return torch.ones((a.numel(), num_detectors), dtype=a.dtype, device=a.device)
+
+    u = detector_coordinates_1d(
+        num_detectors,
+        detector_spacing,
+        detector_offset=detector_offset,
+        device=a.device,
+        dtype=a.dtype,
+    )
+    gamma = torch.atan(u / sdd).view(1, num_detectors)
+    gamma_max = torch.max(torch.abs(gamma))
+    min_short_scan = torch.pi + 2.0 * gamma_max
+    if coverage < (min_short_scan - 1e-3):
+        raise ValueError(
+            "Insufficient angular coverage for Parker weighting. "
+            f"Need at least {float(min_short_scan):.6f} rad, got {float(coverage):.6f} rad."
+        )
+
+    beta = (a - a[0]).view(-1, 1)
+    eps = 1e-6
+
+    # Exact Parker form for minimal short scan (pi + 2*gamma_max).
+    if coverage <= (min_short_scan + 1e-3):
+        t1 = 2.0 * (gamma_max - gamma)
+        t2 = torch.pi - 2.0 * gamma
+        t3 = torch.pi + 2.0 * gamma_max
+        t4 = 2.0 * (gamma_max + gamma)
+
+        w1 = 0.5 * (1.0 - torch.cos(torch.pi * beta / torch.clamp(t1, min=eps)))
+        w3 = 0.5 * (1.0 - torch.cos(torch.pi * (t3 - beta) / torch.clamp(t4, min=eps)))
+
+        cond1 = (beta >= 0.0) & (beta < t1)
+        cond2 = (beta >= t1) & (beta <= t2)
+        cond3 = (beta > t2) & (beta <= t3)
+        ones = torch.ones_like(w1)
+        zeros = torch.zeros_like(w1)
+        return torch.where(cond1, w1, torch.where(cond2, ones, torch.where(cond3, w3, zeros)))
+
+    # Fallback for over-scan (<2*pi): cosine taper at both ends.
+    ramp = 2.0 * gamma_max
+    wb = torch.ones_like(a)
+    if ramp > eps:
+        b = beta[:, 0]
+        lead = 0.5 * (1.0 - torch.cos(torch.pi * torch.clamp(b / ramp, min=0.0, max=1.0)))
+        trail = 0.5 * (1.0 - torch.cos(torch.pi * torch.clamp((coverage - b) / ramp, min=0.0, max=1.0)))
+        wb = torch.minimum(torch.maximum(lead, trail), torch.ones_like(lead))
+    return wb.view(-1, 1).expand(-1, num_detectors)
+
+
+def ramp_filter_1d(sinogram_tensor, dim=-1):
+    """Apply a 1D ramp filter along ``dim`` using FFT."""
+    n = sinogram_tensor.shape[dim]
+    freqs = torch.fft.fftfreq(n, device=sinogram_tensor.device)
+    ramp = torch.abs(2.0 * torch.pi * freqs)
+    shape = [1] * sinogram_tensor.ndim
+    shape[dim] = n
+    ramp = ramp.reshape(shape)
+    sino_fft = torch.fft.fft(sinogram_tensor, dim=dim)
+    return torch.real(torch.fft.ifft(sino_fft * ramp, dim=dim))
+
+
 # ############################################################################
 # SHARED CUDA KERNELS
 # ############################################################################
@@ -341,7 +476,8 @@ def _grid_3d(n1, n2, n3, tpb=_TPB_3D):
 def _parallel_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
-    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing
+    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y
 ):
     """Compute the 2D parallel beam forward projection.
 
@@ -396,13 +532,14 @@ def _parallel_2d_forward_kernel(
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
 
     # Define ray direction and starting point for parallel beam geometry
     # Ray direction is perpendicular to detector array (cos_a, sin_a)
     # Ray starting point is offset along detector by distance u in voxel units
     dir_x, dir_y = cos_a, sin_a
-    pnt_x, pnt_y = u * -sin_a, u * cos_a
+    pnt_x = u * -sin_a + center_offset_x
+    pnt_y = u * cos_a + center_offset_y
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
@@ -516,7 +653,8 @@ def _parallel_2d_forward_kernel(
 def _parallel_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
-    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing
+    det_spacing, d_cos, d_sin, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y
 ):
     """Compute the 2D parallel beam backprojection.
 
@@ -565,11 +703,12 @@ def _parallel_2d_backward_kernel(
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
 
     # Define ray direction and starting point for parallel beam geometry
     dir_x, dir_y = cos_a, sin_a
-    pnt_x, pnt_y = u * -sin_a, u * cos_a
+    pnt_x = u * -sin_a + center_offset_x
+    pnt_y = u * cos_a + center_offset_y
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
     t_min, t_max = -_INF, _INF
@@ -650,7 +789,8 @@ def _fan_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
     det_spacing, d_cos, d_sin,
-    sdd, sid, cx, cy, voxel_spacing
+    sdd, sid, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y
 ):
     """Compute the 2D fan beam forward projection.
 
@@ -702,19 +842,19 @@ def _fan_2d_forward_kernel(
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate source and detector positions for current projection angle
     # Source position: rotated by angle around isocenter at distance sid (SID)
-    src_x = -sid_v * sin_a  # Source x-coordinate in voxel units
-    src_y =  sid_v * cos_a  # Source y-coordinate in voxel units
+    src_x = -sid_v * sin_a + center_offset_x  # Source x-coordinate in voxel units
+    src_y = sid_v * cos_a + center_offset_y  # Source y-coordinate in voxel units
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate in voxel units
+    det_x = idd * sin_a + u * cos_a + center_offset_x  # Detector x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a + center_offset_y  # Detector y-coordinate in voxel units
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -808,7 +948,9 @@ def _fan_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
     det_spacing, d_cos, d_sin,
-    sdd, sid, cx, cy, voxel_spacing
+    sdd, sid, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y,
+    distance_weight
 ):
     """Compute the 2D fan beam backprojection.
 
@@ -861,19 +1003,19 @@ def _fan_2d_backward_kernel(
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u     = (idet - n_det * 0.5) * det_spacing / voxel_spacing  # Detector coordinate in voxel units
+    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate source and detector positions for current projection angle
     # Source position: rotated by angle around isocenter at distance sid (SID)
-    src_x = -sid_v * sin_a  # Source x-coordinate in voxel units
-    src_y =  sid_v * cos_a  # Source y-coordinate in voxel units
+    src_x = -sid_v * sin_a + center_offset_x  # Source x-coordinate in voxel units
+    src_y = sid_v * cos_a + center_offset_y  # Source y-coordinate in voxel units
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # Detector x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # Detector y-coordinate in voxel units
+    det_x = idd * sin_a + u * cos_a + center_offset_x  # Detector x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a + center_offset_y  # Detector y-coordinate in voxel units
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -936,6 +1078,16 @@ def _fan_2d_backward_kernel(
                 # Atomic operations prevent race conditions when multiple divergent rays write to same voxel
                 # Performance consideration: Fan beam geometry may have more atomic contention than parallel beam
                 cval = val * seg_len  # Contribution value for this ray segment
+                if distance_weight > 0.5:
+                    # Fan-beam FBP distance weighting in rotated coordinates.
+                    x_rel = (src_x + t_mid * dir_x) - center_offset_x
+                    y_rel = (src_y + t_mid * dir_y) - center_offset_y
+                    den = sdd_v + x_rel * sin_a - y_rel * cos_a
+                    if abs(den) <= _EPSILON:
+                        cval = 0.0
+                    else:
+                        scale = sdd_v / den
+                        cval = cval * scale * scale
                 one_minus_dx = 1.0 - dx
                 one_minus_dy = 1.0 - dy
                 cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
@@ -963,7 +1115,9 @@ def _cone_3d_forward_kernel(
     d_vol, Nx, Ny, Nz,
     d_sino, n_views, n_u, n_v,
     du, dv, d_cos, d_sin,
-    sdd, sid, cx, cy, cz, voxel_spacing
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z
 ):
     """Compute the 3D cone-beam forward projection.
 
@@ -1022,21 +1176,23 @@ def _cone_3d_forward_kernel(
     # === 3D CONE BEAM GEOMETRY SETUP ===
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
     # Normalize all physical distances to voxel units
-    u     = (iu - n_u * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
-    v     = (iv - n_v * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
+    u = (iu - (n_u - 1) * 0.5) * du / voxel_spacing + det_offset_u
+    v = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing + det_offset_v
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate 3D source and detector positions
     # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -sid_v * sin_a, sid_v * cos_a, 0.0
+    src_x = -sid_v * sin_a + center_offset_x
+    src_y = sid_v * cos_a + center_offset_y
+    src_z = center_offset_z
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
     idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate in voxel units
-    det_z = v                                           # Vertical z-coordinate in voxel units
+    det_x = idd * sin_a + u * cos_a + center_offset_x  # In-plane x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a + center_offset_y  # In-plane y-coordinate in voxel units
+    det_z = v + center_offset_z  # Vertical z-coordinate in voxel units
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
@@ -1167,7 +1323,10 @@ def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
     du, dv, d_cos, d_sin,
-    sdd, sid, cx, cy, cz, voxel_spacing
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z,
+    distance_weight
 ):
     """Compute the 3D cone-beam backprojection.
 
@@ -1227,21 +1386,23 @@ def _cone_3d_backward_kernel(
     g = d_sino[iview, iu, iv]  # Sinogram value to backproject along this ray
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
     # Normalize all physical distances to voxel units
-    u     = (iu - n_u * 0.5) * du / voxel_spacing  # Detector u-coordinate in voxel units
-    v     = (iv - n_v * 0.5) * dv / voxel_spacing  # Detector v-coordinate in voxel units
+    u = (iu - (n_u - 1) * 0.5) * du / voxel_spacing + det_offset_u
+    v = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing + det_offset_v
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
     # Calculate 3D source and detector positions
     # Source rotates in xy-plane around isocenter, z-coordinate is zero
-    src_x, src_y, src_z = -sid_v * sin_a, sid_v * cos_a, 0.0
+    src_x = -sid_v * sin_a + center_offset_x
+    src_y = sid_v * cos_a + center_offset_y
+    src_z = center_offset_z
     
     # Detector element position: IDD = SDD - SID (Isocenter-to-Detector Distance)
     # u-coordinate is in-plane offset, v-coordinate is vertical (z-direction)
     idd = sdd_v - sid_v
-    det_x = idd * sin_a + u * cos_a   # In-plane x-coordinate in voxel units
-    det_y = -idd * cos_a + u * sin_a  # In-plane y-coordinate in voxel units
-    det_z = v                                           # Vertical z-coordinate in voxel units
+    det_x = idd * sin_a + u * cos_a + center_offset_x  # In-plane x-coordinate in voxel units
+    det_y = -idd * cos_a + u * sin_a + center_offset_y  # In-plane y-coordinate in voxel units
+    det_z = v + center_offset_z  # Vertical z-coordinate in voxel units
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
@@ -1325,6 +1486,16 @@ def _cone_3d_backward_kernel(
                 omdy = 1.0 - dy
                 omdz = 1.0 - dz
                 cval = g * seg_len
+                if distance_weight > 0.5:
+                    # FDK distance weighting term in rotated coordinates.
+                    x_rel = (src_x + t_mid * dir_x) - center_offset_x
+                    y_rel = (src_y + t_mid * dir_y) - center_offset_y
+                    den = sdd_v + x_rel * sin_a - y_rel * cos_a
+                    if abs(den) <= _EPSILON:
+                        cval = 0.0
+                    else:
+                        scale = sdd_v / den
+                        cval = cval * scale * scale
 
                 # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
                 cuda.atomic.add(d_vol, (ix0,     iy0,     iz0),     cval * omdx*omdy*omdz)
@@ -1391,7 +1562,17 @@ class ParallelProjectorFunction(torch.autograd.Function):
     >>> print(f"Gradient shape: {image.grad.shape}")  # (128, 128)
     """
     @staticmethod
-    def forward(ctx, image, angles, num_detectors, detector_spacing=1.0, voxel_spacing=1.0):
+    def forward(
+        ctx,
+        image,
+        angles,
+        num_detectors,
+        detector_spacing=1.0,
+        voxel_spacing=1.0,
+        detector_offset=0.0,
+        center_offset_x=0.0,
+        center_offset_y=0.0,
+    ):
         """Compute the 2D parallel beam forward projection (Radon transform) of
         an image using CUDA acceleration.
 
@@ -1455,19 +1636,42 @@ class ParallelProjectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _parallel_2d_forward_kernel[grid, tpb, numba_stream](
             d_image, Nx, Ny, d_sino, n_angles, num_detectors,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
+        ctx.intermediate = (
+            num_detectors,
+            detector_spacing,
+            Ny,
+            Nx,
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        )
         return sinogram
     
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        num_detectors, detector_spacing, Ny, Nx, voxel_spacing = ctx.intermediate
+        (
+            num_detectors,
+            detector_spacing,
+            Ny,
+            Nx,
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        ) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1489,13 +1693,18 @@ class ParallelProjectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _parallel_2d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_angles, num_detectors,
             d_img_grad, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v
         )
 
-        return grad_image, None, None, None, None
+        return grad_image, None, None, None, None, None, None, None
 
 
 class ParallelBackprojectorFunction(torch.autograd.Function):
@@ -1526,7 +1735,18 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     >>> print(sinogram.grad.shape)  # (180, 128)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, detector_spacing=1.0, H=128, W=128, voxel_spacing=1.0):
+    def forward(
+        ctx,
+        sinogram,
+        angles,
+        detector_spacing=1.0,
+        H=128,
+        W=128,
+        voxel_spacing=1.0,
+        detector_offset=0.0,
+        center_offset_x=0.0,
+        center_offset_y=0.0,
+    ):
         """Compute the 2D parallel beam backprojection (adjoint Radon
         transform) of a sinogram using CUDA acceleration.
 
@@ -1592,19 +1812,44 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _parallel_2d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr, cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1], voxel_spacing)
+        ctx.intermediate = (
+            H,
+            W,
+            detector_spacing,
+            sinogram.shape[0],
+            sinogram.shape[1],
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        )
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
-        H, W, detector_spacing, n_ang, n_det, voxel_spacing = ctx.intermediate
+        (
+            H,
+            W,
+            detector_spacing,
+            n_ang,
+            n_det,
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        ) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1631,12 +1876,17 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _parallel_2d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
-            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(detector_spacing), d_cos, d_sin, cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v
         )
 
-        return grad_sino, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None, None
 
 
 class FanProjectorFunction(torch.autograd.Function):
@@ -1667,7 +1917,19 @@ class FanProjectorFunction(torch.autograd.Function):
     >>> print(image.grad.shape)  # (256, 256)
     """
     @staticmethod
-    def forward(ctx, image, angles, num_detectors, detector_spacing, sdd, sid, voxel_spacing=1.0):
+    def forward(
+        ctx,
+        image,
+        angles,
+        num_detectors,
+        detector_spacing,
+        sdd,
+        sid,
+        voxel_spacing=1.0,
+        detector_offset=0.0,
+        center_offset_x=0.0,
+        center_offset_y=0.0,
+    ):
         """Compute the 2D fan beam forward projection of an image using CUDA
         acceleration.
 
@@ -1733,21 +1995,47 @@ class FanProjectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _fan_2d_forward_kernel[grid, tpb, numba_stream](
             d_image, Nx, Ny, d_sino, n_ang, num_detectors,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx,
-                            sdd, sid, voxel_spacing)
+        ctx.intermediate = (
+            num_detectors,
+            detector_spacing,
+            Ny,
+            Nx,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        )
         return sinogram
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        (n_det, det_spacing, Ny, Nx, sdd, sid, voxel_spacing) = ctx.intermediate
+        (
+            n_det,
+            det_spacing,
+            Ny,
+            Nx,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        ) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1769,13 +2057,19 @@ class FanProjectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v,
+            _DTYPE(0.0)
         )
 
-        return grad_img, None, None, None, None, None, None
+        return grad_img, None, None, None, None, None, None, None, None, None
 
 
 class FanBackprojectorFunction(torch.autograd.Function):
@@ -1807,7 +2101,20 @@ class FanBackprojectorFunction(torch.autograd.Function):
     >>> print(sinogram.grad.shape)  # (360, 512)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, detector_spacing, H, W, sdd, sid, voxel_spacing=1.0):
+    def forward(
+        ctx,
+        sinogram,
+        angles,
+        detector_spacing,
+        H,
+        W,
+        sdd,
+        sid,
+        voxel_spacing=1.0,
+        detector_offset=0.0,
+        center_offset_x=0.0,
+        center_offset_y=0.0,
+    ):
         """Compute the 2D fan beam backprojection of a sinogram using CUDA
         acceleration.
 
@@ -1875,20 +2182,50 @@ class FanBackprojectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v,
+            _DTYPE(0.0)
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (H, W, detector_spacing, n_ang, n_det, sdd, sid, voxel_spacing)
+        ctx.intermediate = (
+            H,
+            W,
+            detector_spacing,
+            n_ang,
+            n_det,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        )
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
-        (H, W, det_spacing, n_ang, n_det, sdd, sid, voxel_spacing) = ctx.intermediate
+        (
+            H,
+            W,
+            det_spacing,
+            n_ang,
+            n_det,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset,
+            center_offset_x,
+            center_offset_y,
+        ) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -1911,13 +2248,18 @@ class FanBackprojectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
         _fan_2d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing)
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v
         )
 
-        return grad_sino, None, None, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None, None, None, None
 
 
 class ConeProjectorFunction(torch.autograd.Function):
@@ -1948,7 +2290,23 @@ class ConeProjectorFunction(torch.autograd.Function):
     >>> print(volume.grad.shape)  # (128, 128, 128)
     """
     @staticmethod
-    def forward(ctx, volume, angles, det_u, det_v, du, dv, sdd, sid, voxel_spacing=1.0):
+    def forward(
+        ctx,
+        volume,
+        angles,
+        det_u,
+        det_v,
+        du,
+        dv,
+        sdd,
+        sid,
+        voxel_spacing=1.0,
+        detector_offset_u=0.0,
+        detector_offset_v=0.0,
+        center_offset_x=0.0,
+        center_offset_y=0.0,
+        center_offset_z=0.0,
+    ):
         """Compute the 3D cone beam forward projection of a volume using CUDA
         acceleration.
 
@@ -2022,23 +2380,61 @@ class ConeProjectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_u_v = _DTYPE(detector_offset_u / voxel_spacing)
+        det_offset_v_v = _DTYPE(detector_offset_v / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+        center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
+
         _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_vol, W, H, D, d_sino, n_views, det_u, det_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid),
-            cx, cy, cz, _DTYPE(voxel_spacing)
+            cx, cy, cz, _DTYPE(voxel_spacing),
+            det_offset_u_v, det_offset_v_v,
+            center_offset_x_v, center_offset_y_v, center_offset_z_v
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (D, H, W, det_u, det_v, du, dv,
-                            sdd, sid, voxel_spacing)
+        ctx.intermediate = (
+            D,
+            H,
+            W,
+            det_u,
+            det_v,
+            du,
+            dv,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset_u,
+            detector_offset_v,
+            center_offset_x,
+            center_offset_y,
+            center_offset_z,
+        )
         return sino
 
     @staticmethod
     def backward(ctx, grad_sinogram):
         angles, = ctx.saved_tensors
-        (D, H, W, det_u, det_v, du, dv,
-         sdd, sid, voxel_spacing) = ctx.intermediate
+        (
+            D,
+            H,
+            W,
+            det_u,
+            det_v,
+            du,
+            dv,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset_u,
+            detector_offset_v,
+            center_offset_x,
+            center_offset_y,
+            center_offset_z,
+        ) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -2061,14 +2457,23 @@ class ConeProjectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_u_v = _DTYPE(detector_offset_u / voxel_spacing)
+        det_offset_v_v = _DTYPE(detector_offset_v / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+        center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
+
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+            det_offset_u_v, det_offset_v_v,
+            center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            _DTYPE(0.0)
         )
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
-        return grad_vol, None, None, None, None, None, None, None, None
+        return grad_vol, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 class ConeBackprojectorFunction(torch.autograd.Function):
@@ -2108,7 +2513,24 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     >>> print(f"Projection gradient shape: {projections.grad.shape}")  # (360, 256, 256)
     """
     @staticmethod
-    def forward(ctx, sinogram, angles, D, H, W, du, dv, sdd, sid, voxel_spacing=1.0):
+    def forward(
+        ctx,
+        sinogram,
+        angles,
+        D,
+        H,
+        W,
+        du,
+        dv,
+        sdd,
+        sid,
+        voxel_spacing=1.0,
+        detector_offset_u=0.0,
+        detector_offset_v=0.0,
+        center_offset_x=0.0,
+        center_offset_y=0.0,
+        center_offset_z=0.0,
+    ):
         """Compute the 3D cone beam backprojection of a projection sinogram
         using CUDA acceleration.
 
@@ -2182,23 +2604,62 @@ class ConeBackprojectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_u_v = _DTYPE(detector_offset_u / voxel_spacing)
+        det_offset_v_v = _DTYPE(detector_offset_v / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+        center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
+
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_views, n_u, n_v, d_reco, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+            det_offset_u_v, det_offset_v_v,
+            center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            _DTYPE(0.0)
         )
 
         ctx.save_for_backward(angles)
-        ctx.intermediate = (D, H, W, n_u, n_v, du, dv,
-                            sdd, sid, voxel_spacing)
+        ctx.intermediate = (
+            D,
+            H,
+            W,
+            n_u,
+            n_v,
+            du,
+            dv,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset_u,
+            detector_offset_v,
+            center_offset_x,
+            center_offset_y,
+            center_offset_z,
+        )
         vol = vol_perm.permute(2, 1, 0).contiguous()
         return vol
 
     @staticmethod
     def backward(ctx, grad_output):
         angles, = ctx.saved_tensors
-        (D, H, W, n_u, n_v, du, dv,
-         sdd, sid, voxel_spacing) = ctx.intermediate
+        (
+            D,
+            H,
+            W,
+            n_u,
+            n_v,
+            du,
+            dv,
+            sdd,
+            sid,
+            voxel_spacing,
+            detector_offset_u,
+            detector_offset_v,
+            center_offset_x,
+            center_offset_y,
+            center_offset_z,
+        ) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
         angles = DeviceManager.ensure_device(angles, device)
@@ -2222,10 +2683,126 @@ class ConeBackprojectorFunction(torch.autograd.Function):
 
         pt_stream = torch.cuda.current_stream()
         numba_stream = _get_numba_external_stream_for(pt_stream)
+        det_offset_u_v = _DTYPE(detector_offset_u / voxel_spacing)
+        det_offset_v_v = _DTYPE(detector_offset_v / voxel_spacing)
+        center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+        center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+        center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
+
         _cone_3d_forward_kernel[grid, tpb, numba_stream](
             d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing)
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+            det_offset_u_v, det_offset_v_v,
+            center_offset_x_v, center_offset_y_v, center_offset_z_v
         )
 
-        return grad_sino, None, None, None, None, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+
+
+def fan_weighted_backproject(
+    sinogram,
+    angles,
+    detector_spacing,
+    H,
+    W,
+    sdd,
+    sid,
+    voxel_spacing=1.0,
+    detector_offset=0.0,
+    center_offset_x=0.0,
+    center_offset_y=0.0,
+):
+    """Fan-beam weighted backprojection for analytical FBP pipelines.
+
+    This uses the same Siddon traversal as `FanBackprojectorFunction` but enables
+    geometric distance weighting in the accumulation step.
+    """
+    if not sinogram.is_cuda:
+        raise ValueError("sinogram must be on CUDA device")
+    device = sinogram.device
+    sinogram = sinogram.to(dtype=torch.float32).contiguous()
+    angles = angles.to(dtype=torch.float32, device=device).contiguous()
+
+    n_ang, n_det = sinogram.shape
+    Ny, Nx = H, W
+    reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
+    d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
+
+    d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+    d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
+    d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+    d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+
+    grid, tpb = _grid_2d(n_ang, n_det)
+    cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
+    det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+    center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+    center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
+    pt_stream = torch.cuda.current_stream()
+    numba_stream = _get_numba_external_stream_for(pt_stream)
+    _fan_2d_backward_kernel[grid, tpb, numba_stream](
+        d_sino, n_ang, n_det, d_reco, Nx, Ny,
+        _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+        _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+        det_offset_v, center_offset_x_v, center_offset_y_v,
+        _DTYPE(1.0)
+    )
+    return reco
+
+
+def cone_weighted_backproject(
+    sinogram,
+    angles,
+    D,
+    H,
+    W,
+    du,
+    dv,
+    sdd,
+    sid,
+    voxel_spacing=1.0,
+    detector_offset_u=0.0,
+    detector_offset_v=0.0,
+    center_offset_x=0.0,
+    center_offset_y=0.0,
+    center_offset_z=0.0,
+):
+    """Cone-beam weighted backprojection for analytical FDK pipelines."""
+    if not sinogram.is_cuda:
+        raise ValueError("sinogram must be on CUDA device")
+    device = sinogram.device
+    sinogram = sinogram.to(dtype=torch.float32).contiguous()
+    angles = angles.to(dtype=torch.float32, device=device).contiguous()
+
+    n_views, n_u, n_v = sinogram.shape
+    _validate_3d_memory_layout(sinogram, expected_order='VHW')
+
+    vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
+    d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
+
+    d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+    d_reco = TorchCUDABridge.tensor_to_cuda_array(vol_perm)
+    d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+    d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+
+    grid, tpb = _grid_3d(n_views, n_u, n_v)
+    cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
+    det_offset_u_v = _DTYPE(detector_offset_u / voxel_spacing)
+    det_offset_v_v = _DTYPE(detector_offset_v / voxel_spacing)
+    center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+    center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+    center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
+
+    pt_stream = torch.cuda.current_stream()
+    numba_stream = _get_numba_external_stream_for(pt_stream)
+    _cone_3d_backward_kernel[grid, tpb, numba_stream](
+        d_sino, n_views, n_u, n_v, d_reco, W, H, D,
+        _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+        _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+        det_offset_u_v, det_offset_v_v,
+        center_offset_x_v, center_offset_y_v, center_offset_z_v,
+        _DTYPE(1.0)
+    )
+    return vol_perm.permute(2, 1, 0).contiguous()

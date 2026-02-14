@@ -2,7 +2,12 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
-from diffct.differentiable import ParallelProjectorFunction, ParallelBackprojectorFunction
+from diffct.differentiable import (
+    ParallelProjectorFunction,
+    ParallelBackprojectorFunction,
+    angular_integration_weights,
+    ramp_filter_1d,
+)
 
 
 def shepp_logan_2d(Nx, Ny):
@@ -33,19 +38,6 @@ def shepp_logan_2d(Nx, Ny):
     phantom = np.clip(phantom, 0.0, 1.0)
     return phantom
 
-def ramp_filter(sinogram_tensor):
-    device = sinogram_tensor.device
-    num_views, num_det = sinogram_tensor.shape
-    freqs = torch.fft.fftfreq(num_det, device=device)
-    omega = 2.0 * torch.pi * freqs
-    ramp = torch.abs(omega)
-    ramp_2d = ramp.reshape(1, num_det)
-    sino_fft = torch.fft.fft(sinogram_tensor, dim=1)
-    filtered_fft = sino_fft * ramp_2d
-    filtered = torch.real(torch.fft.ifft(filtered_fft, dim=1))
-    
-    return filtered
-
 def main():
     Nx, Ny = 256, 256
     phantom = shepp_logan_2d(Nx, Ny)
@@ -63,18 +55,12 @@ def main():
     sinogram = ParallelProjectorFunction.apply(image_torch, angles_torch,
                                                num_detectors, detector_spacing, voxel_spacing)
     
-    sinogram_filt = ramp_filter(sinogram)
+    sinogram_filt = ramp_filter_1d(sinogram, dim=1)
+    d_theta = angular_integration_weights(angles_torch, redundant_full_scan=True).view(-1, 1)
+    sinogram_filt = sinogram_filt * d_theta
 
     reconstruction = F.relu(ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
                                                          detector_spacing, Ny, Nx, voxel_spacing)) # ReLU to ensure non-negativity
-    
-    # --- FBP normalization ---
-    # The backprojection is a sum over all angles. To approximate the integral,
-    # we need to multiply by the angular step d_theta.
-    # The FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
-    # d_theta = 2 * pi / num_angles
-    # Normalization factor = (1/2) * d_theta = pi / num_angles
-    reconstruction = reconstruction * (np.pi / num_angles)
 
     loss = torch.mean((reconstruction - image_torch)**2)
     loss.backward()

@@ -3,7 +3,13 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
-from diffct.differentiable import ConeProjectorFunction, ConeBackprojectorFunction
+from diffct.differentiable import (
+    ConeProjectorFunction,
+    angular_integration_weights,
+    cone_cosine_weights,
+    cone_weighted_backproject,
+    ramp_filter_1d,
+)
 
 
 def shepp_logan_3d(shape):
@@ -59,19 +65,6 @@ def shepp_logan_3d(shape):
     shepp_logan = np.clip(shepp_logan, 0, 1)
     return shepp_logan
 
-def ramp_filter_3d(sinogram_tensor):
-    device = sinogram_tensor.device
-    num_views, num_det_u, num_det_v = sinogram_tensor.shape
-    freqs = torch.fft.fftfreq(num_det_u, device=device)
-    omega = 2.0 * torch.pi * freqs
-    ramp = torch.abs(omega)
-    ramp_3d = ramp.reshape(1, num_det_u, 1)
-    sino_fft = torch.fft.fft(sinogram_tensor, dim=1)
-    filtered_fft = sino_fft * ramp_3d
-    filtered = torch.real(torch.fft.ifft(filtered_fft, dim=1))
-    
-    return filtered
-
 def main():
     Nx, Ny, Nz = 128, 128, 128
     phantom_cpu = shepp_logan_3d((Nz, Ny, Nx))
@@ -81,13 +74,15 @@ def main():
 
     det_u, det_v = 256, 256
     du, dv = 1.0, 1.0
+    detector_offset_u = 0.0
+    detector_offset_v = 0.0
     sdd = 900.0
     sid = 600.0
 
     voxel_spacing = 1.0
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32, requires_grad=True).contiguous()
+    phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32).contiguous()
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
     sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
@@ -95,39 +90,49 @@ def main():
                                            sdd, sid, voxel_spacing)
 
     # --- FDK weighting and filtering ---
-    # For FDK, projections must be weighted before filtering.
-    # Weight = D / sqrt(D^2 + u^2 + v^2), where D is source_distance
-    # and (u,v) are detector coordinates.
-    u_coords = (torch.arange(det_u, dtype=phantom_torch.dtype, device=device) - (det_u - 1) / 2) * du
-    v_coords = (torch.arange(det_v, dtype=phantom_torch.dtype, device=device) - (det_v - 1) / 2) * dv
-
-    # Reshape for broadcasting over sinogram of shape (views, u, v)
-    u_coords = u_coords.view(1, det_u, 1)
-    v_coords = v_coords.view(1, 1, det_v)
-    
-    weights = sdd / torch.sqrt(sdd**2 + u_coords**2 + v_coords**2)
-    
-    # Apply weights and then filter
+    # 1) FDK cosine pre-weighting
+    weights = cone_cosine_weights(
+        det_u,
+        det_v,
+        du,
+        dv,
+        sdd,
+        detector_offset_u=detector_offset_u,
+        detector_offset_v=detector_offset_v,
+        device=device,
+        dtype=phantom_torch.dtype,
+    ).unsqueeze(0)
     sino_weighted = sinogram * weights
-    sinogram_filt = ramp_filter_3d(sino_weighted).contiguous()
 
-    reconstruction = F.relu(ConeBackprojectorFunction.apply(sinogram_filt, angles_torch, Nz, Ny, Nx,
-                                                    du, dv, sdd, sid, voxel_spacing)) # ReLU to ensure non-negativity
-    
-    # --- FDK normalization ---
-    # The backprojection is a sum over all angles. To approximate the integral,
-    # we need to multiply by the angular step d_beta.
-    # The FDK formula also includes a factor of 1/2 when integrating over [0, 2*pi].
-    # d_beta = 2 * pi / num_views
-    # Normalization factor = (1/2) * d_beta = pi / num_views
-    reconstruction = reconstruction * (math.pi / num_views)
+    # 2) Ramp filter along detector-u rows
+    sinogram_filt = ramp_filter_1d(sino_weighted, dim=1).contiguous()
+
+    # 3) Angle-integration weights
+    d_beta = angular_integration_weights(angles_torch, redundant_full_scan=True).view(-1, 1, 1)
+    sinogram_filt = sinogram_filt * d_beta
+
+    # 4) Weighted cone-beam backprojection
+    reconstruction = F.relu(
+        cone_weighted_backproject(
+            sinogram_filt,
+            angles_torch,
+            Nz,
+            Ny,
+            Nx,
+            du,
+            dv,
+            sdd,
+            sid,
+            voxel_spacing=voxel_spacing,
+            detector_offset_u=detector_offset_u,
+            detector_offset_v=detector_offset_v,
+        )
+    )
 
     loss = torch.mean((reconstruction - phantom_torch)**2)
-    loss.backward()
 
     print("Cone Beam Example with user-defined geometry:")
     print("Loss:", loss.item())
-    print("Volume center voxel gradient:", phantom_torch.grad[Nz//2, Ny//2, Nx//2].item())
     print("Reconstruction shape:", reconstruction.shape)
 
     reconstruction_cpu = reconstruction.detach().cpu().numpy()
