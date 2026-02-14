@@ -1901,7 +1901,7 @@ class FanProjectorFunction(torch.autograd.Function):
     method with interpolation for fan beam geometry, where rays diverge from a point
     X-ray source to a linear detector array. The forward pass computes sinograms
     using divergent beam geometry, and the backward pass computes gradients via
-    adjoint backprojection.
+    adjoint backprojection with geometric ``1/U^2`` distance weighting.
     
     
     Examples
@@ -2066,7 +2066,7 @@ class FanProjectorFunction(torch.autograd.Function):
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
             det_offset_v, center_offset_x_v, center_offset_y_v,
-            _DTYPE(0.0)
+            _DTYPE(1.0)
         )
 
         return grad_img, None, None, None, None, None, None, None, None, None
@@ -2082,8 +2082,9 @@ class FanBackprojectorFunction(torch.autograd.Function):
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
     method with interpolation for fan beam backprojection. Implements the adjoint
-    of the fan beam projection operator, distributing sinogram values back into
-    the reconstruction volume along divergent ray paths. The forward pass
+    of the fan beam projection operator with geometric ``1/U^2`` distance weighting,
+    distributing sinogram values back into the reconstruction volume along divergent
+    ray paths. The forward pass
     computes reconstruction from sinogram data, and the backward pass computes
     gradients via forward projection.
     
@@ -2191,7 +2192,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
             det_offset_v, center_offset_x_v, center_offset_y_v,
-            _DTYPE(0.0)
+            _DTYPE(1.0)
         )
 
         ctx.save_for_backward(angles)
@@ -2274,7 +2275,8 @@ class ConeProjectorFunction(torch.autograd.Function):
     method with interpolation for 3D cone beam geometry. Rays emanate from a point
     X-ray source to a 2D detector array capturing volumetric projection data.
     The forward pass computes 3D projections, and the backward pass computes
-    gradients via adjoint 3D backprojection. Requires significant GPU memory.
+    gradients via adjoint 3D backprojection with geometric ``1/U^2`` distance
+    weighting. Requires significant GPU memory.
     
     
     Examples
@@ -2469,7 +2471,7 @@ class ConeProjectorFunction(torch.autograd.Function):
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
             det_offset_u_v, det_offset_v_v,
             center_offset_x_v, center_offset_y_v, center_offset_z_v,
-            _DTYPE(0.0)
+            _DTYPE(1.0)
         )
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
@@ -2486,10 +2488,10 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
     method with interpolation for 3D cone beam backprojection. The forward pass
-    computes a 3D reconstruction from cone beam projection data using
-    backprojection as the adjoint operation. The backward pass computes gradients
-    via 3D cone beam forward projection. Requires CUDA-capable hardware and
-    consistent device placements.
+    computes a 3D reconstruction from cone beam projection data using weighted
+    backprojection (geometric ``1/U^2`` term) as the adjoint operation. The
+    backward pass computes gradients via 3D cone beam forward projection. Requires
+    CUDA-capable hardware and consistent device placements.
     
     This operation may be memory- and computationally-intensive due to 3D geometry.
     Consider using gradient checkpointing, smaller volumes, or distributed computing
@@ -2616,7 +2618,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
             det_offset_u_v, det_offset_v_v,
             center_offset_x_v, center_offset_y_v, center_offset_z_v,
-            _DTYPE(0.0)
+            _DTYPE(1.0)
         )
 
         ctx.save_for_backward(angles)
