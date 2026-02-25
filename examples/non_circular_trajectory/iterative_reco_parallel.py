@@ -5,7 +5,6 @@ parallel beam trajectories (sinusoidal + custom wobble).  Optimises a
 learnable image to match the measured sinogram via MSE loss and AdamW.
 """
 
-import math
 import numpy as np
 import mlx.core as mx
 import matplotlib.pyplot as plt

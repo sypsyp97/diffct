@@ -5,7 +5,6 @@ fan beam trajectories (sinusoidal + custom elliptical).  Optimises a
 learnable image to match the measured sinogram via MSE loss.
 """
 
-import math
 import numpy as np
 import mlx.core as mx
 import matplotlib.pyplot as plt

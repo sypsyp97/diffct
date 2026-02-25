@@ -5,7 +5,6 @@ Demonstrates gradient-based iterative reconstruction using non-standard
 Optimises a learnable volume to match the measured sinogram via MSE loss.
 """
 
-import math
 import numpy as np
 import mlx.core as mx
 import matplotlib.pyplot as plt
