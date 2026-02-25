@@ -8,7 +8,6 @@ learnable image to match the measured sinogram via MSE loss.
 import math
 import numpy as np
 import mlx.core as mx
-import mlx.optimizers as optim
 import matplotlib.pyplot as plt
 import diffct_mlx
 
@@ -78,12 +77,12 @@ def run_reconstruction(trajectory_name, src_pos, det_center, det_u_vec,
     )
     mx.eval(target_sino)
 
-    # Learnable reconstruction
-    reco = mx.zeros((Ny, Nx), dtype=mx.float32)
+    # Learnable reconstruction — small random init so gradients flow
+    reco = 0.01 * mx.random.normal((Ny, Nx)).astype(mx.float32)
 
     def loss_fn(reco_val):
         current_sino = diffct_mlx.fan_forward(
-            mx.maximum(reco_val, 0.0),
+            reco_val,
             src_pos, det_center, det_u_vec,
             n_det, det_spacing, voxel_spacing,
         )

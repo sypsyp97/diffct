@@ -8,7 +8,6 @@ learnable image to match the measured sinogram via MSE loss and AdamW.
 import math
 import numpy as np
 import mlx.core as mx
-import mlx.optimizers as optim
 import matplotlib.pyplot as plt
 import diffct_mlx
 
@@ -84,13 +83,13 @@ def run_reconstruction(trajectory_name, ray_dir, det_origin, det_u_vec,
     )
     mx.eval(target_sino)
 
-    # Learnable reconstruction initialised to zero
-    reco = mx.zeros((Ny, Nx), dtype=mx.float32)
-    optimizer = optim.AdamW(learning_rate=1e-1)
+    # Learnable reconstruction — small random init so gradients flow
+    reco = 0.01 * mx.random.normal((Ny, Nx)).astype(mx.float32)
+    lr = 1e-1
 
     def loss_fn(reco_val):
         current_sino = diffct_mlx.parallel_forward(
-            mx.maximum(reco_val, 0.0),
+            reco_val,
             ray_dir, det_origin, det_u_vec,
             n_det, det_spacing, voxel_spacing,
         )
@@ -104,11 +103,7 @@ def run_reconstruction(trajectory_name, ray_dir, det_origin, det_u_vec,
         loss_val, grad = loss_and_grad(reco)
         mx.eval(loss_val, grad)
 
-        # AdamW step (operates on a flat list of parameters)
-        optimizer.apply_gradients([(grad, reco)])
-        reco = reco - optimizer.learning_rate * grad  # manual step
-        # Simpler: direct gradient descent with momentum via optimizer state
-        # Re-initialise with updated reco for next iter
+        reco = reco - lr * grad
         mx.eval(reco)
 
         loss_values.append(float(loss_val))

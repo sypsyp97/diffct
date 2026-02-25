@@ -86,12 +86,12 @@ def run_reconstruction(trajectory_name,
     )
     mx.eval(target_sino)
 
-    # Learnable volume
-    reco = mx.zeros((Nz, Ny, Nx), dtype=mx.float32)
+    # Learnable volume — small random init so gradients flow
+    reco = 0.01 * mx.random.normal((Nz, Ny, Nx)).astype(mx.float32)
 
     def loss_fn(reco_val):
         current_sino = diffct_mlx.cone_forward(
-            mx.maximum(reco_val, 0.0),
+            reco_val,
             src_pos, det_center, det_u_vec, det_v_vec,
             det_u, det_v, du, dv, voxel_spacing,
         )
