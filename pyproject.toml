@@ -3,43 +3,37 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "diffct"
-version = "1.2.7.dev0"
-description = "A CUDA-based library for computed tomography (CT) projection and reconstruction with differentiable operators"
+name = "diffct-mlx"
+version = "1.0.0.dev0"
+description = "Differentiable CT reconstruction for Apple Silicon using MLX and custom Metal kernels"
 readme = "README.md"
 authors = [
     {name = "Yipeng Sun", email = "yipeng.sun@fau.de"},
 ]
 license = {text = "Apache 2.0"}
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
+    "Operating System :: MacOS",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
 dependencies = [
+    "mlx>=0.20.0",
     "numpy",
-    "numba",
-    "torch",
 ]
 
 [project.optional-dependencies]
-mlx = [
-    "mlx>=0.20.0",
-    "numpy",
+dev = [
+    "matplotlib",
 ]
 
 [project.urls]
 Homepage = "https://github.com/sypsyp97/diffct"
 
-[tool.setuptools]
-package-dir = {"" = "."}
-
-[tool.setuptools.packages.find]
-where = ["."]
+[tool.hatch.build.targets.wheel]
+packages = ["diffct_mlx"]
 
 [tool.hatch.envs.default]
 python = "python"
-
-[tool.hatch.envs.default.env-vars]
