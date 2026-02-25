@@ -24,6 +24,12 @@ dependencies = [
     "torch",
 ]
 
+[project.optional-dependencies]
+mlx = [
+    "mlx>=0.20.0",
+    "numpy",
+]
+
 [project.urls]
 Homepage = "https://github.com/sypsyp97/diffct"
 
