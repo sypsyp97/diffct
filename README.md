@@ -158,6 +158,33 @@ reco = diffct_mlx.cone_backward(
 | `random_trajectory_3d(n_views, sid_mean, sdd_mean, ...)` | 3D cone |
 | `custom_trajectory_3d(n_views, sid, sdd, ...)` | 3D cone |
 
+## Examples
+
+Ready-to-run scripts are provided in the `examples/` directory:
+
+### Circular Trajectory (Analytical Reconstruction)
+
+| Script | Description |
+|--------|-------------|
+| `examples/circular_trajectory/fbp_parallel.py` | FBP with ramp filter — 2D parallel beam |
+| `examples/circular_trajectory/fbp_fan.py` | FBP with cosine weighting + ramp filter — 2D fan beam |
+| `examples/circular_trajectory/fdk_cone.py` | FDK with distance weighting + ramp filter — 3D cone beam |
+
+### Non-Circular Trajectory (Iterative Reconstruction)
+
+| Script | Description |
+|--------|-------------|
+| `examples/non_circular_trajectory/iterative_reco_parallel.py` | Gradient-based iterative reco — sinusoidal & custom wobble trajectories |
+| `examples/non_circular_trajectory/iterative_reco_fan.py` | Gradient-based iterative reco — sinusoidal & custom elliptical trajectories |
+| `examples/non_circular_trajectory/iterative_reco_cone.py` | Gradient-based iterative reco — spiral, sinusoidal, saddle & figure-8 trajectories |
+
+Run any example with:
+
+```bash
+conda activate diffct-mlx
+python examples/circular_trajectory/fbp_parallel.py
+```
+
 ## Package Structure
 
 ```
