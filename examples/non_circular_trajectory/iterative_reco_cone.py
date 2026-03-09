@@ -2,11 +2,13 @@
 
 Demonstrates gradient-based iterative reconstruction using non-standard
 3D cone beam trajectories (spiral, sinusoidal, saddle, custom figure-8).
-Optimises a learnable volume to match the measured sinogram via MSE loss.
+Optimises a non-negative volume with Adam to match the measured sinogram
+via MSE loss.
 """
 
 import numpy as np
 import mlx.core as mx
+import mlx.optimizers as optim
 import matplotlib.pyplot as plt
 import diffct_mlx
 
@@ -57,10 +59,10 @@ def shepp_logan_3d(shape):
 # ── Custom trajectory ────────────────────────────────────────────────────────
 
 def custom_figure8_trajectory(angles, sid):
-    """Figure-8 source path in 3D."""
+    """Figure-8-like source path that stays away from the isocenter."""
     src_x = -sid * mx.sin(angles)
-    src_y = sid * mx.cos(angles) * mx.sin(angles)       # figure-8 in y
-    src_z = 50.0 * mx.sin(2 * angles)                   # z oscillation
+    src_y = sid * mx.cos(angles) + 0.15 * sid * mx.sin(2 * angles)
+    src_z = 50.0 * mx.sin(2 * angles)
     return mx.stack([src_x, src_y, src_z], axis=1)
 
 
@@ -69,7 +71,7 @@ def custom_figure8_trajectory(angles, sid):
 def run_reconstruction(trajectory_name,
                        src_pos, det_center, det_u_vec, det_v_vec,
                        phantom, det_u, det_v, du, dv,
-                       voxel_spacing, epochs=500):
+                       voxel_spacing, epochs=100, lr=1e-1):
     """Run gradient-based iterative reconstruction for a cone beam trajectory."""
     print(f"\n{'=' * 60}")
     print(f"Processing {trajectory_name} Trajectory")
@@ -85,8 +87,9 @@ def run_reconstruction(trajectory_name,
     )
     mx.eval(target_sino)
 
-    # Learnable volume — small random init so gradients flow
-    reco = 0.01 * mx.random.normal((Nz, Ny, Nx)).astype(mx.float32)
+    # Zero init is sufficient here because the cone projector is linear.
+    params = {"reco": mx.zeros((Nz, Ny, Nx), dtype=mx.float32)}
+    optimizer = optim.Adam(learning_rate=lr, bias_correction=True)
 
     def loss_fn(reco_val):
         current_sino = diffct_mlx.cone_forward(
@@ -97,23 +100,26 @@ def run_reconstruction(trajectory_name,
         return mx.mean((current_sino - target_sino) ** 2)
 
     loss_and_grad = mx.value_and_grad(loss_fn)
-    lr = 1e-1
     loss_values = []
+    phantom_np = np.array(phantom)
 
     print("Starting iterative reconstruction...")
     for epoch in range(epochs):
-        loss_val, grad = loss_and_grad(reco)
+        loss_val, grad = loss_and_grad(params["reco"])
         mx.eval(loss_val, grad)
 
-        reco = reco - lr * grad
-        mx.eval(reco)
+        params = optimizer.apply_gradients({"reco": grad}, params)
+        params["reco"] = mx.maximum(params["reco"], 0.0)
+        mx.eval(params["reco"])
 
         loss_values.append(float(loss_val))
-        if epoch % 50 == 0:
-            print(f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}")
+        if epoch % 10 == 0 or epoch == epochs - 1:
+            reco_np = np.array(params["reco"])
+            mse = float(np.mean((reco_np - phantom_np) ** 2))
+            psnr = 10 * np.log10(1.0 / mse)
+            print(f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}  PSNR: {psnr:.2f} dB")
 
-    reco_np = np.array(mx.maximum(reco, 0.0))
-    phantom_np = np.array(phantom)
+    reco_np = np.array(params["reco"])
     mse = float(np.mean((reco_np - phantom_np) ** 2))
     psnr = 10 * np.log10(1.0 / mse)
     print(f"\n  {trajectory_name} — MSE: {mse:.6f}  PSNR: {psnr:.2f} dB")
@@ -134,7 +140,7 @@ def main():
     voxel_spacing = 1.0
     sdd = 600.0
     sid = 400.0
-    epochs = 500
+    epochs = 100
 
     results = {}
 

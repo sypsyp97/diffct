@@ -311,6 +311,15 @@ def custom_trajectory_3d(n_views, sid, sdd,
     if src_pos.shape != (n_views, 3):
         raise ValueError(f"source_path_fn must return shape ({n_views}, 3), got {src_pos.shape}")
 
+    src_norm = mx.linalg.norm(src_pos, axis=1)
+    mx.eval(src_norm)
+    min_src_norm = float(mx.min(src_norm))
+    max_src_norm = float(mx.max(src_norm))
+    if min_src_norm <= 1e-6:
+        raise ValueError("source_path_fn must keep the source away from the isocenter")
+    if max_src_norm >= sdd:
+        raise ValueError("source_path_fn must keep the source radius smaller than sdd")
+
     det_center_list = []
     det_u_list = []
     det_v_list = []
@@ -472,6 +481,15 @@ def custom_trajectory_2d_fan(n_views, sid, sdd,
     src_pos = source_path_fn(angles, sid)
     if src_pos.shape != (n_views, 2):
         raise ValueError(f"source_path_fn must return shape ({n_views}, 2), got {src_pos.shape}")
+
+    src_norm = mx.linalg.norm(src_pos, axis=1)
+    mx.eval(src_norm)
+    min_src_norm = float(mx.min(src_norm))
+    max_src_norm = float(mx.max(src_norm))
+    if min_src_norm <= 1e-6:
+        raise ValueError("source_path_fn must keep the source away from the isocenter")
+    if max_src_norm >= sdd:
+        raise ValueError("source_path_fn must keep the source radius smaller than sdd")
 
     det_center_list = []
     det_u_list = []
