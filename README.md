@@ -207,7 +207,7 @@ If you use this library in your research, please cite:
 
 ```bibtex
 @software{diffct2025,
-  author       = {Yipeng Sun},
+  author       = {Yipeng Sun, Linda-Sophie Schneider},
   title        = {diffct: Differentiable Computed Tomography
                  Reconstruction with CUDA},
   year         = 2025,
