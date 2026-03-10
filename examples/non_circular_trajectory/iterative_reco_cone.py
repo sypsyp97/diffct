@@ -11,6 +11,12 @@ import mlx.core as mx
 import mlx.optimizers as optim
 import matplotlib.pyplot as plt
 import diffct_mlx
+from pathlib import Path
+
+try:
+    _load_arbitrary_cone_geometry_from_json = diffct_mlx.load_arbitrary_cone_geometry_from_json
+except AttributeError:
+    from diffct_mlx.geometry import load_arbitrary_cone_geometry_from_json as _load_arbitrary_cone_geometry_from_json
 
 
 # ── 3D Phantom ───────────────────────────────────────────────────────────────
@@ -64,6 +70,8 @@ def custom_figure8_trajectory(angles, sid):
     src_y = sid * mx.cos(angles) + 0.15 * sid * mx.sin(2 * angles)
     src_z = 50.0 * mx.sin(2 * angles)
     return mx.stack([src_x, src_y, src_z], axis=1)
+
+
 
 
 # ── Iterative reconstruction ────────────────────────────────────────────────
@@ -187,6 +195,37 @@ def main():
         phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
     )
     results["Figure-8"] = (lv, reco)
+
+    # 5. Arbitrary trajectory
+    print("\nGenerating Arbitrary Trajectory...")
+    trajectory_json_path = Path(__file__).with_name("real1_geometry_diffct.json")
+    # Load measured geometry from JSON and translate it into the reconstruction frame so that the estimated isocenter is placed at the origin.
+    s, dc, du_v, dv_v = _load_arbitrary_cone_geometry_from_json(
+        trajectory_json_path,
+        flip_det_u=False,
+        flip_det_v=False,
+        recenter_to_isocenter=True,
+    )
+    lv, reco = run_reconstruction(
+        "Arbitrary", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    )
+    results["Arbitrary"] = (lv, reco)
+
+    # Optional: inspect whether the loaded detector basis and central rays are
+    # internally consistent after the isocenter recentering step.
+    # diag = diffct_mlx.diagnose_cone_geometry(s, dc, du_v, dv_v)
+    # print(
+    #     "Loaded geometry stats: "
+    #     f"SID {diag['sid_min_mm']:.1f}..{diag['sid_max_mm']:.1f} mm, "
+    #     f"SDD {diag['sdd_min_mm']:.1f}..{diag['sdd_max_mm']:.1f} mm, "
+    #     f"max|u·v|={diag['det_u_dot_det_v_max_abs']:.4f}, "
+    #     f"max|v·ray|={diag['det_v_dot_ray_max_abs']:.4f}, "
+    #     f"isocenter=({diag['estimated_isocenter_x_mm']:.1f}, "
+    #     f"{diag['estimated_isocenter_y_mm']:.1f}, "
+    #     f"{diag['estimated_isocenter_z_mm']:.1f}) mm"
+    # )
+
 
     # ── Plot ─────────────────────────────────────────────────────────────────
     mid = Nz // 2
