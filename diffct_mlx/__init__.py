@@ -15,6 +15,11 @@ from .projectors import (
     cone_backward,
 )
 
+from .real_measured_data_helper import (
+    diagnose_cone_geometry,
+    estimate_cone_isocenter,
+)
+
 from .geometry import (
     circular_trajectory_3d,
     random_trajectory_3d,
@@ -22,6 +27,7 @@ from .geometry import (
     sinusoidal_trajectory_3d,
     saddle_trajectory_3d,
     custom_trajectory_3d,
+    load_arbitrary_cone_geometry_from_json,
     circular_trajectory_2d_fan,
     sinusoidal_trajectory_2d_fan,
     custom_trajectory_2d_fan,
@@ -47,6 +53,9 @@ __all__ = [
     'sinusoidal_trajectory_3d',
     'saddle_trajectory_3d',
     'custom_trajectory_3d',
+    'diagnose_cone_geometry',
+    'estimate_cone_isocenter',
+    'load_arbitrary_cone_geometry_from_json',
     # 2D fan beam trajectory generators
     'circular_trajectory_2d_fan',
     'sinusoidal_trajectory_2d_fan',

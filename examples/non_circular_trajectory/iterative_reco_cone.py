@@ -152,59 +152,79 @@ def main():
 
     results = {}
 
-    # # 1. Spiral trajectory
-    # print("\nGenerating Spiral Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.spiral_trajectory_3d(
-    #     num_views, sid, sdd, z_range=80.0, n_turns=2.0,
-    # )
-    # lv, reco = run_reconstruction(
-    #     "Spiral", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    # )
-    # results["Spiral"] = (lv, reco)
+    # 1. Spiral trajectory
+    print("\nGenerating Spiral Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.spiral_trajectory_3d(
+        num_views, sid, sdd, z_range=80.0, n_turns=2.0,
+    )
+    lv, reco = run_reconstruction(
+        "Spiral", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    )
+    results["Spiral"] = (lv, reco)
 
-    # # 2. Sinusoidal trajectory
-    # print("\nGenerating Sinusoidal Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.sinusoidal_trajectory_3d(
-    #     num_views, sid, sdd, amplitude=50.0, frequency=3.0,
-    # )
-    # lv, reco = run_reconstruction(
-    #     "Sinusoidal", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    # )
-    # results["Sinusoidal"] = (lv, reco)
+    # 2. Sinusoidal trajectory
+    print("\nGenerating Sinusoidal Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.sinusoidal_trajectory_3d(
+        num_views, sid, sdd, amplitude=50.0, frequency=3.0,
+    )
+    lv, reco = run_reconstruction(
+        "Sinusoidal", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    )
+    results["Sinusoidal"] = (lv, reco)
 
-    # # 3. Saddle trajectory
-    # print("\nGenerating Saddle Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.saddle_trajectory_3d(
-    #     num_views, sid, sdd, z_amplitude=60.0, radial_amplitude=40.0,
-    # )
-    # lv, reco = run_reconstruction(
-    #     "Saddle", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    # )
-    # results["Saddle"] = (lv, reco)
+    # 3. Saddle trajectory
+    print("\nGenerating Saddle Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.saddle_trajectory_3d(
+        num_views, sid, sdd, z_amplitude=60.0, radial_amplitude=40.0,
+    )
+    lv, reco = run_reconstruction(
+        "Saddle", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    )
+    results["Saddle"] = (lv, reco)
 
-    # # 4. Custom figure-8 trajectory
-    # print("\nGenerating Custom (Figure-8) Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.custom_trajectory_3d(
-    #     num_views, sid, sdd, source_path_fn=custom_figure8_trajectory,
-    # )
-    # lv, reco = run_reconstruction(
-    #     "Figure-8", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    # )
-    # results["Figure-8"] = (lv, reco)
+    # 4. Custom figure-8 trajectory
+    print("\nGenerating Custom (Figure-8) Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.custom_trajectory_3d(
+        num_views, sid, sdd, source_path_fn=custom_figure8_trajectory,
+    )
+    lv, reco = run_reconstruction(
+        "Figure-8", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    )
+    results["Figure-8"] = (lv, reco)
 
     # 5. Arbitrary trajectory
     print("\nGenerating Arbitrary Trajectory...")
     trajectory_json_path = Path(__file__).with_name("real1_geometry_diffct.json")
-    s, dc, du_v, dv_v = _load_arbitrary_cone_geometry_from_json(trajectory_json_path)
+    # Load measured geometry from JSON and translate it into the reconstruction frame so that the estimated isocenter is placed at the origin.
+    s, dc, du_v, dv_v = _load_arbitrary_cone_geometry_from_json(
+        trajectory_json_path,
+        flip_det_u=False,
+        flip_det_v=False,
+        recenter_to_isocenter=True,
+    )
     lv, reco = run_reconstruction(
         "Arbitrary", s, dc, du_v, dv_v,
         phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
     )
     results["Arbitrary"] = (lv, reco)
+
+    # Optional: inspect whether the loaded detector basis and central rays are
+    # internally consistent after the isocenter recentering step.
+    # diag = diffct_mlx.diagnose_cone_geometry(s, dc, du_v, dv_v)
+    # print(
+    #     "Loaded geometry stats: "
+    #     f"SID {diag['sid_min_mm']:.1f}..{diag['sid_max_mm']:.1f} mm, "
+    #     f"SDD {diag['sdd_min_mm']:.1f}..{diag['sdd_max_mm']:.1f} mm, "
+    #     f"max|u·v|={diag['det_u_dot_det_v_max_abs']:.4f}, "
+    #     f"max|v·ray|={diag['det_v_dot_ray_max_abs']:.4f}, "
+    #     f"isocenter=({diag['estimated_isocenter_x_mm']:.1f}, "
+    #     f"{diag['estimated_isocenter_y_mm']:.1f}, "
+    #     f"{diag['estimated_isocenter_z_mm']:.1f}) mm"
+    # )
 
 
     # ── Plot ─────────────────────────────────────────────────────────────────
