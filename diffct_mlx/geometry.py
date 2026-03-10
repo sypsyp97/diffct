@@ -8,6 +8,8 @@ for Apple Silicon acceleration.
 import math
 import mlx.core as mx
 from typing import Callable, Tuple
+import json
+import numpy as np
 
 
 # ============================================================================
@@ -354,6 +356,70 @@ def custom_trajectory_3d(n_views, sid, sdd,
     det_v_vec = mx.stack(det_v_list, axis=0)
 
     return src_pos, det_center, det_u_vec, det_v_vec
+
+
+def load_arbitrary_cone_geometry_from_json(json_path):
+    """Load arbitrary cone trajectory from JSON and return MLX geometry arrays."""
+    with open(json_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    if isinstance(payload, dict):
+        src_key = "src_pos" if "src_pos" in payload else (
+            "source_positions" if "source_positions" in payload else "source_path"
+        )
+        src_np = np.asarray(payload[src_key], dtype=np.float32)
+        det_c = None # payload.get("det_center", payload.get("detector_center"))
+        det_u = None #payload.get("det_u_vec", payload.get("detector_u_vec"))
+        det_v = None #payload.get("det_v_vec", payload.get("detector_v_vec"))
+    else:
+        src_np = np.asarray(payload, dtype=np.float32)
+        det_c = det_u = det_v = None
+
+    if det_c is None or det_u is None or det_v is None:
+        src_norm = np.linalg.norm(src_np, axis=1, keepdims=True)
+        src_norm = np.maximum(src_norm, 1e-6)
+        src_unit = src_np / src_norm
+        sdd = None
+        source_meta = payload.get("source")
+        if isinstance(source_meta, dict):
+            sdd = source_meta.get(
+                "source_to_detector_distance_mm",
+                source_meta.get("source_to_detector_distance"),
+            )
+        if sdd is None:
+            raise ValueError(
+                "Missing SDD in JSON. Provide 'sdd' (or equivalent) when detector vectors are absent."
+            )
+
+        sdd_np = np.asarray(sdd, dtype=np.float32)
+        if sdd_np.ndim == 1:
+            sdd_np = sdd_np[:, None]
+
+        det_c_np = -src_unit * (sdd_np - src_norm)
+
+        det_u_np = np.stack(
+            [-src_np[:, 1], src_np[:, 0], np.zeros(src_np.shape[0], dtype=np.float32)],
+            axis=1,
+        )
+        det_u_norm = np.linalg.norm(det_u_np, axis=1, keepdims=True)
+        non_zero = det_u_norm[:, 0] >= 1e-6
+        det_u_np[non_zero] /= det_u_norm[non_zero]
+        det_u_np[~non_zero] = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+        det_v_np = np.cross(src_unit, det_u_np)
+        det_v_np /= np.maximum(np.linalg.norm(det_v_np, axis=1, keepdims=True), 1e-6)
+    else:
+        det_c_np = np.asarray(det_c, dtype=np.float32)
+        det_u_np = np.asarray(det_u, dtype=np.float32)
+        det_v_np = np.asarray(det_v, dtype=np.float32)
+
+    return (
+        mx.array(src_np, dtype=mx.float32),
+        mx.array(det_c_np, dtype=mx.float32),
+        mx.array(det_u_np, dtype=mx.float32),
+        mx.array(det_v_np, dtype=mx.float32),
+    )
+
 
 
 # ============================================================================

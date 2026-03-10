@@ -11,6 +11,12 @@ import mlx.core as mx
 import mlx.optimizers as optim
 import matplotlib.pyplot as plt
 import diffct_mlx
+from pathlib import Path
+
+try:
+    _load_arbitrary_cone_geometry_from_json = diffct_mlx.load_arbitrary_cone_geometry_from_json
+except AttributeError:
+    from diffct_mlx.geometry import load_arbitrary_cone_geometry_from_json as _load_arbitrary_cone_geometry_from_json
 
 
 # ── 3D Phantom ───────────────────────────────────────────────────────────────
@@ -64,6 +70,8 @@ def custom_figure8_trajectory(angles, sid):
     src_y = sid * mx.cos(angles) + 0.15 * sid * mx.sin(2 * angles)
     src_z = 50.0 * mx.sin(2 * angles)
     return mx.stack([src_x, src_y, src_z], axis=1)
+
+
 
 
 # ── Iterative reconstruction ────────────────────────────────────────────────
@@ -144,49 +152,60 @@ def main():
 
     results = {}
 
-    # 1. Spiral trajectory
-    print("\nGenerating Spiral Trajectory...")
-    s, dc, du_v, dv_v = diffct_mlx.spiral_trajectory_3d(
-        num_views, sid, sdd, z_range=80.0, n_turns=2.0,
-    )
-    lv, reco = run_reconstruction(
-        "Spiral", s, dc, du_v, dv_v,
-        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    )
-    results["Spiral"] = (lv, reco)
+    # # 1. Spiral trajectory
+    # print("\nGenerating Spiral Trajectory...")
+    # s, dc, du_v, dv_v = diffct_mlx.spiral_trajectory_3d(
+    #     num_views, sid, sdd, z_range=80.0, n_turns=2.0,
+    # )
+    # lv, reco = run_reconstruction(
+    #     "Spiral", s, dc, du_v, dv_v,
+    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    # )
+    # results["Spiral"] = (lv, reco)
 
-    # 2. Sinusoidal trajectory
-    print("\nGenerating Sinusoidal Trajectory...")
-    s, dc, du_v, dv_v = diffct_mlx.sinusoidal_trajectory_3d(
-        num_views, sid, sdd, amplitude=50.0, frequency=3.0,
-    )
-    lv, reco = run_reconstruction(
-        "Sinusoidal", s, dc, du_v, dv_v,
-        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    )
-    results["Sinusoidal"] = (lv, reco)
+    # # 2. Sinusoidal trajectory
+    # print("\nGenerating Sinusoidal Trajectory...")
+    # s, dc, du_v, dv_v = diffct_mlx.sinusoidal_trajectory_3d(
+    #     num_views, sid, sdd, amplitude=50.0, frequency=3.0,
+    # )
+    # lv, reco = run_reconstruction(
+    #     "Sinusoidal", s, dc, du_v, dv_v,
+    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    # )
+    # results["Sinusoidal"] = (lv, reco)
 
-    # 3. Saddle trajectory
-    print("\nGenerating Saddle Trajectory...")
-    s, dc, du_v, dv_v = diffct_mlx.saddle_trajectory_3d(
-        num_views, sid, sdd, z_amplitude=60.0, radial_amplitude=40.0,
-    )
-    lv, reco = run_reconstruction(
-        "Saddle", s, dc, du_v, dv_v,
-        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    )
-    results["Saddle"] = (lv, reco)
+    # # 3. Saddle trajectory
+    # print("\nGenerating Saddle Trajectory...")
+    # s, dc, du_v, dv_v = diffct_mlx.saddle_trajectory_3d(
+    #     num_views, sid, sdd, z_amplitude=60.0, radial_amplitude=40.0,
+    # )
+    # lv, reco = run_reconstruction(
+    #     "Saddle", s, dc, du_v, dv_v,
+    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    # )
+    # results["Saddle"] = (lv, reco)
 
-    # 4. Custom figure-8 trajectory
-    print("\nGenerating Custom (Figure-8) Trajectory...")
-    s, dc, du_v, dv_v = diffct_mlx.custom_trajectory_3d(
-        num_views, sid, sdd, source_path_fn=custom_figure8_trajectory,
-    )
+    # # 4. Custom figure-8 trajectory
+    # print("\nGenerating Custom (Figure-8) Trajectory...")
+    # s, dc, du_v, dv_v = diffct_mlx.custom_trajectory_3d(
+    #     num_views, sid, sdd, source_path_fn=custom_figure8_trajectory,
+    # )
+    # lv, reco = run_reconstruction(
+    #     "Figure-8", s, dc, du_v, dv_v,
+    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    # )
+    # results["Figure-8"] = (lv, reco)
+
+    # 5. Arbitrary trajectory
+    print("\nGenerating Arbitrary Trajectory...")
+    trajectory_json_path = Path(__file__).with_name("real1_geometry_diffct.json")
+    s, dc, du_v, dv_v = _load_arbitrary_cone_geometry_from_json(trajectory_json_path)
     lv, reco = run_reconstruction(
-        "Figure-8", s, dc, du_v, dv_v,
+        "Arbitrary", s, dc, du_v, dv_v,
         phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
     )
-    results["Figure-8"] = (lv, reco)
+    results["Arbitrary"] = (lv, reco)
+
 
     # ── Plot ─────────────────────────────────────────────────────────────────
     mid = Nz // 2
