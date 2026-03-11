@@ -1,0 +1,33 @@
+{
+  "source_rek": "/Users/linda/Documents/Research/MILP_Opt_Project/MILP_Traj_Opt_Reco/diffct/examples/non_circular_trajectory/sample_data/reko/sim_obj_1.rek",
+  "output_npy": "/Users/linda/Documents/Research/MILP_Opt_Project/MILP_Traj_Opt_Reco/diffct/examples/non_circular_trajectory/sample_data/reko/sim_obj_1_diffct.npy",
+  "array_layout": "zyx",
+  "shape_zyx": [
+    600,
+    600,
+    600
+  ],
+  "dtype": "float32",
+  "source_dtype": "uint16",
+  "normalization": "none",
+  "value_range": {
+    "min": 0.0,
+    "max": 65535.0
+  },
+  "voxel_size_um": 300.0, 
+  "voxel_size_um_wrong_from_file": 192.0,
+  "voxel_size_mm": 0.3,  
+  "diffct_loader_hint": "volume = np.load(path); volume_mx = mx.array(volume.astype(np.float32))",
+  "header": {
+    "image_width": 600,
+    "image_height": 600,
+    "number_of_images": 600,
+    "bit_depth": 16,
+    "focus_object_distance_in_mm": null,
+    "focus_detector_distance_in_mm": null,
+    "detector_width_in_mm": null,
+    "detector_height_in_mm": null,
+    "scan_range_in_rad": null,
+    "acquisition_geometry": null
+  }
+}

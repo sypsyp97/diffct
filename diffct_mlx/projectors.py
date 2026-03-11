@@ -20,6 +20,11 @@ from .kernels import (
 )
 
 
+def _as_mx_float_array(value):
+    """Accept NumPy or MLX arrays and return an MLX float array."""
+    return mx.array(value, dtype=_MX_DTYPE)
+
+
 # ============================================================================
 # 2D Parallel Beam
 # ============================================================================
@@ -27,10 +32,10 @@ from .kernels import (
 def _parallel_forward_impl(image, ray_dir, det_origin, det_u_vec,
                            num_detectors, detector_spacing=1.0, voxel_spacing=1.0):
     """Raw parallel beam forward projection (no VJP)."""
-    image = image.astype(_MX_DTYPE)
-    ray_dir = ray_dir.astype(_MX_DTYPE)
-    det_origin = det_origin.astype(_MX_DTYPE)
-    det_u_vec = det_u_vec.astype(_MX_DTYPE)
+    image = _as_mx_float_array(image)
+    ray_dir = _as_mx_float_array(ray_dir)
+    det_origin = _as_mx_float_array(det_origin)
+    det_u_vec = _as_mx_float_array(det_u_vec)
 
     Ny, Nx = image.shape
     n_ang = ray_dir.shape[0]
@@ -57,10 +62,10 @@ def _parallel_forward_impl(image, ray_dir, det_origin, det_u_vec,
 def _parallel_backward_impl(sinogram, ray_dir, det_origin, det_u_vec,
                             detector_spacing, H, W, voxel_spacing=1.0):
     """Raw parallel beam backprojection (no VJP)."""
-    sinogram = sinogram.astype(_MX_DTYPE)
-    ray_dir = ray_dir.astype(_MX_DTYPE)
-    det_origin = det_origin.astype(_MX_DTYPE)
-    det_u_vec = det_u_vec.astype(_MX_DTYPE)
+    sinogram = _as_mx_float_array(sinogram)
+    ray_dir = _as_mx_float_array(ray_dir)
+    det_origin = _as_mx_float_array(det_origin)
+    det_u_vec = _as_mx_float_array(det_u_vec)
 
     n_ang, n_det = sinogram.shape
     Ny, Nx = int(H), int(W)
@@ -181,10 +186,10 @@ def parallel_backward_vjp(primals, cotangent, _):
 def _fan_forward_impl(image, src_pos, det_center, det_u_vec,
                       num_detectors, detector_spacing=1.0, voxel_spacing=1.0):
     """Raw fan beam forward projection."""
-    image = image.astype(_MX_DTYPE)
-    src_pos = src_pos.astype(_MX_DTYPE)
-    det_center = det_center.astype(_MX_DTYPE)
-    det_u_vec = det_u_vec.astype(_MX_DTYPE)
+    image = _as_mx_float_array(image)
+    src_pos = _as_mx_float_array(src_pos)
+    det_center = _as_mx_float_array(det_center)
+    det_u_vec = _as_mx_float_array(det_u_vec)
 
     Ny, Nx = image.shape
     n_ang = src_pos.shape[0]
@@ -211,10 +216,10 @@ def _fan_forward_impl(image, src_pos, det_center, det_u_vec,
 def _fan_backward_impl(sinogram, src_pos, det_center, det_u_vec,
                        detector_spacing, H, W, voxel_spacing=1.0):
     """Raw fan beam backprojection."""
-    sinogram = sinogram.astype(_MX_DTYPE)
-    src_pos = src_pos.astype(_MX_DTYPE)
-    det_center = det_center.astype(_MX_DTYPE)
-    det_u_vec = det_u_vec.astype(_MX_DTYPE)
+    sinogram = _as_mx_float_array(sinogram)
+    src_pos = _as_mx_float_array(src_pos)
+    det_center = _as_mx_float_array(det_center)
+    det_u_vec = _as_mx_float_array(det_u_vec)
 
     n_ang, n_det = sinogram.shape
     Ny, Nx = int(H), int(W)
@@ -334,11 +339,11 @@ def fan_backward_vjp(primals, cotangent, _):
 def _cone_forward_impl(volume, src_pos, det_center, det_u_vec, det_v_vec,
                        det_u, det_v, du, dv, voxel_spacing=1.0):
     """Raw cone beam forward projection."""
-    volume = volume.astype(_MX_DTYPE)
-    src_pos = src_pos.astype(_MX_DTYPE)
-    det_center = det_center.astype(_MX_DTYPE)
-    det_u_vec = det_u_vec.astype(_MX_DTYPE)
-    det_v_vec = det_v_vec.astype(_MX_DTYPE)
+    volume = _as_mx_float_array(volume)
+    src_pos = _as_mx_float_array(src_pos)
+    det_center = _as_mx_float_array(det_center)
+    det_u_vec = _as_mx_float_array(det_u_vec)
+    det_v_vec = _as_mx_float_array(det_v_vec)
 
     D, H, W = volume.shape
     n_views = src_pos.shape[0]
@@ -372,11 +377,11 @@ def _cone_forward_impl(volume, src_pos, det_center, det_u_vec, det_v_vec,
 def _cone_backward_impl(sinogram, src_pos, det_center, det_u_vec, det_v_vec,
                         D, H, W, du, dv, voxel_spacing=1.0):
     """Raw cone beam backprojection."""
-    sinogram = sinogram.astype(_MX_DTYPE)
-    src_pos = src_pos.astype(_MX_DTYPE)
-    det_center = det_center.astype(_MX_DTYPE)
-    det_u_vec = det_u_vec.astype(_MX_DTYPE)
-    det_v_vec = det_v_vec.astype(_MX_DTYPE)
+    sinogram = _as_mx_float_array(sinogram)
+    src_pos = _as_mx_float_array(src_pos)
+    det_center = _as_mx_float_array(det_center)
+    det_u_vec = _as_mx_float_array(det_u_vec)
+    det_v_vec = _as_mx_float_array(det_v_vec)
 
     n_views, n_u, n_v = sinogram.shape
     Nx, Ny, Nz = int(W), int(H), int(D)
