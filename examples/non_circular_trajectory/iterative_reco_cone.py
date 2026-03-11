@@ -267,8 +267,10 @@ def main():
                 f"Reference volume resize must stay isotropic, got factors {resize_factors}"
             )
         resized_reference_voxel_spacing = float(reference_meta["voxel_size_mm"]) * resize_factors[0]
-    reference_volume_np = resize_volume_to_shape(np.load(reference_volume_path), (Nz, Ny, Nx))
-    reference_volume_np = normalize_volume(reference_volume_np, new_min=0.0, new_max=1.0)
+        reference_volume_np = resize_volume_to_shape(np.load(reference_volume_path), (Nz, Ny, Nx))
+        reference_volume_np = normalize_volume(reference_volume_np, new_min=0.0, new_max=1.0)
+    else:
+        reference_volume_np = None
      
     geometry_convention_config = {
     "transpose_uv": True,
@@ -362,13 +364,23 @@ def main():
         target_sino=measured_sino_np,
         reference_volume=reference_volume_np,
     )
-    results["Measured Arbitrary"] = {
-        "loss": lv,
-        "reco": reco,
-        "reference": reference_volume_np[reference_volume_np.shape[0] // 2],
-        "reference_title": "Reference Volume",
-        "metrics": metrics,
-    }
+
+    if reference_volume_np is not None:
+        results["Measured Arbitrary"] = {
+            "loss": lv,
+            "reco": reco,
+            "reference": reference_volume_np[reference_volume_np.shape[0] // 2],
+            "reference_title": "Reference Volume",
+            "metrics": metrics,
+        }
+    else:
+        results["Measured Arbitrary"] = {
+            "loss": lv,
+            "reco": reco,
+            "reference": None,
+            "reference_title": None,
+            "metrics": metrics,
+        }
 
     # Optional: inspect whether the loaded detector basis and central rays are
     # internally consistent after the isocenter recentering step.
@@ -403,10 +415,11 @@ def main():
         plt.yscale("log")
         plt.grid(True)
         # Original
-        plt.subplot(3, n, n + idx + 1)
-        plt.imshow(result["reference"], cmap="gray")
-        plt.title(result["reference_title"])
-        plt.axis("off")
+        if result["reference"] is not None:
+            plt.subplot(3, n, n + idx + 1)
+            plt.imshow(result["reference"], cmap="gray")
+            plt.title(result["reference_title"])
+            plt.axis("off")
         # Reconstruction
         plt.subplot(3, n, 2 * n + idx + 1)
         plt.imshow(reco[mid], cmap="gray", vmin=0, vmax=1)
