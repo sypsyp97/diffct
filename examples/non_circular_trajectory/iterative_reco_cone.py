@@ -190,8 +190,8 @@ def run_reconstruction(trajectory_name,
 
 def main():
     Nx, Ny, Nz = 200, 200, 200
-    # phantom_np = shepp_logan_3d((Nz, Ny, Nx))
-    # phantom = mx.array(phantom_np)
+    phantom_np = shepp_logan_3d((Nz, Ny, Nx))
+    phantom = mx.array(phantom_np)
 
     num_views = 200
     det_u, det_v = 256, 256
@@ -207,77 +207,77 @@ def main():
 
     results = {}
 
-    # # 1. Spiral trajectory
-    # print("\nGenerating Spiral Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.spiral_trajectory_3d(
-    #     num_views, sid, sdd, z_range=80.0, n_turns=2.0,
-    # )
-    # lv, reco, metrics = run_reconstruction(
-    #     "Spiral", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    #     reference_volume=phantom_np,
-    # )
-    # results["Spiral"] = {
-    #     "loss": lv,
-    #     "reco": reco,
-    #     "reference": phantom_np[mid],
-    #     "reference_title": "Original",
-    #     "metrics": metrics,
-    # }
+    # 1. Spiral trajectory
+    print("\nGenerating Spiral Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.spiral_trajectory_3d(
+        num_views, sid, sdd, z_range=80.0, n_turns=2.0,
+    )
+    lv, reco, metrics = run_reconstruction(
+        "Spiral", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+        reference_volume=phantom_np,
+    )
+    results["Spiral"] = {
+        "loss": lv,
+        "reco": reco,
+        "reference": phantom_np[mid],
+        "reference_title": "Original",
+        "metrics": metrics,
+    }
 
-    # # 2. Sinusoidal trajectory
-    # print("\nGenerating Sinusoidal Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.sinusoidal_trajectory_3d(
-    #     num_views, sid, sdd, amplitude=50.0, frequency=3.0,
-    # )
-    # lv, reco, metrics = run_reconstruction(
-    #     "Sinusoidal", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    #     reference_volume=phantom_np,
-    # )
-    # results["Sinusoidal"] = {
-    #     "loss": lv,
-    #     "reco": reco,
-    #     "reference": phantom_np[mid],
-    #     "reference_title": "Original",
-    #     "metrics": metrics,
-    # }
+    # 2. Sinusoidal trajectory
+    print("\nGenerating Sinusoidal Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.sinusoidal_trajectory_3d(
+        num_views, sid, sdd, amplitude=50.0, frequency=3.0,
+    )
+    lv, reco, metrics = run_reconstruction(
+        "Sinusoidal", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+        reference_volume=phantom_np,
+    )
+    results["Sinusoidal"] = {
+        "loss": lv,
+        "reco": reco,
+        "reference": phantom_np[mid],
+        "reference_title": "Original",
+        "metrics": metrics,
+    }
 
-    # # 3. Saddle trajectory
-    # print("\nGenerating Saddle Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.saddle_trajectory_3d(
-    #     num_views, sid, sdd, z_amplitude=60.0, radial_amplitude=40.0,
-    # )
-    # lv, reco, metrics = run_reconstruction(
-    #     "Saddle", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    #     reference_volume=phantom_np,
-    # )
-    # results["Saddle"] = {
-    #     "loss": lv,
-    #     "reco": reco,
-    #     "reference": phantom_np[mid],
-    #     "reference_title": "Original",
-    #     "metrics": metrics,
-    # }
+    # 3. Saddle trajectory
+    print("\nGenerating Saddle Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.saddle_trajectory_3d(
+        num_views, sid, sdd, z_amplitude=60.0, radial_amplitude=40.0,
+    )
+    lv, reco, metrics = run_reconstruction(
+        "Saddle", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+        reference_volume=phantom_np,
+    )
+    results["Saddle"] = {
+        "loss": lv,
+        "reco": reco,
+        "reference": phantom_np[mid],
+        "reference_title": "Original",
+        "metrics": metrics,
+    }
 
-    # # 4. Custom figure-8 trajectory
-    # print("\nGenerating Custom (Figure-8) Trajectory...")
-    # s, dc, du_v, dv_v = diffct_mlx.custom_trajectory_3d(
-    #     num_views, sid, sdd, source_path_fn=custom_figure8_trajectory,
-    # )
-    # lv, reco, metrics = run_reconstruction(
-    #     "Figure-8", s, dc, du_v, dv_v,
-    #     phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
-    #     reference_volume=phantom_np,
-    # )
-    # results["Figure-8"] = {
-    #     "loss": lv,
-    #     "reco": reco,
-    #     "reference": phantom_np[mid],
-    #     "reference_title": "Original",
-    #     "metrics": metrics,
-    # }
+    # 4. Custom figure-8 trajectory
+    print("\nGenerating Custom (Figure-8) Trajectory...")
+    s, dc, du_v, dv_v = diffct_mlx.custom_trajectory_3d(
+        num_views, sid, sdd, source_path_fn=custom_figure8_trajectory,
+    )
+    lv, reco, metrics = run_reconstruction(
+        "Figure-8", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+        reference_volume=phantom_np,
+    )
+    results["Figure-8"] = {
+        "loss": lv,
+        "reco": reco,
+        "reference": phantom_np[mid],
+        "reference_title": "Original",
+        "metrics": metrics,
+    }
 
     # 5. Real measured arbitrary trajectory
     print("\nLoading measured TIFF data and arbitrary geometry...")
