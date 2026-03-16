@@ -14,6 +14,11 @@ from .projectors import (
     cone_forward,
     cone_backward,
 )
+from .regularizers import (
+    l2_regularizer,
+    normalize_reconstruction_volume,
+    tv_regularizer_3d,
+)
 
 from .real_measured_data_helper import (
     apply_detector_array_convention,
@@ -55,6 +60,9 @@ __all__ = [
     'fan_backward',
     'cone_forward',
     'cone_backward',
+    'l2_regularizer',
+    'normalize_reconstruction_volume',
+    'tv_regularizer_3d',
     # 3D trajectory generators
     'circular_trajectory_3d',
     'random_trajectory_3d',

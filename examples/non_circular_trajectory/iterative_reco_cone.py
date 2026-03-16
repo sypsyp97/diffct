@@ -89,7 +89,9 @@ def run_reconstruction(trajectory_name,
                        src_pos, det_center, det_u_vec, det_v_vec,
                        phantom, det_u, det_v, du, dv,
                        voxel_spacing, epochs=100, lr=1e-1,
-                       target_sino=None, reference_volume=None):
+                       target_sino=None, reference_volume=None,
+                       tv_weight=0.0, l2_weight=0.0,
+                       fit_projection_gain=False):
     """Run gradient-based iterative reconstruction for a cone beam trajectory."""
     print(f"\n{'=' * 60}")
     print(f"Processing {trajectory_name} Trajectory")
@@ -108,17 +110,30 @@ def run_reconstruction(trajectory_name,
         target_sino = mx.array(target_sino, dtype=mx.float32)
     mx.eval(target_sino)
 
-    # Zero init is sufficient here because the cone projector is linear.
-    params = {"reco": mx.zeros((Nz, Ny, Nx), dtype=mx.float32)}
+    # With analytic projection-gain fitting, exact zero init becomes a stationary
+    # point because the forward projection is also zero.
+    init_value = 1e-3 if fit_projection_gain else 0.0
+    params = {"reco": mx.full((Nz, Ny, Nx), init_value, dtype=mx.float32)}
+    if fit_projection_gain:
+        params["log_gain"] = mx.array(0.0, dtype=mx.float32)
     optimizer = optim.Adam(learning_rate=lr, bias_correction=True)
 
-    def loss_fn(reco_val):
+    def loss_fn(current_params):
+        reco_val = current_params["reco"]
         current_sino = diffct_mlx.cone_forward(
             reco_val,
             src_pos, det_center, det_u_vec, det_v_vec,
             det_u, det_v, du, dv, voxel_spacing,
         )
-        return mx.mean((current_sino - target_sino) ** 2)
+        if fit_projection_gain:
+            current_sino = mx.exp(current_params["log_gain"]) * current_sino
+        data_loss = mx.mean((current_sino - target_sino) ** 2)
+        reg_loss = 0.0
+        if tv_weight > 0.0:
+            reg_loss = reg_loss + float(tv_weight) * diffct_mlx.tv_regularizer_3d(reco_val)
+        if l2_weight > 0.0:
+            reg_loss = reg_loss + float(l2_weight) * diffct_mlx.l2_regularizer(reco_val)
+        return data_loss + reg_loss
 
     loss_and_grad = mx.value_and_grad(loss_fn)
     loss_values = []
@@ -126,23 +141,36 @@ def run_reconstruction(trajectory_name,
 
     print("Starting iterative reconstruction...")
     for epoch in range(epochs):
-        loss_val, grad = loss_and_grad(params["reco"])
+        loss_val, grad = loss_and_grad(params)
         mx.eval(loss_val, grad)
 
-        params = optimizer.apply_gradients({"reco": grad}, params)
+        params = optimizer.apply_gradients(grad, params)
         params["reco"] = mx.maximum(params["reco"], 0.0)
         mx.eval(params["reco"])
+        if fit_projection_gain:
+            mx.eval(params["log_gain"])
 
         loss_values.append(float(loss_val))
         if (epoch % 10 == 0 or epoch == epochs - 1) and reference_np is not None:
             reco_np = np.array(params["reco"])
             mse = float(np.mean((reco_np - reference_np) ** 2))
             psnr = 10 * np.log10(1.0 / mse)
-            print(f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}  PSNR: {psnr:.2f} dB")
+            if fit_projection_gain:
+                gain_val = float(np.exp(np.array(params["log_gain"])))
+                print(
+                    f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}  "
+                    f"PSNR: {psnr:.2f} dB  gain: {gain_val:.4f}"
+                )
+            else:
+                print(f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}  PSNR: {psnr:.2f} dB")
         elif epoch % 10 == 0 or epoch == epochs - 1:
-            print(f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}")
+            if fit_projection_gain:
+                gain_val = float(np.exp(np.array(params["log_gain"])))
+                print(f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}  gain: {gain_val:.4f}")
+            else:
+                print(f"  Epoch {epoch:4d}  Loss: {loss_val.item():.6f}")
 
-    reco_np = np.array(params["reco"])
+    reco_np = diffct_mlx.normalize_volume(np.array(params["reco"]), upper_percentile=None)
     metrics = None
     if reference_np is not None:
         mse = float(np.mean((reco_np - reference_np) ** 2))
@@ -161,18 +189,20 @@ def run_reconstruction(trajectory_name,
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    Nx, Ny, Nz = 64, 64, 64
-    phantom_np = shepp_logan_3d((Nz, Ny, Nx))
-    phantom = mx.array(phantom_np)
+    Nx, Ny, Nz = 200, 200, 200
+    # phantom_np = shepp_logan_3d((Nz, Ny, Nx))
+    # phantom = mx.array(phantom_np)
 
-    num_views = 400
-    det_u, det_v = 128, 128
+    num_views = 200
+    det_u, det_v = 256, 256
     du, dv = 1.0, 1.0
     voxel_spacing = 1.0
     sdd = 600.0
     sid = 400.0
-    epochs = 100
+    epochs = 50
     measured_fov_margin_mm = 8.0
+    measured_tv_weight = 0.0
+    measured_l2_weight = 0.0
     mid = Nz // 2
 
     results = {}
@@ -268,7 +298,7 @@ def main():
             )
         resized_reference_voxel_spacing = float(reference_meta["voxel_size_mm"]) * resize_factors[0]
         reference_volume_np = resize_volume_to_shape(np.load(reference_volume_path), (Nz, Ny, Nx))
-        reference_volume_np = normalize_volume(reference_volume_np, new_min=0.0, new_max=1.0)
+        reference_volume_np = normalize_volume(reference_volume_np, upper_percentile=None)
     else:
         reference_volume_np = None
      
@@ -290,7 +320,8 @@ def main():
     det_u_binning = max(1, int(np.ceil(geometry_payload["detector"]["num_pixels"]["u"] / det_u)))
     measured_sino_np = load_tiff_projections(
         real_data_dir,
-        log_transform=True,
+        log_transform=False,
+        revert=True,
         view_stride=view_stride,
         detector_binning_u=det_u_binning,
         detector_binning_v=det_v_binning,
@@ -359,10 +390,13 @@ def main():
 
     lv, reco, metrics = run_reconstruction(
         "Measured Arbitrary", s, dc, du_v, dv_v,
-        phantom, measured_det_u, measured_det_v, measured_du, measured_dv,
+        reference_volume_np, measured_det_u, measured_det_v, measured_du, measured_dv,
         measured_voxel_spacing, epochs,
-        target_sino=measured_sino_np,
+        target_sino= measured_sino_np,
         reference_volume=reference_volume_np,
+        tv_weight=measured_tv_weight,
+        l2_weight=measured_l2_weight,
+        fit_projection_gain=False,
     )
 
     if reference_volume_np is not None:

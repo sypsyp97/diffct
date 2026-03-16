@@ -287,14 +287,18 @@ def resize_volume_to_shape(volume, target_shape):
     return zoom(volume_np, zoom_factors, order=1).astype(np.float32, copy=False)
 
 
-def normalize_volume(volume):
+def normalize_volume(volume, upper_percentile=None):
     volume_np = np.asarray(volume, dtype=np.float32)
     vol_min = float(np.min(volume_np))
-    vol_max = float(np.max(volume_np))
+    if upper_percentile is None:
+        vol_max = float(np.max(volume_np))
+    else:
+        vol_max = float(np.percentile(volume_np, float(upper_percentile)))
     scale = vol_max - vol_min
     if scale <= 0.0:
         return np.zeros_like(volume_np, dtype=np.float32)
-    return ((volume_np - vol_min) / scale).astype(np.float32, copy=False)
+    normalized = (volume_np - vol_min) / scale
+    return np.clip(normalized, 0.0, 1.0).astype(np.float32, copy=False)
 
 
 def _bin_mean_2d(image, bin_u=1, bin_v=1):
@@ -360,6 +364,7 @@ def _projection_sort_key(path):
 def load_tiff_projections(
     proj_dir,
     log_transform=False,
+    revert=False,
     i0_percentile=99.9,
     view_stride=1,
     detector_binning_u=1,
@@ -418,7 +423,7 @@ def load_tiff_projections(
         np.divide(stack, i0, out=stack)
         np.clip(stack, 1e-6, 1.0, out=stack)
         np.log(stack, out=stack)
-        stack *= -10.0
+        stack *= -40.0
         if debug_before is not None:
             output_path = (
                 Path(debug_output_path)
@@ -431,6 +436,11 @@ def load_tiff_projections(
                 debug_indices,
                 output_path,
             )
+        
+    if revert:
+        np.subtract(65535.0, stack, out=stack)
+        np.divide(stack, 1000, out=stack)
+    
     return stack
 
 
