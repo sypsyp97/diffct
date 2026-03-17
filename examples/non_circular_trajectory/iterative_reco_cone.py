@@ -13,19 +13,55 @@ import mlx.optimizers as optim
 import matplotlib.pyplot as plt
 import diffct_mlx
 from pathlib import Path
-from diffct_mlx.real_measured_data_helper import (
-    auto_voxel_spacing_from_detector,
-    load_tiff_projections,
-    normalize_volume,
-    resize_volume_to_shape,
-    shift_detector_center,
-    transform_detector_offsets,
-)
 
 try:
     _load_arbitrary_cone_geometry_from_json = diffct_mlx.load_arbitrary_cone_geometry_from_json
 except AttributeError:
     from diffct_mlx.geometry import load_arbitrary_cone_geometry_from_json as _load_arbitrary_cone_geometry_from_json
+
+
+# ── 3D Phantom ───────────────────────────────────────────────────────────────
+
+def shepp_logan_3d(shape):
+    """Generate a 3D Shepp-Logan phantom (numpy)."""
+    zz, yy, xx = np.mgrid[:shape[0], :shape[1], :shape[2]]
+    xx = (xx - (shape[2] - 1) / 2) / ((shape[2] - 1) / 2)
+    yy = (yy - (shape[1] - 1) / 2) / ((shape[1] - 1) / 2)
+    zz = (zz - (shape[0] - 1) / 2) / ((shape[0] - 1) / 2)
+
+    el_params = np.array([
+        [0, 0, 0, 0.69, 0.92, 0.81, 0, 1],
+        [0, -0.0184, 0, 0.6624, 0.874, 0.78, 0, -0.8],
+        [0.22, 0, 0, 0.11, 0.31, 0.22, -np.pi / 10, -0.2],
+        [-0.22, 0, 0, 0.16, 0.41, 0.28, np.pi / 10, -0.2],
+        [0, 0.35, -0.15, 0.21, 0.25, 0.41, 0, 0.1],
+        [0, 0.1, 0.25, 0.046, 0.046, 0.05, 0, 0.1],
+        [0, -0.1, 0.25, 0.046, 0.046, 0.05, 0, 0.1],
+        [-0.08, -0.605, 0, 0.046, 0.023, 0.05, 0, 0.1],
+        [0, -0.605, 0, 0.023, 0.023, 0.02, 0, 0.1],
+        [0.06, -0.605, 0, 0.023, 0.046, 0.02, 0, 0.1],
+    ], dtype=np.float32)
+
+    x0 = el_params[:, 0][:, None, None, None]
+    y0 = el_params[:, 1][:, None, None, None]
+    z0 = el_params[:, 2][:, None, None, None]
+    a = el_params[:, 3][:, None, None, None]
+    b = el_params[:, 4][:, None, None, None]
+    c = el_params[:, 5][:, None, None, None]
+    phi = el_params[:, 6][:, None, None, None]
+    val = el_params[:, 7][:, None, None, None]
+
+    cos_p, sin_p = np.cos(phi), np.sin(phi)
+    xc = xx[None] - x0
+    yc = yy[None] - y0
+    zc = zz[None] - z0
+    xp = cos_p * xc - sin_p * yc
+    yp = sin_p * xc + cos_p * yc
+
+    mask = (xp ** 2 / a ** 2 + yp ** 2 / b ** 2 + zc ** 2 / c ** 2) <= 1.0
+    vol = np.clip(np.sum(mask * val, axis=0), 0, 1).astype(np.float32)
+    return vol
+
 
 # ── Custom trajectory ────────────────────────────────────────────────────────
 
@@ -35,6 +71,8 @@ def custom_figure8_trajectory(angles, sid):
     src_y = sid * mx.cos(angles) + 0.15 * sid * mx.sin(2 * angles)
     src_z = 50.0 * mx.sin(2 * angles)
     return mx.stack([src_x, src_y, src_z], axis=1)
+
+
 
 
 # ── Iterative reconstruction ────────────────────────────────────────────────
@@ -369,6 +407,37 @@ def main():
             "reference_title": None,
             "metrics": metrics,
         }
+
+    # Optional: inspect whether the loaded detector basis and central rays are
+    # internally consistent after the isocenter recentering step.
+    # diag = diffct_mlx.diagnose_cone_geometry(s, dc, du_v, dv_v)
+    # print(
+    #     "Loaded geometry stats: "
+    #     f"SID {diag['sid_min_mm']:.1f}..{diag['sid_max_mm']:.1f} mm, "
+    #     f"SDD {diag['sdd_min_mm']:.1f}..{diag['sdd_max_mm']:.1f} mm, "
+    #     f"max|u·v|={diag['det_u_dot_det_v_max_abs']:.4f}, "
+    #     f"max|v·ray|={diag['det_v_dot_ray_max_abs']:.4f}, "
+    #     f"isocenter=({diag['estimated_isocenter_x_mm']:.1f}, "
+    #     f"{diag['estimated_isocenter_y_mm']:.1f}, "
+    #     f"{diag['estimated_isocenter_z_mm']:.1f}) mm"
+    # )
+
+
+    # 5. Arbitrary trajectory
+    print("\nGenerating Arbitrary Trajectory...")
+    trajectory_json_path = Path(__file__).with_name("real1_geometry_diffct.json")
+    # Load measured geometry from JSON and translate it into the reconstruction frame so that the estimated isocenter is placed at the origin.
+    s, dc, du_v, dv_v = _load_arbitrary_cone_geometry_from_json(
+        trajectory_json_path,
+        flip_det_u=False,
+        flip_det_v=False,
+        recenter_to_isocenter=True,
+    )
+    lv, reco = run_reconstruction(
+        "Arbitrary", s, dc, du_v, dv_v,
+        phantom, det_u, det_v, du, dv, voxel_spacing, epochs,
+    )
+    results["Arbitrary"] = (lv, reco)
 
     # Optional: inspect whether the loaded detector basis and central rays are
     # internally consistent after the isocenter recentering step.
