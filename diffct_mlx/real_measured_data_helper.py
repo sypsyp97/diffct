@@ -366,6 +366,10 @@ def load_tiff_projections(
     log_transform=False,
     revert=False,
     i0_percentile=99.9,
+    viewwise_i0=True,
+    air_border_px=16,
+    subtract_air_baseline=True,
+    air_baseline_percentile=50.0,
     view_stride=1,
     detector_binning_u=1,
     detector_binning_v=1,
@@ -419,11 +423,47 @@ def load_tiff_projections(
         if debug_visualization:
             debug_indices = sorted({0, len(stack) // 2, len(stack) - 1})
             debug_before = stack[debug_indices].copy()
-        i0 = max(float(np.percentile(stack, i0_percentile)), 1.0)
+
+        if viewwise_i0:
+            border_px = max(0, int(air_border_px))
+            if border_px > 0:
+                border_samples = [
+                    stack[:, :border_px, :].reshape(len(stack), -1),
+                    stack[:, -border_px:, :].reshape(len(stack), -1),
+                    stack[:, :, :border_px].reshape(len(stack), -1),
+                    stack[:, :, -border_px:].reshape(len(stack), -1),
+                ]
+                i0_source = np.concatenate(border_samples, axis=1)
+            else:
+                i0_source = stack.reshape(len(stack), -1)
+            i0 = np.percentile(i0_source, i0_percentile, axis=1, keepdims=True).reshape(len(stack), 1, 1)
+            i0 = np.maximum(i0, 1.0)
+        else:
+            i0 = max(float(np.percentile(stack, i0_percentile)), 1.0)
         np.divide(stack, i0, out=stack)
         np.clip(stack, 1e-6, 1.0, out=stack)
         np.log(stack, out=stack)
-        stack *= -40.0
+        stack *= -10.0
+        if subtract_air_baseline:
+            border_px = max(0, int(air_border_px))
+            if border_px > 0:
+                border_samples = [
+                    stack[:, :border_px, :].reshape(len(stack), -1),
+                    stack[:, -border_px:, :].reshape(len(stack), -1),
+                    stack[:, :, :border_px].reshape(len(stack), -1),
+                    stack[:, :, -border_px:].reshape(len(stack), -1),
+                ]
+                baseline_source = np.concatenate(border_samples, axis=1)
+            else:
+                baseline_source = stack.reshape(len(stack), -1)
+            air_baseline = np.percentile(
+                baseline_source,
+                float(air_baseline_percentile),
+                axis=1,
+                keepdims=True,
+            ).reshape(len(stack), 1, 1)
+            stack -= air_baseline
+            np.maximum(stack, 0.0, out=stack)
         if debug_before is not None:
             output_path = (
                 Path(debug_output_path)
@@ -439,7 +479,9 @@ def load_tiff_projections(
         
     if revert:
         np.subtract(65535.0, stack, out=stack)
-        np.divide(stack, 1000, out=stack)
+        i0 = max(float(np.percentile(stack, i0_percentile)), 1.0)
+        np.divide(stack, i0, out=stack)
+        np.clip(stack, 1e-6, 1.0, out=stack)
     
     return stack
 

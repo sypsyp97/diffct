@@ -11,43 +11,6 @@ import matplotlib.pyplot as plt
 import diffct_mlx
 
 
-# ── Phantom ──────────────────────────────────────────────────────────────────
-
-def shepp_logan_2d(shape):
-    """Generate a 2D Shepp-Logan phantom (numpy)."""
-    Ny, Nx = shape
-    yy, xx = np.mgrid[:Ny, :Nx]
-    xx = (xx - (Nx - 1) / 2) / ((Nx - 1) / 2)
-    yy = (yy - (Ny - 1) / 2) / ((Ny - 1) / 2)
-
-    el_params = np.array([
-        [0, 0, 0.69, 0.92, 0, 1],
-        [0, -0.0184, 0.6624, 0.874, 0, -0.8],
-        [0.22, 0, 0.11, 0.31, -np.pi / 10, -0.2],
-        [-0.22, 0, 0.16, 0.41, np.pi / 10, -0.2],
-        [0, 0.35, 0.21, 0.25, 0, 0.1],
-        [0, 0.1, 0.046, 0.046, 0, 0.1],
-        [0, -0.1, 0.046, 0.046, 0, 0.1],
-        [-0.08, -0.605, 0.046, 0.023, 0, 0.1],
-        [0, -0.605, 0.023, 0.023, 0, 0.1],
-        [0.06, -0.605, 0.023, 0.046, 0, 0.1],
-    ], dtype=np.float32)
-
-    x0 = el_params[:, 0][:, None, None]
-    y0 = el_params[:, 1][:, None, None]
-    a = el_params[:, 2][:, None, None]
-    b = el_params[:, 3][:, None, None]
-    phi = el_params[:, 4][:, None, None]
-    val = el_params[:, 5][:, None, None]
-
-    c, s = np.cos(phi), np.sin(phi)
-    xc, yc = xx[None] - x0, yy[None] - y0
-    xp = c * xc - s * yc
-    yp = s * xc + c * yc
-    mask = (xp ** 2 / a ** 2 + yp ** 2 / b ** 2) <= 1.0
-    return np.clip(np.sum(mask * val, axis=0), 0, 1).astype(np.float32)
-
-
 # ── Custom trajectory functions ──────────────────────────────────────────────
 
 def custom_wobble_rays(angles):
@@ -122,7 +85,7 @@ def run_reconstruction(trajectory_name, ray_dir, det_origin, det_u_vec,
 
 def main():
     Nx, Ny = 128, 128
-    phantom_np = shepp_logan_2d((Ny, Nx))
+    phantom_np = diffct_mlx.shepp_logan_2d((Ny, Nx))
     phantom = mx.array(phantom_np)
 
     num_views = 180

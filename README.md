@@ -141,6 +141,30 @@ reco = diffct_mlx.cone_backward(
 | `cone_forward(volume, src_pos, det_center, det_u_vec, det_v_vec, ...)` | 3D cone beam forward projection |
 | `cone_backward(sinogram, src_pos, det_center, det_u_vec, det_v_vec, ...)` | 3D cone beam backprojection |
 
+### Iterative Reconstruction Algorithms
+
+The package now also exposes callback-based iterative reconstruction algorithms
+that are independent of geometry and dimensionality:
+
+| Function | Description |
+|----------|-------------|
+| `run_sart(...)` | SART with user-provided single-view forward/backprojectors |
+| `run_tv_pocs(...)` | TV-POCS using the same projector callback pattern |
+| `run_asd_pocs(...)` | ASD-POCS with adaptive TV step-size damping |
+| `run_awtv_pocs(...)` | AwTV-POCS with edge-adaptive weighted TV regularization |
+
+Each algorithm takes:
+
+- `measured_projections`: a list/sequence of per-view projections
+- `forward_project(volume, projection_index)`: user callback for one view
+- `back_project(projection, projection_index)`: user callback for one view
+- `ReconstructionParameters`: shared reconstruction settings
+- an algorithm-specific regularization dataclass where applicable
+
+This keeps the algorithms reusable across parallel, fan, cone, 2D, and 3D
+setups as long as the caller provides the appropriate single-view projector
+wrappers.
+
 ### Trajectory Generators
 
 | Function | Geometry |

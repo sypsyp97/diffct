@@ -14,49 +14,6 @@ import matplotlib.pyplot as plt
 import diffct_mlx
 
 
-# ── 3D Phantom ───────────────────────────────────────────────────────────────
-
-def shepp_logan_3d(shape):
-    """Generate a 3D Shepp-Logan phantom (numpy)."""
-    zz, yy, xx = np.mgrid[:shape[0], :shape[1], :shape[2]]
-    xx = (xx - (shape[2] - 1) / 2) / ((shape[2] - 1) / 2)
-    yy = (yy - (shape[1] - 1) / 2) / ((shape[1] - 1) / 2)
-    zz = (zz - (shape[0] - 1) / 2) / ((shape[0] - 1) / 2)
-
-    el_params = np.array([
-        [0, 0, 0, 0.69, 0.92, 0.81, 0, 1],
-        [0, -0.0184, 0, 0.6624, 0.874, 0.78, 0, -0.8],
-        [0.22, 0, 0, 0.11, 0.31, 0.22, -np.pi / 10, -0.2],
-        [-0.22, 0, 0, 0.16, 0.41, 0.28, np.pi / 10, -0.2],
-        [0, 0.35, -0.15, 0.21, 0.25, 0.41, 0, 0.1],
-        [0, 0.1, 0.25, 0.046, 0.046, 0.05, 0, 0.1],
-        [0, -0.1, 0.25, 0.046, 0.046, 0.05, 0, 0.1],
-        [-0.08, -0.605, 0, 0.046, 0.023, 0.05, 0, 0.1],
-        [0, -0.605, 0, 0.023, 0.023, 0.02, 0, 0.1],
-        [0.06, -0.605, 0, 0.023, 0.046, 0.02, 0, 0.1],
-    ], dtype=np.float32)
-
-    x0 = el_params[:, 0][:, None, None, None]
-    y0 = el_params[:, 1][:, None, None, None]
-    z0 = el_params[:, 2][:, None, None, None]
-    a = el_params[:, 3][:, None, None, None]
-    b = el_params[:, 4][:, None, None, None]
-    c = el_params[:, 5][:, None, None, None]
-    phi = el_params[:, 6][:, None, None, None]
-    val = el_params[:, 7][:, None, None, None]
-
-    cos_p, sin_p = np.cos(phi), np.sin(phi)
-    xc = xx[None] - x0
-    yc = yy[None] - y0
-    zc = zz[None] - z0
-    xp = cos_p * xc - sin_p * yc
-    yp = sin_p * xc + cos_p * yc
-
-    mask = (xp ** 2 / a ** 2 + yp ** 2 / b ** 2 + zc ** 2 / c ** 2) <= 1.0
-    vol = np.clip(np.sum(mask * val, axis=0), 0, 1).astype(np.float32)
-    return vol
-
-
 # ── Ramp filter (3-D sino: views × u × v) ───────────────────────────────────
 
 def ramp_filter_3d(sinogram):
@@ -64,7 +21,7 @@ def ramp_filter_3d(sinogram):
     sino_np = np.array(sinogram)
     n_u = sino_np.shape[1]
     freqs = np.fft.fftfreq(n_u)
-    ramp = np.abs(2.0 * np.pi * freqs).astype(np.float32).reshape(1, n_u, 1)
+    ramp = (2.0 * np.abs(freqs)).astype(np.float32).reshape(1, n_u, 1)
     sino_fft = np.fft.fft(sino_np, axis=1)
     filtered = np.real(np.fft.ifft(sino_fft * ramp, axis=1)).astype(np.float32)
     return mx.array(filtered)
@@ -83,7 +40,7 @@ def main():
     sid = 600.0
 
     # Phantom
-    phantom_np = shepp_logan_3d((Nz, Ny, Nx))
+    phantom_np = diffct_mlx.shepp_logan_3d((Nz, Ny, Nx))
     volume = mx.array(phantom_np)
 
     # Geometry
@@ -113,8 +70,8 @@ def main():
         sinogram_filt, src_pos, det_center, det_u_vec, det_v_vec,
         D=Nz, H=Ny, W=Nx, du=du, dv=dv, voxel_spacing=voxel_spacing,
     )
-    # Non-negativity + FDK normalisation
-    reco = mx.maximum(reco, 0.0) * (math.pi / num_views)
+    # Non-negativity + flat-panel cone-beam FDK normalisation.
+    reco = mx.maximum(reco, 0.0) * ((math.pi * sid) / (2.0 * sdd * num_views))
     mx.eval(reco)
 
     # ── Gradient demo ────────────────────────────────────────────────────────
@@ -129,7 +86,7 @@ def main():
             sf, src_pos, det_center, det_u_vec, det_v_vec,
             D=Nz, H=Ny, W=Nx, du=du, dv=dv, voxel_spacing=voxel_spacing,
         )
-        r = mx.maximum(r, 0.0) * (math.pi / num_views)
+        r = mx.maximum(r, 0.0) * ((math.pi * sid) / (2.0 * sdd * num_views))
         return mx.mean((r - vol) ** 2)
 
     loss_val = loss_fn(volume)

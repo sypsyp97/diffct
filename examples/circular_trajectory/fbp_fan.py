@@ -14,34 +14,6 @@ import matplotlib.pyplot as plt
 import diffct_mlx
 
 
-# ── Phantom ──────────────────────────────────────────────────────────────────
-
-def shepp_logan_2d(Nx, Ny):
-    """Generate a 2D Shepp-Logan phantom (numpy)."""
-    phantom = np.zeros((Ny, Nx), dtype=np.float32)
-    ellipses = [
-        (0.0, 0.0, 0.69, 0.92, 0, 1.0),
-        (0.0, -0.0184, 0.6624, 0.8740, 0, -0.8),
-        (0.22, 0.0, 0.11, 0.31, -18.0, -0.8),
-        (-0.22, 0.0, 0.16, 0.41, 18.0, -0.8),
-        (0.0, 0.35, 0.21, 0.25, 0, 0.7),
-    ]
-    cx, cy = (Nx - 1) / 2, (Ny - 1) / 2
-    for ix in range(Nx):
-        for iy in range(Ny):
-            xn = (ix - cx) / (Nx / 2)
-            yn = (iy - cy) / (Ny / 2)
-            val = 0.0
-            for x0, y0, a, b, angdeg, ampl in ellipses:
-                th = np.deg2rad(angdeg)
-                xp = (xn - x0) * np.cos(th) + (yn - y0) * np.sin(th)
-                yp = -(xn - x0) * np.sin(th) + (yn - y0) * np.cos(th)
-                if xp * xp / (a * a) + yp * yp / (b * b) <= 1.0:
-                    val += ampl
-            phantom[iy, ix] = val
-    return np.clip(phantom, 0.0, 1.0)
-
-
 # ── Ramp filter ──────────────────────────────────────────────────────────────
 
 def ramp_filter(sinogram):
@@ -49,7 +21,7 @@ def ramp_filter(sinogram):
     sino_np = np.array(sinogram)
     n_det = sino_np.shape[1]
     freqs = np.fft.fftfreq(n_det)
-    ramp = np.abs(2.0 * np.pi * freqs).astype(np.float32)
+    ramp = (2.0 * np.abs(freqs)).astype(np.float32)
     sino_fft = np.fft.fft(sino_np, axis=1)
     filtered = np.real(np.fft.ifft(sino_fft * ramp[None, :], axis=1)).astype(np.float32)
     return mx.array(filtered)
@@ -68,7 +40,7 @@ def main():
     sid = 500.0
 
     # Phantom
-    phantom_np = shepp_logan_2d(Nx, Ny)
+    phantom_np = diffct_mlx.shepp_logan_2d(Nx, Ny)
     image = mx.array(phantom_np)
 
     # Geometry
@@ -96,8 +68,9 @@ def main():
         sinogram_filt, src_pos, det_center, det_u_vec,
         detector_spacing=detector_spacing, H=Ny, W=Nx, voxel_spacing=voxel_spacing,
     )
-    # Non-negativity + FBP normalisation
-    reco = mx.maximum(reco, 0.0) * (math.pi / num_angles)
+    # Non-negativity + empirical normalisation matching the current adjoint
+    # backprojector implementation used in diffct_mlx.
+    reco = mx.maximum(reco, 0.0) * (math.pi / (2.0 * num_angles))
     mx.eval(reco)
 
     # ── Gradient demo ────────────────────────────────────────────────────────
@@ -113,7 +86,7 @@ def main():
             detector_spacing=detector_spacing, H=Ny, W=Nx,
             voxel_spacing=voxel_spacing,
         )
-        r = mx.maximum(r, 0.0) * (math.pi / num_angles)
+        r = mx.maximum(r, 0.0) * (math.pi / (2.0 * num_angles))
         return mx.mean((r - img) ** 2)
 
     loss_val = loss_fn(image)

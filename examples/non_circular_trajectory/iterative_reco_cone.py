@@ -27,52 +27,6 @@ try:
 except AttributeError:
     from diffct_mlx.geometry import load_arbitrary_cone_geometry_from_json as _load_arbitrary_cone_geometry_from_json
 
-
-
-
-# ── 3D Phantom ───────────────────────────────────────────────────────────────
-
-def shepp_logan_3d(shape):
-    """Generate a 3D Shepp-Logan phantom (numpy)."""
-    zz, yy, xx = np.mgrid[:shape[0], :shape[1], :shape[2]]
-    xx = (xx - (shape[2] - 1) / 2) / ((shape[2] - 1) / 2)
-    yy = (yy - (shape[1] - 1) / 2) / ((shape[1] - 1) / 2)
-    zz = (zz - (shape[0] - 1) / 2) / ((shape[0] - 1) / 2)
-
-    el_params = np.array([
-        [0, 0, 0, 0.69, 0.92, 0.81, 0, 1],
-        [0, -0.0184, 0, 0.6624, 0.874, 0.78, 0, -0.8],
-        [0.22, 0, 0, 0.11, 0.31, 0.22, -np.pi / 10, -0.2],
-        [-0.22, 0, 0, 0.16, 0.41, 0.28, np.pi / 10, -0.2],
-        [0, 0.35, -0.15, 0.21, 0.25, 0.41, 0, 0.1],
-        [0, 0.1, 0.25, 0.046, 0.046, 0.05, 0, 0.1],
-        [0, -0.1, 0.25, 0.046, 0.046, 0.05, 0, 0.1],
-        [-0.08, -0.605, 0, 0.046, 0.023, 0.05, 0, 0.1],
-        [0, -0.605, 0, 0.023, 0.023, 0.02, 0, 0.1],
-        [0.06, -0.605, 0, 0.023, 0.046, 0.02, 0, 0.1],
-    ], dtype=np.float32)
-
-    x0 = el_params[:, 0][:, None, None, None]
-    y0 = el_params[:, 1][:, None, None, None]
-    z0 = el_params[:, 2][:, None, None, None]
-    a = el_params[:, 3][:, None, None, None]
-    b = el_params[:, 4][:, None, None, None]
-    c = el_params[:, 5][:, None, None, None]
-    phi = el_params[:, 6][:, None, None, None]
-    val = el_params[:, 7][:, None, None, None]
-
-    cos_p, sin_p = np.cos(phi), np.sin(phi)
-    xc = xx[None] - x0
-    yc = yy[None] - y0
-    zc = zz[None] - z0
-    xp = cos_p * xc - sin_p * yc
-    yp = sin_p * xc + cos_p * yc
-
-    mask = (xp ** 2 / a ** 2 + yp ** 2 / b ** 2 + zc ** 2 / c ** 2) <= 1.0
-    vol = np.clip(np.sum(mask * val, axis=0), 0, 1).astype(np.float32)
-    return vol
-
-
 # ── Custom trajectory ────────────────────────────────────────────────────────
 
 def custom_figure8_trajectory(angles, sid):
@@ -190,7 +144,7 @@ def run_reconstruction(trajectory_name,
 
 def main():
     Nx, Ny, Nz = 200, 200, 200
-    phantom_np = shepp_logan_3d((Nz, Ny, Nx))
+    phantom_np = diffct_mlx.shepp_logan_3d((Nz, Ny, Nx))
     phantom = mx.array(phantom_np)
 
     num_views = 200
