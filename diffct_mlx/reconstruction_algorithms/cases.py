@@ -56,8 +56,10 @@ class ReconstructionCase:
     supports_fdk: bool = False
     fbp_normalization_scale: float | None = None
     iterative_iteration_count: int = 5
+    sirt_iteration_count: int = 15
     iterative_sart_iteration_count: int = 2
     iterative_backprojection_scale: float = 0.215
+    pocs_iterative_update_method: str = "sart"
     iterative_positivity_mode: str = "per_iteration"
     iterative_detector_border_u: int = 0
     iterative_detector_border_v: int = 0
@@ -103,6 +105,252 @@ class MeasuredConeDataConfig:
     iterative_backprojection_scale: float = 0.215
 
 
+def make_parallel_2d_operators(
+    ray_dir: Array,
+    det_origin: Array,
+    det_u_vec: Array,
+    *,
+    image_shape: tuple[int, int],
+    num_detectors: int,
+    detector_spacing: float = 1.0,
+    voxel_spacing: float = 1.0,
+) -> tuple[Callable[[Array, int], Array], Callable[[Array, int], Array], Callable[[Array], Array]]:
+    """Create single-view and all-view parallel-beam projector wrappers."""
+    ny, nx = image_shape
+
+    def forward_single(volume: Array, projection_index: int) -> Array:
+        return parallel_forward(
+            volume,
+            ray_dir[projection_index : projection_index + 1],
+            det_origin[projection_index : projection_index + 1],
+            det_u_vec[projection_index : projection_index + 1],
+            num_detectors=num_detectors,
+            detector_spacing=detector_spacing,
+            voxel_spacing=voxel_spacing,
+        )[0]
+
+    def forward_slice(volume: Array, start: int, stop: int) -> Array:
+        return parallel_forward(
+            volume,
+            ray_dir[start:stop],
+            det_origin[start:stop],
+            det_u_vec[start:stop],
+            num_detectors=num_detectors,
+            detector_spacing=detector_spacing,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_single(projection: Array, projection_index: int) -> Array:
+        return parallel_backward(
+            mx.array(projection, dtype=mx.float32)[None, :],
+            ray_dir[projection_index : projection_index + 1],
+            det_origin[projection_index : projection_index + 1],
+            det_u_vec[projection_index : projection_index + 1],
+            detector_spacing=detector_spacing,
+            H=ny,
+            W=nx,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_slice(projection: Array, start: int, stop: int) -> Array:
+        return parallel_backward(
+            mx.array(projection, dtype=mx.float32),
+            ray_dir[start:stop],
+            det_origin[start:stop],
+            det_u_vec[start:stop],
+            detector_spacing=detector_spacing,
+            H=ny,
+            W=nx,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_project_all(filtered_sinogram: Array) -> Array:
+        return parallel_backward(
+            filtered_sinogram,
+            ray_dir,
+            det_origin,
+            det_u_vec,
+            detector_spacing=detector_spacing,
+            H=ny,
+            W=nx,
+            voxel_spacing=voxel_spacing,
+        )
+
+    forward_single.project_slice = forward_slice  # type: ignore[attr-defined]
+    back_single.project_slice = back_slice  # type: ignore[attr-defined]
+    return forward_single, back_single, back_project_all
+
+
+def make_fan_2d_operators(
+    src_pos: Array,
+    det_center: Array,
+    det_u_vec: Array,
+    *,
+    image_shape: tuple[int, int],
+    num_detectors: int,
+    detector_spacing: float = 1.0,
+    voxel_spacing: float = 1.0,
+) -> tuple[Callable[[Array, int], Array], Callable[[Array, int], Array], Callable[[Array], Array]]:
+    """Create single-view and all-view fan-beam projector wrappers."""
+    ny, nx = image_shape
+
+    def forward_single(volume: Array, projection_index: int) -> Array:
+        return fan_forward(
+            volume,
+            src_pos[projection_index : projection_index + 1],
+            det_center[projection_index : projection_index + 1],
+            det_u_vec[projection_index : projection_index + 1],
+            num_detectors=num_detectors,
+            detector_spacing=detector_spacing,
+            voxel_spacing=voxel_spacing,
+        )[0]
+
+    def forward_slice(volume: Array, start: int, stop: int) -> Array:
+        return fan_forward(
+            volume,
+            src_pos[start:stop],
+            det_center[start:stop],
+            det_u_vec[start:stop],
+            num_detectors=num_detectors,
+            detector_spacing=detector_spacing,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_single(projection: Array, projection_index: int) -> Array:
+        return fan_backward(
+            mx.array(projection, dtype=mx.float32)[None, :],
+            src_pos[projection_index : projection_index + 1],
+            det_center[projection_index : projection_index + 1],
+            det_u_vec[projection_index : projection_index + 1],
+            detector_spacing=detector_spacing,
+            H=ny,
+            W=nx,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_slice(projection: Array, start: int, stop: int) -> Array:
+        return fan_backward(
+            mx.array(projection, dtype=mx.float32),
+            src_pos[start:stop],
+            det_center[start:stop],
+            det_u_vec[start:stop],
+            detector_spacing=detector_spacing,
+            H=ny,
+            W=nx,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_project_all(filtered_sinogram: Array) -> Array:
+        return fan_backward(
+            filtered_sinogram,
+            src_pos,
+            det_center,
+            det_u_vec,
+            detector_spacing=detector_spacing,
+            H=ny,
+            W=nx,
+            voxel_spacing=voxel_spacing,
+        )
+
+    forward_single.project_slice = forward_slice  # type: ignore[attr-defined]
+    back_single.project_slice = back_slice  # type: ignore[attr-defined]
+    return forward_single, back_single, back_project_all
+
+
+def make_cone_3d_operators(
+    src_pos: Array,
+    det_center: Array,
+    det_u_vec: Array,
+    det_v_vec: Array,
+    *,
+    volume_shape: tuple[int, int, int],
+    detector_shape: tuple[int, int],
+    du: float = 1.0,
+    dv: float = 1.0,
+    voxel_spacing: float = 1.0,
+) -> tuple[Callable[[Array, int], Array], Callable[[Array, int], Array], Callable[[Array], Array]]:
+    """Create single-view and all-view cone-beam projector wrappers."""
+    nz, ny, nx = volume_shape
+    det_u_count, det_v_count = detector_shape
+
+    def forward_single(volume: Array, projection_index: int) -> Array:
+        return cone_forward(
+            volume,
+            src_pos[projection_index : projection_index + 1],
+            det_center[projection_index : projection_index + 1],
+            det_u_vec[projection_index : projection_index + 1],
+            det_v_vec[projection_index : projection_index + 1],
+            det_u=det_u_count,
+            det_v=det_v_count,
+            du=du,
+            dv=dv,
+            voxel_spacing=voxel_spacing,
+        )[0]
+
+    def forward_slice(volume: Array, start: int, stop: int) -> Array:
+        return cone_forward(
+            volume,
+            src_pos[start:stop],
+            det_center[start:stop],
+            det_u_vec[start:stop],
+            det_v_vec[start:stop],
+            det_u=det_u_count,
+            det_v=det_v_count,
+            du=du,
+            dv=dv,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_single(projection: Array, projection_index: int) -> Array:
+        return cone_backward(
+            mx.array(projection, dtype=mx.float32)[None, :, :],
+            src_pos[projection_index : projection_index + 1],
+            det_center[projection_index : projection_index + 1],
+            det_u_vec[projection_index : projection_index + 1],
+            det_v_vec[projection_index : projection_index + 1],
+            D=nz,
+            H=ny,
+            W=nx,
+            du=du,
+            dv=dv,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_slice(projection: Array, start: int, stop: int) -> Array:
+        return cone_backward(
+            mx.array(projection, dtype=mx.float32),
+            src_pos[start:stop],
+            det_center[start:stop],
+            det_u_vec[start:stop],
+            det_v_vec[start:stop],
+            D=nz,
+            H=ny,
+            W=nx,
+            du=du,
+            dv=dv,
+            voxel_spacing=voxel_spacing,
+        )
+
+    def back_project_all(filtered_sinogram: Array) -> Array:
+        return cone_backward(
+            filtered_sinogram,
+            src_pos,
+            det_center,
+            det_u_vec,
+            det_v_vec,
+            D=nz,
+            H=ny,
+            W=nx,
+            du=du,
+            dv=dv,
+            voxel_spacing=voxel_spacing,
+        )
+
+    forward_single.project_slice = forward_slice  # type: ignore[attr-defined]
+    back_single.project_slice = back_slice  # type: ignore[attr-defined]
+    return forward_single, back_single, back_project_all
+
+
 def build_parallel_2d_case(
     *,
     image_shape: tuple[int, int] = (96, 96),
@@ -125,40 +373,15 @@ def build_parallel_2d_case(
         voxel_spacing=voxel_spacing,
     )
 
-    def forward_single(volume: Array, projection_index: int) -> Array:
-        return parallel_forward(
-            volume,
-            ray_dir[projection_index : projection_index + 1],
-            det_origin[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            num_detectors=num_detectors,
-            detector_spacing=detector_spacing,
-            voxel_spacing=voxel_spacing,
-        )[0]
-
-    def back_single(projection: Array, projection_index: int) -> Array:
-        return parallel_backward(
-            mx.array(projection, dtype=mx.float32)[None, :],
-            ray_dir[projection_index : projection_index + 1],
-            det_origin[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            detector_spacing=detector_spacing,
-            H=ny,
-            W=nx,
-            voxel_spacing=voxel_spacing,
-        )
-
-    def back_project_all(filtered_sinogram: Array) -> Array:
-        return parallel_backward(
-            filtered_sinogram,
-            ray_dir,
-            det_origin,
-            det_u_vec,
-            detector_spacing=detector_spacing,
-            H=ny,
-            W=nx,
-            voxel_spacing=voxel_spacing,
-        )
+    forward_single, back_single, back_project_all = make_parallel_2d_operators(
+        ray_dir,
+        det_origin,
+        det_u_vec,
+        image_shape=(ny, nx),
+        num_detectors=num_detectors,
+        detector_spacing=detector_spacing,
+        voxel_spacing=voxel_spacing,
+    )
 
     return ReconstructionCase(
         name="Parallel 2D",
@@ -201,40 +424,15 @@ def build_fan_2d_case(
     detector_coords = (mx.arange(num_detectors) - (num_detectors - 1) / 2) * detector_spacing
     cosine_weights = mx.cos(mx.arctan(detector_coords / sdd)).reshape(1, -1)
 
-    def forward_single(volume: Array, projection_index: int) -> Array:
-        return fan_forward(
-            volume,
-            src_pos[projection_index : projection_index + 1],
-            det_center[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            num_detectors=num_detectors,
-            detector_spacing=detector_spacing,
-            voxel_spacing=voxel_spacing,
-        )[0]
-
-    def back_single(projection: Array, projection_index: int) -> Array:
-        return fan_backward(
-            mx.array(projection, dtype=mx.float32)[None, :],
-            src_pos[projection_index : projection_index + 1],
-            det_center[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            detector_spacing=detector_spacing,
-            H=ny,
-            W=nx,
-            voxel_spacing=voxel_spacing,
-        )
-
-    def back_project_all(filtered_sinogram: Array) -> Array:
-        return fan_backward(
-            filtered_sinogram,
-            src_pos,
-            det_center,
-            det_u_vec,
-            detector_spacing=detector_spacing,
-            H=ny,
-            W=nx,
-            voxel_spacing=voxel_spacing,
-        )
+    forward_single, back_single, back_project_all = make_fan_2d_operators(
+        src_pos,
+        det_center,
+        det_u_vec,
+        image_shape=(ny, nx),
+        num_detectors=num_detectors,
+        detector_spacing=detector_spacing,
+        voxel_spacing=voxel_spacing,
+    )
 
     return ReconstructionCase(
         name="Fan 2D",
@@ -287,49 +485,17 @@ def build_cone_3d_case(
     )
     cone_weight = lambda raw: raw * fdk_weights
 
-    def forward_single(volume: Array, projection_index: int) -> Array:
-        return cone_forward(
-            volume,
-            src_pos[projection_index : projection_index + 1],
-            det_center[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            det_v_vec[projection_index : projection_index + 1],
-            det_u=det_u_count,
-            det_v=det_v_count,
-            du=du,
-            dv=dv,
-            voxel_spacing=voxel_spacing,
-        )[0]
-
-    def back_single(projection: Array, projection_index: int) -> Array:
-        return cone_backward(
-            mx.array(projection, dtype=mx.float32)[None, :, :],
-            src_pos[projection_index : projection_index + 1],
-            det_center[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            det_v_vec[projection_index : projection_index + 1],
-            D=nz,
-            H=ny,
-            W=nx,
-            du=du,
-            dv=dv,
-            voxel_spacing=voxel_spacing,
-        )
-
-    def back_project_all(filtered_sinogram: Array) -> Array:
-        return cone_backward(
-            filtered_sinogram,
-            src_pos,
-            det_center,
-            det_u_vec,
-            det_v_vec,
-            D=nz,
-            H=ny,
-            W=nx,
-            du=du,
-            dv=dv,
-            voxel_spacing=voxel_spacing,
-        )
+    forward_single, back_single, back_project_all = make_cone_3d_operators(
+        src_pos,
+        det_center,
+        det_u_vec,
+        det_v_vec,
+        volume_shape=(nz, ny, nx),
+        detector_shape=(det_u_count, det_v_count),
+        du=du,
+        dv=dv,
+        voxel_spacing=voxel_spacing,
+    )
 
     normalization = (math.pi * sid) / (2.0 * sdd * num_views)
     return ReconstructionCase(
@@ -459,49 +625,17 @@ def build_measured_cone_3d_case(config: MeasuredConeDataConfig) -> Reconstructio
             fov_margin_mm=config.measured_fov_margin_mm,
         )
 
-    def forward_single(volume: Array, projection_index: int) -> Array:
-        return cone_forward(
-            volume,
-            src_pos[projection_index : projection_index + 1],
-            det_center[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            det_v_vec[projection_index : projection_index + 1],
-            det_u=measured_det_u,
-            det_v=measured_det_v,
-            du=measured_du,
-            dv=measured_dv,
-            voxel_spacing=measured_voxel_spacing,
-        )[0]
-
-    def back_single(projection: Array, projection_index: int) -> Array:
-        return cone_backward(
-            mx.array(projection, dtype=mx.float32)[None, :, :],
-            src_pos[projection_index : projection_index + 1],
-            det_center[projection_index : projection_index + 1],
-            det_u_vec[projection_index : projection_index + 1],
-            det_v_vec[projection_index : projection_index + 1],
-            D=nz,
-            H=ny,
-            W=nx,
-            du=measured_du,
-            dv=measured_dv,
-            voxel_spacing=measured_voxel_spacing,
-        )
-
-    def back_project_all(filtered_sinogram: Array) -> Array:
-        return cone_backward(
-            filtered_sinogram,
-            src_pos,
-            det_center,
-            det_u_vec,
-            det_v_vec,
-            D=nz,
-            H=ny,
-            W=nx,
-            du=measured_du,
-            dv=measured_dv,
-            voxel_spacing=measured_voxel_spacing,
-        )
+    forward_single, back_single, back_project_all = make_cone_3d_operators(
+        src_pos,
+        det_center,
+        det_u_vec,
+        det_v_vec,
+        volume_shape=(nz, ny, nx),
+        detector_shape=(measured_det_u, measured_det_v),
+        du=measured_du,
+        dv=measured_dv,
+        voxel_spacing=measured_voxel_spacing,
+    )
 
     reference = None if reference_np is None else mx.array(reference_np, dtype=mx.float32)
     sinogram = mx.array(measured_sino_np, dtype=mx.float32)

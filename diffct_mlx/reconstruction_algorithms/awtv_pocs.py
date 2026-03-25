@@ -20,7 +20,7 @@ from ._core import (
     normalize_measured_projections,
     print_progress,
     projection_order,
-    run_sart_sweeps,
+    run_iterative_sweeps,
     validate_reconstruction_inputs,
 )
 
@@ -62,7 +62,7 @@ def reconstruct_awtv_pocs(
         iteration_reference = zero_volume if skip_first_sart else volume
 
         if not skip_first_sart:
-            volume = run_sart_sweeps(
+            volume = run_iterative_sweeps(
                 volume=volume,
                 measured_projections=measured,
                 ones_volume=ones_volume,

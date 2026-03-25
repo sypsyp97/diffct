@@ -104,6 +104,7 @@ def _iterative_results(case: diffct_mlx.ReconstructionCase) -> dict[str, object]
         volume_shape=case.volume_shape,
         iteration_count=case.iterative_iteration_count,
         sart_iteration_count=case.iterative_sart_iteration_count,
+        iterative_update_method=case.pocs_iterative_update_method,
         enforce_positivity=True,
         positivity_mode=case.iterative_positivity_mode,
         preserve_unmasked_computed_projection=case.iterative_preserve_unmasked_computed_projection,
@@ -122,6 +123,17 @@ def _iterative_results(case: diffct_mlx.ReconstructionCase) -> dict[str, object]
         detector_border_v=case.iterative_detector_border_v,
         backprojection_scale=case.iterative_backprojection_scale,
     )
+    sirt_params = diffct_mlx.SIRTParameters(
+        volume_shape=case.volume_shape,
+        iteration_count=case.sirt_iteration_count,
+        sart_iteration_count=case.iterative_sart_iteration_count,
+        enforce_positivity=True,
+        positivity_mode=case.iterative_positivity_mode,
+        preserve_unmasked_computed_projection=case.iterative_preserve_unmasked_computed_projection,
+        detector_border_u=case.iterative_detector_border_u,
+        detector_border_v=case.iterative_detector_border_v,
+        backprojection_scale=case.iterative_backprojection_scale,
+    )
     measured_projections = [case.sinogram[i] for i in range(case.sinogram.shape[0])]
 
     return {
@@ -130,6 +142,13 @@ def _iterative_results(case: diffct_mlx.ReconstructionCase) -> dict[str, object]
             case.forward_single,
             case.back_single,
             sart_params,
+            show_progress=True,
+        ),
+        "SIRT": diffct_mlx.run_sirt(
+            measured_projections,
+            case.forward_single,
+            case.back_single,
+            sirt_params,
             show_progress=True,
         ),
         "TV-POCS": diffct_mlx.run_tv_pocs(
@@ -268,7 +287,7 @@ def _plot_comparison_results(
 def compare_2d_parallel() -> dict[str, object]:
     """Compare FBP and iterative methods on 2D parallel-beam Shepp-Logan data."""
     case = diffct_mlx.build_parallel_2d_case()
-    ordered_names = ["FBP", "SART", "TV-POCS", "ASD-POCS", "AwTV-POCS"]
+    ordered_names = ["FBP", "SART", "SIRT", "TV-POCS", "ASD-POCS", "AwTV-POCS"]
     results = {"FBP": _fbp_result(case)}
     results.update(_iterative_results(case))
 
@@ -283,7 +302,7 @@ def compare_2d_parallel() -> dict[str, object]:
 def compare_2d_fan() -> dict[str, object]:
     """Compare FBP and iterative methods on 2D fan-beam Shepp-Logan data."""
     case = diffct_mlx.build_fan_2d_case()
-    ordered_names = ["FBP", "SART", "TV-POCS", "ASD-POCS", "AwTV-POCS"]
+    ordered_names = ["FBP", "SART", "SIRT", "TV-POCS", "ASD-POCS", "AwTV-POCS"]
     results = {"FBP": _fbp_result(case)}
     results.update(_iterative_results(case))
 
@@ -327,7 +346,7 @@ def compare_3d_cone(
 
     iterative = _iterative_results(case)
     results.update(iterative)
-    ordered_names.extend(["SART", "TV-POCS", "ASD-POCS", "AwTV-POCS"])
+    ordered_names.extend(["SART", "SIRT", "TV-POCS", "ASD-POCS", "AwTV-POCS"])
 
     for name in ordered_names:
         _print_result(case.name, name, results[name], case.reference)

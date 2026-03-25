@@ -7,6 +7,9 @@ from .cases import (
     build_fan_2d_case,
     build_measured_cone_3d_case,
     build_parallel_2d_case,
+    make_cone_3d_operators,
+    make_fan_2d_operators,
+    make_parallel_2d_operators,
 )
 from ._core import (
     BackProjector,
@@ -16,16 +19,11 @@ from ._core import (
 )
 from .asd_pocs import ASDPOCSParameters, ASD_POCS_Parameter, reconstruct_asd_pocs, run_asd_pocs
 from .awtv_pocs import AwTVPOCSParameters, AwTV_POCS_Parameter, reconstruct_awtv_pocs, run_awtv_pocs
+from .dart import DARTParameters, reconstruct_dart, run_dart
 from .fbp import FBPParameters, reconstruct_fbp, run_fbp
 from .fdk import FDKParameters, reconstruct_fdk, run_fdk
 from .sart import SARTParameters, reconstruct_sart, run_sart
-from ...diagnose_scripts.sart_diagnostics import (
-    SARTDiagnosticsResult,
-    SARTProjectionSnapshot,
-    default_projection_indices,
-    diagnose_sart,
-    plot_sart_projection_diagnostics,
-)
+from .sirt import SIRTParameters, reconstruct_sirt, run_sirt
 from .tv_pocs import TVPOCSParameters, TV_POCS_Parameter, reconstruct_tv_pocs, run_tv_pocs
 
 
@@ -39,6 +37,9 @@ __all__ = [
     "build_fan_2d_case",
     "build_cone_3d_case",
     "build_measured_cone_3d_case",
+    "make_parallel_2d_operators",
+    "make_fan_2d_operators",
+    "make_cone_3d_operators",
     "BackProjector",
     "ForwardProjector",
     "ReconstructionParameters",
@@ -48,6 +49,9 @@ __all__ = [
     "SARTParameters",
     "run_sart",
     "reconstruct_sart",
+    "SIRTParameters",
+    "run_sirt",
+    "reconstruct_sirt",
     "SARTDiagnosticsResult",
     "SARTProjectionSnapshot",
     "default_projection_indices",
@@ -65,6 +69,9 @@ __all__ = [
     "AwTV_POCS_Parameter",
     "run_awtv_pocs",
     "reconstruct_awtv_pocs",
+    "DARTParameters",
+    "run_dart",
+    "reconstruct_dart",
     "FBPParameters",
     "run_fbp",
     "reconstruct_fbp",

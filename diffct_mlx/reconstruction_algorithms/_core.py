@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Sequence
 
 import mlx.core as mx
@@ -22,6 +23,7 @@ class ReconstructionParameters:
     volume_shape: tuple[int, ...]
     iteration_count: int
     sart_iteration_count: int = 1
+    iterative_update_method: str = "sart"
     pixel_extreme_values: tuple[float, float] = (0.0, float("inf"))
     voxel_extreme_values: tuple[float, float] = (-float("inf"), float("inf"))
     initial_volume: ArrayLike | None = None
@@ -37,6 +39,7 @@ class ReconstructionParameters:
     preserve_unmasked_computed_projection: bool = False
     detector_border_u: int = 0
     detector_border_v: int = 0
+    projection_chunk_size: int | None = None
     backprojection_scale: float = 1.0
     dtype: Any = mx.float32
 
@@ -78,6 +81,8 @@ def validate_reconstruction_inputs(
         raise ValueError("iteration_count must be positive.")
     if params.sart_iteration_count <= 0:
         raise ValueError("sart_iteration_count must be positive.")
+    if params.iterative_update_method not in {"sart", "sirt"}:
+        raise ValueError("iterative_update_method must be one of: 'sart', 'sirt'.")
     if params.positivity_mode not in {"per_iteration", "final", "none"}:
         raise ValueError("positivity_mode must be one of: 'per_iteration', 'final', 'none'.")
     if params.raylength_quantile < 0.0 or params.raylength_quantile >= 1.0:
@@ -86,6 +91,8 @@ def validate_reconstruction_inputs(
         raise ValueError("raylength_epsilon must be positive.")
     if params.detector_border_u < 0 or params.detector_border_v < 0:
         raise ValueError("detector border widths must be non-negative.")
+    if params.projection_chunk_size is not None and params.projection_chunk_size <= 0:
+        raise ValueError("projection_chunk_size must be positive when specified.")
     if params.initial_volume is not None and tuple(np.shape(params.initial_volume)) != tuple(params.volume_shape):
         raise ValueError(
             "initial_volume shape does not match volume_shape: "
@@ -282,26 +289,37 @@ def apply_detector_border_mask(
     if border_u <= 0 and border_v <= 0:
         return value
 
-    value_np = np.array(np.asarray(value), copy=True)
-    if value_np.ndim == 1:
-        if border_u > 0:
-            trim_u = min(border_u, value_np.shape[0])
-            value_np[:trim_u] = fill_value
-            value_np[-trim_u:] = fill_value
-        return mx.array(value_np, dtype=value.dtype)
-
-    if value_np.ndim != 2:
+    shape = tuple(int(dimension) for dimension in value.shape)
+    if len(shape) not in {1, 2}:
         return value
+    mask = detector_border_keep_mask(shape, border_u, border_v)
+    return mx.where(mask, value, fill_value)
 
-    if border_u > 0:
-        trim_u = min(border_u, value_np.shape[0])
-        value_np[:trim_u, :] = fill_value
-        value_np[-trim_u:, :] = fill_value
-    if border_v > 0:
-        trim_v = min(border_v, value_np.shape[1])
-        value_np[:, :trim_v] = fill_value
-        value_np[:, -trim_v:] = fill_value
-    return mx.array(value_np, dtype=value.dtype)
+
+@lru_cache(maxsize=64)
+def detector_border_keep_mask(
+    shape: tuple[int, ...],
+    border_u: int,
+    border_v: int,
+) -> mx.array:
+    """Cache detector-border keep masks on the MLX side."""
+    mask_np = np.ones(shape, dtype=bool)
+    if len(shape) == 1:
+        if border_u > 0:
+            trim_u = min(border_u, shape[0])
+            mask_np[:trim_u] = False
+            mask_np[-trim_u:] = False
+        return mx.array(mask_np)
+
+    trim_u = min(border_u, shape[0]) if border_u > 0 else 0
+    trim_v = min(border_v, shape[1]) if border_v > 0 else 0
+    if trim_u > 0:
+        mask_np[:trim_u, :] = False
+        mask_np[-trim_u:, :] = False
+    if trim_v > 0:
+        mask_np[:, :trim_v] = False
+        mask_np[:, -trim_v:] = False
+    return mx.array(mask_np)
 
 
 def _array_stats(name: str, value: mx.array) -> dict[str, float]:
@@ -336,6 +354,58 @@ def _raylength_stats(raylength_projection: mx.array) -> dict[str, float]:
     }
 
 
+def projection_slice_ranges(
+    projection_count: int,
+    params: ReconstructionParameters,
+) -> tuple[tuple[int, int], ...]:
+    """Resolve contiguous projection slices for optional chunked projector calls."""
+    chunk_size = params.projection_chunk_size
+    if chunk_size is None or chunk_size <= 1:
+        return tuple((index, index + 1) for index in range(projection_count))
+    return tuple(
+        (start, min(start + int(chunk_size), projection_count))
+        for start in range(0, projection_count, int(chunk_size))
+    )
+
+
+def forward_project_views(
+    volume: mx.array,
+    forward_project: ForwardProjector,
+    projection_count: int,
+    params: ReconstructionParameters,
+) -> list[mx.array]:
+    """Project a fixed volume over all views, optionally using contiguous chunks."""
+    project_slice = getattr(forward_project, "project_slice", None)
+    if project_slice is None or params.projection_chunk_size is None or params.projection_chunk_size <= 1:
+        return [forward_project(volume, projection_index) for projection_index in range(projection_count)]
+
+    projections: list[mx.array] = [None] * projection_count  # type: ignore[list-item]
+    for start, stop in projection_slice_ranges(projection_count, params):
+        chunk_projection = project_slice(volume, start, stop)
+        for offset, projection_index in enumerate(range(start, stop)):
+            projections[projection_index] = chunk_projection[offset]
+    return projections
+
+
+def precompute_raylength_projections(
+    ones_volume: mx.array,
+    forward_project: ForwardProjector,
+    params: ReconstructionParameters,
+    projection_count: int,
+) -> dict[int, mx.array]:
+    """Cache per-view raylength projections for one iterative sweep call."""
+    projected_ones = forward_project_views(
+        ones_volume,
+        forward_project,
+        projection_count,
+        params,
+    )
+    return {
+        int(projection_index): prepare_raylength_projection(projected_ones[int(projection_index)], params)
+        for projection_index in range(projection_count)
+    }
+
+
 def run_sart_sweeps(
     volume: mx.array,
     measured_projections: Sequence[mx.array],
@@ -349,14 +419,17 @@ def run_sart_sweeps(
 ) -> mx.array:
     """Run the configured number of SART sweeps over all provided projections."""
     order = projection_order(params, len(measured_projections))
+    raylength_projections = precompute_raylength_projections(
+        ones_volume,
+        forward_project,
+        params,
+        len(measured_projections),
+    )
     for sweep_index in range(params.sart_iteration_count):
         for projection_index in order:
             measured_projection = measured_projections[projection_index]
             computed_projection = forward_project(volume, projection_index)
-            raylength_projection = prepare_raylength_projection(
-                forward_project(ones_volume, projection_index),
-                params,
-            )
+            raylength_projection = raylength_projections[int(projection_index)]
             correction_image = compute_sart_correction(
                 measured_projection=measured_projection,
                 computed_projection=computed_projection,
@@ -382,3 +455,95 @@ def run_sart_sweeps(
                 }
                 params.sart_debug_callback(debug_stats)
     return volume
+
+
+def run_sirt_sweeps(
+    volume: mx.array,
+    measured_projections: Sequence[mx.array],
+    ones_volume: mx.array,
+    forward_project: ForwardProjector,
+    back_project: BackProjector,
+    params: ReconstructionParameters,
+    *,
+    beta: float = 1.0,
+    outer_iteration_index: int = 0,
+) -> mx.array:
+    """Run the configured number of SIRT sweeps over all provided projections."""
+    order = projection_order(params, len(measured_projections))
+    raylength_projections = precompute_raylength_projections(
+        ones_volume,
+        forward_project,
+        params,
+        len(measured_projections),
+    )
+    projection_count = float(len(order))
+    for sweep_index in range(params.sart_iteration_count):
+        reference_volume = volume
+        accumulated_backprojection = mx.zeros_like(volume)
+        for projection_index in order:
+            measured_projection = measured_projections[projection_index]
+            computed_projection = forward_project(reference_volume, projection_index)
+            raylength_projection = raylength_projections[int(projection_index)]
+            correction_image = compute_sart_correction(
+                measured_projection=measured_projection,
+                computed_projection=computed_projection,
+                raylength_projection=raylength_projection,
+                params=params,
+            )
+            backprojection_volume = back_project(correction_image, projection_index)
+            accumulated_backprojection = accumulated_backprojection + backprojection_volume
+            if params.sart_debug_callback is not None:
+                debug_stats = {
+                    "outer_iteration": float(outer_iteration_index),
+                    "sart_sweep": float(sweep_index),
+                    "projection_index": float(projection_index),
+                    "beta": float(beta),
+                    "backprojection_scale": float(params.backprojection_scale),
+                    "iterative_update_method": 1.0,
+                    **_array_stats("measured", measured_projection),
+                    **_array_stats("computed", computed_projection),
+                    **_raylength_stats(raylength_projection),
+                    **_array_stats("correction", correction_image),
+                    **_array_stats("backprojection", backprojection_volume),
+                    **_array_stats("volume", reference_volume),
+                }
+                params.sart_debug_callback(debug_stats)
+        averaged_backprojection = accumulated_backprojection / projection_count
+        volume = volume + (float(beta) * float(params.backprojection_scale) * averaged_backprojection)
+        volume = clamp_reconstruction_volume(volume, params, stage="sart_update")
+    return volume
+
+
+def run_iterative_sweeps(
+    volume: mx.array,
+    measured_projections: Sequence[mx.array],
+    ones_volume: mx.array,
+    forward_project: ForwardProjector,
+    back_project: BackProjector,
+    params: ReconstructionParameters,
+    *,
+    beta: float = 1.0,
+    outer_iteration_index: int = 0,
+) -> mx.array:
+    """Dispatch to the configured iterative sweep method."""
+    if params.iterative_update_method == "sirt":
+        return run_sirt_sweeps(
+            volume=volume,
+            measured_projections=measured_projections,
+            ones_volume=ones_volume,
+            forward_project=forward_project,
+            back_project=back_project,
+            params=params,
+            beta=beta,
+            outer_iteration_index=outer_iteration_index,
+        )
+    return run_sart_sweeps(
+        volume=volume,
+        measured_projections=measured_projections,
+        ones_volume=ones_volume,
+        forward_project=forward_project,
+        back_project=back_project,
+        params=params,
+        beta=beta,
+        outer_iteration_index=outer_iteration_index,
+    )
