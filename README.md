@@ -1,132 +1,231 @@
-# diffct: Differentiable Computed Tomography Operators
+# diffct-mlx: Differentiable CT for Apple Silicon
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square)](https://doi.org/10.5281/zenodo.14999333)
-[![PyPI version](https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/diffct/)
-[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat-square)](https://sypsyp97.github.io/diffct/)
-[![CI/CD](https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square)](https://github.com/sypsyp97/diffct/actions)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sypsyp97/diffct)
 
-A high-performance, CUDA-accelerated library for circular orbits CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
+A high-performance, differentiable computed tomography (CT) reconstruction library built with [MLX](https://github.com/ml-explore/mlx) and custom Metal kernels, optimized for Apple Silicon (M-series) chips.
 
-⭐ **Please star this project if you find it is useful!**
+This is the Apple Silicon port of [diffct](https://github.com/sypsyp97/diffct), replacing CUDA/PyTorch with MLX/Metal for native M-series GPU acceleration.
 
-## 🔀 Branches
+## Features
 
-### Main Branch (Stable)
-This is the **stable version** supporting circular trajectory CT reconstruction.
+- **Apple Silicon Native:** Custom Metal kernels via `mx.fast.metal_kernel` — no CUDA required
+- **Differentiable:** End-to-end gradient propagation using `mx.custom_function` with custom VJPs
+- **Siddon Ray-Tracing:** Bilinear (2D) and trilinear (3D) interpolation for accurate projection
+- **Atomic Backprojection:** Thread-safe gradient accumulation using Metal atomic operations
 
-### Dev Branch (Under Development)
-The `dev` branch includes experimental features:
-- **Random trajectory projection and backprojection operators**
-- **New examples with non-circular trajectories**
+## Supported Geometries
 
-⚠️ **Note:** The dev branch is under active development. If you find any bugs, please [raise an issue](https://github.com/sypsyp97/diffct/issues).
+| Geometry | Forward | Backward | Differentiable |
+|----------|---------|----------|----------------|
+| 2D Parallel Beam | ✅ | ✅ | ✅ |
+| 2D Fan Beam | ✅ | ✅ | ✅ |
+| 3D Cone Beam | ✅ | ✅ | ✅ |
 
-## ✨ Features
+## Trajectory Generators
 
-- **Fast:** CUDA-accelerated projection and backprojection operations
-- **Differentiable:** End-to-end gradient propagation for deep learning workflows
+- **Circular** — standard single-rotation scan
+- **Spiral / Helical** — helical CT with z-axis translation (3D)
+- **Sinusoidal** — variable source-to-isocenter distance
+- **Saddle** — combined z-oscillation and radial variation (3D)
+- **Random** — perturbed circular with configurable noise (3D)
+- **Custom** — user-defined source path functions
 
-## 📐 Supported Geometries
-
-- **Parallel Beam:** 2D parallel-beam geometry
-- **Fan Beam:** 2D fan-beam geometry
-- **Cone Beam:** 3D cone-beam geometry
-
-## 🧩 Code Structure
-
-```bash
-diffct/
-├── diffct/
-│   ├── __init__.py            # Package initialization
-│   ├── differentiable.py      # Differentiable CT operators
-├── examples/                  # Example usages
-│   ├── fbp_parallel.py
-│   ├── fbp_fan.py
-│   ├── fdk_cone.py
-│   ├── iterative_reco_cone.py
-│   ├── iterative_reco_fan.py
-│   ├── iterative_reco_parallel.py
-├── pyproject.toml             # Project metadata
-├── README.md                  # README
-├── LICENSE                    # License
-├── requirements.txt           # Dependencies
-```
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
-- CUDA-capable GPU
+- Apple Silicon Mac (M1/M2/M3/M4 series)
 - Python 3.10+
-- [PyTorch](https://pytorch.org/get-started/locally/), [NumPy](https://numpy.org/), [Numba](https://numba.readthedocs.io/en/stable/user/installing.html), [CUDA](https://developer.nvidia.com/cuda-toolkit)
+- macOS 13.5+
 
 ### Installation
 
-**CUDA 12 (Recommended):**
 ```bash
+# Clone the repository
+git clone https://github.com/sypsyp97/diffct.git
+cd diffct
+git checkout feature/mlx-apple-silicon
+
 # Create and activate conda environment
-conda create -n diffct python=3.12
-conda activate diffct
+conda create -n diffct-mlx python=3.11
+conda activate diffct-mlx
 
-# Install CUDA (here 12.8.1 as example) PyTorch, and Numba
-conda install nvidia/label/cuda-12.8.1::cuda-toolkit
+# Install MLX and dependencies
+pip install mlx numpy matplotlib
 
-# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
-
-# Install Numba with CUDA 12
-pip install numba-cuda[cu12]
-
-# Install diffct
-pip install diffct
+# Install diffct-mlx
+pip install -e .
 ```
 
-<details>
-<summary>CUDA 13 Installation</summary>
+### Basic Usage
 
-```bash
-# Create and activate conda environment
-conda create -n diffct python=3.12
-conda activate diffct
+```python
+import mlx.core as mx
+import diffct_mlx
 
-# Install CUDA (here 13.0.2 as example) PyTorch, and Numba
-conda install nvidia/label/cuda-13.0.2::cuda-toolkit
+# Create a 64x64 test image
+image = mx.ones((64, 64), dtype=mx.float32)
 
-# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
+# Generate parallel beam geometry (90 views)
+ray_dir, det_origin, det_u_vec = diffct_mlx.circular_trajectory_2d_parallel(90)
 
-# Install Numba with CUDA 13
-pip install numba-cuda[cu13]
+# Forward projection → sinogram
+sino = diffct_mlx.parallel_forward(
+    image, ray_dir, det_origin, det_u_vec,
+    num_detectors=92, detector_spacing=1.0, voxel_spacing=1.0
+)
 
-# Install diffct
-pip install diffct
+# Backprojection → reconstruction
+reco = diffct_mlx.parallel_backward(
+    sino, ray_dir, det_origin, det_u_vec,
+    H=64, W=64, detector_spacing=1.0, voxel_spacing=1.0
+)
 ```
 
-</details>
+### Gradient Computation
 
-<details>
-<summary>CUDA 11 Installation</summary>
+Since all projectors are differentiable, you can compute gradients directly:
 
-```bash
-# Create and activate conda environment
-conda create -n diffct python=3.12
-conda activate diffct
+```python
+import mlx.core as mx
+import diffct_mlx
 
-# Install CUDA (here 11.8.0 as example) PyTorch, and Numba
-conda install nvidia/label/cuda-11.8.0::cuda-toolkit
+def loss_fn(image):
+    ray_dir, det_origin, det_u_vec = diffct_mlx.circular_trajectory_2d_parallel(90)
+    sino = diffct_mlx.parallel_forward(image, ray_dir, det_origin, det_u_vec, 92)
+    return mx.sum(sino ** 2)
 
-# Install Pytorch, you can find the commend here: https://pytorch.org/get-started/locally/
-
-# Install Numba with CUDA 11
-pip install numba-cuda[cu11]
-
-# Install diffct
-pip install diffct
+image = mx.ones((64, 64), dtype=mx.float32)
+grad_fn = mx.grad(loss_fn)
+gradient = grad_fn(image)
 ```
 
-</details>
+### 3D Cone Beam Example
 
-## 📝 Citation
+```python
+import mlx.core as mx
+import diffct_mlx
+
+# Create a 32x64x64 volume (D, H, W)
+volume = mx.ones((32, 64, 64), dtype=mx.float32)
+
+# Generate cone beam geometry
+src, det_c, det_u, det_v = diffct_mlx.circular_trajectory_3d(
+    n_views=60, sid=500.0, sdd=1000.0
+)
+
+# Forward projection
+sino = diffct_mlx.cone_forward(
+    volume, src, det_c, det_u, det_v,
+    det_u=64, det_v=32, du=1.0, dv=1.0, voxel_spacing=1.0
+)
+
+# Backprojection
+reco = diffct_mlx.cone_backward(
+    sino, src, det_c, det_u, det_v,
+    D=32, H=64, W=64, du=1.0, dv=1.0, voxel_spacing=1.0
+)
+```
+
+## API Reference
+
+### Projectors
+
+| Function | Description |
+|----------|-------------|
+| `parallel_forward(image, ray_dir, det_origin, det_u_vec, ...)` | 2D parallel beam forward projection |
+| `parallel_backward(sinogram, ray_dir, det_origin, det_u_vec, ...)` | 2D parallel beam backprojection |
+| `fan_forward(image, src_pos, det_center, det_u_vec, ...)` | 2D fan beam forward projection |
+| `fan_backward(sinogram, src_pos, det_center, det_u_vec, ...)` | 2D fan beam backprojection |
+| `cone_forward(volume, src_pos, det_center, det_u_vec, det_v_vec, ...)` | 3D cone beam forward projection |
+| `cone_backward(sinogram, src_pos, det_center, det_u_vec, det_v_vec, ...)` | 3D cone beam backprojection |
+
+### Iterative Reconstruction Algorithms
+
+The package now also exposes callback-based iterative reconstruction algorithms
+that are independent of geometry and dimensionality:
+
+| Function | Description |
+|----------|-------------|
+| `run_sart(...)` | SART with user-provided single-view forward/backprojectors |
+| `run_tv_pocs(...)` | TV-POCS using the same projector callback pattern |
+| `run_asd_pocs(...)` | ASD-POCS with adaptive TV step-size damping |
+| `run_awtv_pocs(...)` | AwTV-POCS with edge-adaptive weighted TV regularization |
+
+Each algorithm takes:
+
+- `measured_projections`: a list/sequence of per-view projections
+- `forward_project(volume, projection_index)`: user callback for one view
+- `back_project(projection, projection_index)`: user callback for one view
+- `ReconstructionParameters`: shared reconstruction settings
+- an algorithm-specific regularization dataclass where applicable
+
+This keeps the algorithms reusable across parallel, fan, cone, 2D, and 3D
+setups as long as the caller provides the appropriate single-view projector
+wrappers.
+
+### Trajectory Generators
+
+| Function | Geometry |
+|----------|----------|
+| `circular_trajectory_2d_parallel(n_views, ...)` | 2D parallel |
+| `sinusoidal_trajectory_2d_parallel(n_views, ...)` | 2D parallel |
+| `custom_trajectory_2d_parallel(n_views, ...)` | 2D parallel |
+| `circular_trajectory_2d_fan(n_views, sid, sdd, ...)` | 2D fan |
+| `sinusoidal_trajectory_2d_fan(n_views, sid, sdd, ...)` | 2D fan |
+| `custom_trajectory_2d_fan(n_views, sid, sdd, ...)` | 2D fan |
+| `circular_trajectory_3d(n_views, sid, sdd, ...)` | 3D cone |
+| `spiral_trajectory_3d(n_views, sid, sdd, ...)` | 3D cone |
+| `sinusoidal_trajectory_3d(n_views, sid, sdd, ...)` | 3D cone |
+| `saddle_trajectory_3d(n_views, sid, sdd, ...)` | 3D cone |
+| `random_trajectory_3d(n_views, sid_mean, sdd_mean, ...)` | 3D cone |
+| `custom_trajectory_3d(n_views, sid, sdd, ...)` | 3D cone |
+
+## Examples
+
+Ready-to-run scripts are provided in the `examples/` directory:
+
+### Circular Trajectory (Analytical Reconstruction)
+
+| Script | Description |
+|--------|-------------|
+| `examples/circular_trajectory/fbp_parallel.py` | FBP with ramp filter — 2D parallel beam |
+| `examples/circular_trajectory/fbp_fan.py` | FBP with cosine weighting + ramp filter — 2D fan beam |
+| `examples/circular_trajectory/fdk_cone.py` | FDK with distance weighting + ramp filter — 3D cone beam |
+
+### Non-Circular Trajectory (Iterative Reconstruction)
+
+| Script | Description |
+|--------|-------------|
+| `examples/non_circular_trajectory/iterative_reco_parallel.py` | Gradient-based iterative reco — sinusoidal & custom wobble trajectories |
+| `examples/non_circular_trajectory/iterative_reco_fan.py` | Gradient-based iterative reco — sinusoidal & custom elliptical trajectories |
+| `examples/non_circular_trajectory/iterative_reco_cone.py` | Gradient-based iterative reco — spiral, sinusoidal, saddle & figure-8 trajectories |
+
+Run any example with:
+
+```bash
+conda activate diffct-mlx
+python examples/circular_trajectory/fbp_parallel.py
+```
+
+## Package Structure
+
+```
+diffct_mlx/
+├── __init__.py          # Public API exports
+├── constants.py         # MLX-specific constants and dtypes
+├── utils.py             # Grid computation utilities
+├── geometry.py          # Trajectory generation functions
+├── projectors.py        # Differentiable projector functions with VJPs
+└── kernels/
+    ├── __init__.py
+    ├── parallel_beam.py # Metal kernels for 2D parallel beam
+    ├── fan_beam.py      # Metal kernels for 2D fan beam
+    └── cone_beam.py     # Metal kernels for 3D cone beam
+```
+
+## Citation
 
 If you use this library in your research, please cite:
 
@@ -142,15 +241,16 @@ If you use this library in your research, please cite:
 }
 ```
 
-## 📄 License
+## License
 
-This project is licensed under the Apache 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License — see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgements
+## Acknowledgements
 
 This project was highly inspired by:
 
 - [PYRO-NN](https://github.com/csyben/PYRO-NN)
 - [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT)
+- [MLX](https://github.com/ml-explore/mlx) by Apple
 
 Issues and contributions are welcome!

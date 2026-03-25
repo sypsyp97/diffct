@@ -1,5 +1,4 @@
 # Core dependencies
+mlx>=0.20.0
 numpy
-torch
-numba
 matplotlib
