@@ -282,334 +282,385 @@ efficiency.</p>
 <span class="linenos"> 27</span>    <span class="n">angular_integration_weights</span><span class="p">,</span>
 <span class="linenos"> 28</span>    <span class="n">cone_cosine_weights</span><span class="p">,</span>
 <span class="linenos"> 29</span>    <span class="n">cone_weighted_backproject</span><span class="p">,</span>
-<span class="linenos"> 30</span>    <span class="n">ramp_filter_1d</span><span class="p">,</span>
-<span class="linenos"> 31</span><span class="p">)</span>
-<span class="linenos"> 32</span>
+<span class="linenos"> 30</span>    <span class="n">parker_weights</span><span class="p">,</span>
+<span class="linenos"> 31</span>    <span class="n">ramp_filter_1d</span><span class="p">,</span>
+<span class="linenos"> 32</span><span class="p">)</span>
 <span class="linenos"> 33</span>
-<span class="linenos"> 34</span><span class="k">def</span><span class="w"> </span><span class="nf">shepp_logan_3d</span><span class="p">(</span><span class="n">shape</span><span class="p">):</span>
-<span class="linenos"> 35</span><span class="w">    </span><span class="sd">&quot;&quot;&quot;Build a 3D Shepp-Logan phantom.</span>
-<span class="linenos"> 36</span>
-<span class="linenos"> 37</span><span class="sd">    Parameters</span>
-<span class="linenos"> 38</span><span class="sd">    ----------</span>
-<span class="linenos"> 39</span><span class="sd">    shape : tuple of int</span>
-<span class="linenos"> 40</span><span class="sd">        Volume shape as ``(Nz, Ny, Nx)`` in the same order the rest of the</span>
-<span class="linenos"> 41</span><span class="sd">        library uses. Values are clipped to ``[0, 1]``.</span>
-<span class="linenos"> 42</span><span class="sd">    &quot;&quot;&quot;</span>
-<span class="linenos"> 43</span>    <span class="c1"># Voxel grid normalized to [-1, 1] on each axis so the standard</span>
-<span class="linenos"> 44</span>    <span class="c1"># Shepp-Logan ellipsoid parameters can be reused directly.</span>
-<span class="linenos"> 45</span>    <span class="n">zz</span><span class="p">,</span> <span class="n">yy</span><span class="p">,</span> <span class="n">xx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mgrid</span><span class="p">[:</span> <span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="p">:</span> <span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="p">:</span> <span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]]</span>
-<span class="linenos"> 46</span>    <span class="n">xx</span> <span class="o">=</span> <span class="p">(</span><span class="n">xx</span> <span class="o">-</span> <span class="p">(</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 47</span>    <span class="n">yy</span> <span class="o">=</span> <span class="p">(</span><span class="n">yy</span> <span class="o">-</span> <span class="p">(</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 48</span>    <span class="n">zz</span> <span class="o">=</span> <span class="p">(</span><span class="n">zz</span> <span class="o">-</span> <span class="p">(</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 49</span>
-<span class="linenos"> 50</span>    <span class="c1"># Columns: x0, y0, z0, a, b, c, phi, _, _, amplitude.</span>
-<span class="linenos"> 51</span>    <span class="n">el_params</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
-<span class="linenos"> 52</span>        <span class="p">[</span>
-<span class="linenos"> 53</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>     <span class="mi">0</span><span class="p">,</span>       <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.69</span><span class="p">,</span>  <span class="mf">0.92</span><span class="p">,</span>  <span class="mf">0.81</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">1.0</span><span class="p">],</span>
-<span class="linenos"> 54</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>    <span class="o">-</span><span class="mf">0.0184</span><span class="p">,</span>  <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.6624</span><span class="p">,</span> <span class="mf">0.874</span><span class="p">,</span> <span class="mf">0.78</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>            <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">],</span>
-<span class="linenos"> 55</span>            <span class="p">[</span><span class="mf">0.22</span><span class="p">,</span>  <span class="mi">0</span><span class="p">,</span>       <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.11</span><span class="p">,</span>  <span class="mf">0.31</span><span class="p">,</span>  <span class="mf">0.22</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.2</span><span class="p">],</span>
-<span class="linenos"> 56</span>            <span class="p">[</span><span class="o">-</span><span class="mf">0.22</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>       <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.16</span><span class="p">,</span>  <span class="mf">0.41</span><span class="p">,</span>  <span class="mf">0.28</span><span class="p">,</span>  <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.2</span><span class="p">],</span>
-<span class="linenos"> 57</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>     <span class="mf">0.35</span><span class="p">,</span>   <span class="o">-</span><span class="mf">0.15</span><span class="p">,</span>  <span class="mf">0.21</span><span class="p">,</span>  <span class="mf">0.25</span><span class="p">,</span>  <span class="mf">0.41</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
-<span class="linenos"> 58</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>     <span class="mf">0.10</span><span class="p">,</span>    <span class="mf">0.25</span><span class="p">,</span>  <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
-<span class="linenos"> 59</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>    <span class="o">-</span><span class="mf">0.10</span><span class="p">,</span>    <span class="mf">0.25</span><span class="p">,</span>  <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
-<span class="linenos"> 60</span>            <span class="p">[</span><span class="o">-</span><span class="mf">0.08</span><span class="p">,</span><span class="o">-</span><span class="mf">0.605</span><span class="p">,</span>   <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
-<span class="linenos"> 61</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>    <span class="o">-</span><span class="mf">0.605</span><span class="p">,</span>   <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
-<span class="linenos"> 62</span>            <span class="p">[</span><span class="mf">0.06</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.605</span><span class="p">,</span>   <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
-<span class="linenos"> 63</span>        <span class="p">],</span>
-<span class="linenos"> 64</span>        <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
-<span class="linenos"> 65</span>    <span class="p">)</span>
-<span class="linenos"> 66</span>
-<span class="linenos"> 67</span>    <span class="n">x_pos</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 68</span>    <span class="n">y_pos</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 69</span>    <span class="n">z_pos</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 70</span>    <span class="n">a_axis</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 71</span>    <span class="n">b_axis</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 72</span>    <span class="n">c_axis</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 73</span>    <span class="n">phi</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">6</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 74</span>    <span class="n">val</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">9</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
-<span class="linenos"> 75</span>
-<span class="linenos"> 76</span>    <span class="n">xc</span> <span class="o">=</span> <span class="n">xx</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">-</span> <span class="n">x_pos</span>
-<span class="linenos"> 77</span>    <span class="n">yc</span> <span class="o">=</span> <span class="n">yy</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">-</span> <span class="n">y_pos</span>
-<span class="linenos"> 78</span>    <span class="n">zc</span> <span class="o">=</span> <span class="n">zz</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">-</span> <span class="n">z_pos</span>
-<span class="linenos"> 79</span>
-<span class="linenos"> 80</span>    <span class="n">c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi</span><span class="p">)</span>
-<span class="linenos"> 81</span>    <span class="n">s</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">phi</span><span class="p">)</span>
-<span class="linenos"> 82</span>    <span class="c1"># Each ellipsoid only rotates around the z-axis here.</span>
-<span class="linenos"> 83</span>    <span class="n">xp</span> <span class="o">=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">xc</span> <span class="o">-</span> <span class="n">s</span> <span class="o">*</span> <span class="n">yc</span>
-<span class="linenos"> 84</span>    <span class="n">yp</span> <span class="o">=</span> <span class="n">s</span> <span class="o">*</span> <span class="n">xc</span> <span class="o">+</span> <span class="n">c</span> <span class="o">*</span> <span class="n">yc</span>
-<span class="linenos"> 85</span>    <span class="n">zp</span> <span class="o">=</span> <span class="n">zc</span>
-<span class="linenos"> 86</span>
-<span class="linenos"> 87</span>    <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span>
-<span class="linenos"> 88</span>        <span class="p">(</span><span class="n">xp</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">a_axis</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 89</span>        <span class="o">+</span> <span class="p">(</span><span class="n">yp</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">b_axis</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 90</span>        <span class="o">+</span> <span class="p">(</span><span class="n">zp</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">c_axis</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 91</span>        <span class="o">&lt;=</span> <span class="mf">1.0</span>
-<span class="linenos"> 92</span>    <span class="p">)</span>
-<span class="linenos"> 93</span>
-<span class="linenos"> 94</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">mask</span> <span class="o">*</span> <span class="n">val</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<span class="linenos"> 95</span>    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
-<span class="linenos"> 96</span>
+<span class="linenos"> 34</span>
+<span class="linenos"> 35</span><span class="k">def</span><span class="w"> </span><span class="nf">shepp_logan_3d</span><span class="p">(</span><span class="n">shape</span><span class="p">):</span>
+<span class="linenos"> 36</span><span class="w">    </span><span class="sd">&quot;&quot;&quot;Build a 3D Shepp-Logan phantom.</span>
+<span class="linenos"> 37</span>
+<span class="linenos"> 38</span><span class="sd">    Parameters</span>
+<span class="linenos"> 39</span><span class="sd">    ----------</span>
+<span class="linenos"> 40</span><span class="sd">    shape : tuple of int</span>
+<span class="linenos"> 41</span><span class="sd">        Volume shape as ``(Nz, Ny, Nx)`` in the same order the rest of the</span>
+<span class="linenos"> 42</span><span class="sd">        library uses. Values are clipped to ``[0, 1]``.</span>
+<span class="linenos"> 43</span><span class="sd">    &quot;&quot;&quot;</span>
+<span class="linenos"> 44</span>    <span class="c1"># Voxel grid normalized to [-1, 1] on each axis so the standard</span>
+<span class="linenos"> 45</span>    <span class="c1"># Shepp-Logan ellipsoid parameters can be reused directly.</span>
+<span class="linenos"> 46</span>    <span class="n">zz</span><span class="p">,</span> <span class="n">yy</span><span class="p">,</span> <span class="n">xx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mgrid</span><span class="p">[:</span> <span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="p">:</span> <span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="p">:</span> <span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]]</span>
+<span class="linenos"> 47</span>    <span class="n">xx</span> <span class="o">=</span> <span class="p">(</span><span class="n">xx</span> <span class="o">-</span> <span class="p">(</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 48</span>    <span class="n">yy</span> <span class="o">=</span> <span class="p">(</span><span class="n">yy</span> <span class="o">-</span> <span class="p">(</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 49</span>    <span class="n">zz</span> <span class="o">=</span> <span class="p">(</span><span class="n">zz</span> <span class="o">-</span> <span class="p">(</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 50</span>
+<span class="linenos"> 51</span>    <span class="c1"># Columns: x0, y0, z0, a, b, c, phi, _, _, amplitude.</span>
+<span class="linenos"> 52</span>    <span class="n">el_params</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+<span class="linenos"> 53</span>        <span class="p">[</span>
+<span class="linenos"> 54</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>     <span class="mi">0</span><span class="p">,</span>       <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.69</span><span class="p">,</span>  <span class="mf">0.92</span><span class="p">,</span>  <span class="mf">0.81</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">1.0</span><span class="p">],</span>
+<span class="linenos"> 55</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>    <span class="o">-</span><span class="mf">0.0184</span><span class="p">,</span>  <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.6624</span><span class="p">,</span> <span class="mf">0.874</span><span class="p">,</span> <span class="mf">0.78</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>            <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">],</span>
+<span class="linenos"> 56</span>            <span class="p">[</span><span class="mf">0.22</span><span class="p">,</span>  <span class="mi">0</span><span class="p">,</span>       <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.11</span><span class="p">,</span>  <span class="mf">0.31</span><span class="p">,</span>  <span class="mf">0.22</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.2</span><span class="p">],</span>
+<span class="linenos"> 57</span>            <span class="p">[</span><span class="o">-</span><span class="mf">0.22</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>       <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.16</span><span class="p">,</span>  <span class="mf">0.41</span><span class="p">,</span>  <span class="mf">0.28</span><span class="p">,</span>  <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.2</span><span class="p">],</span>
+<span class="linenos"> 58</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>     <span class="mf">0.35</span><span class="p">,</span>   <span class="o">-</span><span class="mf">0.15</span><span class="p">,</span>  <span class="mf">0.21</span><span class="p">,</span>  <span class="mf">0.25</span><span class="p">,</span>  <span class="mf">0.41</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
+<span class="linenos"> 59</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>     <span class="mf">0.10</span><span class="p">,</span>    <span class="mf">0.25</span><span class="p">,</span>  <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
+<span class="linenos"> 60</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>    <span class="o">-</span><span class="mf">0.10</span><span class="p">,</span>    <span class="mf">0.25</span><span class="p">,</span>  <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
+<span class="linenos"> 61</span>            <span class="p">[</span><span class="o">-</span><span class="mf">0.08</span><span class="p">,</span><span class="o">-</span><span class="mf">0.605</span><span class="p">,</span>   <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
+<span class="linenos"> 62</span>            <span class="p">[</span><span class="mi">0</span><span class="p">,</span>    <span class="o">-</span><span class="mf">0.605</span><span class="p">,</span>   <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
+<span class="linenos"> 63</span>            <span class="p">[</span><span class="mf">0.06</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.605</span><span class="p">,</span>   <span class="mi">0</span><span class="p">,</span>     <span class="mf">0.023</span><span class="p">,</span> <span class="mf">0.046</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">0.1</span><span class="p">],</span>
+<span class="linenos"> 64</span>        <span class="p">],</span>
+<span class="linenos"> 65</span>        <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+<span class="linenos"> 66</span>    <span class="p">)</span>
+<span class="linenos"> 67</span>
+<span class="linenos"> 68</span>    <span class="n">x_pos</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 69</span>    <span class="n">y_pos</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 70</span>    <span class="n">z_pos</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 71</span>    <span class="n">a_axis</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 72</span>    <span class="n">b_axis</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 73</span>    <span class="n">c_axis</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 74</span>    <span class="n">phi</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">6</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 75</span>    <span class="n">val</span> <span class="o">=</span> <span class="n">el_params</span><span class="p">[:,</span> <span class="mi">9</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="linenos"> 76</span>
+<span class="linenos"> 77</span>    <span class="n">xc</span> <span class="o">=</span> <span class="n">xx</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">-</span> <span class="n">x_pos</span>
+<span class="linenos"> 78</span>    <span class="n">yc</span> <span class="o">=</span> <span class="n">yy</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">-</span> <span class="n">y_pos</span>
+<span class="linenos"> 79</span>    <span class="n">zc</span> <span class="o">=</span> <span class="n">zz</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">-</span> <span class="n">z_pos</span>
+<span class="linenos"> 80</span>
+<span class="linenos"> 81</span>    <span class="n">c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi</span><span class="p">)</span>
+<span class="linenos"> 82</span>    <span class="n">s</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">phi</span><span class="p">)</span>
+<span class="linenos"> 83</span>    <span class="c1"># Each ellipsoid only rotates around the z-axis here.</span>
+<span class="linenos"> 84</span>    <span class="n">xp</span> <span class="o">=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">xc</span> <span class="o">-</span> <span class="n">s</span> <span class="o">*</span> <span class="n">yc</span>
+<span class="linenos"> 85</span>    <span class="n">yp</span> <span class="o">=</span> <span class="n">s</span> <span class="o">*</span> <span class="n">xc</span> <span class="o">+</span> <span class="n">c</span> <span class="o">*</span> <span class="n">yc</span>
+<span class="linenos"> 86</span>    <span class="n">zp</span> <span class="o">=</span> <span class="n">zc</span>
+<span class="linenos"> 87</span>
+<span class="linenos"> 88</span>    <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span>
+<span class="linenos"> 89</span>        <span class="p">(</span><span class="n">xp</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">a_axis</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 90</span>        <span class="o">+</span> <span class="p">(</span><span class="n">yp</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">b_axis</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 91</span>        <span class="o">+</span> <span class="p">(</span><span class="n">zp</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">c_axis</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos"> 92</span>        <span class="o">&lt;=</span> <span class="mf">1.0</span>
+<span class="linenos"> 93</span>    <span class="p">)</span>
+<span class="linenos"> 94</span>
+<span class="linenos"> 95</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">mask</span> <span class="o">*</span> <span class="n">val</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="linenos"> 96</span>    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
 <span class="linenos"> 97</span>
-<span class="linenos"> 98</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
-<span class="linenos"> 99</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">100</span>    <span class="c1"># 1. Volume geometry</span>
-<span class="linenos">101</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">102</span>    <span class="c1"># ``Nx / Ny / Nz`` are the number of voxels along each axis. The</span>
-<span class="linenos">103</span>    <span class="c1"># phantom tensor has shape ``(Nz, Ny, Nx)`` which matches the</span>
-<span class="linenos">104</span>    <span class="c1"># ``(D, H, W)`` layout that every cone-beam routine in diffct</span>
-<span class="linenos">105</span>    <span class="c1"># expects. Making the volume larger increases the reconstruction</span>
-<span class="linenos">106</span>    <span class="c1"># grid but also increases memory and runtime roughly ``O(N^3)``.</span>
-<span class="linenos">107</span>    <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span>
-<span class="linenos">108</span>    <span class="n">phantom_cpu</span> <span class="o">=</span> <span class="n">shepp_logan_3d</span><span class="p">((</span><span class="n">Nz</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">))</span>
-<span class="linenos">109</span>
-<span class="linenos">110</span>    <span class="c1"># ``voxel_spacing`` is the physical size of one voxel in the same</span>
-<span class="linenos">111</span>    <span class="c1"># length unit used by ``du``, ``dv``, ``sdd`` and ``sid`` below</span>
-<span class="linenos">112</span>    <span class="c1"># (commonly millimeters). All geometry math inside the CUDA kernels</span>
-<span class="linenos">113</span>    <span class="c1"># is done in voxel units, and physical spacings are divided by</span>
-<span class="linenos">114</span>    <span class="c1"># ``voxel_spacing`` internally, so only the *ratios* matter.</span>
-<span class="linenos">115</span>    <span class="n">voxel_spacing</span> <span class="o">=</span> <span class="mf">1.0</span>
-<span class="linenos">116</span>
-<span class="linenos">117</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">118</span>    <span class="c1"># 2. Source trajectory (circular orbit)</span>
-<span class="linenos">119</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">120</span>    <span class="c1"># ``num_views`` is the number of projection angles sampled on the</span>
-<span class="linenos">121</span>    <span class="c1"># circular orbit. More views generally mean smaller angular</span>
-<span class="linenos">122</span>    <span class="c1"># aliasing and a cleaner FDK reconstruction, at the cost of memory</span>
-<span class="linenos">123</span>    <span class="c1"># and runtime linear in ``num_views``.</span>
-<span class="linenos">124</span>    <span class="n">num_views</span> <span class="o">=</span> <span class="mi">360</span>
-<span class="linenos">125</span>
-<span class="linenos">126</span>    <span class="c1"># Angles in radians. This example uses a full 2*pi scan sampled</span>
-<span class="linenos">127</span>    <span class="c1"># uniformly (``endpoint=False`` avoids duplicating angle 0). For a</span>
-<span class="linenos">128</span>    <span class="c1"># short-scan geometry you would use an interval of length</span>
-<span class="linenos">129</span>    <span class="c1"># ``pi + 2*gamma_max`` and feed the result through ``parker_weights``</span>
-<span class="linenos">130</span>    <span class="c1"># before the ramp filter.</span>
-<span class="linenos">131</span>    <span class="n">angles_np</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span>
-<span class="linenos">132</span>        <span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">num_views</span><span class="p">,</span> <span class="n">endpoint</span><span class="o">=</span><span class="kc">False</span>
-<span class="linenos">133</span>    <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-<span class="linenos">134</span>
-<span class="linenos">135</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">136</span>    <span class="c1"># 3. Detector geometry</span>
-<span class="linenos">137</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">138</span>    <span class="c1"># ``det_u`` / ``det_v`` are the number of detector cells along the</span>
-<span class="linenos">139</span>    <span class="c1"># u (in-plane / horizontal) and v (axial / vertical) directions.</span>
-<span class="linenos">140</span>    <span class="c1"># ``du`` / ``dv`` are their physical spacings. Together they define</span>
-<span class="linenos">141</span>    <span class="c1"># the detector size in physical units:</span>
-<span class="linenos">142</span>    <span class="c1">#     detector_width_u  = det_u * du</span>
-<span class="linenos">143</span>    <span class="c1">#     detector_height_v = det_v * dv</span>
-<span class="linenos">144</span>    <span class="c1"># Make sure the detector is large enough that no ray that intersects</span>
-<span class="linenos">145</span>    <span class="c1"># the reconstructed field-of-view ever projects outside it; rays</span>
-<span class="linenos">146</span>    <span class="c1"># that miss the detector are zero-filled and create truncation</span>
-<span class="linenos">147</span>    <span class="c1"># artifacts.</span>
-<span class="linenos">148</span>    <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span>
-<span class="linenos">149</span>    <span class="n">du</span><span class="p">,</span> <span class="n">dv</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span>
-<span class="linenos">150</span>
-<span class="linenos">151</span>    <span class="c1"># Principal-ray offsets. A nonzero ``detector_offset_u`` models a</span>
-<span class="linenos">152</span>    <span class="c1"># detector that is shifted sideways relative to the ideal principal</span>
-<span class="linenos">153</span>    <span class="c1"># ray (useful for half-fan / offset-detector acquisitions). These</span>
-<span class="linenos">154</span>    <span class="c1"># values are in the same physical unit as ``du`` / ``dv``.</span>
-<span class="linenos">155</span>    <span class="n">detector_offset_u</span> <span class="o">=</span> <span class="mf">0.0</span>
-<span class="linenos">156</span>    <span class="n">detector_offset_v</span> <span class="o">=</span> <span class="mf">0.0</span>
-<span class="linenos">157</span>
-<span class="linenos">158</span>    <span class="c1"># ``sdd`` = source-to-detector distance, ``sid`` = source-to-</span>
-<span class="linenos">159</span>    <span class="c1"># isocenter distance, both in physical units. Their ratio</span>
-<span class="linenos">160</span>    <span class="c1"># ``sdd / sid`` is the geometric magnification at the detector.</span>
-<span class="linenos">161</span>    <span class="c1"># Typical clinical cone-beam systems have a magnification around</span>
-<span class="linenos">162</span>    <span class="c1"># 1.3 - 2.0; here we pick 1.5.</span>
-<span class="linenos">163</span>    <span class="n">sdd</span> <span class="o">=</span> <span class="mf">900.0</span>
-<span class="linenos">164</span>    <span class="n">sid</span> <span class="o">=</span> <span class="mf">600.0</span>
-<span class="linenos">165</span>
-<span class="linenos">166</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">167</span>    <span class="c1"># 4. Move everything to CUDA</span>
-<span class="linenos">168</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">169</span>    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
-<span class="linenos">170</span>    <span class="n">phantom_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
-<span class="linenos">171</span>        <span class="n">phantom_cpu</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
-<span class="linenos">172</span>    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
-<span class="linenos">173</span>    <span class="n">angles_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-<span class="linenos">174</span>
-<span class="linenos">175</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">176</span>    <span class="c1"># 5. Forward projection: volume -&gt; sinogram</span>
-<span class="linenos">177</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">178</span>    <span class="c1"># ``ConeProjectorFunction`` is the differentiable Siddon-based cone-</span>
-<span class="linenos">179</span>    <span class="c1"># beam forward projector. It returns a (num_views, det_u, det_v)</span>
-<span class="linenos">180</span>    <span class="c1"># sinogram. This call is autograd-aware, so using the same function</span>
-<span class="linenos">181</span>    <span class="c1"># inside an iterative reconstruction loop is supported (see</span>
-<span class="linenos">182</span>    <span class="c1"># ``iterative_reco_cone.py``).</span>
-<span class="linenos">183</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
-<span class="linenos">184</span>        <span class="n">phantom_torch</span><span class="p">,</span>
-<span class="linenos">185</span>        <span class="n">angles_torch</span><span class="p">,</span>
-<span class="linenos">186</span>        <span class="n">det_u</span><span class="p">,</span>
-<span class="linenos">187</span>        <span class="n">det_v</span><span class="p">,</span>
-<span class="linenos">188</span>        <span class="n">du</span><span class="p">,</span>
-<span class="linenos">189</span>        <span class="n">dv</span><span class="p">,</span>
-<span class="linenos">190</span>        <span class="n">sdd</span><span class="p">,</span>
-<span class="linenos">191</span>        <span class="n">sid</span><span class="p">,</span>
-<span class="linenos">192</span>        <span class="n">voxel_spacing</span><span class="p">,</span>
-<span class="linenos">193</span>    <span class="p">)</span>
-<span class="linenos">194</span>
-<span class="linenos">195</span>    <span class="c1"># ==================================================================</span>
-<span class="linenos">196</span>    <span class="c1"># 6. FDK analytical reconstruction</span>
-<span class="linenos">197</span>    <span class="c1"># ==================================================================</span>
-<span class="linenos">198</span>
-<span class="linenos">199</span>    <span class="c1"># --- 6.1  Cosine pre-weight --------------------------------------</span>
-<span class="linenos">200</span>    <span class="c1"># Multiplies each detector pixel by ``sdd / sqrt(sdd^2 + u^2 + v^2)``,</span>
-<span class="linenos">201</span>    <span class="c1"># i.e. the cosine of the cone angle. This compensates for the</span>
-<span class="linenos">202</span>    <span class="c1"># extra path length that off-center rays traverse relative to the</span>
-<span class="linenos">203</span>    <span class="c1"># principal ray. The ``unsqueeze(0)`` broadcasts the 2D weight over</span>
-<span class="linenos">204</span>    <span class="c1"># every view.</span>
-<span class="linenos">205</span>    <span class="n">weights</span> <span class="o">=</span> <span class="n">cone_cosine_weights</span><span class="p">(</span>
-<span class="linenos">206</span>        <span class="n">det_u</span><span class="p">,</span>
-<span class="linenos">207</span>        <span class="n">det_v</span><span class="p">,</span>
-<span class="linenos">208</span>        <span class="n">du</span><span class="p">,</span>
-<span class="linenos">209</span>        <span class="n">dv</span><span class="p">,</span>
-<span class="linenos">210</span>        <span class="n">sdd</span><span class="p">,</span>
-<span class="linenos">211</span>        <span class="n">detector_offset_u</span><span class="o">=</span><span class="n">detector_offset_u</span><span class="p">,</span>
-<span class="linenos">212</span>        <span class="n">detector_offset_v</span><span class="o">=</span><span class="n">detector_offset_v</span><span class="p">,</span>
-<span class="linenos">213</span>        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-<span class="linenos">214</span>        <span class="n">dtype</span><span class="o">=</span><span class="n">phantom_torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
-<span class="linenos">215</span>    <span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-<span class="linenos">216</span>    <span class="n">sino_weighted</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">weights</span>
-<span class="linenos">217</span>
-<span class="linenos">218</span>    <span class="c1"># --- 6.2  1D ramp filter along the detector-u direction ----------</span>
-<span class="linenos">219</span>    <span class="c1"># ``ramp_filter_1d`` is a generic building block. For high-quality</span>
-<span class="linenos">220</span>    <span class="c1"># FDK reconstruction the recommended arguments are:</span>
-<span class="linenos">221</span>    <span class="c1">#</span>
-<span class="linenos">222</span>    <span class="c1">#   dim : int</span>
-<span class="linenos">223</span>    <span class="c1">#       The detector-u axis. For sinograms of shape</span>
-<span class="linenos">224</span>    <span class="c1">#       ``(views, u, v)`` that axis is ``1``.</span>
-<span class="linenos">225</span>    <span class="c1">#</span>
-<span class="linenos">226</span>    <span class="c1">#   sample_spacing : float</span>
-<span class="linenos">227</span>    <span class="c1">#       Physical detector-u spacing ``du``. The ramp filter is</span>
-<span class="linenos">228</span>    <span class="c1">#       rescaled by ``1 / sample_spacing`` so that the output is</span>
-<span class="linenos">229</span>    <span class="c1">#       in physical units, and the amplitude of the reconstruction</span>
-<span class="linenos">230</span>    <span class="c1">#       stays calibrated across different detector pitches.</span>
-<span class="linenos">231</span>    <span class="c1">#</span>
-<span class="linenos">232</span>    <span class="c1">#   pad_factor : int</span>
-<span class="linenos">233</span>    <span class="c1">#       Zero-pad the signal to ``pad_factor * N`` along ``dim``</span>
-<span class="linenos">234</span>    <span class="c1">#       before the FFT. Options:</span>
-<span class="linenos">235</span>    <span class="c1">#           1 (default)  - no padding, fastest, but circular</span>
-<span class="linenos">236</span>    <span class="c1">#                          convolution wrap-around can contaminate</span>
-<span class="linenos">237</span>    <span class="c1">#                          the edges of the reconstruction.</span>
-<span class="linenos">238</span>    <span class="c1">#           2 (typical)  - good balance for cone-beam FDK.</span>
-<span class="linenos">239</span>    <span class="c1">#           4 (strict)   - used when the object is very close to</span>
-<span class="linenos">240</span>    <span class="c1">#                          the detector edges.</span>
-<span class="linenos">241</span>    <span class="c1">#</span>
-<span class="linenos">242</span>    <span class="c1">#   window : str or None</span>
-<span class="linenos">243</span>    <span class="c1">#       Frequency-domain apodization applied on top of the bare</span>
-<span class="linenos">244</span>    <span class="c1">#       ramp. Available options are:</span>
-<span class="linenos">245</span>    <span class="c1">#           None / &quot;ram-lak&quot; - sharp Ram-Lak ramp, no smoothing.</span>
-<span class="linenos">246</span>    <span class="c1">#           &quot;hann&quot;           - Hann window, strongly suppresses</span>
-<span class="linenos">247</span>    <span class="c1">#                              high-frequency noise. Used below.</span>
-<span class="linenos">248</span>    <span class="c1">#           &quot;hamming&quot;        - slightly milder than Hann.</span>
-<span class="linenos">249</span>    <span class="c1">#           &quot;cosine&quot;         - equivalent to a half-cosine rolloff.</span>
-<span class="linenos">250</span>    <span class="c1">#           &quot;shepp-logan&quot;    - sinc rolloff, classical choice.</span>
-<span class="linenos">251</span>    <span class="c1">#</span>
-<span class="linenos">252</span>    <span class="c1">#   use_rfft : bool</span>
-<span class="linenos">253</span>    <span class="c1">#       Use ``torch.fft.rfft`` instead of ``fft`` when the input is</span>
-<span class="linenos">254</span>    <span class="c1">#       real. Default ``True``; set to ``False`` only if you need</span>
-<span class="linenos">255</span>    <span class="c1">#       the complex path (e.g. to reuse an already-complex buffer).</span>
-<span class="linenos">256</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">ramp_filter_1d</span><span class="p">(</span>
-<span class="linenos">257</span>        <span class="n">sino_weighted</span><span class="p">,</span>
-<span class="linenos">258</span>        <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-<span class="linenos">259</span>        <span class="n">sample_spacing</span><span class="o">=</span><span class="n">du</span><span class="p">,</span>
-<span class="linenos">260</span>        <span class="n">pad_factor</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-<span class="linenos">261</span>        <span class="n">window</span><span class="o">=</span><span class="s2">&quot;hann&quot;</span><span class="p">,</span>
-<span class="linenos">262</span>    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
-<span class="linenos">263</span>
-<span class="linenos">264</span>    <span class="c1"># --- 6.3  Per-view angular integration weights -------------------</span>
-<span class="linenos">265</span>    <span class="c1"># For a circular full-scan sampled uniformly, each view contributes</span>
-<span class="linenos">266</span>    <span class="c1"># ``pi / num_views`` to the FDK integral (the ``1/2`` redundancy</span>
-<span class="linenos">267</span>    <span class="c1"># factor of the FDK formula is absorbed inside ``redundant_full_scan``).</span>
-<span class="linenos">268</span>    <span class="c1"># For a short scan you would pass ``redundant_full_scan=False`` and</span>
-<span class="linenos">269</span>    <span class="c1"># typically combine this with Parker weights earlier in the</span>
-<span class="linenos">270</span>    <span class="c1"># pipeline.</span>
-<span class="linenos">271</span>    <span class="n">d_beta</span> <span class="o">=</span> <span class="n">angular_integration_weights</span><span class="p">(</span>
-<span class="linenos">272</span>        <span class="n">angles_torch</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="kc">True</span>
-<span class="linenos">273</span>    <span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-<span class="linenos">274</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">sinogram_filt</span> <span class="o">*</span> <span class="n">d_beta</span>
-<span class="linenos">275</span>
-<span class="linenos">276</span>    <span class="c1"># --- 6.4  Voxel-driven FDK backprojection -------------------------</span>
-<span class="linenos">277</span>    <span class="c1"># ``cone_weighted_backproject`` now dispatches to a dedicated</span>
-<span class="linenos">278</span>    <span class="c1"># voxel-driven gather kernel (separate from the Siddon-based</span>
-<span class="linenos">279</span>    <span class="c1"># autograd cone backprojector). For every voxel it computes the</span>
-<span class="linenos">280</span>    <span class="c1"># detector ``(u, v)`` the voxel projects to, bilinearly samples the</span>
-<span class="linenos">281</span>    <span class="c1"># filtered sinogram there, and accumulates ``(sid / U)^2 * sample``</span>
-<span class="linenos">282</span>    <span class="c1"># over all views, where ``U`` is the distance from the source to</span>
-<span class="linenos">283</span>    <span class="c1"># the voxel along the central ray direction. The final</span>
-<span class="linenos">284</span>    <span class="c1"># ``sdd / (2*pi*sid)`` analytical FDK constant is applied inside</span>
-<span class="linenos">285</span>    <span class="c1"># the wrapper so the returned volume is already in the right</span>
-<span class="linenos">286</span>    <span class="c1"># physical amplitude and no further scaling is needed.</span>
-<span class="linenos">287</span>    <span class="n">reconstruction_raw</span> <span class="o">=</span> <span class="n">cone_weighted_backproject</span><span class="p">(</span>
-<span class="linenos">288</span>        <span class="n">sinogram_filt</span><span class="p">,</span>
-<span class="linenos">289</span>        <span class="n">angles_torch</span><span class="p">,</span>
-<span class="linenos">290</span>        <span class="n">Nz</span><span class="p">,</span>
-<span class="linenos">291</span>        <span class="n">Ny</span><span class="p">,</span>
-<span class="linenos">292</span>        <span class="n">Nx</span><span class="p">,</span>
-<span class="linenos">293</span>        <span class="n">du</span><span class="p">,</span>
-<span class="linenos">294</span>        <span class="n">dv</span><span class="p">,</span>
-<span class="linenos">295</span>        <span class="n">sdd</span><span class="p">,</span>
-<span class="linenos">296</span>        <span class="n">sid</span><span class="p">,</span>
-<span class="linenos">297</span>        <span class="n">voxel_spacing</span><span class="o">=</span><span class="n">voxel_spacing</span><span class="p">,</span>
-<span class="linenos">298</span>        <span class="n">detector_offset_u</span><span class="o">=</span><span class="n">detector_offset_u</span><span class="p">,</span>
-<span class="linenos">299</span>        <span class="n">detector_offset_v</span><span class="o">=</span><span class="n">detector_offset_v</span><span class="p">,</span>
-<span class="linenos">300</span>    <span class="p">)</span>
-<span class="linenos">301</span>
-<span class="linenos">302</span>    <span class="c1"># Optional non-negativity clamp. FDK can produce small negative</span>
-<span class="linenos">303</span>    <span class="c1"># values near sharp edges because the ramp filter has negative</span>
-<span class="linenos">304</span>    <span class="c1"># lobes in the spatial domain; for visualization and quantitative</span>
-<span class="linenos">305</span>    <span class="c1"># comparison against the non-negative phantom we clamp with a ReLU.</span>
-<span class="linenos">306</span>    <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">reconstruction_raw</span><span class="p">)</span>
-<span class="linenos">307</span>
-<span class="linenos">308</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">309</span>    <span class="c1"># 7. Quantitative summary</span>
-<span class="linenos">310</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">311</span>    <span class="n">raw_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction_raw</span> <span class="o">-</span> <span class="n">phantom_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">312</span>    <span class="n">clamped_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction</span> <span class="o">-</span> <span class="n">phantom_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">313</span>
-<span class="linenos">314</span>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Cone Beam FDK example (circular full scan):&quot;</span><span class="p">)</span>
-<span class="linenos">315</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Raw MSE:             </span><span class="si">{</span><span class="n">raw_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">316</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Clamped MSE:         </span><span class="si">{</span><span class="n">clamped_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">317</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Reconstruction shape: </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">318</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">319</span>        <span class="s2">&quot;  Raw reco data range:  &quot;</span>
-<span class="linenos">320</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">321</span>    <span class="p">)</span>
-<span class="linenos">322</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">323</span>        <span class="s2">&quot;  Clamped reco range:   &quot;</span>
-<span class="linenos">324</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">325</span>    <span class="p">)</span>
-<span class="linenos">326</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">327</span>        <span class="s2">&quot;  Phantom data range:   &quot;</span>
-<span class="linenos">328</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="o">.</span><span class="n">min</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">329</span>    <span class="p">)</span>
-<span class="linenos">330</span>
-<span class="linenos">331</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">332</span>    <span class="c1"># 8. Visualization</span>
-<span class="linenos">333</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">334</span>    <span class="n">reconstruction_cpu</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-<span class="linenos">335</span>    <span class="n">sinogram_cpu</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-<span class="linenos">336</span>    <span class="n">mid_slice</span> <span class="o">=</span> <span class="n">Nz</span> <span class="o">//</span> <span class="mi">2</span>
-<span class="linenos">337</span>
-<span class="linenos">338</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
-<span class="linenos">339</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-<span class="linenos">340</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="p">[</span><span class="n">mid_slice</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:],</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
-<span class="linenos">341</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Phantom mid-slice&quot;</span><span class="p">)</span>
-<span class="linenos">342</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">343</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">344</span>    <span class="c1"># Transpose so the v axis is vertical in the figure.</span>
-<span class="linenos">345</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">sinogram_cpu</span><span class="p">[</span><span class="n">num_views</span> <span class="o">//</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">,</span> <span class="n">origin</span><span class="o">=</span><span class="s2">&quot;lower&quot;</span><span class="p">)</span>
-<span class="linenos">346</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Sinogram mid-view&quot;</span><span class="p">)</span>
-<span class="linenos">347</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">348</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-<span class="linenos">349</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">reconstruction_cpu</span><span class="p">[</span><span class="n">mid_slice</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:],</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
-<span class="linenos">350</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Recon mid-slice&quot;</span><span class="p">)</span>
-<span class="linenos">351</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">352</span>    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
-<span class="linenos">353</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="linenos">354</span>
-<span class="linenos">355</span>
-<span class="linenos">356</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-<span class="linenos">357</span>    <span class="n">main</span><span class="p">()</span>
+<span class="linenos"> 98</span>
+<span class="linenos"> 99</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="linenos">100</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">101</span>    <span class="c1"># 1. Volume geometry</span>
+<span class="linenos">102</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">103</span>    <span class="c1"># ``Nx / Ny / Nz`` are the number of voxels along each axis. The</span>
+<span class="linenos">104</span>    <span class="c1"># phantom tensor has shape ``(Nz, Ny, Nx)`` which matches the</span>
+<span class="linenos">105</span>    <span class="c1"># ``(D, H, W)`` layout that every cone-beam routine in diffct</span>
+<span class="linenos">106</span>    <span class="c1"># expects. Making the volume larger increases the reconstruction</span>
+<span class="linenos">107</span>    <span class="c1"># grid but also increases memory and runtime roughly ``O(N^3)``.</span>
+<span class="linenos">108</span>    <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span>
+<span class="linenos">109</span>    <span class="n">phantom_cpu</span> <span class="o">=</span> <span class="n">shepp_logan_3d</span><span class="p">((</span><span class="n">Nz</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">))</span>
+<span class="linenos">110</span>
+<span class="linenos">111</span>    <span class="c1"># ``voxel_spacing`` is the physical size of one voxel in the same</span>
+<span class="linenos">112</span>    <span class="c1"># length unit used by ``du``, ``dv``, ``sdd`` and ``sid`` below</span>
+<span class="linenos">113</span>    <span class="c1"># (commonly millimeters). All geometry math inside the CUDA kernels</span>
+<span class="linenos">114</span>    <span class="c1"># is done in voxel units, and physical spacings are divided by</span>
+<span class="linenos">115</span>    <span class="c1"># ``voxel_spacing`` internally, so only the *ratios* matter.</span>
+<span class="linenos">116</span>    <span class="n">voxel_spacing</span> <span class="o">=</span> <span class="mf">1.0</span>
+<span class="linenos">117</span>
+<span class="linenos">118</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">119</span>    <span class="c1"># 2. Detector geometry</span>
+<span class="linenos">120</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">121</span>    <span class="c1"># (Listed before the trajectory so the short-scan coverage below can</span>
+<span class="linenos">122</span>    <span class="c1"># use the detector fan angle to compute ``pi + 2*gamma_max``.)</span>
+<span class="linenos">123</span>    <span class="c1">#</span>
+<span class="linenos">124</span>    <span class="c1"># ``det_u`` / ``det_v`` are the number of detector cells along the</span>
+<span class="linenos">125</span>    <span class="c1"># u (in-plane / horizontal) and v (axial / vertical) directions.</span>
+<span class="linenos">126</span>    <span class="c1"># ``du`` / ``dv`` are their physical spacings. Together they define</span>
+<span class="linenos">127</span>    <span class="c1"># the detector size in physical units:</span>
+<span class="linenos">128</span>    <span class="c1">#     detector_width_u  = det_u * du</span>
+<span class="linenos">129</span>    <span class="c1">#     detector_height_v = det_v * dv</span>
+<span class="linenos">130</span>    <span class="c1"># Make sure the detector is large enough that no ray that intersects</span>
+<span class="linenos">131</span>    <span class="c1"># the reconstructed field-of-view ever projects outside it; rays</span>
+<span class="linenos">132</span>    <span class="c1"># that miss the detector are zero-filled and create truncation</span>
+<span class="linenos">133</span>    <span class="c1"># artifacts.</span>
+<span class="linenos">134</span>    <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span>
+<span class="linenos">135</span>    <span class="n">du</span><span class="p">,</span> <span class="n">dv</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span>
+<span class="linenos">136</span>
+<span class="linenos">137</span>    <span class="c1"># Principal-ray offsets. A nonzero ``detector_offset_u`` models a</span>
+<span class="linenos">138</span>    <span class="c1"># detector that is shifted sideways relative to the ideal principal</span>
+<span class="linenos">139</span>    <span class="c1"># ray (useful for half-fan / offset-detector acquisitions). These</span>
+<span class="linenos">140</span>    <span class="c1"># values are in the same physical unit as ``du`` / ``dv``.</span>
+<span class="linenos">141</span>    <span class="n">detector_offset_u</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="linenos">142</span>    <span class="n">detector_offset_v</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="linenos">143</span>
+<span class="linenos">144</span>    <span class="c1"># ``sdd`` = source-to-detector distance, ``sid`` = source-to-</span>
+<span class="linenos">145</span>    <span class="c1"># isocenter distance, both in physical units. Their ratio</span>
+<span class="linenos">146</span>    <span class="c1"># ``sdd / sid`` is the geometric magnification at the detector.</span>
+<span class="linenos">147</span>    <span class="c1"># Typical clinical cone-beam systems have a magnification around</span>
+<span class="linenos">148</span>    <span class="c1"># 1.3 - 2.0; here we pick 1.5.</span>
+<span class="linenos">149</span>    <span class="n">sdd</span> <span class="o">=</span> <span class="mf">900.0</span>
+<span class="linenos">150</span>    <span class="n">sid</span> <span class="o">=</span> <span class="mf">600.0</span>
+<span class="linenos">151</span>
+<span class="linenos">152</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">153</span>    <span class="c1"># 3. Source trajectory (circular orbit)</span>
+<span class="linenos">154</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">155</span>    <span class="c1"># ``apply_parker`` selects between two supported trajectories:</span>
+<span class="linenos">156</span>    <span class="c1">#</span>
+<span class="linenos">157</span>    <span class="c1">#   False -&gt; full 2*pi circular scan. Each ray is sampled twice</span>
+<span class="linenos">158</span>    <span class="c1">#            (once going one way, once the opposite), so the FDK</span>
+<span class="linenos">159</span>    <span class="c1">#            formula carries a 1/2 redundancy factor which is</span>
+<span class="linenos">160</span>    <span class="c1">#            absorbed by ``redundant_full_scan=True`` inside the</span>
+<span class="linenos">161</span>    <span class="c1">#            angular integration weights.</span>
+<span class="linenos">162</span>    <span class="c1">#</span>
+<span class="linenos">163</span>    <span class="c1">#   True  -&gt; minimal short scan of length ``pi + 2*gamma_max``</span>
+<span class="linenos">164</span>    <span class="c1">#            where ``gamma_max = atan(u_max / sdd)`` is the maximum</span>
+<span class="linenos">165</span>    <span class="c1">#            fan angle. Every ray is sampled *at least once*, some</span>
+<span class="linenos">166</span>    <span class="c1">#            rays twice; the standard Parker window smoothly tapers</span>
+<span class="linenos">167</span>    <span class="c1">#            the duplicate regions so each ray&#39;s total contribution</span>
+<span class="linenos">168</span>    <span class="c1">#            integrates to pi (the same effective weight as the</span>
+<span class="linenos">169</span>    <span class="c1">#            full-scan case after the 1/2 redundancy factor), and</span>
+<span class="linenos">170</span>    <span class="c1">#            the angular weights use plain trapezoidal rule</span>
+<span class="linenos">171</span>    <span class="c1">#            (``redundant_full_scan=False``).</span>
+<span class="linenos">172</span>    <span class="c1">#</span>
+<span class="linenos">173</span>    <span class="c1"># Short scans are common on clinical C-arm and cone-beam systems</span>
+<span class="linenos">174</span>    <span class="c1"># where a full 2*pi rotation is mechanically impossible.</span>
+<span class="linenos">175</span>    <span class="n">apply_parker</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="linenos">176</span>
+<span class="linenos">177</span>    <span class="k">if</span> <span class="n">apply_parker</span><span class="p">:</span>
+<span class="linenos">178</span>        <span class="n">u_max</span> <span class="o">=</span> <span class="p">((</span><span class="n">det_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">du</span> <span class="o">+</span> <span class="nb">abs</span><span class="p">(</span><span class="n">detector_offset_u</span><span class="p">)</span>
+<span class="linenos">179</span>        <span class="n">gamma_max</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">atan</span><span class="p">(</span><span class="n">u_max</span> <span class="o">/</span> <span class="n">sdd</span><span class="p">)</span>
+<span class="linenos">180</span>        <span class="n">scan_range</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">+</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">gamma_max</span>
+<span class="linenos">181</span>    <span class="k">else</span><span class="p">:</span>
+<span class="linenos">182</span>        <span class="n">scan_range</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span>
+<span class="linenos">183</span>
+<span class="linenos">184</span>    <span class="c1"># ``num_views`` is the number of projection angles sampled on the</span>
+<span class="linenos">185</span>    <span class="c1"># orbit. More views generally mean smaller angular aliasing and a</span>
+<span class="linenos">186</span>    <span class="c1"># cleaner FDK reconstruction, at the cost of memory and runtime</span>
+<span class="linenos">187</span>    <span class="c1"># linear in ``num_views``.</span>
+<span class="linenos">188</span>    <span class="n">num_views</span> <span class="o">=</span> <span class="mi">360</span>
+<span class="linenos">189</span>
+<span class="linenos">190</span>    <span class="c1"># Angles in radians. ``endpoint=False`` avoids duplicating the start</span>
+<span class="linenos">191</span>    <span class="c1"># angle at the end of the sweep.</span>
+<span class="linenos">192</span>    <span class="n">angles_np</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span>
+<span class="linenos">193</span>        <span class="mf">0.0</span><span class="p">,</span> <span class="n">scan_range</span><span class="p">,</span> <span class="n">num_views</span><span class="p">,</span> <span class="n">endpoint</span><span class="o">=</span><span class="kc">False</span>
+<span class="linenos">194</span>    <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="linenos">195</span>
+<span class="linenos">196</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">197</span>    <span class="c1"># 4. Move everything to CUDA</span>
+<span class="linenos">198</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">199</span>    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+<span class="linenos">200</span>    <span class="n">phantom_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+<span class="linenos">201</span>        <span class="n">phantom_cpu</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
+<span class="linenos">202</span>    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+<span class="linenos">203</span>    <span class="n">angles_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="linenos">204</span>
+<span class="linenos">205</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">206</span>    <span class="c1"># 5. Forward projection: volume -&gt; sinogram</span>
+<span class="linenos">207</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">208</span>    <span class="c1"># ``ConeProjectorFunction`` is the differentiable Siddon-based cone-</span>
+<span class="linenos">209</span>    <span class="c1"># beam forward projector. It returns a (num_views, det_u, det_v)</span>
+<span class="linenos">210</span>    <span class="c1"># sinogram. This call is autograd-aware, so using the same function</span>
+<span class="linenos">211</span>    <span class="c1"># inside an iterative reconstruction loop is supported (see</span>
+<span class="linenos">212</span>    <span class="c1"># ``iterative_reco_cone.py``).</span>
+<span class="linenos">213</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">ConeProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="linenos">214</span>        <span class="n">phantom_torch</span><span class="p">,</span>
+<span class="linenos">215</span>        <span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos">216</span>        <span class="n">det_u</span><span class="p">,</span>
+<span class="linenos">217</span>        <span class="n">det_v</span><span class="p">,</span>
+<span class="linenos">218</span>        <span class="n">du</span><span class="p">,</span>
+<span class="linenos">219</span>        <span class="n">dv</span><span class="p">,</span>
+<span class="linenos">220</span>        <span class="n">sdd</span><span class="p">,</span>
+<span class="linenos">221</span>        <span class="n">sid</span><span class="p">,</span>
+<span class="linenos">222</span>        <span class="n">voxel_spacing</span><span class="p">,</span>
+<span class="linenos">223</span>    <span class="p">)</span>
+<span class="linenos">224</span>
+<span class="linenos">225</span>    <span class="c1"># ==================================================================</span>
+<span class="linenos">226</span>    <span class="c1"># 6. FDK analytical reconstruction</span>
+<span class="linenos">227</span>    <span class="c1"># ==================================================================</span>
+<span class="linenos">228</span>
+<span class="linenos">229</span>    <span class="c1"># --- 6.0  Optional Parker redundancy weighting -------------------</span>
+<span class="linenos">230</span>    <span class="c1"># ``parker_weights`` returns a ``(num_views, det_u)`` tensor that</span>
+<span class="linenos">231</span>    <span class="c1"># tapers rays in the redundantly-sampled regions of a short scan.</span>
+<span class="linenos">232</span>    <span class="c1"># For a full 2*pi scan it detects the coverage and returns all</span>
+<span class="linenos">233</span>    <span class="c1"># ones (no-op), so this branch is safe to run unconditionally; we</span>
+<span class="linenos">234</span>    <span class="c1"># gate it on ``apply_parker`` just for clarity.</span>
+<span class="linenos">235</span>    <span class="c1">#</span>
+<span class="linenos">236</span>    <span class="c1"># The returned weight depends on the in-plane fan angle only, so</span>
+<span class="linenos">237</span>    <span class="c1"># we broadcast it across the v (axial) direction via ``unsqueeze(-1)``.</span>
+<span class="linenos">238</span>    <span class="k">if</span> <span class="n">apply_parker</span><span class="p">:</span>
+<span class="linenos">239</span>        <span class="n">parker</span> <span class="o">=</span> <span class="n">parker_weights</span><span class="p">(</span>
+<span class="linenos">240</span>            <span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos">241</span>            <span class="n">det_u</span><span class="p">,</span>
+<span class="linenos">242</span>            <span class="n">du</span><span class="p">,</span>
+<span class="linenos">243</span>            <span class="n">sdd</span><span class="p">,</span>
+<span class="linenos">244</span>            <span class="n">detector_offset</span><span class="o">=</span><span class="n">detector_offset_u</span><span class="p">,</span>
+<span class="linenos">245</span>        <span class="p">)</span>
+<span class="linenos">246</span>        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">parker</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<span class="linenos">247</span>
+<span class="linenos">248</span>    <span class="c1"># --- 6.1  Cosine pre-weight --------------------------------------</span>
+<span class="linenos">249</span>    <span class="c1"># Multiplies each detector pixel by ``sdd / sqrt(sdd^2 + u^2 + v^2)``,</span>
+<span class="linenos">250</span>    <span class="c1"># i.e. the cosine of the cone angle. This compensates for the</span>
+<span class="linenos">251</span>    <span class="c1"># extra path length that off-center rays traverse relative to the</span>
+<span class="linenos">252</span>    <span class="c1"># principal ray. The ``unsqueeze(0)`` broadcasts the 2D weight over</span>
+<span class="linenos">253</span>    <span class="c1"># every view.</span>
+<span class="linenos">254</span>    <span class="n">weights</span> <span class="o">=</span> <span class="n">cone_cosine_weights</span><span class="p">(</span>
+<span class="linenos">255</span>        <span class="n">det_u</span><span class="p">,</span>
+<span class="linenos">256</span>        <span class="n">det_v</span><span class="p">,</span>
+<span class="linenos">257</span>        <span class="n">du</span><span class="p">,</span>
+<span class="linenos">258</span>        <span class="n">dv</span><span class="p">,</span>
+<span class="linenos">259</span>        <span class="n">sdd</span><span class="p">,</span>
+<span class="linenos">260</span>        <span class="n">detector_offset_u</span><span class="o">=</span><span class="n">detector_offset_u</span><span class="p">,</span>
+<span class="linenos">261</span>        <span class="n">detector_offset_v</span><span class="o">=</span><span class="n">detector_offset_v</span><span class="p">,</span>
+<span class="linenos">262</span>        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+<span class="linenos">263</span>        <span class="n">dtype</span><span class="o">=</span><span class="n">phantom_torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+<span class="linenos">264</span>    <span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="linenos">265</span>    <span class="n">sino_weighted</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">weights</span>
+<span class="linenos">266</span>
+<span class="linenos">267</span>    <span class="c1"># --- 6.2  1D ramp filter along the detector-u direction ----------</span>
+<span class="linenos">268</span>    <span class="c1"># ``ramp_filter_1d`` is a generic building block. For high-quality</span>
+<span class="linenos">269</span>    <span class="c1"># FDK reconstruction the recommended arguments are:</span>
+<span class="linenos">270</span>    <span class="c1">#</span>
+<span class="linenos">271</span>    <span class="c1">#   dim : int</span>
+<span class="linenos">272</span>    <span class="c1">#       The detector-u axis. For sinograms of shape</span>
+<span class="linenos">273</span>    <span class="c1">#       ``(views, u, v)`` that axis is ``1``.</span>
+<span class="linenos">274</span>    <span class="c1">#</span>
+<span class="linenos">275</span>    <span class="c1">#   sample_spacing : float</span>
+<span class="linenos">276</span>    <span class="c1">#       Physical detector-u spacing ``du``. The ramp filter is</span>
+<span class="linenos">277</span>    <span class="c1">#       rescaled by ``1 / sample_spacing`` so that the output is</span>
+<span class="linenos">278</span>    <span class="c1">#       in physical units, and the amplitude of the reconstruction</span>
+<span class="linenos">279</span>    <span class="c1">#       stays calibrated across different detector pitches.</span>
+<span class="linenos">280</span>    <span class="c1">#</span>
+<span class="linenos">281</span>    <span class="c1">#   pad_factor : int</span>
+<span class="linenos">282</span>    <span class="c1">#       Zero-pad the signal to ``pad_factor * N`` along ``dim``</span>
+<span class="linenos">283</span>    <span class="c1">#       before the FFT. Options:</span>
+<span class="linenos">284</span>    <span class="c1">#           1 (default)  - no padding, fastest, but circular</span>
+<span class="linenos">285</span>    <span class="c1">#                          convolution wrap-around can contaminate</span>
+<span class="linenos">286</span>    <span class="c1">#                          the edges of the reconstruction.</span>
+<span class="linenos">287</span>    <span class="c1">#           2 (typical)  - good balance for cone-beam FDK.</span>
+<span class="linenos">288</span>    <span class="c1">#           4 (strict)   - used when the object is very close to</span>
+<span class="linenos">289</span>    <span class="c1">#                          the detector edges.</span>
+<span class="linenos">290</span>    <span class="c1">#</span>
+<span class="linenos">291</span>    <span class="c1">#   window : str or None</span>
+<span class="linenos">292</span>    <span class="c1">#       Frequency-domain apodization applied on top of the bare</span>
+<span class="linenos">293</span>    <span class="c1">#       ramp. Available options are:</span>
+<span class="linenos">294</span>    <span class="c1">#           None / &quot;ram-lak&quot; - sharp Ram-Lak ramp, no smoothing.</span>
+<span class="linenos">295</span>    <span class="c1">#           &quot;hann&quot;           - Hann window, strongly suppresses</span>
+<span class="linenos">296</span>    <span class="c1">#                              high-frequency noise. Used below.</span>
+<span class="linenos">297</span>    <span class="c1">#           &quot;hamming&quot;        - slightly milder than Hann.</span>
+<span class="linenos">298</span>    <span class="c1">#           &quot;cosine&quot;         - equivalent to a half-cosine rolloff.</span>
+<span class="linenos">299</span>    <span class="c1">#           &quot;shepp-logan&quot;    - sinc rolloff, classical choice.</span>
+<span class="linenos">300</span>    <span class="c1">#</span>
+<span class="linenos">301</span>    <span class="c1">#   use_rfft : bool</span>
+<span class="linenos">302</span>    <span class="c1">#       Use ``torch.fft.rfft`` instead of ``fft`` when the input is</span>
+<span class="linenos">303</span>    <span class="c1">#       real. Default ``True``; set to ``False`` only if you need</span>
+<span class="linenos">304</span>    <span class="c1">#       the complex path (e.g. to reuse an already-complex buffer).</span>
+<span class="linenos">305</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">ramp_filter_1d</span><span class="p">(</span>
+<span class="linenos">306</span>        <span class="n">sino_weighted</span><span class="p">,</span>
+<span class="linenos">307</span>        <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<span class="linenos">308</span>        <span class="n">sample_spacing</span><span class="o">=</span><span class="n">du</span><span class="p">,</span>
+<span class="linenos">309</span>        <span class="n">pad_factor</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<span class="linenos">310</span>        <span class="n">window</span><span class="o">=</span><span class="s2">&quot;hann&quot;</span><span class="p">,</span>
+<span class="linenos">311</span>    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+<span class="linenos">312</span>
+<span class="linenos">313</span>    <span class="c1"># --- 6.3  Per-view angular integration weights -------------------</span>
+<span class="linenos">314</span>    <span class="c1"># For a full 2*pi scan each view contributes ``pi / num_views`` to</span>
+<span class="linenos">315</span>    <span class="c1"># the FDK integral: the ``1/2`` redundancy factor of the FDK</span>
+<span class="linenos">316</span>    <span class="c1"># formula is absorbed inside ``redundant_full_scan=True``. For a</span>
+<span class="linenos">317</span>    <span class="c1"># Parker short scan the redundancy has already been handled by the</span>
+<span class="linenos">318</span>    <span class="c1"># Parker window above, so we fall back to a plain trapezoidal rule</span>
+<span class="linenos">319</span>    <span class="c1"># with ``redundant_full_scan=False`` (the 1/2 factor would then be</span>
+<span class="linenos">320</span>    <span class="c1"># incorrect).</span>
+<span class="linenos">321</span>    <span class="n">d_beta</span> <span class="o">=</span> <span class="n">angular_integration_weights</span><span class="p">(</span>
+<span class="linenos">322</span>        <span class="n">angles_torch</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="p">(</span><span class="ow">not</span> <span class="n">apply_parker</span><span class="p">)</span>
+<span class="linenos">323</span>    <span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="linenos">324</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">sinogram_filt</span> <span class="o">*</span> <span class="n">d_beta</span>
+<span class="linenos">325</span>
+<span class="linenos">326</span>    <span class="c1"># --- 6.4  Voxel-driven FDK backprojection -------------------------</span>
+<span class="linenos">327</span>    <span class="c1"># ``cone_weighted_backproject`` now dispatches to a dedicated</span>
+<span class="linenos">328</span>    <span class="c1"># voxel-driven gather kernel (separate from the Siddon-based</span>
+<span class="linenos">329</span>    <span class="c1"># autograd cone backprojector). For every voxel it computes the</span>
+<span class="linenos">330</span>    <span class="c1"># detector ``(u, v)`` the voxel projects to, bilinearly samples the</span>
+<span class="linenos">331</span>    <span class="c1"># filtered sinogram there, and accumulates ``(sid / U)^2 * sample``</span>
+<span class="linenos">332</span>    <span class="c1"># over all views, where ``U`` is the distance from the source to</span>
+<span class="linenos">333</span>    <span class="c1"># the voxel along the central ray direction. The final</span>
+<span class="linenos">334</span>    <span class="c1"># ``sdd / (2*pi*sid)`` analytical FDK constant is applied inside</span>
+<span class="linenos">335</span>    <span class="c1"># the wrapper so the returned volume is already in the right</span>
+<span class="linenos">336</span>    <span class="c1"># physical amplitude and no further scaling is needed.</span>
+<span class="linenos">337</span>    <span class="n">reconstruction_raw</span> <span class="o">=</span> <span class="n">cone_weighted_backproject</span><span class="p">(</span>
+<span class="linenos">338</span>        <span class="n">sinogram_filt</span><span class="p">,</span>
+<span class="linenos">339</span>        <span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos">340</span>        <span class="n">Nz</span><span class="p">,</span>
+<span class="linenos">341</span>        <span class="n">Ny</span><span class="p">,</span>
+<span class="linenos">342</span>        <span class="n">Nx</span><span class="p">,</span>
+<span class="linenos">343</span>        <span class="n">du</span><span class="p">,</span>
+<span class="linenos">344</span>        <span class="n">dv</span><span class="p">,</span>
+<span class="linenos">345</span>        <span class="n">sdd</span><span class="p">,</span>
+<span class="linenos">346</span>        <span class="n">sid</span><span class="p">,</span>
+<span class="linenos">347</span>        <span class="n">voxel_spacing</span><span class="o">=</span><span class="n">voxel_spacing</span><span class="p">,</span>
+<span class="linenos">348</span>        <span class="n">detector_offset_u</span><span class="o">=</span><span class="n">detector_offset_u</span><span class="p">,</span>
+<span class="linenos">349</span>        <span class="n">detector_offset_v</span><span class="o">=</span><span class="n">detector_offset_v</span><span class="p">,</span>
+<span class="linenos">350</span>    <span class="p">)</span>
+<span class="linenos">351</span>
+<span class="linenos">352</span>    <span class="c1"># Optional non-negativity clamp. FDK can produce small negative</span>
+<span class="linenos">353</span>    <span class="c1"># values near sharp edges because the ramp filter has negative</span>
+<span class="linenos">354</span>    <span class="c1"># lobes in the spatial domain; for visualization and quantitative</span>
+<span class="linenos">355</span>    <span class="c1"># comparison against the non-negative phantom we clamp with a ReLU.</span>
+<span class="linenos">356</span>    <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">reconstruction_raw</span><span class="p">)</span>
+<span class="linenos">357</span>
+<span class="linenos">358</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">359</span>    <span class="c1"># 7. Quantitative summary</span>
+<span class="linenos">360</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">361</span>    <span class="n">raw_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction_raw</span> <span class="o">-</span> <span class="n">phantom_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos">362</span>    <span class="n">clamped_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction</span> <span class="o">-</span> <span class="n">phantom_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos">363</span>
+<span class="linenos">364</span>    <span class="n">scan_label</span> <span class="o">=</span> <span class="s2">&quot;Parker short scan&quot;</span> <span class="k">if</span> <span class="n">apply_parker</span> <span class="k">else</span> <span class="s2">&quot;full 2*pi scan&quot;</span>
+<span class="linenos">365</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cone Beam FDK example (</span><span class="si">{</span><span class="n">scan_label</span><span class="si">}</span><span class="s2">):&quot;</span><span class="p">)</span>
+<span class="linenos">366</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Raw MSE:             </span><span class="si">{</span><span class="n">raw_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="linenos">367</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Clamped MSE:         </span><span class="si">{</span><span class="n">clamped_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="linenos">368</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Reconstruction shape: </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="linenos">369</span>    <span class="nb">print</span><span class="p">(</span>
+<span class="linenos">370</span>        <span class="s2">&quot;  Raw reco data range:  &quot;</span>
+<span class="linenos">371</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="linenos">372</span>    <span class="p">)</span>
+<span class="linenos">373</span>    <span class="nb">print</span><span class="p">(</span>
+<span class="linenos">374</span>        <span class="s2">&quot;  Clamped reco range:   &quot;</span>
+<span class="linenos">375</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="linenos">376</span>    <span class="p">)</span>
+<span class="linenos">377</span>    <span class="nb">print</span><span class="p">(</span>
+<span class="linenos">378</span>        <span class="s2">&quot;  Phantom data range:   &quot;</span>
+<span class="linenos">379</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="o">.</span><span class="n">min</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="linenos">380</span>    <span class="p">)</span>
+<span class="linenos">381</span>
+<span class="linenos">382</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">383</span>    <span class="c1"># 8. Visualization</span>
+<span class="linenos">384</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">385</span>    <span class="n">reconstruction_cpu</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="linenos">386</span>    <span class="n">sinogram_cpu</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="linenos">387</span>    <span class="n">mid_slice</span> <span class="o">=</span> <span class="n">Nz</span> <span class="o">//</span> <span class="mi">2</span>
+<span class="linenos">388</span>
+<span class="linenos">389</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="linenos">390</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="linenos">391</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">phantom_cpu</span><span class="p">[</span><span class="n">mid_slice</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:],</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
+<span class="linenos">392</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Phantom mid-slice&quot;</span><span class="p">)</span>
+<span class="linenos">393</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">394</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos">395</span>    <span class="c1"># Transpose so the v axis is vertical in the figure.</span>
+<span class="linenos">396</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">sinogram_cpu</span><span class="p">[</span><span class="n">num_views</span> <span class="o">//</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">,</span> <span class="n">origin</span><span class="o">=</span><span class="s2">&quot;lower&quot;</span><span class="p">)</span>
+<span class="linenos">397</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Sinogram mid-view&quot;</span><span class="p">)</span>
+<span class="linenos">398</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">399</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+<span class="linenos">400</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">reconstruction_cpu</span><span class="p">[</span><span class="n">mid_slice</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:],</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
+<span class="linenos">401</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Recon mid-slice&quot;</span><span class="p">)</span>
+<span class="linenos">402</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">403</span>    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="linenos">404</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="linenos">405</span>
+<span class="linenos">406</span>
+<span class="linenos">407</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<span class="linenos">408</span>    <span class="n">main</span><span class="p">()</span>
 </pre></div>
 </div>
 </div>
