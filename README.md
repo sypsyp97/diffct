@@ -7,26 +7,69 @@
 [![CI/CD](https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square)](https://github.com/sypsyp97/diffct/actions)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sypsyp97/diffct)
 
-A high-performance, CUDA-accelerated library for circular orbits CT reconstruction with end-to-end differentiable operators, enabling advanced optimization and deep learning integration.
+A high-performance, CUDA-accelerated library for circular orbits CT
+reconstruction with end-to-end differentiable operators, amplitude-
+calibrated analytical FBP / FDK, and a separable-footprint projector
+family for cell-integrated forward models. Built for optimization and
+deep-learning integration.
 
 ⭐ **Please star this project if you find it is useful!**
 
 ## 🔀 Branches
 
-### Main Branch (Stable)
-This is the **stable version** supporting circular trajectory CT reconstruction.
+### Main Branch (Stable, PyPI)
+This is the **stable release** branch supporting circular-orbit CT
+reconstruction. Every versioned release on
+[PyPI](https://pypi.org/project/diffct/) comes from `main`. See
+[CHANGELOG.md](CHANGELOG.md) for the full release history.
 
-### Dev Branch (Under Development)
-The `dev` branch includes experimental features:
-- **Random trajectory projection and backprojection operators**
-- **New examples with non-circular trajectories**
+### Dev Branch (arbitrary trajectories)
+The `dev` branch is the arbitrary-trajectory evolution of the library.
+Kernels take per-view ``(src_pos, det_center, det_u_vec[, det_v_vec])``
+arrays instead of closed-form `sdd / sid / beta` scalars, so you can
+reconstruct along **spiral, saddle, sinusoidal, or any user-supplied
+trajectory**. It is kept in sync with `main`'s 1.2.11 analytical
+reconstruction overhaul (ramp filter, weighted backproject, tests,
+benchmark suite); the only thing currently deferred from `main` is the
+1.3.0 separable-footprint (SF) backends, because generalising the
+trapezoidal footprint math to arbitrary trajectories is a separate
+research effort.
 
-⚠️ **Note:** The dev branch is under active development. If you find any bugs, please [raise an issue](https://github.com/sypsyp97/diffct/issues).
+⚠️ **Note:** The dev branch is under active development and is not
+published to PyPI. If you find any bugs please
+[raise an issue](https://github.com/sypsyp97/diffct/issues).
 
 ## ✨ Features
 
-- **Fast:** CUDA-accelerated projection and backprojection operations
-- **Differentiable:** End-to-end gradient propagation for deep learning workflows
+- **Fast:** CUDA-accelerated forward and backward projectors with
+  Numba CUDA kernels, plus dedicated voxel-driven FBP / FDK gather
+  kernels with coalesced memory writes.
+- **Differentiable:** End-to-end gradient propagation via
+  ``torch.autograd``. Every projector / backprojector pair is a
+  byte-accurate adjoint, verified by
+  ``tests/test_adjoint_inner_product.py`` and
+  ``torch.autograd.gradcheck`` in ``tests/test_gradcheck.py``.
+- **Analytical reconstruction:** Amplitude-calibrated FBP / FDK
+  pipelines via ``ramp_filter_1d`` (Ram-Lak / Hann / Hamming /
+  cosine / Shepp-Logan windows, configurable padding and physical
+  ``sample_spacing``), ``fan_cosine_weights`` /
+  ``cone_cosine_weights``, ``parker_weights``,
+  ``angular_integration_weights``, and
+  ``parallel_weighted_backproject`` / ``fan_weighted_backproject`` /
+  ``cone_weighted_backproject``. A unit-density phantom reconstructs
+  back to amplitude 1 without any manual scaling.
+- **Separable-footprint projectors:** Optional ``backend="sf"``
+  (fan) and ``backend="sf_tr"`` / ``"sf_tt"`` (cone) selectors on
+  every ``FanProjectorFunction`` / ``ConeProjectorFunction`` call
+  expose voxel-driven SF projectors (Long-Fessler-Balter, IEEE TMI
+  2010). In the full analytical FBP / FDK pipeline these measurably
+  lower reconstruction MSE by ~17 % on standard Shepp-Logan phantoms
+  versus the default Siddon backend, at ~2-3x forward cost.
+- **Tested:** 66 pytest tests covering adjoint identity, gradcheck,
+  smoke, FBP / FDK accuracy per geometry, detector / center offsets,
+  and 29 ramp-filter window cases. Opt-in 27-case
+  ``pytest-benchmark`` perf suite under ``tests/benchmarks/`` for
+  before/after regression tracking.
 
 ## 📐 Supported Geometries
 
@@ -39,19 +82,26 @@ The `dev` branch includes experimental features:
 ```bash
 diffct/
 ├── diffct/
-│   ├── __init__.py            # Package initialization
-│   ├── differentiable.py      # Differentiable CT operators
-├── examples/                  # Example usages
+│   ├── __init__.py            # public API re-exports
+│   └── differentiable.py      # CUDA kernels, autograd Functions,
+│                              # analytical helpers, SF backends
+├── examples/                  # circular-orbit example scripts
 │   ├── fbp_parallel.py
-│   ├── fbp_fan.py
-│   ├── fdk_cone.py
-│   ├── iterative_reco_cone.py
-│   ├── iterative_reco_fan.py
+│   ├── fbp_fan.py             # with Parker short-scan switch
+│   ├── fdk_cone.py            # with Parker short-scan switch
 │   ├── iterative_reco_parallel.py
-├── pyproject.toml             # Project metadata
-├── README.md                  # README
-├── LICENSE                    # License
-├── requirements.txt           # Dependencies
+│   ├── iterative_reco_fan.py
+│   └── iterative_reco_cone.py
+├── tests/
+│   ├── test_*.py              # adjoint / gradcheck / accuracy /
+│   │                          # offsets / weights / ramp-filter
+│   └── benchmarks/            # opt-in pytest-benchmark perf suite
+├── docs/                      # Sphinx documentation sources
+├── pyproject.toml             # project metadata
+├── pytest.ini
+├── CHANGELOG.md               # Keep-a-Changelog release notes
+├── README.md
+└── LICENSE
 ```
 
 ## 🚀 Quick Start
@@ -125,6 +175,13 @@ pip install diffct
 ```
 
 </details>
+
+### Running the tests
+
+```bash
+pytest tests/ -q                             # 66 tests, ~15 s
+pytest tests/benchmarks/ --benchmark-only    # opt-in perf suite, requires pytest-benchmark
+```
 
 ## 📝 Citation
 
