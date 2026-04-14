@@ -1,0 +1,96 @@
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
+from diffct.differentiable import (
+    ParallelProjectorFunction,
+    ParallelBackprojectorFunction,
+    angular_integration_weights,
+    ramp_filter_1d,
+)
+
+
+def shepp_logan_2d(Nx, Ny):
+    Nx = int(Nx)
+    Ny = int(Ny)
+    phantom = np.zeros((Ny, Nx), dtype=np.float64)
+    ellipses = [
+        (0.0, 0.0, 0.69, 0.92, 0, 1.0),
+        (0.0, -0.0184, 0.6624, 0.8740, 0, -0.8),
+        (0.22, 0.0, 0.11, 0.31, -18.0, -0.8),
+        (-0.22, 0.0, 0.16, 0.41, 18.0, -0.8),
+        (0.0, 0.35, 0.21, 0.25, 0, 0.7),
+    ]
+    cx = (Nx - 1) / 2
+    cy = (Ny - 1) / 2
+    for ix in range(Nx):
+        for iy in range(Ny):
+            xnorm = (ix - cx) / (Nx / 2)
+            ynorm = (iy - cy) / (Ny / 2)
+            val = 0.0
+            for (x0, y0, a, b, angdeg, ampl) in ellipses:
+                th = np.deg2rad(angdeg)
+                xprime = (xnorm - x0) * np.cos(th) + (ynorm - y0) * np.sin(th)
+                yprime = -(xnorm - x0) * np.sin(th) + (ynorm - y0) * np.cos(th)
+                if xprime * xprime / (a * a) + yprime * yprime / (b * b) <= 1.0:
+                    val += ampl
+            phantom[iy, ix] = val
+    phantom = np.clip(phantom, 0.0, 1.0)
+    return phantom
+
+def main():
+    Nx, Ny = 256, 256
+    phantom = shepp_logan_2d(Nx, Ny)
+    num_angles = 360
+    angles_np = np.linspace(0, 2*np.pi, num_angles, endpoint=False).astype(np.float32)
+
+    num_detectors = 512
+    detector_spacing = 1.0
+    voxel_spacing = 1.0
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
+    angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
+
+    sinogram = ParallelProjectorFunction.apply(image_torch, angles_torch,
+                                               num_detectors, detector_spacing, voxel_spacing)
+    
+    sinogram_filt = ramp_filter_1d(sinogram, dim=1)
+    d_theta = angular_integration_weights(angles_torch, redundant_full_scan=True).view(-1, 1)
+    sinogram_filt = sinogram_filt * d_theta
+
+    reconstruction = F.relu(ParallelBackprojectorFunction.apply(sinogram_filt, angles_torch,
+                                                         detector_spacing, Ny, Nx, voxel_spacing)) # ReLU to ensure non-negativity
+
+    loss = torch.mean((reconstruction - image_torch)**2)
+    loss.backward()
+
+    print("Loss:", loss.item())
+    print("Phantom gradient center pixel:", image_torch.grad[Ny//2, Nx//2].item())
+    print("Reconstruction shape:", reconstruction.shape)
+
+    sinogram_cpu = sinogram.detach().cpu().numpy()
+    reco_cpu = reconstruction.detach().cpu().numpy()
+
+    plt.figure(figsize=(12,4))
+    plt.subplot(1,3,1)
+    plt.imshow(phantom, cmap='gray')
+    plt.title("Phantom")
+    plt.axis('off')
+    plt.subplot(1,3,2)
+    plt.imshow(sinogram_cpu, aspect='auto', cmap='gray')
+    plt.title("Differentiable Sinogram")
+    plt.axis('off')
+    plt.subplot(1,3,3)
+    plt.imshow(reco_cpu, cmap='gray')
+    plt.title("Differentiable Recon")
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+
+    # print data range of the phantom and reco 
+    print("Phantom range:", phantom.min(), phantom.max())
+    print("Reco range:", reco_cpu.min(), reco_cpu.max())
+
+if __name__ == "__main__":
+    main()
