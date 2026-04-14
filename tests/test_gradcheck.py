@@ -102,6 +102,79 @@ def test_fan_projector_gradcheck():
 
 
 @pytest.mark.cuda
+def test_fan_sf_projector_gradcheck():
+    """Gradcheck for ``FanProjectorFunction`` with ``backend='sf'``.
+
+    The SF backward kernel is a voxel-driven gather with no atomic adds,
+    so it should be byte-deterministic (nondet_tol=0). Tolerances are
+    otherwise the same as the Siddon gradcheck above."""
+    _skip_if_no_cuda()
+    device = torch.device("cuda")
+    torch.manual_seed(21)
+
+    H, W = 6, 6
+    img = torch.randn(H, W, device=device, dtype=torch.float32).contiguous()
+    img.requires_grad_(True)
+    angles = torch.linspace(0.0, 2.0 * math.pi, 8, device=device, dtype=torch.float32)
+    num_detectors = 10
+    detector_spacing = 1.0
+    sdd, sid = 900.0, 600.0
+
+    def fn(x):
+        return FanProjectorFunction.apply(
+            x, angles, num_detectors, detector_spacing, sdd, sid,
+            1.0, 0.0, 0.0, 0.0, "sf",
+        )
+
+    assert torch.autograd.gradcheck(
+        fn,
+        (img,),
+        eps=_GC_EPS,
+        atol=_GC_ATOL,
+        rtol=_GC_RTOL,
+        nondet_tol=_GC_NONDET,
+        check_undefined_grad=False,
+    )
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("backend", ["sf_tr", "sf_tt"])
+def test_cone_sf_projector_gradcheck(backend):
+    """Gradcheck for ``ConeProjectorFunction`` with the SF backends.
+
+    Tiny 4x4x4 volume / 6 views / 6x6 detector — gradcheck does ~128
+    forward calls. SF backward is deterministic (gather, no atomics) so
+    ``nondet_tol`` stays tight."""
+    _skip_if_no_cuda()
+    device = torch.device("cuda")
+    torch.manual_seed(50 + hash(backend) % 100)
+
+    D, H, W = 4, 4, 4
+    vol = torch.randn(D, H, W, device=device, dtype=torch.float32).contiguous()
+    vol.requires_grad_(True)
+    angles = torch.linspace(0.0, 2.0 * math.pi, 6, device=device, dtype=torch.float32)
+    det_u = det_v = 6
+    du = dv = 1.0
+    sdd, sid = 900.0, 600.0
+
+    def fn(x):
+        return ConeProjectorFunction.apply(
+            x, angles, det_u, det_v, du, dv, sdd, sid,
+            1.0, 0.0, 0.0, 0.0, 0.0, 0.0, backend,
+        )
+
+    assert torch.autograd.gradcheck(
+        fn,
+        (vol,),
+        eps=_GC_EPS,
+        atol=_GC_ATOL,
+        rtol=_GC_RTOL,
+        nondet_tol=_GC_NONDET,
+        check_undefined_grad=False,
+    )
+
+
+@pytest.mark.cuda
 def test_cone_projector_gradcheck():
     """Numerical vs analytical Jacobian match for ``ConeProjectorFunction``.
 

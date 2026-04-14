@@ -36,10 +36,10 @@ def shepp_logan_2d(Nx, Ny):
     return phantom
 
 class IterativeRecoModel(nn.Module):
-    def __init__(self, volume_shape, angles, 
-                 num_detectors, detector_spacing, 
-                 sdd, sid, voxel_spacing):
-        
+    def __init__(self, volume_shape, angles,
+                 num_detectors, detector_spacing,
+                 sdd, sid, voxel_spacing,
+                 backend="siddon"):
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
         self.angles = angles
@@ -49,25 +49,40 @@ class IterativeRecoModel(nn.Module):
         self.sid = sid
         self.relu = nn.ReLU() # non negative constraint
         self.voxel_spacing = voxel_spacing
+        self.backend = backend
 
     def forward(self, x):
         updated_reco = x + self.reco
-        current_sino = FanProjectorFunction.apply(updated_reco, self.angles, 
-                                                  self.num_detectors, self.detector_spacing, 
-                                                  self.sdd, self.sid, self.voxel_spacing)
+        # ``backend`` is the last positional argument to
+        # ``FanProjectorFunction.apply`` so we must also pass the three
+        # default offsets (detector_offset / center_offset_x / center_offset_y)
+        # to line up with the signature.
+        current_sino = FanProjectorFunction.apply(
+            updated_reco,
+            self.angles,
+            self.num_detectors,
+            self.detector_spacing,
+            self.sdd,
+            self.sid,
+            self.voxel_spacing,
+            0.0,              # detector_offset
+            0.0,              # center_offset_x
+            0.0,              # center_offset_y
+            self.backend,
+        )
         return current_sino, self.relu(updated_reco)
 
 class Pipeline:
-    def __init__(self, lr, volume_shape, angles, 
-                 num_detectors, detector_spacing, 
+    def __init__(self, lr, volume_shape, angles,
+                 num_detectors, detector_spacing,
                  sdd, sid, voxel_spacing,
-                 device, epoches=1000):
-        
+                 device, epoches=1000, backend="siddon"):
         self.epoches = epoches
         self.model = IterativeRecoModel(volume_shape, angles,
-                                        num_detectors, detector_spacing, 
-                                        sdd, sid, voxel_spacing).to(device)
-        
+                                        num_detectors, detector_spacing,
+                                        sdd, sid, voxel_spacing,
+                                        backend=backend).to(device)
+
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
         self.loss = nn.MSELoss()
 
@@ -99,14 +114,38 @@ def main():
     sdd = 600.0
     sid = 400.0
 
+    # Forward projector backend used for BOTH the ground-truth sinogram
+    # and the inner iterative loop. Using the same backend on both sides
+    # is the cleanest setup: the loop then solves its own exact inverse
+    # problem, and the adjoint returned by autograd matches the forward
+    # byte-for-byte (guaranteed by the matched scatter/gather kernel
+    # pair, verified by tests/test_adjoint_inner_product.py). Options:
+    #
+    #   "siddon"           - ray-driven Siddon with bilinear voxel
+    #                        interpolation. Fastest. Good default when
+    #                        you want the shortest iteration step.
+    #   "sf"               - voxel-driven separable-footprint projector
+    #                        (Long et al. SF-TR). Mass-conserving per
+    #                        voxel, closed-form cell integral, ~3x
+    #                        slower than siddon. Worth trying when you
+    #                        want a physically-principled cell-
+    #                        integrated forward model and don't mind
+    #                        the per-iteration cost.
+    projector_backend = "sf"
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32)
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
-    # Generate the "real" sinogram
-    real_sinogram = FanProjectorFunction.apply(phantom_torch, angles_torch,
-                                               num_detectors, detector_spacing,
-                                               sdd, sid, voxel_spacing)
+    # Generate the "real" sinogram with the same backend as the inner
+    # loop, so reconstruction targets what the loop can actually produce.
+    real_sinogram = FanProjectorFunction.apply(
+        phantom_torch, angles_torch,
+        num_detectors, detector_spacing,
+        sdd, sid, voxel_spacing,
+        0.0, 0.0, 0.0,                  # detector_offset, center_offset_x, center_offset_y
+        projector_backend,
+    )
 
     pipeline_instance = Pipeline(lr=1e-1,
                                  volume_shape=(Ny,Nx),
@@ -115,7 +154,8 @@ def main():
                                  detector_spacing=detector_spacing,
                                  sdd=sdd, voxel_spacing=voxel_spacing,
                                  sid=sid,
-                                 device=device, epoches=1000)
+                                 device=device, epoches=1000,
+                                 backend=projector_backend)
 
     ini_guess = torch.zeros_like(phantom_torch)
 

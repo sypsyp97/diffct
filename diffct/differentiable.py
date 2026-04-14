@@ -15,6 +15,10 @@ _TPB_2D             = (16, 16)
 # 3D blocks: 8x8x8 = 512 threads per block, optimal for 3D cone beam kernels  
 # Smaller per-dimension size accommodates higher register usage in 3D algorithms
 _TPB_3D             = (8,  8,  8)
+# Smaller TPB for the 3-D SF kernels. SF-TT in particular spills past the
+# 128-register-per-thread budget that (8, 8, 8) allows, so we drop to
+# (4, 4, 4) = 64 threads/block, giving each thread ~1024 registers.
+_TPB_SF_3D          = (4,  4,  4)
 # CUDA fastmath optimization: enables aggressive floating-point optimizations
 # Trades numerical precision for performance in ray-tracing calculations
 # Safe for CT reconstruction where slight precision loss is acceptable for speed gains
@@ -1166,6 +1170,316 @@ def _fan_2d_backward_kernel(
             iy += step_y
             ty += dt_y
 
+
+@_FDK_ACCURACY_DECORATOR
+def _fan_2d_sf_forward_kernel(
+    d_image, Nx, Ny,
+    d_sino, n_ang, n_det,
+    det_spacing, d_cos, d_sin,
+    sdd, sid, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y
+):
+    """Separable-footprint (SF-TR) forward projector for 2D fan beam.
+
+    Voxel-driven: one thread per (view, voxel). Projects the four corners of
+    the unit-square voxel onto the flat detector to obtain a trapezoidal
+    footprint in the detector coordinate u, then closed-form-integrates that
+    trapezoid over each overlapping detector bin and atomically accumulates
+    ``value * chord * bin_fraction`` into the sinogram. Mass is conserved:
+    summed across all bins, a single voxel contributes exactly ``v * chord``,
+    the same total as the thin-ray Siddon kernel, but spread across the true
+    finite-width footprint instead of concentrated at one bin.
+    """
+    iang, iy, ix = cuda.grid(3)
+    if iang >= n_ang or iy >= Ny or ix >= Nx:
+        return
+
+    val = d_image[iy, ix]
+    if val == 0.0:
+        return
+
+    cos_a = d_cos[iang]
+    sin_a = d_sin[iang]
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    det_spacing_v = det_spacing / voxel_spacing
+
+    # Voxel center at grid-point world position. Matches the Siddon / FDK
+    # convention where d_vol[ix, iy] is a sample AT world (ix - cx, iy - cy)
+    # and bilinear interpolation linearly connects neighbouring samples. The
+    # SF "box" around each sample has unit side length, extending +-0.5.
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+
+    # Project the four corners to the flat detector.
+    # u(x, y) = sdd_v * (x*cos + y*sin) / (sid_v + x*sin - y*cos)
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+
+    d1 = sid_v + x_m * sin_a - y_m * cos_a
+    d2 = sid_v + x_p * sin_a - y_m * cos_a
+    d3 = sid_v + x_p * sin_a - y_p * cos_a
+    d4 = sid_v + x_m * sin_a - y_p * cos_a
+    if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+        return  # voxel straddles the source plane — SF invalid
+
+    u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+    u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+    u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+    u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+    # 4-element sorting network → (u_min, u_lo, u_hi, u_max)
+    a = u1
+    b = u2
+    c = u3
+    d = u4
+    if a > b:
+        a, b = b, a
+    if c > d:
+        c, d = d, c
+    if a > c:
+        a, c = c, a
+    if b > d:
+        b, d = d, b
+    if b > c:
+        b, c = c, b
+    u_min = a
+    u_lo = b
+    u_hi = c
+    u_max = d
+
+    span = u_max - u_min
+    if span < _EPSILON:
+        return
+
+    # Central ray through voxel center → chord length through unit square.
+    # For ray direction (rx, ry) with rx^2 + ry^2 = 1, chord = 1/max(|rx|,|ry|).
+    rx = x_c - (-sid_v * sin_a)
+    ry = y_c - (sid_v * cos_a)
+    r_len = math.sqrt(rx * rx + ry * ry)
+    if r_len < _EPSILON:
+        return
+    rx /= r_len
+    ry /= r_len
+    m = abs(rx)
+    ar = abs(ry)
+    if ar > m:
+        m = ar
+    if m < _EPSILON:
+        return
+    chord = 1.0 / m
+
+    # Footprint is a trapezoid in detector u with peak = chord (= line integral
+    # along the central ray). Each sinogram bin stores the cell-averaged line
+    # integral (thin-ray convention, matching Siddon): contribution from this
+    # voxel to bin k is (val * chord / det_spacing_v) * bin_integral_of_unit_trapezoid.
+    plateau = u_hi - u_lo
+    weight = val * chord / det_spacing_v
+
+    # Detector bin range overlapping [u_min, u_max].
+    # idet = (u - det_offset) / det_spacing_v + 0.5*(n_det - 1)
+    half = 0.5 * (n_det - 1)
+    k_lo_f = (u_min - det_offset) / det_spacing_v + half - 0.5
+    k_hi_f = (u_max - det_offset) / det_spacing_v + half + 0.5
+    k_lo = int(math.floor(k_lo_f))
+    k_hi = int(math.ceil(k_hi_f))
+    if k_lo < 0:
+        k_lo = 0
+    if k_hi > n_det - 1:
+        k_hi = n_det - 1
+    if k_hi < k_lo:
+        return
+
+    rise_w = u_lo - u_min
+    fall_w = u_max - u_hi
+
+    for k in range(k_lo, k_hi + 1):
+        u_k = (k - half) * det_spacing_v + det_offset
+        u_L = u_k - 0.5 * det_spacing_v
+        u_R = u_k + 0.5 * det_spacing_v
+
+        aL = u_L if u_L > u_min else u_min
+        aR = u_R if u_R < u_max else u_max
+        if aL >= aR:
+            continue
+
+        raw = 0.0  # unnormalized trapezoid integral over [aL, aR] with peak = 1
+
+        # Rising segment [u_min, u_lo], height (u - u_min)/rise_w.
+        if rise_w > _EPSILON:
+            r_lo = aL if aL > u_min else u_min
+            r_hi = aR if aR < u_lo else u_lo
+            if r_hi > r_lo:
+                raw += 0.5 * ((r_hi - u_min) * (r_hi - u_min) -
+                              (r_lo - u_min) * (r_lo - u_min)) / rise_w
+
+        # Plateau [u_lo, u_hi], height = 1.
+        if plateau > _EPSILON:
+            p_lo = aL if aL > u_lo else u_lo
+            p_hi = aR if aR < u_hi else u_hi
+            if p_hi > p_lo:
+                raw += p_hi - p_lo
+
+        # Falling segment [u_hi, u_max], height (u_max - u)/fall_w.
+        if fall_w > _EPSILON:
+            f_lo = aL if aL > u_hi else u_hi
+            f_hi = aR if aR < u_max else u_max
+            if f_hi > f_lo:
+                raw += 0.5 * ((u_max - f_lo) * (u_max - f_lo) -
+                              (u_max - f_hi) * (u_max - f_hi)) / fall_w
+
+        if raw > 0.0:
+            cuda.atomic.add(d_sino, (iang, k), weight * raw)
+
+
+@_FDK_ACCURACY_DECORATOR
+def _fan_2d_sf_backward_kernel(
+    d_grad_sino, n_ang, n_det,
+    d_grad_img, Nx, Ny,
+    det_spacing, d_cos, d_sin,
+    sdd, sid, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y
+):
+    """Pure adjoint (transpose) of _fan_2d_sf_forward_kernel.
+
+    Voxel-driven gather. One thread per output pixel, loops over views and
+    over the detector bins inside each view's footprint, rebuilding the same
+    trapezoidal SF coefficients as the forward kernel and accumulating
+    ``weight * raw * grad_sino[iang, k]`` into ``grad_img[iy, ix]``. No atomic
+    adds needed because each thread owns a unique output pixel. The SF
+    coefficients (``chord``, ``raw``, ``1/det_spacing_v``) are byte-for-byte
+    identical to the forward kernel, so the inner-product identity
+    ``<A x, y> = <x, A^T y>`` holds exactly up to float32 accumulation order.
+    """
+    iy, ix = cuda.grid(2)
+    if iy >= Ny or ix >= Nx:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    det_spacing_v = det_spacing / voxel_spacing
+    half = 0.5 * (n_det - 1)
+
+    # Grid-point convention (see _fan_2d_sf_forward_kernel for details).
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+
+    grad_val = 0.0
+
+    for iang in range(n_ang):
+        cos_a = d_cos[iang]
+        sin_a = d_sin[iang]
+
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+
+        span = u_max - u_min
+        if span < _EPSILON:
+            continue
+
+        rx = x_c - (-sid_v * sin_a)
+        ry = y_c - (sid_v * cos_a)
+        r_len = math.sqrt(rx * rx + ry * ry)
+        if r_len < _EPSILON:
+            continue
+        rx /= r_len
+        ry /= r_len
+        m = abs(rx)
+        ar = abs(ry)
+        if ar > m:
+            m = ar
+        if m < _EPSILON:
+            continue
+        chord = 1.0 / m
+
+        plateau = u_hi - u_lo
+        weight = chord / det_spacing_v
+
+        k_lo_f = (u_min - det_offset) / det_spacing_v + half - 0.5
+        k_hi_f = (u_max - det_offset) / det_spacing_v + half + 0.5
+        k_lo = int(math.floor(k_lo_f))
+        k_hi = int(math.ceil(k_hi_f))
+        if k_lo < 0:
+            k_lo = 0
+        if k_hi > n_det - 1:
+            k_hi = n_det - 1
+        if k_hi < k_lo:
+            continue
+
+        rise_w = u_lo - u_min
+        fall_w = u_max - u_hi
+
+        for k in range(k_lo, k_hi + 1):
+            u_k = (k - half) * det_spacing_v + det_offset
+            u_L = u_k - 0.5 * det_spacing_v
+            u_R = u_k + 0.5 * det_spacing_v
+
+            aL = u_L if u_L > u_min else u_min
+            aR = u_R if u_R < u_max else u_max
+            if aL >= aR:
+                continue
+
+            raw = 0.0
+            if rise_w > _EPSILON:
+                r_lo_ = aL if aL > u_min else u_min
+                r_hi_ = aR if aR < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                  (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
+
+            if plateau > _EPSILON:
+                p_lo_ = aL if aL > u_lo else u_lo
+                p_hi_ = aR if aR < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw += p_hi_ - p_lo_
+
+            if fall_w > _EPSILON:
+                f_lo_ = aL if aL > u_hi else u_hi
+                f_hi_ = aR if aR < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                  (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
+
+            if raw > 0.0:
+                grad_val += weight * raw * d_grad_sino[iang, k]
+
+    d_grad_img[iy, ix] = grad_val
+
+
 # ------------------------------------------------------------------
 # 3-D CONE BEAM KERNELS
 # ------------------------------------------------------------------
@@ -1531,6 +1845,851 @@ def _cone_3d_backward_kernel(
             t = tz
             iz += step_z
             tz += dt_z
+
+
+# ------------------------------------------------------------------
+# 3-D cone-beam separable-footprint kernels (SF-TR and SF-TT)
+# ------------------------------------------------------------------
+# SF-TR uses a trapezoidal footprint in the transaxial (u) direction and a
+# rectangular footprint in the axial (v) direction, evaluated with the
+# magnification at the voxel centre. SF-TT uses a trapezoidal footprint in
+# BOTH directions, with the axial trapezoid taking its rise/fall from the
+# difference between U_near and U_far across the voxel, which matters at
+# large z offsets where the axial magnification varies measurably across a
+# single voxel. Both variants are voxel-driven and compute a closed-form
+# integral of the separable footprint over each detector bin. The adjoint
+# kernels gather instead of scatter, rebuild the same coefficients, and
+# preserve the exact <Ax, y> = <x, A^T y> identity up to float32 accumulation.
+
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_sf_tr_forward_kernel(
+    d_vol, Nx, Ny, Nz,
+    d_sino, n_views, n_u, n_v,
+    du, dv, d_cos, d_sin,
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z
+):
+    """Cone-beam SF-TR forward projector.
+
+    Voxel-driven scatter: one thread per voxel (iterating views inside),
+    trapezoidal transaxial footprint built from the 4 ``(x, y)`` voxel
+    corners and a rectangular axial footprint using ``U`` at the voxel
+    centre. Contributions are atomic-added into the sinogram.
+    """
+    iz, iy, ix = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    val = d_vol[ix, iy, iz]
+    if val == 0.0:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+    u_half = 0.5 * (n_u - 1)
+    v_half = 0.5 * (n_v - 1)
+
+    # Grid-point convention: voxel[ix,iy,iz] sits at world (ix-cx, iy-cy, iz-cz).
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    z_c = (iz - cz) - center_offset_z
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+    z_m = z_c - 0.5
+    z_p = z_c + 0.5
+
+    for iview in range(n_views):
+        cos_a = d_cos[iview]
+        sin_a = d_sin[iview]
+
+        # Transaxial corner projections (z independent of u for a flat detector).
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+        if (u_max - u_min) < _EPSILON:
+            continue
+
+        # Axial rectangle using U at voxel centre — SF-TR approximation.
+        U_c = sid_v + x_c * sin_a - y_c * cos_a
+        if U_c <= _EPSILON:
+            continue
+        mag_c = sdd_v / U_c
+        v_bot = z_m * mag_c
+        v_top = z_p * mag_c
+        if v_bot > v_top:
+            v_bot, v_top = v_top, v_bot
+        v_span = v_top - v_bot
+        if v_span < _EPSILON:
+            continue
+
+        # Central-ray chord length through the unit cube.
+        rx = x_c - (-sid_v * sin_a)
+        ry = y_c - (sid_v * cos_a)
+        rz = z_c
+        r_len = math.sqrt(rx * rx + ry * ry + rz * rz)
+        if r_len < _EPSILON:
+            continue
+        rx /= r_len
+        ry /= r_len
+        rz /= r_len
+        m = abs(rx)
+        ar = abs(ry)
+        if ar > m:
+            m = ar
+        az = abs(rz)
+        if az > m:
+            m = az
+        if m < _EPSILON:
+            continue
+        chord = 1.0 / m
+
+        plateau = u_hi - u_lo
+        rise_w = u_lo - u_min
+        fall_w = u_max - u_hi
+        weight = val * chord / (du_v * dv_v)
+
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        if k_u_lo < 0:
+            k_u_lo = 0
+        if k_u_hi > n_u - 1:
+            k_u_hi = n_u - 1
+        if k_u_hi < k_u_lo:
+            continue
+
+        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - 0.5))
+        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + 0.5))
+        if k_v_lo < 0:
+            k_v_lo = 0
+        if k_v_hi > n_v - 1:
+            k_v_hi = n_v - 1
+        if k_v_hi < k_v_lo:
+            continue
+
+        for ku in range(k_u_lo, k_u_hi + 1):
+            u_k = (ku - u_half) * du_v + det_offset_u
+            u_L = u_k - 0.5 * du_v
+            u_R = u_k + 0.5 * du_v
+
+            aL = u_L if u_L > u_min else u_min
+            aR = u_R if u_R < u_max else u_max
+            if aL >= aR:
+                continue
+
+            raw_u = 0.0
+            if rise_w > _EPSILON:
+                r_lo_ = aL if aL > u_min else u_min
+                r_hi_ = aR if aR < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                    (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
+            if plateau > _EPSILON:
+                p_lo_ = aL if aL > u_lo else u_lo
+                p_hi_ = aR if aR < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw_u += p_hi_ - p_lo_
+            if fall_w > _EPSILON:
+                f_lo_ = aL if aL > u_hi else u_hi
+                f_hi_ = aR if aR < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                    (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
+            if raw_u <= 0.0:
+                continue
+
+            for kv in range(k_v_lo, k_v_hi + 1):
+                v_k = (kv - v_half) * dv_v + det_offset_v
+                v_L = v_k - 0.5 * dv_v
+                v_R = v_k + 0.5 * dv_v
+
+                aLv = v_L if v_L > v_bot else v_bot
+                aRv = v_R if v_R < v_top else v_top
+                if aLv >= aRv:
+                    continue
+                raw_v = aRv - aLv  # rectangle, height = 1
+
+                cuda.atomic.add(d_sino, (iview, ku, kv), weight * raw_u * raw_v)
+
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_sf_tr_backward_kernel(
+    d_grad_sino, n_views, n_u, n_v,
+    d_grad_vol, Nx, Ny, Nz,
+    du, dv, d_cos, d_sin,
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z
+):
+    """Pure adjoint (transpose) of _cone_3d_sf_tr_forward_kernel.
+
+    Voxel-driven gather. No atomic adds — each thread owns a unique output
+    voxel and accumulates ``weight * raw_u * raw_v * grad_sino`` into a
+    local value, writing at the end.
+    """
+    iz, iy, ix = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+    u_half = 0.5 * (n_u - 1)
+    v_half = 0.5 * (n_v - 1)
+
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    z_c = (iz - cz) - center_offset_z
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+    z_m = z_c - 0.5
+    z_p = z_c + 0.5
+
+    grad_val = 0.0
+
+    for iview in range(n_views):
+        cos_a = d_cos[iview]
+        sin_a = d_sin[iview]
+
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+        if (u_max - u_min) < _EPSILON:
+            continue
+
+        U_c = sid_v + x_c * sin_a - y_c * cos_a
+        if U_c <= _EPSILON:
+            continue
+        mag_c = sdd_v / U_c
+        v_bot = z_m * mag_c
+        v_top = z_p * mag_c
+        if v_bot > v_top:
+            v_bot, v_top = v_top, v_bot
+        v_span = v_top - v_bot
+        if v_span < _EPSILON:
+            continue
+
+        rx = x_c - (-sid_v * sin_a)
+        ry = y_c - (sid_v * cos_a)
+        rz = z_c
+        r_len = math.sqrt(rx * rx + ry * ry + rz * rz)
+        if r_len < _EPSILON:
+            continue
+        rx /= r_len
+        ry /= r_len
+        rz /= r_len
+        m = abs(rx)
+        ar = abs(ry)
+        if ar > m:
+            m = ar
+        az = abs(rz)
+        if az > m:
+            m = az
+        if m < _EPSILON:
+            continue
+        chord = 1.0 / m
+
+        plateau = u_hi - u_lo
+        rise_w = u_lo - u_min
+        fall_w = u_max - u_hi
+        weight = chord / (du_v * dv_v)
+
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        if k_u_lo < 0:
+            k_u_lo = 0
+        if k_u_hi > n_u - 1:
+            k_u_hi = n_u - 1
+        if k_u_hi < k_u_lo:
+            continue
+
+        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - 0.5))
+        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + 0.5))
+        if k_v_lo < 0:
+            k_v_lo = 0
+        if k_v_hi > n_v - 1:
+            k_v_hi = n_v - 1
+        if k_v_hi < k_v_lo:
+            continue
+
+        for ku in range(k_u_lo, k_u_hi + 1):
+            u_k = (ku - u_half) * du_v + det_offset_u
+            u_L = u_k - 0.5 * du_v
+            u_R = u_k + 0.5 * du_v
+
+            aL = u_L if u_L > u_min else u_min
+            aR = u_R if u_R < u_max else u_max
+            if aL >= aR:
+                continue
+
+            raw_u = 0.0
+            if rise_w > _EPSILON:
+                r_lo_ = aL if aL > u_min else u_min
+                r_hi_ = aR if aR < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                    (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
+            if plateau > _EPSILON:
+                p_lo_ = aL if aL > u_lo else u_lo
+                p_hi_ = aR if aR < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw_u += p_hi_ - p_lo_
+            if fall_w > _EPSILON:
+                f_lo_ = aL if aL > u_hi else u_hi
+                f_hi_ = aR if aR < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                    (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
+            if raw_u <= 0.0:
+                continue
+
+            for kv in range(k_v_lo, k_v_hi + 1):
+                v_k = (kv - v_half) * dv_v + det_offset_v
+                v_L = v_k - 0.5 * dv_v
+                v_R = v_k + 0.5 * dv_v
+
+                aLv = v_L if v_L > v_bot else v_bot
+                aRv = v_R if v_R < v_top else v_top
+                if aLv >= aRv:
+                    continue
+                raw_v = aRv - aLv
+
+                grad_val += weight * raw_u * raw_v * d_grad_sino[iview, ku, kv]
+
+    d_grad_vol[ix, iy, iz] = grad_val
+
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_sf_tt_forward_kernel(
+    d_vol, Nx, Ny, Nz,
+    d_sino, n_views, n_u, n_v,
+    du, dv, d_cos, d_sin,
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z
+):
+    """Cone-beam SF-TT forward projector.
+
+    Same transaxial trapezoid as SF-TR, but the axial footprint is also a
+    trapezoid built from four z-corner projections using U_near and U_far
+    across the voxel. This captures the variation of axial magnification
+    inside a single voxel at large cone angles, at the cost of more inner
+    work per voxel-view. For axial-centred voxels the axial trapezoid
+    collapses towards the SF-TR rectangle.
+    """
+    iz, iy, ix = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    val = d_vol[ix, iy, iz]
+    if val == 0.0:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+    u_half = 0.5 * (n_u - 1)
+    v_half = 0.5 * (n_v - 1)
+
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    z_c = (iz - cz) - center_offset_z
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+    z_m = z_c - 0.5
+    z_p = z_c + 0.5
+
+    for iview in range(n_views):
+        cos_a = d_cos[iview]
+        sin_a = d_sin[iview]
+
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+        if (u_max - u_min) < _EPSILON:
+            continue
+
+        # U_near / U_far across the voxel → axial trapezoid from 4 z-projections.
+        U_near = d1
+        if d2 < U_near:
+            U_near = d2
+        if d3 < U_near:
+            U_near = d3
+        if d4 < U_near:
+            U_near = d4
+        U_far = d1
+        if d2 > U_far:
+            U_far = d2
+        if d3 > U_far:
+            U_far = d3
+        if d4 > U_far:
+            U_far = d4
+        mag_near = sdd_v / U_near
+        mag_far = sdd_v / U_far
+
+        v_bot_near = z_m * mag_near
+        v_bot_far = z_m * mag_far
+        v_top_near = z_p * mag_near
+        v_top_far = z_p * mag_far
+
+        # Sort the 4 v values to find v_min <= v_lo <= v_hi <= v_max.
+        av = v_bot_near
+        bv = v_bot_far
+        cv = v_top_near
+        dv_ = v_top_far
+        if av > bv:
+            av, bv = bv, av
+        if cv > dv_:
+            cv, dv_ = dv_, cv
+        if av > cv:
+            av, cv = cv, av
+        if bv > dv_:
+            bv, dv_ = dv_, bv
+        if bv > cv:
+            bv, cv = cv, bv
+        v_min = av
+        v_lo = bv
+        v_hi = cv
+        v_max = dv_
+
+        v_span = v_max - v_min
+        if v_span < _EPSILON:
+            continue
+
+        # Central-ray chord.
+        rx = x_c - (-sid_v * sin_a)
+        ry = y_c - (sid_v * cos_a)
+        rz = z_c
+        r_len = math.sqrt(rx * rx + ry * ry + rz * rz)
+        if r_len < _EPSILON:
+            continue
+        rx /= r_len
+        ry /= r_len
+        rz /= r_len
+        m = abs(rx)
+        ar = abs(ry)
+        if ar > m:
+            m = ar
+        az = abs(rz)
+        if az > m:
+            m = az
+        if m < _EPSILON:
+            continue
+        chord = 1.0 / m
+
+        plateau_u = u_hi - u_lo
+        rise_u = u_lo - u_min
+        fall_u = u_max - u_hi
+
+        plateau_v = v_hi - v_lo
+        rise_v = v_lo - v_min
+        fall_v = v_max - v_hi
+
+        weight = val * chord / (du_v * dv_v)
+
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        if k_u_lo < 0:
+            k_u_lo = 0
+        if k_u_hi > n_u - 1:
+            k_u_hi = n_u - 1
+        if k_u_hi < k_u_lo:
+            continue
+
+        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - 0.5))
+        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + 0.5))
+        if k_v_lo < 0:
+            k_v_lo = 0
+        if k_v_hi > n_v - 1:
+            k_v_hi = n_v - 1
+        if k_v_hi < k_v_lo:
+            continue
+
+        for ku in range(k_u_lo, k_u_hi + 1):
+            u_k = (ku - u_half) * du_v + det_offset_u
+            u_L = u_k - 0.5 * du_v
+            u_R = u_k + 0.5 * du_v
+
+            aLu = u_L if u_L > u_min else u_min
+            aRu = u_R if u_R < u_max else u_max
+            if aLu >= aRu:
+                continue
+
+            raw_u = 0.0
+            if rise_u > _EPSILON:
+                r_lo_ = aLu if aLu > u_min else u_min
+                r_hi_ = aRu if aRu < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                    (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_u
+            if plateau_u > _EPSILON:
+                p_lo_ = aLu if aLu > u_lo else u_lo
+                p_hi_ = aRu if aRu < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw_u += p_hi_ - p_lo_
+            if fall_u > _EPSILON:
+                f_lo_ = aLu if aLu > u_hi else u_hi
+                f_hi_ = aRu if aRu < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                    (u_max - f_hi_) * (u_max - f_hi_)) / fall_u
+            if raw_u <= 0.0:
+                continue
+
+            for kv in range(k_v_lo, k_v_hi + 1):
+                v_k = (kv - v_half) * dv_v + det_offset_v
+                v_L = v_k - 0.5 * dv_v
+                v_R = v_k + 0.5 * dv_v
+
+                aLv = v_L if v_L > v_min else v_min
+                aRv = v_R if v_R < v_max else v_max
+                if aLv >= aRv:
+                    continue
+
+                raw_v = 0.0
+                if rise_v > _EPSILON:
+                    r_lo_v = aLv if aLv > v_min else v_min
+                    r_hi_v = aRv if aRv < v_lo else v_lo
+                    if r_hi_v > r_lo_v:
+                        raw_v += 0.5 * ((r_hi_v - v_min) * (r_hi_v - v_min) -
+                                        (r_lo_v - v_min) * (r_lo_v - v_min)) / rise_v
+                if plateau_v > _EPSILON:
+                    p_lo_v = aLv if aLv > v_lo else v_lo
+                    p_hi_v = aRv if aRv < v_hi else v_hi
+                    if p_hi_v > p_lo_v:
+                        raw_v += p_hi_v - p_lo_v
+                if fall_v > _EPSILON:
+                    f_lo_v = aLv if aLv > v_hi else v_hi
+                    f_hi_v = aRv if aRv < v_max else v_max
+                    if f_hi_v > f_lo_v:
+                        raw_v += 0.5 * ((v_max - f_lo_v) * (v_max - f_lo_v) -
+                                        (v_max - f_hi_v) * (v_max - f_hi_v)) / fall_v
+                if raw_v <= 0.0:
+                    continue
+
+                cuda.atomic.add(d_sino, (iview, ku, kv), weight * raw_u * raw_v)
+
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_sf_tt_backward_kernel(
+    d_grad_sino, n_views, n_u, n_v,
+    d_grad_vol, Nx, Ny, Nz,
+    du, dv, d_cos, d_sin,
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z
+):
+    """Pure adjoint (transpose) of _cone_3d_sf_tt_forward_kernel.
+
+    Voxel-driven gather mirror of the SF-TT scatter. Same separable
+    trapezoid-trapezoid coefficients, no atomics.
+    """
+    iz, iy, ix = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+    u_half = 0.5 * (n_u - 1)
+    v_half = 0.5 * (n_v - 1)
+
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    z_c = (iz - cz) - center_offset_z
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+    z_m = z_c - 0.5
+    z_p = z_c + 0.5
+
+    grad_val = 0.0
+
+    for iview in range(n_views):
+        cos_a = d_cos[iview]
+        sin_a = d_sin[iview]
+
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+        if (u_max - u_min) < _EPSILON:
+            continue
+
+        U_near = d1
+        if d2 < U_near:
+            U_near = d2
+        if d3 < U_near:
+            U_near = d3
+        if d4 < U_near:
+            U_near = d4
+        U_far = d1
+        if d2 > U_far:
+            U_far = d2
+        if d3 > U_far:
+            U_far = d3
+        if d4 > U_far:
+            U_far = d4
+        mag_near = sdd_v / U_near
+        mag_far = sdd_v / U_far
+
+        v_bot_near = z_m * mag_near
+        v_bot_far = z_m * mag_far
+        v_top_near = z_p * mag_near
+        v_top_far = z_p * mag_far
+
+        av = v_bot_near
+        bv = v_bot_far
+        cv = v_top_near
+        dv_ = v_top_far
+        if av > bv:
+            av, bv = bv, av
+        if cv > dv_:
+            cv, dv_ = dv_, cv
+        if av > cv:
+            av, cv = cv, av
+        if bv > dv_:
+            bv, dv_ = dv_, bv
+        if bv > cv:
+            bv, cv = cv, bv
+        v_min = av
+        v_lo = bv
+        v_hi = cv
+        v_max = dv_
+        if (v_max - v_min) < _EPSILON:
+            continue
+
+        rx = x_c - (-sid_v * sin_a)
+        ry = y_c - (sid_v * cos_a)
+        rz = z_c
+        r_len = math.sqrt(rx * rx + ry * ry + rz * rz)
+        if r_len < _EPSILON:
+            continue
+        rx /= r_len
+        ry /= r_len
+        rz /= r_len
+        m = abs(rx)
+        ar = abs(ry)
+        if ar > m:
+            m = ar
+        az = abs(rz)
+        if az > m:
+            m = az
+        if m < _EPSILON:
+            continue
+        chord = 1.0 / m
+
+        plateau_u = u_hi - u_lo
+        rise_u = u_lo - u_min
+        fall_u = u_max - u_hi
+        plateau_v = v_hi - v_lo
+        rise_v = v_lo - v_min
+        fall_v = v_max - v_hi
+        weight = chord / (du_v * dv_v)
+
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        if k_u_lo < 0:
+            k_u_lo = 0
+        if k_u_hi > n_u - 1:
+            k_u_hi = n_u - 1
+        if k_u_hi < k_u_lo:
+            continue
+
+        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - 0.5))
+        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + 0.5))
+        if k_v_lo < 0:
+            k_v_lo = 0
+        if k_v_hi > n_v - 1:
+            k_v_hi = n_v - 1
+        if k_v_hi < k_v_lo:
+            continue
+
+        for ku in range(k_u_lo, k_u_hi + 1):
+            u_k = (ku - u_half) * du_v + det_offset_u
+            u_L = u_k - 0.5 * du_v
+            u_R = u_k + 0.5 * du_v
+
+            aLu = u_L if u_L > u_min else u_min
+            aRu = u_R if u_R < u_max else u_max
+            if aLu >= aRu:
+                continue
+
+            raw_u = 0.0
+            if rise_u > _EPSILON:
+                r_lo_ = aLu if aLu > u_min else u_min
+                r_hi_ = aRu if aRu < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                    (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_u
+            if plateau_u > _EPSILON:
+                p_lo_ = aLu if aLu > u_lo else u_lo
+                p_hi_ = aRu if aRu < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw_u += p_hi_ - p_lo_
+            if fall_u > _EPSILON:
+                f_lo_ = aLu if aLu > u_hi else u_hi
+                f_hi_ = aRu if aRu < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                    (u_max - f_hi_) * (u_max - f_hi_)) / fall_u
+            if raw_u <= 0.0:
+                continue
+
+            for kv in range(k_v_lo, k_v_hi + 1):
+                v_k = (kv - v_half) * dv_v + det_offset_v
+                v_L = v_k - 0.5 * dv_v
+                v_R = v_k + 0.5 * dv_v
+
+                aLv = v_L if v_L > v_min else v_min
+                aRv = v_R if v_R < v_max else v_max
+                if aLv >= aRv:
+                    continue
+
+                raw_v = 0.0
+                if rise_v > _EPSILON:
+                    r_lo_v = aLv if aLv > v_min else v_min
+                    r_hi_v = aRv if aRv < v_lo else v_lo
+                    if r_hi_v > r_lo_v:
+                        raw_v += 0.5 * ((r_hi_v - v_min) * (r_hi_v - v_min) -
+                                        (r_lo_v - v_min) * (r_lo_v - v_min)) / rise_v
+                if plateau_v > _EPSILON:
+                    p_lo_v = aLv if aLv > v_lo else v_lo
+                    p_hi_v = aRv if aRv < v_hi else v_hi
+                    if p_hi_v > p_lo_v:
+                        raw_v += p_hi_v - p_lo_v
+                if fall_v > _EPSILON:
+                    f_lo_v = aLv if aLv > v_hi else v_hi
+                    f_hi_v = aRv if aRv < v_max else v_max
+                    if f_hi_v > f_lo_v:
+                        raw_v += 0.5 * ((v_max - f_lo_v) * (v_max - f_lo_v) -
+                                        (v_max - f_hi_v) * (v_max - f_hi_v)) / fall_v
+                if raw_v <= 0.0:
+                    continue
+
+                grad_val += weight * raw_u * raw_v * d_grad_sino[iview, ku, kv]
+
+    d_grad_vol[ix, iy, iz] = grad_val
 
 
 # ------------------------------------------------------------------
@@ -2262,9 +3421,22 @@ class FanProjectorFunction(torch.autograd.Function):
         detector_offset=0.0,
         center_offset_x=0.0,
         center_offset_y=0.0,
+        backend="siddon",
     ):
         """Compute the 2D fan beam forward projection of an image using CUDA
         acceleration.
+
+        Parameters
+        ----------
+        backend : str, optional
+            Forward projector backend. ``"siddon"`` (default) is the existing
+            ray-driven Siddon kernel with bilinear interpolation at segment
+            midpoints. ``"sf"`` is a prototype separable-footprint (SF-TR)
+            voxel-driven projector that projects each voxel's footprint as a
+            trapezoid on the detector and integrates it closed-form over each
+            detector cell; it is mass-conserving and closer to the physical
+            finite-width-cell integral, at the cost of being forward-only
+            (no autograd backward yet).
 
         Parameters
         ----------
@@ -2323,7 +3495,6 @@ class FanProjectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_2d(n_ang, num_detectors)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -2332,12 +3503,27 @@ class FanProjectorFunction(torch.autograd.Function):
         center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
 
-        _fan_2d_forward_kernel[grid, tpb, numba_stream](
-            d_image, Nx, Ny, d_sino, n_ang, num_detectors,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
-            det_offset_v, center_offset_x_v, center_offset_y_v
-        )
+        if backend == "siddon":
+            grid, tpb = _grid_2d(n_ang, num_detectors)
+            _fan_2d_forward_kernel[grid, tpb, numba_stream](
+                d_image, Nx, Ny, d_sino, n_ang, num_detectors,
+                _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v
+            )
+        elif backend == "sf":
+            grid, tpb = _grid_3d(n_ang, Ny, Nx)
+            _fan_2d_sf_forward_kernel[grid, tpb, numba_stream](
+                d_image, Nx, Ny, d_sino, n_ang, num_detectors,
+                _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v
+            )
+        else:
+            raise ValueError(
+                f"FanProjectorFunction: unknown backend {backend!r}; "
+                "expected 'siddon' or 'sf'."
+            )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (
@@ -2351,6 +3537,7 @@ class FanProjectorFunction(torch.autograd.Function):
             detector_offset,
             center_offset_x,
             center_offset_y,
+            backend,
         )
         return sinogram
 
@@ -2368,6 +3555,7 @@ class FanProjectorFunction(torch.autograd.Function):
             detector_offset,
             center_offset_x,
             center_offset_y,
+            backend,
         ) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
@@ -2385,7 +3573,6 @@ class FanProjectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -2394,16 +3581,33 @@ class FanProjectorFunction(torch.autograd.Function):
         center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
 
-        # Pure adjoint P^T of the Siddon forward projector. FBP distance
-        # weighting lives in fan_weighted_backproject, not the gradient path.
-        _fan_2d_backward_kernel[grid, tpb, numba_stream](
-            d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
-            _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
-            det_offset_v, center_offset_x_v, center_offset_y_v,
-        )
+        if backend == "siddon":
+            # Pure adjoint P^T of the Siddon forward projector. FBP distance
+            # weighting lives in fan_weighted_backproject, not the gradient path.
+            grid, tpb = _grid_2d(n_ang, n_det)
+            _fan_2d_backward_kernel[grid, tpb, numba_stream](
+                d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
+                _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v,
+            )
+        elif backend == "sf":
+            # Pure adjoint of the SF-TR forward: voxel-driven gather that
+            # rebuilds the same trapezoidal coefficients and accumulates
+            # weight * raw * grad_sino into each image pixel.
+            grid, tpb = _grid_2d(Ny, Nx)
+            _fan_2d_sf_backward_kernel[grid, tpb, numba_stream](
+                d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
+                _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v,
+            )
+        else:
+            raise ValueError(
+                f"FanProjectorFunction.backward: unknown backend {backend!r}"
+            )
 
-        return grad_img, None, None, None, None, None, None, None, None, None
+        return grad_img, None, None, None, None, None, None, None, None, None, None
 
 
 class FanBackprojectorFunction(torch.autograd.Function):
@@ -2449,9 +3653,17 @@ class FanBackprojectorFunction(torch.autograd.Function):
         detector_offset=0.0,
         center_offset_x=0.0,
         center_offset_y=0.0,
+        backend="siddon",
     ):
         """Compute the 2D fan beam backprojection of a sinogram using CUDA
         acceleration.
+
+        Parameters
+        ----------
+        backend : str, optional
+            Adjoint backend, matches ``FanProjectorFunction``. ``"siddon"``
+            (default) uses the ray-driven Siddon scatter kernel, ``"sf"`` uses
+            the voxel-driven gather adjoint of the SF-TR projector.
 
         Parameters
         ----------
@@ -2512,7 +3724,6 @@ class FanBackprojectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -2521,14 +3732,29 @@ class FanBackprojectorFunction(torch.autograd.Function):
         center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
 
-        # Pure adjoint. See the class docstring - this Function is
-        # deliberately *not* the weighted FBP path.
-        _fan_2d_backward_kernel[grid, tpb, numba_stream](
-            d_sino, n_ang, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
-            det_offset_v, center_offset_x_v, center_offset_y_v,
-        )
+        if backend == "siddon":
+            # Pure adjoint. See the class docstring - this Function is
+            # deliberately *not* the weighted FBP path.
+            grid, tpb = _grid_2d(n_ang, n_det)
+            _fan_2d_backward_kernel[grid, tpb, numba_stream](
+                d_sino, n_ang, n_det, d_reco, Nx, Ny,
+                _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v,
+            )
+        elif backend == "sf":
+            grid, tpb = _grid_2d(Ny, Nx)
+            _fan_2d_sf_backward_kernel[grid, tpb, numba_stream](
+                d_sino, n_ang, n_det, d_reco, Nx, Ny,
+                _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v,
+            )
+        else:
+            raise ValueError(
+                f"FanBackprojectorFunction: unknown backend {backend!r}; "
+                "expected 'siddon' or 'sf'."
+            )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (
@@ -2543,6 +3769,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
             detector_offset,
             center_offset_x,
             center_offset_y,
+            backend,
         )
         return reco
 
@@ -2561,6 +3788,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
             detector_offset,
             center_offset_x,
             center_offset_y,
+            backend,
         ) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
@@ -2579,7 +3807,6 @@ class FanBackprojectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_2d(n_ang, n_det)
         cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -2588,14 +3815,28 @@ class FanBackprojectorFunction(torch.autograd.Function):
         center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
 
-        _fan_2d_forward_kernel[grid, tpb, numba_stream](
-            d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
-            _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
-            det_offset_v, center_offset_x_v, center_offset_y_v
-        )
+        if backend == "siddon":
+            grid, tpb = _grid_2d(n_ang, n_det)
+            _fan_2d_forward_kernel[grid, tpb, numba_stream](
+                d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
+                _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v
+            )
+        elif backend == "sf":
+            grid, tpb = _grid_3d(n_ang, Ny, Nx)
+            _fan_2d_sf_forward_kernel[grid, tpb, numba_stream](
+                d_grad_out, Nx, Ny, d_sino_grad, n_ang, n_det,
+                _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+                det_offset_v, center_offset_x_v, center_offset_y_v
+            )
+        else:
+            raise ValueError(
+                f"FanBackprojectorFunction.backward: unknown backend {backend!r}"
+            )
 
-        return grad_sino, None, None, None, None, None, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None, None, None, None, None
 
 
 class ConeProjectorFunction(torch.autograd.Function):
@@ -2646,9 +3887,24 @@ class ConeProjectorFunction(torch.autograd.Function):
         center_offset_x=0.0,
         center_offset_y=0.0,
         center_offset_z=0.0,
+        backend="siddon",
     ):
         """Compute the 3D cone beam forward projection of a volume using CUDA
         acceleration.
+
+        Parameters
+        ----------
+        backend : str, optional
+            Forward projector backend. ``"siddon"`` (default) is the existing
+            ray-driven trilinear Siddon kernel. ``"sf_tr"`` and ``"sf_tt"``
+            are separable-footprint voxel-driven projectors (Long et al.,
+            IEEE TMI 2010). SF-TR uses a trapezoidal transaxial footprint
+            and a rectangular axial footprint evaluated at voxel-centre
+            magnification; SF-TT uses trapezoids in BOTH directions, with
+            the axial trapezoid built from ``U_near`` and ``U_far`` across
+            the voxel to capture axial magnification variation at large
+            cone angles. Both SF backends have matched voxel-driven gather
+            adjoint kernels and support autograd.
 
         Parameters
         ----------
@@ -2715,7 +3971,6 @@ class ConeProjectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_3d(n_views, det_u, det_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -2726,14 +3981,41 @@ class ConeProjectorFunction(torch.autograd.Function):
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
-        _cone_3d_forward_kernel[grid, tpb, numba_stream](
-            d_vol, W, H, D, d_sino, n_views, det_u, det_v,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid),
-            cx, cy, cz, _DTYPE(voxel_spacing),
-            det_offset_u_v, det_offset_v_v,
-            center_offset_x_v, center_offset_y_v, center_offset_z_v
-        )
+        if backend == "siddon":
+            grid, tpb = _grid_3d(n_views, det_u, det_v)
+            _cone_3d_forward_kernel[grid, tpb, numba_stream](
+                d_vol, W, H, D, d_sino, n_views, det_u, det_v,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid),
+                cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v
+            )
+        elif backend == "sf_tr":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tr_forward_kernel[grid, tpb, numba_stream](
+                d_vol, W, H, D, d_sino, n_views, det_u, det_v,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid),
+                cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v
+            )
+        elif backend == "sf_tt":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tt_forward_kernel[grid, tpb, numba_stream](
+                d_vol, W, H, D, d_sino, n_views, det_u, det_v,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid),
+                cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v
+            )
+        else:
+            raise ValueError(
+                f"ConeProjectorFunction: unknown backend {backend!r}; "
+                "expected 'siddon', 'sf_tr', or 'sf_tt'."
+            )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (
@@ -2752,6 +4034,7 @@ class ConeProjectorFunction(torch.autograd.Function):
             center_offset_x,
             center_offset_y,
             center_offset_z,
+            backend,
         )
         return sino
 
@@ -2774,6 +4057,7 @@ class ConeProjectorFunction(torch.autograd.Function):
             center_offset_x,
             center_offset_y,
             center_offset_z,
+            backend,
         ) = ctx.intermediate
         device = DeviceManager.get_device(grad_sinogram)
         grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
@@ -2792,7 +4076,6 @@ class ConeProjectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_3d(n_views, det_u, det_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -2803,20 +4086,41 @@ class ConeProjectorFunction(torch.autograd.Function):
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
-        # Pure adjoint P^T of the Siddon forward projector, no
-        # (sdd/U)^2 weighting. This is the correct gradient of
-        # y = P(x) with respect to x. FDK distance weighting lives
-        # in cone_weighted_backproject, not in the gradient path.
-        _cone_3d_backward_kernel[grid, tpb, numba_stream](
-            d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
-            det_offset_u_v, det_offset_v_v,
-            center_offset_x_v, center_offset_y_v, center_offset_z_v,
-        )
+        if backend == "siddon":
+            # Pure adjoint P^T of the Siddon forward projector.
+            grid, tpb = _grid_3d(n_views, det_u, det_v)
+            _cone_3d_backward_kernel[grid, tpb, numba_stream](
+                d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            )
+        elif backend == "sf_tr":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tr_backward_kernel[grid, tpb, numba_stream](
+                d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            )
+        elif backend == "sf_tt":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tt_backward_kernel[grid, tpb, numba_stream](
+                d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            )
+        else:
+            raise ValueError(
+                f"ConeProjectorFunction.backward: unknown backend {backend!r}"
+            )
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
-        return grad_vol, None, None, None, None, None, None, None, None, None, None, None, None, None
+        return grad_vol, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 class ConeBackprojectorFunction(torch.autograd.Function):
@@ -2877,9 +4181,17 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         center_offset_x=0.0,
         center_offset_y=0.0,
         center_offset_z=0.0,
+        backend="siddon",
     ):
         """Compute the 3D cone beam backprojection of a projection sinogram
         using CUDA acceleration.
+
+        Parameters
+        ----------
+        backend : str, optional
+            Adjoint backend, matches ``ConeProjectorFunction``. ``"siddon"``
+            (default), ``"sf_tr"``, or ``"sf_tt"``. See
+            ``ConeProjectorFunction`` for details.
 
         Parameters
         ----------
@@ -2946,7 +4258,6 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_3d(n_views, n_u, n_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -2957,16 +4268,41 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
-        # Pure adjoint of the Siddon forward projector. See the class
-        # docstring for why this Function deliberately does *not*
-        # apply FDK distance weighting.
-        _cone_3d_backward_kernel[grid, tpb, numba_stream](
-            d_sino, n_views, n_u, n_v, d_reco, W, H, D,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
-            det_offset_u_v, det_offset_v_v,
-            center_offset_x_v, center_offset_y_v, center_offset_z_v,
-        )
+        if backend == "siddon":
+            # Pure adjoint of the Siddon forward projector. See the class
+            # docstring for why this Function deliberately does *not*
+            # apply FDK distance weighting.
+            grid, tpb = _grid_3d(n_views, n_u, n_v)
+            _cone_3d_backward_kernel[grid, tpb, numba_stream](
+                d_sino, n_views, n_u, n_v, d_reco, W, H, D,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            )
+        elif backend == "sf_tr":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tr_backward_kernel[grid, tpb, numba_stream](
+                d_sino, n_views, n_u, n_v, d_reco, W, H, D,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            )
+        elif backend == "sf_tt":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tt_backward_kernel[grid, tpb, numba_stream](
+                d_sino, n_views, n_u, n_v, d_reco, W, H, D,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v,
+            )
+        else:
+            raise ValueError(
+                f"ConeBackprojectorFunction: unknown backend {backend!r}; "
+                "expected 'siddon', 'sf_tr', or 'sf_tt'."
+            )
 
         ctx.save_for_backward(angles)
         ctx.intermediate = (
@@ -2985,6 +4321,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             center_offset_x,
             center_offset_y,
             center_offset_z,
+            backend,
         )
         vol = vol_perm.permute(2, 1, 0).contiguous()
         return vol
@@ -3008,6 +4345,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             center_offset_x,
             center_offset_y,
             center_offset_z,
+            backend,
         ) = ctx.intermediate
         device = DeviceManager.get_device(grad_output)
         grad_output = DeviceManager.ensure_device(grad_output, device)
@@ -3027,7 +4365,6 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
         d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-        grid, tpb = _grid_3d(n_views, n_u, n_v)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -3038,15 +4375,39 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
-        _cone_3d_forward_kernel[grid, tpb, numba_stream](
-            d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
-            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
-            det_offset_u_v, det_offset_v_v,
-            center_offset_x_v, center_offset_y_v, center_offset_z_v
-        )
+        if backend == "siddon":
+            grid, tpb = _grid_3d(n_views, n_u, n_v)
+            _cone_3d_forward_kernel[grid, tpb, numba_stream](
+                d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v
+            )
+        elif backend == "sf_tr":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tr_forward_kernel[grid, tpb, numba_stream](
+                d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v
+            )
+        elif backend == "sf_tt":
+            grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
+            _cone_3d_sf_tt_forward_kernel[grid, tpb, numba_stream](
+                d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
+                _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+                _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+                det_offset_u_v, det_offset_v_v,
+                center_offset_x_v, center_offset_y_v, center_offset_z_v
+            )
+        else:
+            raise ValueError(
+                f"ConeBackprojectorFunction.backward: unknown backend {backend!r}"
+            )
 
-        return grad_sino, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+        return grad_sino, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 def parallel_weighted_backproject(

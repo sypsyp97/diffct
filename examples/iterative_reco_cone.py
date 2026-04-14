@@ -60,7 +60,8 @@ def shepp_logan_3d(shape):
     return shepp_logan
 
 class IterativeRecoModel(nn.Module):
-    def __init__(self, volume_shape, angles, det_u, det_v, du, dv, sdd, sid, voxel_spacing):
+    def __init__(self, volume_shape, angles, det_u, det_v, du, dv, sdd, sid,
+                 voxel_spacing, backend="siddon"):
         super().__init__()
         self.reco = nn.Parameter(torch.zeros(volume_shape))
         self.angles = angles
@@ -72,27 +73,38 @@ class IterativeRecoModel(nn.Module):
         self.sid = sid
         self.relu = nn.ReLU() # non negative constraint
         self.voxel_spacing = voxel_spacing
+        self.backend = backend
 
     def forward(self, x):
         updated_reco = x + self.reco
-        current_sino = ConeProjectorFunction.apply(updated_reco, 
-                                                   self.angles, 
-                                                   self.det_u, self.det_v, 
-                                                   self.du, self.dv, 
-                                                   self.sdd, self.sid, self.voxel_spacing)
+        # ``backend`` is the last positional arg to
+        # ``ConeProjectorFunction.apply`` so we also pass the five default
+        # offsets (two detector offsets + three centre offsets) to line
+        # up with the signature.
+        current_sino = ConeProjectorFunction.apply(
+            updated_reco,
+            self.angles,
+            self.det_u, self.det_v,
+            self.du, self.dv,
+            self.sdd, self.sid,
+            self.voxel_spacing,
+            0.0, 0.0,             # detector_offset_u, detector_offset_v
+            0.0, 0.0, 0.0,        # center_offset_x, y, z
+            self.backend,
+        )
         return current_sino, self.relu(updated_reco)
 
 class Pipeline:
-    def __init__(self, lr, volume_shape, angles, 
-                 det_u, det_v, du, dv, 
+    def __init__(self, lr, volume_shape, angles,
+                 det_u, det_v, du, dv,
                  sdd, sid, voxel_spacing,
-                 device, epoches=1000):
-        
+                 device, epoches=1000, backend="siddon"):
         self.epoches = epoches
         self.model = IterativeRecoModel(volume_shape, angles,
-                                        det_u, det_v, du, dv, 
-                                        sdd, sid, voxel_spacing).to(device)
-        
+                                        det_u, det_v, du, dv,
+                                        sdd, sid, voxel_spacing,
+                                        backend=backend).to(device)
+
         self.optimizer = optim.AdamW(list(self.model.parameters()), lr=lr)
         self.loss = nn.MSELoss()
 
@@ -124,23 +136,56 @@ def main():
     sdd = 600.0
     sid = 400.0
 
+    # Forward projector backend used for BOTH the ground-truth sinogram
+    # and the inner iterative loop. Using the same backend on both sides
+    # guarantees the loop is solving its own consistent inverse problem
+    # and that the adjoint returned by autograd matches the forward
+    # byte-for-byte (matched scatter/gather kernel pair, verified by
+    # tests/test_adjoint_inner_product.py). Options:
+    #
+    #   "siddon"           - 3D ray-driven Siddon with trilinear
+    #                        interpolation. Fastest per-iteration step.
+    #                        Good default when iteration count is the
+    #                        bottleneck.
+    #   "sf_tr"            - 3D SF with trapezoidal transaxial and
+    #                        rectangular axial footprint. Mass-
+    #                        conserving per voxel, closed-form cell
+    #                        integral. ~2x slower forward than siddon.
+    #   "sf_tt"            - 3D SF with trapezoidal footprint in BOTH
+    #                        directions; the axial trapezoid captures
+    #                        the variation of axial magnification across
+    #                        the voxel by using ``U_near`` and ``U_far``
+    #                        corner projections. Strictly more expressive
+    #                        than SF-TR at ~1.4x the SF-TR cost. Useful
+    #                        for large cone angles and for research into
+    #                        the full Long et al. separable-footprint
+    #                        model.
+    projector_backend = "siddon"
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32).contiguous()
 
-    # Generate the "real" sinogram
+    # Generate the "real" sinogram with the same backend as the inner
+    # loop, so reconstruction targets what the loop can actually produce.
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
-    real_sinogram = ConeProjectorFunction.apply(phantom_torch, angles_torch,
-                                               det_u, det_v, du, dv,
-                                               sdd, sid, voxel_spacing)
+    real_sinogram = ConeProjectorFunction.apply(
+        phantom_torch, angles_torch,
+        det_u, det_v, du, dv,
+        sdd, sid, voxel_spacing,
+        0.0, 0.0,                      # detector_offset_u, detector_offset_v
+        0.0, 0.0, 0.0,                 # center_offset_x, y, z
+        projector_backend,
+    )
 
-    pipeline_instance = Pipeline(lr=1e-1, 
+    pipeline_instance = Pipeline(lr=1e-1,
                                  volume_shape=(Nz,Ny,Nx),
                                  angles=angles_torch,
                                  det_u=det_u, det_v=det_v,
                                  du=du, dv=dv, voxel_spacing=voxel_spacing,
                                  sdd=sdd,
                                  sid=sid,
-                                 device=device, epoches=1000)
+                                 device=device, epoches=1000,
+                                 backend=projector_backend)
     
     ini_guess = torch.zeros_like(phantom_torch)
     

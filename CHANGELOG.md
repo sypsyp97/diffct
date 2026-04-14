@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-14
+
+### Added
+- **Separable-footprint (SF) projector backends** for 2D fan and 3D cone
+  beam geometries, following Long-Fessler-Balter (IEEE TMI 2010).
+  `FanProjectorFunction` / `FanBackprojectorFunction` now accept
+  `backend="siddon"` (default, unchanged) or `backend="sf"`.
+  `ConeProjectorFunction` / `ConeBackprojectorFunction` accept
+  `backend="siddon"` (default), `"sf_tr"` (trapezoid in transaxial,
+  rectangle in axial) or `"sf_tt"` (trapezoid in both directions with
+  axial rise/fall from `U_near`/`U_far` across the voxel). Each SF
+  backend is implemented as a matched scatter/gather pair of CUDA
+  kernels so both forward and adjoint are available — autograd works
+  end-to-end for every backend, and the standalone Backprojector
+  Function can also be driven in SF mode for iterative reconstruction.
+- **Adjoint inner-product tests** for every new SF backend in
+  `tests/test_adjoint_inner_product.py`, plus `torch.autograd.gradcheck`
+  coverage in `tests/test_gradcheck.py`. Test count grew from 57 to 66.
+
+### Changed
+- **Internal grid-point convention** is now uniformly `x_v = ix - cx`
+  (matching `_cone_3d_fdk_backproject_kernel`). The SF kernels use the
+  same convention so voxel centers align with where the Siddon/FDK
+  paths interpret `d_vol[ix, iy, iz]`.
+- **`_TPB_SF_3D = (4, 4, 4)`** introduced for the 3D SF kernels. SF-TT
+  in particular exceeds the 128-register-per-thread budget allowed by
+  the default `(8, 8, 8)` launch; the smaller block gives each thread
+  ~1024 registers and avoids `CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES`.
+
+### Notes
+- **Raw forward accuracy vs analytical Radon**: on both 2D fan
+  (512² Shepp-Logan) and 3D cone (96³ and 128³ 3D Shepp-Logan) phantoms,
+  measured against the analytical ellipse / ellipsoid Radon transform,
+  the existing Siddon projector with bilinear / trilinear interpolation
+  is slightly more accurate (~3% better RMSE, ~15% better max error)
+  than SF-TR / SF-TT at the thin-ray sampling level. The classic SF
+  advantage reported in Long et al. is over the piecewise-constant DD
+  projector; diffct's Siddon uses smooth interpolation, which covers
+  most of the gap SF was designed to close.
+- **Full analytical reconstruction (forward + FBP/FDK)**: despite the
+  raw-forward result above, in a complete analytical pipeline
+  (`FanProjectorFunction` / `ConeProjectorFunction` -> `ramp_filter_1d`
+  -> `fan_weighted_backproject` / `cone_weighted_backproject`) SF
+  **measurably improves reconstruction quality**. On the 256²
+  Shepp-Logan `fbp_fan.py` example the raw MSE drops from
+  `0.00216` (Siddon) to `0.00178` (SF-TR), a ~17% improvement.
+  On the 128³ `fdk_cone.py` example it drops from `0.00325` (Siddon)
+  to `0.00271` (SF-TR), again ~17%. The mechanism is that SF's
+  mass-conserving cell-integrated forward pairs more naturally with
+  the voxel-driven FBP/FDK gather backprojector than Siddon's
+  thin-ray sampling, which feeds extra high-frequency ringing into
+  the ramp filter.
+- **Performance**: SF-TR is ~2× and SF-TT ~2.5–4× slower than Siddon for
+  cone beam, and ~3× slower than Siddon for fan beam. The extra cost
+  comes from voxel-driven scatter with atomic adds (forward) versus
+  ray-driven parallelism in Siddon.
+- **Recommendation**: `backend="siddon"` remains the default for
+  backward compatibility and raw speed. For **analytical FBP/FDK
+  reconstruction** where reconstruction MSE matters more than forward
+  runtime, `"sf"` / `"sf_tr"` is a quantifiably better choice — at
+  2–3× forward cost you get ~17% lower reconstruction MSE on standard
+  phantoms. For **iterative reconstruction with autograd**, either
+  backend is valid; SF has the theoretical advantage of exact voxel-
+  scale mass conservation on both forward and adjoint, but in practice
+  Siddon's smoothing usually helps optimizer convergence. SF-TT's
+  axial-trapezoid refinement over SF-TR improves RMSE only by ~0.001
+  and is not worth the extra cost for typical cone angles; use SF-TR
+  by default and reserve SF-TT for extreme cone-angle research.
+
 ## [1.2.11] - 2026-04-14
 
 ### Added
@@ -217,7 +286,8 @@ Releases 1.2.0 through 1.2.6 and the 1.1.x / 1.0.x lines are tracked on
 was introduced in 1.2.10 and does not back-fill detailed notes for earlier
 versions beyond pointers to the GitHub release pages.
 
-[Unreleased]: https://github.com/sypsyp97/diffct/compare/v1.2.11...HEAD
+[Unreleased]: https://github.com/sypsyp97/diffct/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/sypsyp97/diffct/releases/tag/v1.3.0
 [1.2.11]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.11
 [1.2.10]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.10
 [1.2.9]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.9

@@ -93,6 +93,69 @@ def test_fan_adjoint_inner_product():
 
 
 @pytest.mark.cuda
+def test_fan_sf_adjoint_inner_product():
+    """SF-TR backend: voxel-driven trapezoidal forward paired with its
+    voxel-driven gather adjoint. Protects the SF forward/backward pair
+    and the ``backend='sf'`` dispatch in both Function classes."""
+    _skip_if_no_cuda()
+    device = torch.device("cuda")
+    torch.manual_seed(11)
+
+    H, W = 32, 32
+    num_angles, num_det = 45, 48
+    sdd, sid = 900.0, 600.0
+    x = torch.randn(H, W, device=device, dtype=torch.float32).contiguous()
+    y = torch.randn(num_angles, num_det, device=device, dtype=torch.float32).contiguous()
+    angles = torch.linspace(0.0, 2.0 * math.pi, num_angles, device=device, dtype=torch.float32)
+
+    Ax = FanProjectorFunction.apply(
+        x, angles, num_det, 1.0, sdd, sid, 1.0, 0.0, 0.0, 0.0, "sf"
+    )
+    Aty = FanBackprojectorFunction.apply(
+        y, angles, 1.0, H, W, sdd, sid, 1.0, 0.0, 0.0, 0.0, "sf"
+    )
+
+    lhs = torch.sum(Ax * y).item()
+    rhs = torch.sum(x * Aty).item()
+    _assert_adjoint(lhs, rhs, rtol=5e-3)
+
+
+@pytest.mark.cuda
+def test_fan_sf_autograd_backward_matches_backprojector_forward():
+    """SF autograd backward must match the standalone SF backprojector
+    Function on the same input. Both should compute the exact same
+    ``A_sf^T y`` through the same kernel."""
+    _skip_if_no_cuda()
+    device = torch.device("cuda")
+    torch.manual_seed(12)
+
+    H, W = 32, 32
+    num_angles, num_det = 45, 48
+    sdd, sid = 900.0, 600.0
+
+    x_zero = torch.zeros(H, W, device=device, dtype=torch.float32, requires_grad=True)
+    angles = torch.linspace(0.0, 2.0 * math.pi, num_angles, device=device, dtype=torch.float32)
+    y = torch.randn(num_angles, num_det, device=device, dtype=torch.float32).contiguous()
+
+    Ax = FanProjectorFunction.apply(
+        x_zero, angles, num_det, 1.0, sdd, sid, 1.0, 0.0, 0.0, 0.0, "sf"
+    )
+    torch.sum(Ax * y).backward()
+    via_autograd = x_zero.grad.detach().clone()
+
+    via_backprojector = FanBackprojectorFunction.apply(
+        y, angles, 1.0, H, W, sdd, sid, 1.0, 0.0, 0.0, 0.0, "sf"
+    ).detach()
+
+    diff = (via_autograd - via_backprojector).abs().max().item()
+    scale = via_backprojector.abs().max().item() + 1e-6
+    assert diff / scale < 1e-3, (
+        f"SF autograd backward and backprojector forward differ: "
+        f"max abs diff={diff:.4e}, scale={scale:.4e}"
+    )
+
+
+@pytest.mark.cuda
 def test_cone_adjoint_inner_product():
     """Cone: same adjoint identity for the 3D Siddon projector/backprojector."""
     _skip_if_no_cuda()
@@ -112,6 +175,74 @@ def test_cone_adjoint_inner_product():
     lhs = torch.sum(Ax * y).item()
     rhs = torch.sum(x * Aty).item()
     _assert_adjoint(lhs, rhs, rtol=5e-3)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("backend", ["sf_tr", "sf_tt"])
+def test_cone_sf_adjoint_inner_product(backend):
+    """3D SF backends: voxel-driven scatter forward paired with voxel-driven
+    gather adjoint. Both SF-TR (rectangle axial) and SF-TT (trapezoid axial)
+    must be byte-accurate adjoints of themselves."""
+    _skip_if_no_cuda()
+    device = torch.device("cuda")
+    torch.manual_seed(30 + hash(backend) % 100)
+
+    D, H, W = 16, 16, 16
+    num_views, det_u, det_v = 24, 20, 20
+    sdd, sid = 900.0, 600.0
+    x = torch.randn(D, H, W, device=device, dtype=torch.float32).contiguous()
+    y = torch.randn(num_views, det_u, det_v, device=device, dtype=torch.float32).contiguous()
+    angles = torch.linspace(0.0, 2.0 * math.pi, num_views, device=device, dtype=torch.float32)
+
+    Ax = ConeProjectorFunction.apply(
+        x, angles, det_u, det_v, 1.0, 1.0, sdd, sid,
+        1.0, 0.0, 0.0, 0.0, 0.0, 0.0, backend,
+    )
+    Aty = ConeBackprojectorFunction.apply(
+        y, angles, D, H, W, 1.0, 1.0, sdd, sid,
+        1.0, 0.0, 0.0, 0.0, 0.0, 0.0, backend,
+    )
+
+    lhs = torch.sum(Ax * y).item()
+    rhs = torch.sum(x * Aty).item()
+    _assert_adjoint(lhs, rhs, rtol=5e-3)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("backend", ["sf_tr", "sf_tt"])
+def test_cone_sf_autograd_backward_matches_backprojector_forward(backend):
+    """SF cone autograd backward must match the standalone SF backprojector
+    Function on the same input."""
+    _skip_if_no_cuda()
+    device = torch.device("cuda")
+    torch.manual_seed(40 + hash(backend) % 100)
+
+    D, H, W = 16, 16, 16
+    num_views, det_u, det_v = 24, 20, 20
+    sdd, sid = 900.0, 600.0
+
+    x_zero = torch.zeros(D, H, W, device=device, dtype=torch.float32, requires_grad=True)
+    angles = torch.linspace(0.0, 2.0 * math.pi, num_views, device=device, dtype=torch.float32)
+    y = torch.randn(num_views, det_u, det_v, device=device, dtype=torch.float32).contiguous()
+
+    Ax = ConeProjectorFunction.apply(
+        x_zero, angles, det_u, det_v, 1.0, 1.0, sdd, sid,
+        1.0, 0.0, 0.0, 0.0, 0.0, 0.0, backend,
+    )
+    torch.sum(Ax * y).backward()
+    via_autograd = x_zero.grad.detach().clone()
+
+    via_backprojector = ConeBackprojectorFunction.apply(
+        y, angles, D, H, W, 1.0, 1.0, sdd, sid,
+        1.0, 0.0, 0.0, 0.0, 0.0, 0.0, backend,
+    ).detach()
+
+    diff = (via_autograd - via_backprojector).abs().max().item()
+    scale = via_backprojector.abs().max().item() + 1e-6
+    assert diff / scale < 1e-3, (
+        f"SF cone ({backend}) autograd backward and backprojector forward "
+        f"differ: max abs diff={diff:.4e}, scale={scale:.4e}"
+    )
 
 
 @pytest.mark.cuda
