@@ -77,14 +77,9 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#cone-beam-operators">Cone Beam Operators</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction.backward()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction.forward()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction.backward()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction.forward()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#projector-backends">Projector backends</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#diffct.differentiable.ConeBackprojectorFunction"><code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code></a></li>
 </ul>
 </li>
 </ul>
@@ -403,12 +398,20 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanProjectorFunction.forward">
-<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction.forward" title="Link to this definition"></a></dt>
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">backend</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'siddon'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 2D fan beam forward projection of an image using CUDA
 acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
+<li><p><strong>backend</strong> (<em>str</em><em>, </em><em>optional</em>) – Forward projector backend. <code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> (default) is the existing
+ray-driven Siddon kernel with bilinear interpolation at segment
+midpoints. <code class="docutils literal notranslate"><span class="pre">&quot;sf&quot;</span></code> is a prototype separable-footprint (SF-TR)
+voxel-driven projector that projects each voxel’s footprint as a
+trapezoid on the detector and integrates it closed-form over each
+detector cell; it is mass-conserving and closer to the physical
+finite-width-cell integral, at the cost of being forward-only
+(no autograd backward yet).</p></li>
 <li><p><strong>image</strong> (<em>torch.Tensor</em>) – 2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</p></li>
 <li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>image</cite>.</p></li>
 <li><p><strong>num_detectors</strong> (<em>int</em>) – Number of detector elements in the sinogram (columns).</p></li>
@@ -498,12 +501,15 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.FanBackprojectorFunction.forward">
-<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="Link to this definition"></a></dt>
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">backend</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'siddon'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanBackprojectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 2D fan beam backprojection of a sinogram using CUDA
 acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
+<li><p><strong>backend</strong> (<em>str</em><em>, </em><em>optional</em>) – Adjoint backend, matches <code class="docutils literal notranslate"><span class="pre">FanProjectorFunction</span></code>. <code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code>
+(default) uses the ray-driven Siddon scatter kernel, <code class="docutils literal notranslate"><span class="pre">&quot;sf&quot;</span></code> uses
+the voxel-driven gather adjoint of the SF-TR projector.</p></li>
 <li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 2D input fan beam sinogram tensor of shape (num_angles, num_detectors), must be on a CUDA device and of type float32.</p></li>
 <li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>sinogram</cite>.</p></li>
 <li><p><strong>detector_spacing</strong> (<em>float</em>) – Physical spacing between detector elements.</p></li>
@@ -553,12 +559,76 @@ traversal with trilinear interpolation) and drive the iterative cone
 example. For analytical FDK, use <code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code> — it
 dispatches to a dedicated voxel-driven gather kernel with the classical
 <code class="docutils literal notranslate"><span class="pre">(sid/U)^2</span></code> distance weighting.</p>
+<section id="projector-backends">
+<h3>Projector backends<a class="headerlink" href="#projector-backends" title="Link to this heading"></a></h3>
+<p>Both the fan and cone Projector / Backprojector Function pairs accept a
+<code class="docutils literal notranslate"><span class="pre">backend</span></code> keyword that selects the underlying CUDA kernel family:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> (default)</dt><dd><p>Ray-driven Siddon traversal with bilinear (2D) / trilinear (3D)
+interpolation. Fastest, byte-for-byte unchanged from 1.2.11 and
+earlier, and is the right default for the overwhelming majority of
+use cases.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">&quot;sf&quot;</span></code> (fan only)</dt><dd><p>Voxel-driven separable-footprint projector (Long-Fessler-Balter,
+IEEE TMI 2010). Each voxel’s footprint is a trapezoid built from
+the four projected corners and is closed-form integrated over each
+detector cell. Matched forward/adjoint kernels so autograd and the
+standalone Backprojector both work; use for iterative reconstruction
+under a mass-conserving cell-integral forward model.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">&quot;sf_tr&quot;</span></code> (cone only)</dt><dd><p>3D voxel-driven SF with a trapezoidal transaxial footprint and a
+rectangular axial footprint evaluated at voxel-centre magnification.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">&quot;sf_tt&quot;</span></code> (cone only)</dt><dd><p>Same transaxial trapezoid as SF-TR but the axial footprint is also
+a trapezoid built from the four <code class="docutils literal notranslate"><span class="pre">(U_near,</span> <span class="pre">U_far)</span> <span class="pre">×</span> <span class="pre">(z_bot,</span> <span class="pre">z_top)</span></code>
+projections. Captures axial magnification variation inside a single
+voxel at large cone angles. Strictly more expressive than SF-TR but
+2–4× slower.</p>
+</dd>
+</dl>
+<p>All three SF backends go through matched scatter/gather kernel pairs
+with byte-accurate adjoints (verified by <code class="docutils literal notranslate"><span class="pre">test_adjoint_inner_product</span></code>
+and <code class="docutils literal notranslate"><span class="pre">test_gradcheck</span></code>).</p>
+<p><strong>Which backend to pick.</strong> At the thin-ray sampling level, measured
+against the analytical ellipse / ellipsoid Radon transform, Siddon is
+slightly more accurate than SF (~3 % better RMSE, ~15 % better max
+error) because diffct’s Siddon uses smooth interpolation rather than
+nearest-neighbour sampling. However, in a <strong>complete analytical
+reconstruction pipeline</strong> (forward projection -&gt; ramp filter -&gt;
+<cite>fan_weighted_backproject</cite> / <cite>cone_weighted_backproject</cite>) SF
+measurably improves the reconstruction MSE: on the standard 256²
+<code class="docutils literal notranslate"><span class="pre">examples/fbp_fan.py</span></code> phantom the raw MSE drops from <code class="docutils literal notranslate"><span class="pre">0.00216</span></code>
+(Siddon) to <code class="docutils literal notranslate"><span class="pre">0.00178</span></code> (SF), a ~17 % improvement; on the 128³
+<code class="docutils literal notranslate"><span class="pre">examples/fdk_cone.py</span></code> phantom it drops from <code class="docutils literal notranslate"><span class="pre">0.00325</span></code> (Siddon)
+to <code class="docutils literal notranslate"><span class="pre">0.00271</span></code> (SF-TR), again ~17 %. The mechanism is that SF’s
+mass-conserving cell-integrated sinogram pairs more naturally with
+the voxel-driven FBP / FDK gather backprojector than Siddon’s
+thin-ray sampling, which feeds extra high-frequency ringing into
+the ramp filter.</p>
+<p>So:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> — default for backward compatibility and raw forward
+speed. Best choice when you only need a forward projection and not
+a reconstruction.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;sf&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;sf_tr&quot;</span></code> — recommended for analytical FBP / FDK
+reconstruction when reconstruction quality matters more than
+forward-projection runtime. ~2–3× slower forward, ~17 % lower
+reconstruction MSE on standard CT phantoms.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;sf_tt&quot;</span></code> — strictly more expressive than SF-TR but its
+axial-trapezoid refinement improves RMSE by only ~0.001 at the cost
+of another ~40 % forward runtime; use for extreme cone angles or
+algorithm research only.</p></li>
+</ul>
+<p>For <strong>iterative reconstruction with autograd</strong>, any backend is valid;
+SF has the theoretical advantage of exact voxel-scale mass
+conservation on both forward and adjoint, but in practice Siddon’s
+smoothing helps optimizer convergence.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction">
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ConeProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction" title="Link to this definition"></a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Function</span></code></p>
 <section id="id4">
-<h3>Summary<a class="headerlink" href="#id4" title="Link to this heading"></a></h3>
+<h4>Summary<a class="headerlink" href="#id4" title="Link to this heading"></a></h4>
 <p>PyTorch autograd function for differentiable 3D cone beam forward projection.</p>
 <p class="rubric">Notes</p>
 <p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
@@ -606,12 +676,22 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction.forward">
-<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_u</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_v</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_z</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction.forward" title="Link to this definition"></a></dt>
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_u</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_v</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_z</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">backend</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'siddon'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 3D cone beam forward projection of a volume using CUDA
 acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
+<li><p><strong>backend</strong> (<em>str</em><em>, </em><em>optional</em>) – Forward projector backend. <code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> (default) is the existing
+ray-driven trilinear Siddon kernel. <code class="docutils literal notranslate"><span class="pre">&quot;sf_tr&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;sf_tt&quot;</span></code>
+are separable-footprint voxel-driven projectors (Long et al.,
+IEEE TMI 2010). SF-TR uses a trapezoidal transaxial footprint
+and a rectangular axial footprint evaluated at voxel-centre
+magnification; SF-TT uses trapezoids in BOTH directions, with
+the axial trapezoid built from <code class="docutils literal notranslate"><span class="pre">U_near</span></code> and <code class="docutils literal notranslate"><span class="pre">U_far</span></code> across
+the voxel to capture axial magnification variation at large
+cone angles. Both SF backends have matched voxel-driven gather
+adjoint kernels and support autograd.</p></li>
 <li><p><strong>volume</strong> (<em>torch.Tensor</em>) – 3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.</p></li>
 <li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as <cite>volume</cite>.</p></li>
 <li><p><strong>det_u</strong> (<em>int</em>) – Number of detector elements along the u-axis (width).</p></li>
@@ -657,7 +737,7 @@ source to the center of rotation (isocenter).</p></li>
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ConeBackprojectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction" title="Link to this definition"></a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Function</span></code></p>
 <section id="id5">
-<h3>Summary<a class="headerlink" href="#id5" title="Link to this heading"></a></h3>
+<h4>Summary<a class="headerlink" href="#id5" title="Link to this heading"></a></h4>
 <p>PyTorch autograd function for differentiable 3D cone beam backprojection.</p>
 <p class="rubric">Notes</p>
 <p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
@@ -713,12 +793,15 @@ output.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeBackprojectorFunction.forward">
-<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">D</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_u</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_v</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_z</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="Link to this definition"></a></dt>
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">forward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">D</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_u</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_v</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_z</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">backend</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'siddon'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeBackprojectorFunction.forward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeBackprojectorFunction.forward" title="Link to this definition"></a></dt>
 <dd><p>Compute the 3D cone beam backprojection of a projection sinogram
 using CUDA acceleration.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
+<li><p><strong>backend</strong> (<em>str</em><em>, </em><em>optional</em>) – Adjoint backend, matches <code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code>. <code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code>
+(default), <code class="docutils literal notranslate"><span class="pre">&quot;sf_tr&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&quot;sf_tt&quot;</span></code>. See
+<code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code> for details.</p></li>
 <li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 3D input cone beam projection tensor of shape (num_views, det_u, det_v), must be on a CUDA device and of type float32.</p></li>
 <li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_views,), must be on the same CUDA device as <cite>sinogram</cite>.</p></li>
 <li><p><strong>D</strong> (<em>int</em>) – Depth (z-dimension) of the output reconstruction volume.</p></li>
@@ -760,6 +843,7 @@ source to the center of rotation (isocenter).</p></li>
 </section>
 </dd></dl>
 
+</section>
 </section>
 <section id="analytical-reconstruction-helpers">
 <h2>Analytical Reconstruction Helpers<a class="headerlink" href="#analytical-reconstruction-helpers" title="Link to this heading"></a></h2>
