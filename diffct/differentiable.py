@@ -19,6 +19,11 @@ _TPB_3D             = (8,  8,  8)
 # Trades numerical precision for performance in ray-tracing calculations
 # Safe for CT reconstruction where slight precision loss is acceptable for speed gains
 _FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=True)
+# The analytical FDK gather kernel gets its own decorator with fastmath disabled.
+# FDK is a one-shot reconstruction so the few-percent speedup of fastmath is not
+# worth the loss of IEEE-correct rounding in the (sid/U)^2 distance weighting and
+# the bilinear detector interpolation near detector edges.
+_FDK_ACCURACY_DECORATOR = cuda.jit(cache=True, fastmath=False)
 
 _INF                = _DTYPE(np.inf)
 _EPSILON            = _DTYPE(1e-6)
@@ -452,16 +457,117 @@ def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset
     return wb.view(-1, 1).expand(-1, num_detectors)
 
 
-def ramp_filter_1d(sinogram_tensor, dim=-1):
-    """Apply a 1D ramp filter along ``dim`` using FFT."""
-    n = sinogram_tensor.shape[dim]
-    freqs = torch.fft.fftfreq(n, device=sinogram_tensor.device)
-    ramp = torch.abs(2.0 * torch.pi * freqs)
-    shape = [1] * sinogram_tensor.ndim
-    shape[dim] = n
-    ramp = ramp.reshape(shape)
-    sino_fft = torch.fft.fft(sinogram_tensor, dim=dim)
-    return torch.real(torch.fft.ifft(sino_fft * ramp, dim=dim))
+def _ramp_window(name, freqs):
+    """Build a frequency-domain apodization window for the ramp filter.
+
+    ``freqs`` are in cycles per sample (same convention as ``torch.fft.fftfreq``
+    and ``torch.fft.rfftfreq``). The normalized coordinate ``nf = 2 * |freqs|``
+    maps DC to 0 and the Nyquist bin to 1.
+    """
+    if name is None:
+        return torch.ones_like(freqs)
+    nf = torch.abs(freqs) * 2.0  # [0, 1] at Nyquist
+    nf = torch.clamp(nf, max=1.0)
+    key = name.lower().replace("_", "-")
+    if key in ("hann", "hanning"):
+        return 0.5 * (1.0 + torch.cos(torch.pi * nf))
+    if key in ("hamming",):
+        return 0.54 + 0.46 * torch.cos(torch.pi * nf)
+    if key in ("cosine",):
+        return torch.cos(torch.pi * nf * 0.5)
+    if key in ("shepp-logan",):
+        # sinc(nf/2); sinc(0)=1 by limit.
+        arg = torch.pi * nf * 0.5
+        return torch.where(
+            nf > 1e-8, torch.sin(arg) / torch.clamp(arg, min=1e-8), torch.ones_like(nf)
+        )
+    if key in ("ram-lak", "ramlak", "none"):
+        return torch.ones_like(freqs)
+    raise ValueError(f"Unknown ramp window '{name}'")
+
+
+def ramp_filter_1d(
+    sinogram_tensor,
+    dim=-1,
+    sample_spacing=1.0,
+    pad_factor=1,
+    window=None,
+    use_rfft=True,
+):
+    """Apply a 1D ramp filter along ``dim`` using FFT.
+
+    Parameters
+    ----------
+    sinogram_tensor : torch.Tensor
+        Real-valued sinogram tensor.
+    dim : int, optional
+        Axis along which to filter. Default ``-1``.
+    sample_spacing : float, optional
+        Physical spacing between detector samples along ``dim``. The continuous
+        ramp filter has units of ``1/length``, so the FFT output is rescaled by
+        ``1/sample_spacing`` to respect physical units. Default ``1.0`` (pure
+        sample-unit behavior, matching the historical call signature).
+    pad_factor : int, optional
+        Zero-pad the signal to ``pad_factor * N`` along ``dim`` before the FFT
+        to suppress circular-convolution wrap-around artifacts. Default ``1``
+        (no padding).
+    window : str or None, optional
+        Frequency-domain apodization: ``None``/``"ram-lak"`` (unwindowed),
+        ``"hann"``, ``"hamming"``, ``"cosine"``, or ``"shepp-logan"``.
+        Default ``None``.
+    use_rfft : bool, optional
+        Use the real-valued FFT path when ``True``. Default ``True``.
+
+    Notes
+    -----
+    Pre-existing callers that pass only ``(sinogram_tensor, dim)`` keep the same
+    filter shape because the defaults preserve the original behavior up to the
+    rfft path (which is numerically equivalent for real inputs) and the
+    ``1/sample_spacing`` scale (which is exactly 1 when ``sample_spacing=1.0``).
+    """
+    dim_pos = dim if dim >= 0 else sinogram_tensor.ndim + dim
+    n = sinogram_tensor.shape[dim_pos]
+
+    if pad_factor is None or pad_factor < 1:
+        pad_factor = 1
+    pad_factor = int(pad_factor)
+    n_pad = n * pad_factor
+    if n_pad > n:
+        pad_total = n_pad - n
+        pad_left = pad_total // 2
+        pad_right = pad_total - pad_left
+        pad_spec = [0, 0] * sinogram_tensor.ndim
+        rev_dim = sinogram_tensor.ndim - 1 - dim_pos
+        pad_spec[2 * rev_dim] = pad_left
+        pad_spec[2 * rev_dim + 1] = pad_right
+        x = torch.nn.functional.pad(sinogram_tensor, pad_spec, mode="constant", value=0.0)
+    else:
+        pad_left = 0
+        x = sinogram_tensor
+
+    scale = 1.0 / float(sample_spacing)
+
+    if use_rfft and torch.is_floating_point(x):
+        freqs = torch.fft.rfftfreq(n_pad, device=x.device, dtype=x.dtype)
+        ramp = torch.abs(2.0 * torch.pi * freqs) * _ramp_window(window, freqs) * scale
+        shape = [1] * x.ndim
+        shape[dim_pos] = ramp.shape[0]
+        ramp = ramp.reshape(shape)
+        x_fft = torch.fft.rfft(x, dim=dim_pos)
+        x_filtered = torch.fft.irfft(x_fft * ramp, n=n_pad, dim=dim_pos)
+    else:
+        freqs = torch.fft.fftfreq(n_pad, device=x.device, dtype=torch.float32)
+        freqs = freqs.to(dtype=x.real.dtype if x.is_complex() else x.dtype)
+        ramp = torch.abs(2.0 * torch.pi * freqs) * _ramp_window(window, freqs) * scale
+        shape = [1] * x.ndim
+        shape[dim_pos] = ramp.shape[0]
+        ramp = ramp.reshape(shape)
+        x_fft = torch.fft.fft(x, dim=dim_pos)
+        x_filtered = torch.real(torch.fft.ifft(x_fft * ramp, dim=dim_pos))
+
+    if n_pad > n:
+        x_filtered = x_filtered.narrow(dim_pos, pad_left, n).contiguous()
+    return x_filtered
 
 
 # ############################################################################
@@ -950,49 +1056,14 @@ def _fan_2d_backward_kernel(
     det_spacing, d_cos, d_sin,
     sdd, sid, cx, cy, voxel_spacing,
     det_offset, center_offset_x, center_offset_y,
-    distance_weight
 ):
-    """Compute the 2D fan beam backprojection.
+    """Pure adjoint ``P^T`` of the fan-beam forward projector.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    2D fan beam backprojection.
-
-    Parameters
-    ----------
-    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Input fan beam sinogram array on CUDA.
-    n_ang : int
-        Number of projection angles.
-    n_det : int
-        Number of detector elements.
-    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Output image gradient array on CUDA.
-    Nx : int
-        Number of voxels along the x-axis.
-    Ny : int
-        Number of voxels along the y-axis.
-    det_spacing : float
-        Physical spacing between detector elements.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
-    sdd : float
-        Source-to-Detector Distance (SDD), total distance from source to detector.
-    sid : float
-        Source-to-Isocenter Distance (SID), distance from source to isocenter.
-    cx : float
-        Half of image width in voxels.
-    cy : float
-        Half of image height in voxels.
-    voxel_spacing : float
-        Physical size of one voxel (in same units as det_spacing, sid, sdd).
-
-    Notes
-    -----
-    As the adjoint to the fan beam forward projection, this operation
-    distributes sinogram values back into the volume along divergent ray
-    paths using atomic operations for thread-safe accumulation.
+    Siddon ray-driven scatter with bilinear interpolation weights and no
+    distance weighting. Used by ``FanProjectorFunction.backward`` and
+    ``FanBackprojectorFunction.forward``. The analytical FBP path lives
+    in ``_fan_2d_fbp_backproject_kernel`` / ``fan_weighted_backproject``
+    and does *not* go through this kernel.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -1072,22 +1143,11 @@ def _fan_2d_backward_kernel(
                 iy0 = max(0, min(iy0, Ny - 2))
                 
                 # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
-                # Distribute contribution weighted by segment length and interpolation weights
-                # CUDA ATOMIC OPERATIONS: Critical for fan beam backprojection thread safety
-                # Fan beam rays converge at source, creating higher probability of voxel write conflicts
-                # Atomic operations prevent race conditions when multiple divergent rays write to same voxel
-                # Performance consideration: Fan beam geometry may have more atomic contention than parallel beam
-                cval = val * seg_len  # Contribution value for this ray segment
-                if distance_weight > 0.5:
-                    # Fan-beam FBP distance weighting in rotated coordinates.
-                    x_rel = (src_x + t_mid * dir_x) - center_offset_x
-                    y_rel = (src_y + t_mid * dir_y) - center_offset_y
-                    den = sdd_v + x_rel * sin_a - y_rel * cos_a
-                    if abs(den) <= _EPSILON:
-                        cval = 0.0
-                    else:
-                        scale = sdd_v / den
-                        cval = cval * scale * scale
+                # Pure adjoint scatter: contribution is just val * seg_len,
+                # distributed onto the four nearest pixels with bilinear
+                # weights. No distance weighting - that belongs to the
+                # analytical FBP kernel, not this adjoint.
+                cval = val * seg_len
                 one_minus_dx = 1.0 - dx
                 one_minus_dy = 1.0 - dy
                 cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
@@ -1326,57 +1386,14 @@ def _cone_3d_backward_kernel(
     sdd, sid, cx, cy, cz, voxel_spacing,
     det_offset_u, det_offset_v,
     center_offset_x, center_offset_y, center_offset_z,
-    distance_weight
 ):
-    """Compute the 3D cone-beam backprojection.
+    """Pure adjoint ``P^T`` of the cone-beam forward projector.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
-    3D cone-beam backprojection.
-
-    Parameters
-    ----------
-    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Input cone-beam sinogram array on CUDA.
-    n_views : int
-        Number of projection views.
-    n_u : int
-        Number of detector elements along the u-axis.
-    n_v : int
-        Number of detector elements along the v-axis.
-    d_vol : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Output 3D volume gradient array on CUDA.
-    Nx : int
-        Number of voxels along the x-axis.
-    Ny : int
-        Number of voxels along the y-axis.
-    Nz : int
-        Number of voxels along the z-axis.
-    du : float
-        Physical spacing between detector elements along the u-axis.
-    dv : float
-        Physical spacing between detector elements along the v-axis.
-    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed cosine values of projection angles.
-    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray
-        Precomputed sine values of projection angles.
-    sdd : float
-        Source-to-Detector Distance (SDD), total distance from source to detector.
-    sid : float
-        Source-to-Isocenter Distance (SID), distance from source to isocenter.
-    cx : float
-        Half of volume width along x-axis (in voxels).
-    cy : float
-        Half of volume height along y-axis (in voxels).
-    cz : float
-        Half of volume depth along z-axis (in voxels).
-    voxel_spacing : float
-        Physical size of one voxel (in same units as du, dv, sid, sdd).
-
-    Notes
-    -----
-    As the adjoint to the cone-beam forward projection, this operation
-    distributes sinogram values back into the 3D volume along ray paths using
-    atomic operations for thread-safe accumulation.
+    Siddon ray-driven scatter with trilinear interpolation weights and no
+    distance weighting. Used by ``ConeProjectorFunction.backward`` and
+    ``ConeBackprojectorFunction.forward``. The analytical FDK path lives
+    in ``_cone_3d_fdk_backproject_kernel`` / ``cone_weighted_backproject``
+    and does *not* go through this kernel.
     """
     iview, iu, iv = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
@@ -1481,21 +1498,14 @@ def _cone_3d_backward_kernel(
                 iy0 = max(0, min(iy0, Ny - 2))
                 iz0 = max(0, min(iz0, Nz - 2))
 
-                # Precompute complements and contribution
+                # Precompute complements and contribution. Pure adjoint:
+                # cval = g * seg_len, distributed onto the eight nearest
+                # voxels with trilinear weights. Distance weighting lives
+                # in the analytical FDK kernel, not here.
                 omdx = 1.0 - dx
                 omdy = 1.0 - dy
                 omdz = 1.0 - dz
                 cval = g * seg_len
-                if distance_weight > 0.5:
-                    # FDK distance weighting term in rotated coordinates.
-                    x_rel = (src_x + t_mid * dir_x) - center_offset_x
-                    y_rel = (src_y + t_mid * dir_y) - center_offset_y
-                    den = sdd_v + x_rel * sin_a - y_rel * cos_a
-                    if abs(den) <= _EPSILON:
-                        cval = 0.0
-                    else:
-                        scale = sdd_v / den
-                        cval = cval * scale * scale
 
                 # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
                 cuda.atomic.add(d_vol, (ix0,     iy0,     iz0),     cval * omdx*omdy*omdz)
@@ -1521,6 +1531,278 @@ def _cone_3d_backward_kernel(
             t = tz
             iz += step_z
             tz += dt_z
+
+
+# ------------------------------------------------------------------
+# Analytical FDK backprojection kernel (voxel-driven gather)
+# ------------------------------------------------------------------
+# The Siddon-based ``_cone_3d_backward_kernel`` above is the exact adjoint of
+# ``_cone_3d_forward_kernel`` and stays unchanged so that the cone autograd
+# path in ConeProjectorFunction / ConeBackprojectorFunction / the iterative
+# example is bit-for-bit untouched. FDK reconstruction is a different
+# operation: it wants the classical voxel-driven gather form, where each
+# voxel reads a single bilinearly-interpolated sample from the filtered
+# sinogram at the (u, v) it projects to, weighted by ``(SID / U)^2``. This
+# dedicated kernel implements that gather and is only called by
+# ``cone_weighted_backproject``.
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_fdk_backproject_kernel(
+    d_sino, n_views, n_u, n_v,
+    d_vol, Nx, Ny, Nz,
+    du, dv, d_cos, d_sin,
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z,
+):
+    """Voxel-driven FDK backprojection gather.
+
+    For each voxel in the output volume, for each view, compute the source-
+    to-voxel distance ``U`` along the central ray direction, project the
+    voxel onto the detector, bilinearly sample the filtered sinogram, and
+    accumulate ``(SID/U)^2 * sample``. The cosine pre-weight, ramp filter and
+    angular integration weights are expected to already have been baked into
+    ``d_sino`` by the Python wrapper.
+
+    Geometry conventions match the existing cone forward/backward kernels:
+    the source rotates in the xy-plane around the isocenter at radius SID,
+    the detector is a plane at distance SDD from the source perpendicular to
+    the central ray, and all ``*_offset_*`` values are already in voxel
+    units at call time. Indices follow the existing permuted layout where
+    ``ix`` marches along the W axis, ``iy`` along H and ``iz`` along D.
+    """
+    ix, iy, iz = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    # Voxel position in the "voxel-units, isocenter-centered" frame used by
+    # the shared kernels. Matches the inverse of ``mid = src + t*dir + cx``.
+    x_v = (ix - cx) - center_offset_x
+    y_v = (iy - cy) - center_offset_y
+    z_v = (iz - cz) - center_offset_z
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+
+    u_half = (n_u - 1) * 0.5
+    v_half = (n_v - 1) * 0.5
+
+    accum = 0.0
+    for iview in range(n_views):
+        cos_a = d_cos[iview]
+        sin_a = d_sin[iview]
+
+        # Distance from source to voxel along the central ray direction.
+        # Source: (-sid_v*sin_a, sid_v*cos_a, 0). Central ray: (sin_a, -cos_a, 0).
+        U = sid_v + x_v * sin_a - y_v * cos_a
+        if U <= _EPSILON:
+            continue
+
+        mag = sdd_v / U
+        # Perpendicular in-plane detector coordinate at the detector plane.
+        u_det = (x_v * cos_a + y_v * sin_a) * mag
+        v_det = z_v * mag
+
+        # Detector bin indices. Inverse of the forward kernel's u = (iu - (n_u-1)/2)*du + offset.
+        fu = (u_det - det_offset_u) / du_v + u_half
+        fv = (v_det - det_offset_v) / dv_v + v_half
+
+        if fu < 0.0 or fu > (n_u - 1) or fv < 0.0 or fv > (n_v - 1):
+            continue
+
+        iu0 = int(math.floor(fu))
+        iv0 = int(math.floor(fv))
+        if iu0 >= n_u - 1:
+            iu0 = n_u - 2
+        if iv0 >= n_v - 1:
+            iv0 = n_v - 2
+        if iu0 < 0:
+            iu0 = 0
+        if iv0 < 0:
+            iv0 = 0
+        tu = fu - iu0
+        tv = fv - iv0
+        if tu < 0.0:
+            tu = 0.0
+        elif tu > 1.0:
+            tu = 1.0
+        if tv < 0.0:
+            tv = 0.0
+        elif tv > 1.0:
+            tv = 1.0
+
+        s00 = d_sino[iview, iu0,     iv0    ]
+        s10 = d_sino[iview, iu0 + 1, iv0    ]
+        s01 = d_sino[iview, iu0,     iv0 + 1]
+        s11 = d_sino[iview, iu0 + 1, iv0 + 1]
+
+        omtu = 1.0 - tu
+        omtv = 1.0 - tv
+        sample = (
+            s00 * omtu * omtv
+            + s10 * tu   * omtv
+            + s01 * omtu * tv
+            + s11 * tu   * tv
+        )
+
+        w = sid_v / U
+        accum += (w * w) * sample
+
+    d_vol[ix, iy, iz] = accum
+
+
+# ------------------------------------------------------------------
+# Analytical parallel-beam FBP backprojection kernel (voxel-driven gather)
+# ------------------------------------------------------------------
+# Parallel beam has no source and therefore no ``(sid/U)^2`` distance
+# weight - the gather is just a linear detector interpolation summed
+# over views. Unlike the Siddon-scatter adjoint, this kernel has no
+# per-angle ``seg_len`` bias, so it delivers the same one-percent
+# calibration accuracy as the fan and cone gather kernels. Only
+# ``parallel_weighted_backproject`` calls it; autograd keeps using
+# ``_parallel_2d_backward_kernel`` for the pure adjoint path.
+
+@_FDK_ACCURACY_DECORATOR
+def _parallel_2d_fbp_backproject_kernel(
+    d_sino, n_ang, n_det,
+    d_image, Nx, Ny,
+    det_spacing, d_cos, d_sin,
+    cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y,
+):
+    """Voxel-driven parallel-beam FBP backprojection gather.
+
+    For each pixel and each view, compute the detector-u coordinate the
+    pixel projects to (``u = -x*sin_a + y*cos_a`` in voxel units,
+    matching the parallel forward kernel's ``pnt = (-u*sin_a, u*cos_a)``
+    and ``dir = (cos_a, sin_a)`` convention), linearly sample the
+    filtered sinogram at that position, and accumulate. Cosine
+    pre-weighting, ramp filtering and per-view integration weights are
+    expected to already be baked into ``d_sino`` by the Python wrapper.
+    """
+    ix, iy = cuda.grid(2)
+    if ix >= Nx or iy >= Ny:
+        return
+
+    x_v = (ix - cx) - center_offset_x
+    y_v = (iy - cy) - center_offset_y
+
+    det_v = det_spacing / voxel_spacing
+    u_half = (n_det - 1) * 0.5
+
+    accum = 0.0
+    for iang in range(n_ang):
+        cos_a = d_cos[iang]
+        sin_a = d_sin[iang]
+
+        # Detector-u coordinate of the pixel (parallel convention).
+        u_pix = -x_v * sin_a + y_v * cos_a
+
+        # Inverse of the forward kernel's u index formula.
+        fu = (u_pix - det_offset) / det_v + u_half
+        if fu < 0.0 or fu > (n_det - 1):
+            continue
+
+        idet0 = int(math.floor(fu))
+        if idet0 >= n_det - 1:
+            idet0 = n_det - 2
+        if idet0 < 0:
+            idet0 = 0
+        tu = fu - idet0
+        if tu < 0.0:
+            tu = 0.0
+        elif tu > 1.0:
+            tu = 1.0
+
+        s0 = d_sino[iang, idet0]
+        s1 = d_sino[iang, idet0 + 1]
+        accum += s0 * (1.0 - tu) + s1 * tu
+
+    d_image[iy, ix] = accum
+
+
+# ------------------------------------------------------------------
+# Analytical fan-beam FBP backprojection kernel (voxel-driven gather)
+# ------------------------------------------------------------------
+# Same design as the cone FDK gather above but in 2D. The Siddon-based
+# ``_fan_2d_backward_kernel`` stays the pure adjoint of the fan forward
+# projector and drives autograd; this dedicated FBP kernel is the
+# analytical path and is only invoked by ``fan_weighted_backproject``.
+
+@_FDK_ACCURACY_DECORATOR
+def _fan_2d_fbp_backproject_kernel(
+    d_sino, n_ang, n_det,
+    d_image, Nx, Ny,
+    det_spacing, d_cos, d_sin,
+    sdd, sid, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y,
+):
+    """Voxel-driven fan-beam FBP backprojection gather.
+
+    For each image pixel and each view, compute the source-to-pixel
+    distance ``U`` along the central ray, project the pixel onto the
+    detector, linearly sample the filtered sinogram, and accumulate
+    ``(SID/U)^2 * sample``. Cosine pre-weighting, ramp filtering and
+    per-view integration weights are expected to already be baked into
+    ``d_sino`` by the Python wrapper. Matches the fan forward kernel's
+    geometry: source at ``(-sid_v*sin_a, sid_v*cos_a)`` relative to the
+    isocenter, detector at distance SDD from the source perpendicular
+    to the central ray, ``u`` on the detector is in-plane.
+    """
+    ix, iy = cuda.grid(2)
+    if ix >= Nx or iy >= Ny:
+        return
+
+    # Pixel position in the "voxel-units, isocenter-centered" frame used
+    # by the Siddon forward kernel. Matches the inverse of
+    # ``mid = src + t*dir + cx`` in the forward kernel.
+    x_v = (ix - cx) - center_offset_x
+    y_v = (iy - cy) - center_offset_y
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    det_v = det_spacing / voxel_spacing
+    u_half = (n_det - 1) * 0.5
+
+    accum = 0.0
+    for iang in range(n_ang):
+        cos_a = d_cos[iang]
+        sin_a = d_sin[iang]
+
+        # Distance from source to pixel along the central ray direction.
+        U = sid_v + x_v * sin_a - y_v * cos_a
+        if U <= _EPSILON:
+            continue
+
+        mag = sdd_v / U
+        u_det = (x_v * cos_a + y_v * sin_a) * mag
+
+        # Inverse of the forward kernel's u index formula.
+        fu = (u_det - det_offset) / det_v + u_half
+        if fu < 0.0 or fu > (n_det - 1):
+            continue
+
+        idet0 = int(math.floor(fu))
+        if idet0 >= n_det - 1:
+            idet0 = n_det - 2
+        if idet0 < 0:
+            idet0 = 0
+        tu = fu - idet0
+        if tu < 0.0:
+            tu = 0.0
+        elif tu > 1.0:
+            tu = 1.0
+
+        s0 = d_sino[iang, idet0]
+        s1 = d_sino[iang, idet0 + 1]
+        sample = s0 * (1.0 - tu) + s1 * tu
+
+        w = sid_v / U
+        accum += (w * w) * sample
+
+    d_image[iy, ix] = accum
 
 
 # ############################################################################
@@ -1900,8 +2182,10 @@ class FanProjectorFunction(torch.autograd.Function):
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
     method with interpolation for fan beam geometry, where rays diverge from a point
     X-ray source to a linear detector array. The forward pass computes sinograms
-    using divergent beam geometry, and the backward pass computes gradients via
-    adjoint backprojection with geometric ``1/U^2`` distance weighting.
+    using divergent beam geometry. The backward pass returns the **pure adjoint**
+    ``P^T`` (Siddon scatter, no distance weighting) so that it is the correct
+    gradient of ``y = P(x)`` with respect to ``x``. Analytical fan-beam FBP
+    distance weighting is handled in ``fan_weighted_backproject``, not here.
     
     
     Examples
@@ -2061,12 +2345,13 @@ class FanProjectorFunction(torch.autograd.Function):
         center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
 
+        # Pure adjoint P^T of the Siddon forward projector. FBP distance
+        # weighting lives in fan_weighted_backproject, not the gradient path.
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
             _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
             det_offset_v, center_offset_x_v, center_offset_y_v,
-            _DTYPE(1.0)
         )
 
         return grad_img, None, None, None, None, None, None, None, None, None
@@ -2081,12 +2366,12 @@ class FanBackprojectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for fan beam backprojection. Implements the adjoint
-    of the fan beam projection operator with geometric ``1/U^2`` distance weighting,
-    distributing sinogram values back into the reconstruction volume along divergent
-    ray paths. The forward pass
-    computes reconstruction from sinogram data, and the backward pass computes
-    gradients via forward projection.
+    method with interpolation for fan beam backprojection. The forward pass runs
+    the **pure adjoint** ``P^T`` of the fan forward projector (Siddon scatter
+    with bilinear interpolation, no distance weighting), and the backward pass
+    computes gradients via forward projection. The forward/backward pair is
+    therefore a self-consistent autograd adjoint pair. Analytical FBP distance
+    weighting lives in ``fan_weighted_backproject`` and is *not* applied here.
     
     
     Examples
@@ -2187,12 +2472,13 @@ class FanBackprojectorFunction(torch.autograd.Function):
         center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
 
+        # Pure adjoint. See the class docstring - this Function is
+        # deliberately *not* the weighted FBP path.
         _fan_2d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_ang, n_det, d_reco, Nx, Ny,
             _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
             det_offset_v, center_offset_x_v, center_offset_y_v,
-            _DTYPE(1.0)
         )
 
         ctx.save_for_backward(angles)
@@ -2274,9 +2560,12 @@ class ConeProjectorFunction(torch.autograd.Function):
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
     method with interpolation for 3D cone beam geometry. Rays emanate from a point
     X-ray source to a 2D detector array capturing volumetric projection data.
-    The forward pass computes 3D projections, and the backward pass computes
-    gradients via adjoint 3D backprojection with geometric ``1/U^2`` distance
-    weighting. Requires significant GPU memory.
+    The forward pass computes 3D projections. The backward pass returns the
+    **pure adjoint** ``P^T`` of the forward projector - a Siddon ray-driven
+    scatter with trilinear interpolation weights and no distance weighting -
+    so that ``P^T`` is the mathematically correct gradient of ``y = P(x)``
+    with respect to ``x``. Analytical FDK distance weighting is handled
+    separately in ``cone_weighted_backproject``, not here.
     
     
     Examples
@@ -2465,13 +2754,16 @@ class ConeProjectorFunction(torch.autograd.Function):
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
+        # Pure adjoint P^T of the Siddon forward projector, no
+        # (sdd/U)^2 weighting. This is the correct gradient of
+        # y = P(x) with respect to x. FDK distance weighting lives
+        # in cone_weighted_backproject, not in the gradient path.
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
             det_offset_u_v, det_offset_v_v,
             center_offset_x_v, center_offset_y_v, center_offset_z_v,
-            _DTYPE(1.0)
         )
 
         grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
@@ -2488,10 +2780,14 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
     method with interpolation for 3D cone beam backprojection. The forward pass
-    computes a 3D reconstruction from cone beam projection data using weighted
-    backprojection (geometric ``1/U^2`` term) as the adjoint operation. The
-    backward pass computes gradients via 3D cone beam forward projection. Requires
-    CUDA-capable hardware and consistent device placements.
+    runs the **pure adjoint** ``P^T`` of the cone forward projector: a Siddon
+    ray-driven scatter with trilinear interpolation weights and no distance
+    weighting. The backward pass computes gradients via 3D cone beam forward
+    projection, which is exactly the adjoint of this pure ``P^T`` - so the
+    forward/backward pair is self-consistent for autograd. Analytical FDK
+    distance weighting belongs in ``cone_weighted_backproject`` and is *not*
+    applied here. Requires CUDA-capable hardware and consistent device
+    placements.
     
     This operation may be memory- and computationally-intensive due to 3D geometry.
     Consider using gradient checkpointing, smaller volumes, or distributed computing
@@ -2612,13 +2908,15 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
+        # Pure adjoint of the Siddon forward projector. See the class
+        # docstring for why this Function deliberately does *not*
+        # apply FDK distance weighting.
         _cone_3d_backward_kernel[grid, tpb, numba_stream](
             d_sino, n_views, n_u, n_v, d_reco, W, H, D,
             _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
             _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
             det_offset_u_v, det_offset_v_v,
             center_offset_x_v, center_offset_y_v, center_offset_z_v,
-            _DTYPE(1.0)
         )
 
         ctx.save_for_backward(angles)
@@ -2702,23 +3000,31 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         return grad_sino, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
-def fan_weighted_backproject(
+def parallel_weighted_backproject(
     sinogram,
     angles,
     detector_spacing,
     H,
     W,
-    sdd,
-    sid,
     voxel_spacing=1.0,
     detector_offset=0.0,
     center_offset_x=0.0,
     center_offset_y=0.0,
 ):
-    """Fan-beam weighted backprojection for analytical FBP pipelines.
+    """Parallel-beam backprojection for analytical FBP pipelines.
 
-    This uses the same Siddon traversal as `FanBackprojectorFunction` but enables
-    geometric distance weighting in the accumulation step.
+    Dispatches to the dedicated parallel-beam FBP voxel-driven gather
+    kernel (``_parallel_2d_fbp_backproject_kernel``). The shared
+    Siddon-based parallel backward kernel continues to serve the
+    autograd adjoint path used by ``ParallelProjectorFunction`` /
+    ``ParallelBackprojectorFunction``; this function is only the
+    analytical FBP path. There is no distance weighting in parallel
+    geometry (no source, no magnification), so the kernel simply
+    gathers one linearly-interpolated detector sample per view per
+    pixel and sums. The analytical ``1/(2*pi)`` FBP constant is
+    applied inside the wrapper so the returned image is already
+    amplitude-calibrated - a unit-density disk reconstructs to
+    amplitude 1.
     """
     if not sinogram.is_cuda:
         raise ValueError("sinogram must be on CUDA device")
@@ -2736,7 +3042,7 @@ def fan_weighted_backproject(
     d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
     d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-    grid, tpb = _grid_2d(n_ang, n_det)
+    grid, tpb = _grid_2d(Nx, Ny)
     cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
     det_offset_v = _DTYPE(detector_offset / voxel_spacing)
     center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
@@ -2744,13 +3050,80 @@ def fan_weighted_backproject(
 
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
-    _fan_2d_backward_kernel[grid, tpb, numba_stream](
+    _parallel_2d_fbp_backproject_kernel[grid, tpb, numba_stream](
+        d_sino, n_ang, n_det, d_reco, Nx, Ny,
+        _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+        cx, cy, _DTYPE(voxel_spacing),
+        det_offset_v, center_offset_x_v, center_offset_y_v,
+    )
+    # Parallel-beam analytical FBP scale: only the ``1/(2*pi)``
+    # Fourier convention factor is needed (no SDD/SID magnification
+    # because parallel beam has no source).
+    scale = 1.0 / (2.0 * math.pi)
+    reco.mul_(scale)
+    return reco
+
+
+def fan_weighted_backproject(
+    sinogram,
+    angles,
+    detector_spacing,
+    H,
+    W,
+    sdd,
+    sid,
+    voxel_spacing=1.0,
+    detector_offset=0.0,
+    center_offset_x=0.0,
+    center_offset_y=0.0,
+):
+    """Fan-beam weighted backprojection for analytical FBP pipelines.
+
+    Dispatches to the dedicated fan FBP voxel-driven gather kernel
+    (``_fan_2d_fbp_backproject_kernel``). The shared Siddon-based fan
+    backward kernel continues to serve the autograd adjoint path used by
+    ``FanProjectorFunction`` / ``FanBackprojectorFunction``; this function
+    is only the analytical FBP path. Uses ``(SID/U)^2`` distance
+    weighting with linear detector-gather and applies the same
+    ``sdd/(2*pi*sid)`` analytical FBP constant that the cone FDK path
+    uses, so a unit-density disk reconstructs to amplitude 1.
+    """
+    if not sinogram.is_cuda:
+        raise ValueError("sinogram must be on CUDA device")
+    device = sinogram.device
+    sinogram = sinogram.to(dtype=torch.float32).contiguous()
+    angles = angles.to(dtype=torch.float32, device=device).contiguous()
+
+    n_ang, n_det = sinogram.shape
+    Ny, Nx = H, W
+    reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
+    d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
+
+    d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+    d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
+    d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
+    d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
+
+    grid, tpb = _grid_2d(Nx, Ny)
+    cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
+    det_offset_v = _DTYPE(detector_offset / voxel_spacing)
+    center_offset_x_v = _DTYPE(center_offset_x / voxel_spacing)
+    center_offset_y_v = _DTYPE(center_offset_y / voxel_spacing)
+
+    pt_stream = torch.cuda.current_stream()
+    numba_stream = _get_numba_external_stream_for(pt_stream)
+    _fan_2d_fbp_backproject_kernel[grid, tpb, numba_stream](
         d_sino, n_ang, n_det, d_reco, Nx, Ny,
         _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
         _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
         det_offset_v, center_offset_x_v, center_offset_y_v,
-        _DTYPE(1.0)
     )
+    # Same analytical scale as the cone FDK path. See the comment on
+    # ``cone_weighted_backproject`` for the derivation; both 2D fan FBP
+    # and 3D cone FDK share this constant because the ramp filter is
+    # applied on the physical detector plane in both cases.
+    scale = float(sdd) / (2.0 * math.pi * float(sid))
+    reco.mul_(scale)
     return reco
 
 
@@ -2771,7 +3144,16 @@ def cone_weighted_backproject(
     center_offset_y=0.0,
     center_offset_z=0.0,
 ):
-    """Cone-beam weighted backprojection for analytical FDK pipelines."""
+    """Cone-beam weighted backprojection for analytical FDK pipelines.
+
+    Dispatches to the dedicated FDK voxel-driven gather kernel
+    (``_cone_3d_fdk_backproject_kernel``). The shared Siddon-based cone
+    backward kernel continues to serve the autograd adjoint path used by
+    ``ConeProjectorFunction`` / ``ConeBackprojectorFunction``; this function
+    is only the analytical FDK path, and it uses a ``(SID/U)^2`` weight with
+    a bilinear detector gather to stay consistent with the classical FDK
+    formulation.
+    """
     if not sinogram.is_cuda:
         raise ValueError("sinogram must be on CUDA device")
     device = sinogram.device
@@ -2781,6 +3163,8 @@ def cone_weighted_backproject(
     n_views, n_u, n_v = sinogram.shape
     _validate_3d_memory_layout(sinogram, expected_order='VHW')
 
+    # Keep the same WHD permuted buffer layout as the shared kernels use, so
+    # the final ``permute(2, 1, 0)`` returns a (D, H, W) contiguous result.
     vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
     d_cos, d_sin = _trig_tables(angles, dtype=sinogram.dtype, device=device)
 
@@ -2789,7 +3173,7 @@ def cone_weighted_backproject(
     d_cos_arr = TorchCUDABridge.tensor_to_cuda_array(d_cos)
     d_sin_arr = TorchCUDABridge.tensor_to_cuda_array(d_sin)
 
-    grid, tpb = _grid_3d(n_views, n_u, n_v)
+    grid, tpb = _grid_3d(W, H, D)
     cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
     det_offset_u_v = _DTYPE(detector_offset_u / voxel_spacing)
     det_offset_v_v = _DTYPE(detector_offset_v / voxel_spacing)
@@ -2799,12 +3183,26 @@ def cone_weighted_backproject(
 
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
-    _cone_3d_backward_kernel[grid, tpb, numba_stream](
+    _cone_3d_fdk_backproject_kernel[grid, tpb, numba_stream](
         d_sino, n_views, n_u, n_v, d_reco, W, H, D,
         _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
         _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
         det_offset_u_v, det_offset_v_v,
         center_offset_x_v, center_offset_y_v, center_offset_z_v,
-        _DTYPE(1.0)
     )
-    return vol_perm.permute(2, 1, 0).contiguous()
+    # Final analytical FDK scale factor. Two pieces:
+    # - 1/(2*pi): the repo's ramp_filter_1d computes
+    #     IFFT(|2*pi*fftfreq|*FFT[.])
+    #   which implements the ``|omega|`` ramp in the radian-frequency
+    #   convention. The classical FBP / FDK formula carries an explicit
+    #   1/(2*pi) from the inverse Fourier integral that this discretization
+    #   does not absorb, so it must be applied on the spatial side.
+    # - sdd/sid: the ramp filter runs on the physical detector grid
+    #   (spacing du), but the FDK inversion is written in the virtual
+    #   isocenter-plane detector (spacing du*sid/sdd). Rescaling one-
+    #   dimensional convolution between those two scales leaves an
+    #   ``sdd/sid`` magnification factor on the filtered sinogram.
+    scale = float(sdd) / (2.0 * math.pi * float(sid))
+    vol = vol_perm.permute(2, 1, 0).contiguous()
+    vol.mul_(scale)
+    return vol

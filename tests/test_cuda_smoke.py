@@ -12,6 +12,7 @@ from diffct.differentiable import (
     ParallelProjectorFunction,
     cone_weighted_backproject,
     fan_weighted_backproject,
+    parallel_weighted_backproject,
 )
 
 
@@ -30,9 +31,11 @@ def test_parallel_cuda_smoke():
 
     sino = ParallelProjectorFunction.apply(img, angles, 32, 1.0)
     reco = ParallelBackprojectorFunction.apply(sino, angles, 1.0, 16, 16)
+    reco_fbp = parallel_weighted_backproject(sino, angles, 1.0, 16, 16)
 
     assert torch.isfinite(sino).all()
     assert torch.isfinite(reco).all()
+    assert torch.isfinite(reco_fbp).all()
 
 
 @pytest.mark.cuda

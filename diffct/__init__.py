@@ -12,6 +12,7 @@ from .differentiable import (
     cone_cosine_weights,
     parker_weights,
     ramp_filter_1d,
+    parallel_weighted_backproject,
     fan_weighted_backproject,
     cone_weighted_backproject,
 )
