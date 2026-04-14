@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.11] - 2026-04-14
+
 ### Added
 - **Parker short-scan demos** in `examples/fdk_cone.py` and `examples/fbp_fan.py`.
   Both examples now expose an `apply_parker` switch that not only multiplies
@@ -17,17 +19,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`tests/test_gradcheck.py`** — `torch.autograd.gradcheck` coverage for
   `ParallelProjectorFunction`, `FanProjectorFunction`, and `ConeProjectorFunction`.
   Compares the analytical backward Jacobian to a finite-difference numerical
-  Jacobian over small inputs with float32-calibrated tolerances. This is the
-  strongest possible autograd-correctness guard beyond the existing inner-product
-  adjoint tests.
+  Jacobian over small inputs with float32-calibrated tolerances. Strongest
+  autograd-correctness guard beyond the existing inner-product adjoint tests.
 - **`tests/test_ramp_filter_windows.py`** — 27 parametrised tests covering every
   `ramp_filter_1d` window option (`None`/`"ram-lak"`, `"hann"`, `"hanning"`,
   `"hamming"`, `"cosine"`, `"shepp-logan"`) at three layers: direct `_ramp_window`
   helper (DC gain, Nyquist value, monotonicity), full `ramp_filter_1d` end-to-end
   (shape, DC annihilation, pad correctness, rfft vs complex-fft parity,
-  `sample_spacing` scaling), and a sanity check that apodisation really does
-  reduce peak amplitude on a step input.
-- **`CHANGELOG.md`** — this file.
+  `sample_spacing` scaling), and a high-frequency attenuation sanity check on a
+  step input.
+- **`CHANGELOG.md`** — new Keep-a-Changelog file at the repo root.
+- **`tests/benchmarks/`** — opt-in `pytest-benchmark` suite covering every CUDA
+  kernel in the library (forward projector, pure-adjoint backprojector, and
+  analytical FBP/FDK pipeline) across three sizes for each of the three
+  geometries. 27 benchmarks total. Excluded from the default `pytest tests/`
+  run via `--ignore=tests/benchmarks` in `pytest.ini` so the normal test suite
+  stays fast; run explicitly with `pytest tests/benchmarks/ --benchmark-only`.
+  Enables before/after perf comparisons via `--benchmark-save=` /
+  `--benchmark-compare=`.
+
+### Changed
+- **`_cone_3d_fdk_backproject_kernel`** memory-access layout. The kernel now
+  unpacks `cuda.grid(3)` as `(iz, iy, ix)` instead of `(ix, iy, iz)`, and
+  `cone_weighted_backproject` launches the grid as `_grid_3d(D, H, W)` instead
+  of `_grid_3d(W, H, D)`. This makes `iz` warp-adjacent, which matches the
+  innermost stride-1 axis of the WHD output buffer, so the final `d_vol` write
+  becomes coalesced. Measured speedup on a 64^3–160^3 sweep: 1.0x–1.14x,
+  within run-to-run noise (the kernel is read-bound on the sinogram bilinear
+  samples, not write-bound, so L2 absorbed the old uncoalesced writes). The
+  fix is kept as the right default and future-proofs the kernel against
+  edits that shift work toward the write path. Matching coalescing comments
+  were added to the 2D `_parallel_2d_fbp_backproject_kernel` and
+  `_fan_2d_fbp_backproject_kernel` kernels, which were already coalesced
+  (their first grid index is also warp-adjacent and matches the `Nx` innermost
+  axis of their `(Ny, Nx)` output buffers).
+
+### Notes
+- No public-API changes. Pure-adjoint kernels and autograd Function classes
+  are untouched, so the autograd and iterative-reconstruction paths are
+  byte-for-byte equivalent to 1.2.10.
 
 ## [1.2.10] - 2026-04-14
 
@@ -187,7 +217,8 @@ Releases 1.2.0 through 1.2.6 and the 1.1.x / 1.0.x lines are tracked on
 was introduced in 1.2.10 and does not back-fill detailed notes for earlier
 versions beyond pointers to the GitHub release pages.
 
-[Unreleased]: https://github.com/sypsyp97/diffct/compare/v1.2.10...HEAD
+[Unreleased]: https://github.com/sypsyp97/diffct/compare/v1.2.11...HEAD
+[1.2.11]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.11
 [1.2.10]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.10
 [1.2.9]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.9
 [1.2.8]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.8
