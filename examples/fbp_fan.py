@@ -78,21 +78,11 @@ def main():
     voxel_spacing = 1.0
 
     # ------------------------------------------------------------------
-    # 2. Source trajectory (circular orbit)
+    # 2. Detector geometry
     # ------------------------------------------------------------------
-    # ``num_angles`` samples on the circular orbit. This example uses a
-    # full 2*pi scan, uniformly sampled, with ``endpoint=False`` to
-    # avoid duplicating angle 0. For a short-scan geometry you would
-    # use an interval of length ``pi + 2*gamma_max`` and set
-    # ``apply_parker=True`` to enable Parker redundancy weighting.
-    num_angles = 360
-    angles_np = np.linspace(
-        0.0, 2.0 * math.pi, num_angles, endpoint=False
-    ).astype(np.float32)
-
-    # ------------------------------------------------------------------
-    # 3. Detector geometry
-    # ------------------------------------------------------------------
+    # (Listed before the trajectory so the short-scan coverage below can
+    # use the detector fan angle to compute ``pi + 2*gamma_max``.)
+    #
     # ``num_detectors`` is the number of detector cells along the
     # detector axis. ``detector_spacing`` is their physical pitch.
     # Make sure the detector is wide enough that no ray that intersects
@@ -114,13 +104,33 @@ def main():
     sdd = 800.0
     sid = 500.0
 
-    # Set to ``True`` for short-scan trajectories. When ``True``, the
-    # Parker weights are multiplied onto the raw sinogram before the
-    # cosine pre-weight, and ``redundant_full_scan=False`` is passed
-    # to the angular integration weights (the FBP 1/2 factor that
-    # corrects for 2*pi redundancy is dropped since Parker already
-    # handles redundancy).
+    # ------------------------------------------------------------------
+    # 3. Source trajectory (circular orbit)
+    # ------------------------------------------------------------------
+    # ``apply_parker`` selects between two supported trajectories:
+    #
+    #   False -> full 2*pi scan, 1/2 FBP redundancy factor absorbed
+    #            inside ``redundant_full_scan=True``.
+    #
+    #   True  -> minimal short scan ``pi + 2*gamma_max`` with Parker
+    #            redundancy weighting. ``gamma_max`` is computed from
+    #            the detector half-width and ``sdd``.
+    #
+    # Both branches reuse the same ``num_angles`` so reconstruction
+    # runtime stays identical - only the angular *range* changes.
     apply_parker = False
+
+    if apply_parker:
+        u_max = ((num_detectors - 1) * 0.5) * detector_spacing + abs(detector_offset)
+        gamma_max = math.atan(u_max / sdd)
+        scan_range = math.pi + 2.0 * gamma_max
+    else:
+        scan_range = 2.0 * math.pi
+
+    num_angles = 360
+    angles_np = np.linspace(
+        0.0, scan_range, num_angles, endpoint=False
+    ).astype(np.float32)
 
     # ------------------------------------------------------------------
     # 4. Move everything to CUDA
@@ -229,7 +239,8 @@ def main():
     raw_loss = torch.mean((reconstruction_raw - image_torch) ** 2)
     clamped_loss = torch.mean((reconstruction - image_torch) ** 2)
 
-    print("Fan Beam FBP example (circular full scan):")
+    scan_label = "Parker short scan" if apply_parker else "full 2*pi scan"
+    print(f"Fan Beam FBP example ({scan_label}):")
     print(f"  Raw MSE:              {raw_loss.item():.6f}")
     print(f"  Clamped MSE:          {clamped_loss.item():.6f}")
     print(f"  Reconstruction shape: {tuple(reconstruction.shape)}")

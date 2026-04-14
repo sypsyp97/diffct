@@ -27,6 +27,7 @@ from diffct.differentiable import (
     angular_integration_weights,
     cone_cosine_weights,
     cone_weighted_backproject,
+    parker_weights,
     ramp_filter_1d,
 )
 
@@ -115,26 +116,11 @@ def main():
     voxel_spacing = 1.0
 
     # ------------------------------------------------------------------
-    # 2. Source trajectory (circular orbit)
+    # 2. Detector geometry
     # ------------------------------------------------------------------
-    # ``num_views`` is the number of projection angles sampled on the
-    # circular orbit. More views generally mean smaller angular
-    # aliasing and a cleaner FDK reconstruction, at the cost of memory
-    # and runtime linear in ``num_views``.
-    num_views = 360
-
-    # Angles in radians. This example uses a full 2*pi scan sampled
-    # uniformly (``endpoint=False`` avoids duplicating angle 0). For a
-    # short-scan geometry you would use an interval of length
-    # ``pi + 2*gamma_max`` and feed the result through ``parker_weights``
-    # before the ramp filter.
-    angles_np = np.linspace(
-        0.0, 2.0 * math.pi, num_views, endpoint=False
-    ).astype(np.float32)
-
-    # ------------------------------------------------------------------
-    # 3. Detector geometry
-    # ------------------------------------------------------------------
+    # (Listed before the trajectory so the short-scan coverage below can
+    # use the detector fan angle to compute ``pi + 2*gamma_max``.)
+    #
     # ``det_u`` / ``det_v`` are the number of detector cells along the
     # u (in-plane / horizontal) and v (axial / vertical) directions.
     # ``du`` / ``dv`` are their physical spacings. Together they define
@@ -162,6 +148,50 @@ def main():
     # 1.3 - 2.0; here we pick 1.5.
     sdd = 900.0
     sid = 600.0
+
+    # ------------------------------------------------------------------
+    # 3. Source trajectory (circular orbit)
+    # ------------------------------------------------------------------
+    # ``apply_parker`` selects between two supported trajectories:
+    #
+    #   False -> full 2*pi circular scan. Each ray is sampled twice
+    #            (once going one way, once the opposite), so the FDK
+    #            formula carries a 1/2 redundancy factor which is
+    #            absorbed by ``redundant_full_scan=True`` inside the
+    #            angular integration weights.
+    #
+    #   True  -> minimal short scan of length ``pi + 2*gamma_max``
+    #            where ``gamma_max = atan(u_max / sdd)`` is the maximum
+    #            fan angle. Every ray is sampled *at least once*, some
+    #            rays twice; the standard Parker window smoothly tapers
+    #            the duplicate regions so each ray's total contribution
+    #            integrates to pi (the same effective weight as the
+    #            full-scan case after the 1/2 redundancy factor), and
+    #            the angular weights use plain trapezoidal rule
+    #            (``redundant_full_scan=False``).
+    #
+    # Short scans are common on clinical C-arm and cone-beam systems
+    # where a full 2*pi rotation is mechanically impossible.
+    apply_parker = False
+
+    if apply_parker:
+        u_max = ((det_u - 1) * 0.5) * du + abs(detector_offset_u)
+        gamma_max = math.atan(u_max / sdd)
+        scan_range = math.pi + 2.0 * gamma_max
+    else:
+        scan_range = 2.0 * math.pi
+
+    # ``num_views`` is the number of projection angles sampled on the
+    # orbit. More views generally mean smaller angular aliasing and a
+    # cleaner FDK reconstruction, at the cost of memory and runtime
+    # linear in ``num_views``.
+    num_views = 360
+
+    # Angles in radians. ``endpoint=False`` avoids duplicating the start
+    # angle at the end of the sweep.
+    angles_np = np.linspace(
+        0.0, scan_range, num_views, endpoint=False
+    ).astype(np.float32)
 
     # ------------------------------------------------------------------
     # 4. Move everything to CUDA
@@ -195,6 +225,25 @@ def main():
     # ==================================================================
     # 6. FDK analytical reconstruction
     # ==================================================================
+
+    # --- 6.0  Optional Parker redundancy weighting -------------------
+    # ``parker_weights`` returns a ``(num_views, det_u)`` tensor that
+    # tapers rays in the redundantly-sampled regions of a short scan.
+    # For a full 2*pi scan it detects the coverage and returns all
+    # ones (no-op), so this branch is safe to run unconditionally; we
+    # gate it on ``apply_parker`` just for clarity.
+    #
+    # The returned weight depends on the in-plane fan angle only, so
+    # we broadcast it across the v (axial) direction via ``unsqueeze(-1)``.
+    if apply_parker:
+        parker = parker_weights(
+            angles_torch,
+            det_u,
+            du,
+            sdd,
+            detector_offset=detector_offset_u,
+        )
+        sinogram = sinogram * parker.unsqueeze(-1)
 
     # --- 6.1  Cosine pre-weight --------------------------------------
     # Multiplies each detector pixel by ``sdd / sqrt(sdd^2 + u^2 + v^2)``,
@@ -262,14 +311,15 @@ def main():
     ).contiguous()
 
     # --- 6.3  Per-view angular integration weights -------------------
-    # For a circular full-scan sampled uniformly, each view contributes
-    # ``pi / num_views`` to the FDK integral (the ``1/2`` redundancy
-    # factor of the FDK formula is absorbed inside ``redundant_full_scan``).
-    # For a short scan you would pass ``redundant_full_scan=False`` and
-    # typically combine this with Parker weights earlier in the
-    # pipeline.
+    # For a full 2*pi scan each view contributes ``pi / num_views`` to
+    # the FDK integral: the ``1/2`` redundancy factor of the FDK
+    # formula is absorbed inside ``redundant_full_scan=True``. For a
+    # Parker short scan the redundancy has already been handled by the
+    # Parker window above, so we fall back to a plain trapezoidal rule
+    # with ``redundant_full_scan=False`` (the 1/2 factor would then be
+    # incorrect).
     d_beta = angular_integration_weights(
-        angles_torch, redundant_full_scan=True
+        angles_torch, redundant_full_scan=(not apply_parker)
     ).view(-1, 1, 1)
     sinogram_filt = sinogram_filt * d_beta
 
@@ -311,7 +361,8 @@ def main():
     raw_loss = torch.mean((reconstruction_raw - phantom_torch) ** 2)
     clamped_loss = torch.mean((reconstruction - phantom_torch) ** 2)
 
-    print("Cone Beam FDK example (circular full scan):")
+    scan_label = "Parker short scan" if apply_parker else "full 2*pi scan"
+    print(f"Cone Beam FDK example ({scan_label}):")
     print(f"  Raw MSE:             {raw_loss.item():.6f}")
     print(f"  Clamped MSE:         {clamped_loss.item():.6f}")
     print(f"  Reconstruction shape: {tuple(reconstruction.shape)}")
