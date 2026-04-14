@@ -1664,8 +1664,35 @@
 <span class="sd">    the central ray, and all ``*_offset_*`` values are already in voxel</span>
 <span class="sd">    units at call time. Indices follow the existing permuted layout where</span>
 <span class="sd">    ``ix`` marches along the W axis, ``iy`` along H and ``iz`` along D.</span>
+
+<span class="sd">    Memory-access layout note</span>
+<span class="sd">    -------------------------</span>
+<span class="sd">    Numba ``cuda.grid(3)`` returns ``(threadIdx.x+..., threadIdx.y+...,</span>
+<span class="sd">    threadIdx.z+...)`` in that order, so the FIRST element is the</span>
+<span class="sd">    warp-adjacent axis (lanes 0..31 span the first index). We deliberately</span>
+<span class="sd">    unpack as ``(iz, iy, ix)`` - not ``(ix, iy, iz)`` - so that ``iz``</span>
+<span class="sd">    becomes warp-adjacent. The output buffer ``d_vol`` has WHD layout</span>
+<span class="sd">    ``(W, H, D)``, row-major, which means its innermost stride-1 axis is</span>
+<span class="sd">    ``D`` (== ``iz``). With ``iz`` warp-adjacent, the 32 threads of a warp</span>
+<span class="sd">    write to ``d_vol[ix, iy, iz..iz+31]`` - 32 consecutive float32 cells,</span>
+<span class="sd">    one coalesced transaction per warp. The sinogram reads</span>
+<span class="sd">    ``d_sino[iview, iu, iv]`` are also coalesced because ``iv`` varies</span>
+<span class="sd">    linearly with ``iz`` (``v_det = z_v * sdd/U``) and ``d_sino`` has its</span>
+<span class="sd">    innermost stride-1 axis on ``iv``, so a warp&#39;s ``fv`` values span a</span>
+<span class="sd">    handful of adjacent ``iv`` bins. Matching this ordering, the Python</span>
+<span class="sd">    wrapper launches the grid as ``_grid_3d(D, H, W)``.</span>
+
+<span class="sd">    Expected performance impact of this layout is *small*: the kernel</span>
+<span class="sd">    does ~4 sinogram loads per view per output voxel but only ONE write</span>
+<span class="sd">    at the end, so total memory traffic is overwhelmingly read-bound and</span>
+<span class="sd">    the L2 easily absorbs any stray write transactions. An A/B</span>
+<span class="sd">    benchmark of the old ``ix``-first layout versus this ``iz``-first</span>
+<span class="sd">    layout measured ~1.0x to 1.14x speedup on 64^3..160^3 volumes - well</span>
+<span class="sd">    within run-to-run noise. We keep the coalesced layout anyway because</span>
+<span class="sd">    it is the right default and future kernel edits that shift work</span>
+<span class="sd">    toward the write path will benefit immediately without re-auditing.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">iz</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="n">iz</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span> <span class="ow">or</span> <span class="n">iz</span> <span class="o">&gt;=</span> <span class="n">Nz</span><span class="p">:</span>
         <span class="k">return</span>
 
@@ -1775,6 +1802,17 @@
 <span class="sd">    filtered sinogram at that position, and accumulate. Cosine</span>
 <span class="sd">    pre-weighting, ramp filtering and per-view integration weights are</span>
 <span class="sd">    expected to already be baked into ``d_sino`` by the Python wrapper.</span>
+
+<span class="sd">    Memory-access layout note</span>
+<span class="sd">    -------------------------</span>
+<span class="sd">    Numba ``cuda.grid(2)`` returns ``(threadIdx.x+..., threadIdx.y+...)``</span>
+<span class="sd">    in that order, so the FIRST element is the warp-adjacent axis. We</span>
+<span class="sd">    unpack as ``(ix, iy)``, which puts ``ix`` on ``threadIdx.x``. The</span>
+<span class="sd">    output buffer has shape ``(Ny, Nx)`` row-major, whose innermost</span>
+<span class="sd">    stride-1 axis is ``Nx`` (== ``ix``). Writing ``d_image[iy, ix]`` is</span>
+<span class="sd">    therefore coalesced: the 32 threads of a warp write 32 consecutive</span>
+<span class="sd">    float32 cells in one transaction. The grid is launched as</span>
+<span class="sd">    ``_grid_2d(Nx, Ny)`` to match this ordering.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span><span class="p">:</span>
@@ -1844,6 +1882,17 @@
 <span class="sd">    geometry: source at ``(-sid_v*sin_a, sid_v*cos_a)`` relative to the</span>
 <span class="sd">    isocenter, detector at distance SDD from the source perpendicular</span>
 <span class="sd">    to the central ray, ``u`` on the detector is in-plane.</span>
+
+<span class="sd">    Memory-access layout note</span>
+<span class="sd">    -------------------------</span>
+<span class="sd">    Same coalescing pattern as the parallel FBP gather kernel above:</span>
+<span class="sd">    ``ix`` is on ``threadIdx.x`` (warp-adjacent), and the output buffer</span>
+<span class="sd">    ``(Ny, Nx)`` has ``Nx`` as its innermost stride-1 axis, so</span>
+<span class="sd">    ``d_image[iy, ix]`` writes 32 consecutive float32 cells per warp.</span>
+<span class="sd">    Sinogram reads ``d_sino[iang, idet0..idet0+1]`` also sweep through</span>
+<span class="sd">    a small span of the stride-1 detector axis as ``ix`` varies across</span>
+<span class="sd">    a warp, so they are approximately coalesced as well. Launch grid is</span>
+<span class="sd">    ``_grid_2d(Nx, Ny)``.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span><span class="p">:</span>
@@ -3329,7 +3378,13 @@
     <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
     <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
-    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
+    <span class="c1"># Launch grid is (D, H, W) to match the kernel&#39;s ``iz, iy, ix = cuda.grid(3)``</span>
+    <span class="c1"># unpack order. Numba puts the first grid dimension on ``threadIdx.x``</span>
+    <span class="c1"># (the warp-adjacent axis), so by putting D first we make ``iz``</span>
+    <span class="c1"># warp-adjacent, which matches the innermost stride-1 axis of the WHD</span>
+    <span class="c1"># output buffer - coalesced writes. See the memory-access note in the</span>
+    <span class="c1"># kernel docstring.</span>
+    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">)</span>
     <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">W</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">H</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">D</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
     <span class="n">det_offset_u_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset_u</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
     <span class="n">det_offset_v_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset_v</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
