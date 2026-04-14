@@ -1,13 +1,14 @@
 """CUDA kernels for 2D fan beam projections.
 
 This module contains CUDA kernels implementing the Siddon ray-tracing method
-for 2D fan beam forward projection and backprojection.
+for 2D fan beam forward projection and backprojection, plus a dedicated
+voxel-driven FBP gather kernel for analytical reconstruction pipelines.
 """
 
 import math
 from numba import cuda
 
-from ..constants import _FASTMATH_DECORATOR, _INF, _EPSILON
+from ..constants import _FASTMATH_DECORATOR, _FDK_ACCURACY_DECORATOR, _INF, _EPSILON
 
 
 # ============================================================================
@@ -330,7 +331,113 @@ def _fan_2d_backward_kernel(
             iy += step_y
             ty += dt_y
 
-# ------------------------------------------------------------------
-# 3-D CONE BEAM KERNELS
-# ------------------------------------------------------------------
+# ============================================================================
+# 2D Fan Beam Analytical FBP Backprojection Gather (voxel-driven)
+# ============================================================================
+#
+# Distinct from ``_fan_2d_backward_kernel`` above, which is the pure
+# Siddon adjoint ``P^T`` used by autograd. This kernel is the classical
+# voxel-driven FBP gather: for each output pixel it projects the pixel
+# centre onto the detector for each view, linearly samples the filtered
+# sinogram, and accumulates ``(sid_v / U_n)^2 * sample``.
+
+
+@_FDK_ACCURACY_DECORATOR
+def _fan_2d_fbp_backproject_kernel(
+    d_sino, n_views, n_det,
+    d_image, Nx, Ny,
+    det_spacing, d_src_pos, d_det_center, d_det_u_vec,
+    cx, cy, voxel_spacing
+):
+    """Voxel-driven fan-beam FBP backprojection gather (arbitrary trajectory).
+
+    For each pixel ``(ix, iy)`` loops over views and accumulates a linearly
+    interpolated filtered-sinogram sample weighted by ``(|S_v|/U_n)^2``,
+    where ``U_n`` is the signed distance from the source ``S_v`` to the
+    pixel along the detector normal.
+    """
+    iy, ix = cuda.grid(2)
+    if ix >= Nx or iy >= Ny:
+        return
+
+    x_v = (ix - cx)
+    y_v = (iy - cy)
+
+    det_spacing_v = det_spacing / voxel_spacing
+    half_u = n_det * 0.5
+
+    accum = 0.0
+    for iview in range(n_views):
+        sx = d_src_pos[iview, 0] / voxel_spacing
+        sy = d_src_pos[iview, 1] / voxel_spacing
+
+        dcx = d_det_center[iview, 0] / voxel_spacing
+        dcy = d_det_center[iview, 1] / voxel_spacing
+
+        ux = d_det_u_vec[iview, 0]
+        uy = d_det_u_vec[iview, 1]
+
+        # Detector normal in 2D: rotate u_vec 90 degrees. Choose the
+        # orientation that points from the source toward the detector,
+        # so that ``U_n`` is positive for voxels on the detector side.
+        nx = -uy
+        ny = ux
+        # Align normal so that (det_center - src) . n > 0.
+        align = (dcx - sx) * nx + (dcy - sy) * ny
+        if align < 0.0:
+            nx = -nx
+            ny = -ny
+
+        # Perpendicular distance from source to voxel along normal.
+        px = x_v - sx
+        py = y_v - sy
+        U_n = px * nx + py * ny
+        if U_n <= _EPSILON:
+            continue
+
+        sdd_n = (dcx - sx) * nx + (dcy - sy) * ny
+        if sdd_n <= _EPSILON:
+            continue
+        mag = sdd_n / U_n
+
+        # Source-to-origin distance projected on the detector normal.
+        # Principled generalisation of ``sid`` for arbitrary fan
+        # trajectories; reduces to the classical sid for circular orbits.
+        sid_n = -sx * nx - sy * ny
+        if sid_n <= _EPSILON:
+            continue
+
+        hx = sx + mag * px
+        hy = sy + mag * py
+
+        rx = hx - dcx
+        ry = hy - dcy
+        u_det = rx * ux + ry * uy
+
+        fu = u_det / det_spacing_v + half_u
+        if fu < 0.0 or fu > (n_det - 1):
+            continue
+
+        iu0 = int(math.floor(fu))
+        if iu0 >= n_det - 1:
+            iu0 = n_det - 2
+        if iu0 < 0:
+            iu0 = 0
+        tu = fu - iu0
+        if tu < 0.0:
+            tu = 0.0
+        elif tu > 1.0:
+            tu = 1.0
+
+        s0 = d_sino[iview, iu0]
+        s1 = d_sino[iview, iu0 + 1]
+        sample = s0 * (1.0 - tu) + s1 * tu
+
+        w_ratio = sid_n / U_n
+        w = w_ratio * w_ratio
+
+        accum += w * sample
+
+    d_image[iy, ix] = accum
+
 

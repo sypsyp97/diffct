@@ -1,13 +1,15 @@
 """CUDA kernels for 2D parallel beam projections.
 
 This module contains CUDA kernels implementing the Siddon ray-tracing method
-for 2D parallel beam forward projection and backprojection.
+for 2D parallel beam forward projection and backprojection, plus a
+dedicated voxel-driven FBP gather kernel for analytical reconstruction
+pipelines.
 """
 
 import math
 from numba import cuda
 
-from ..constants import _FASTMATH_DECORATOR, _INF, _EPSILON
+from ..constants import _FASTMATH_DECORATOR, _FDK_ACCURACY_DECORATOR, _INF, _EPSILON
 
 
 # ============================================================================
@@ -340,3 +342,76 @@ def _parallel_2d_backward_kernel(
             iy += step_y
             ty += dt_y
 
+
+
+# ============================================================================
+# 2D Parallel Beam Analytical FBP Backprojection Gather (voxel-driven)
+# ============================================================================
+#
+# Distinct from ``_parallel_2d_backward_kernel`` above, which is the
+# pure Siddon adjoint ``P^T`` used by autograd. This kernel is the
+# classical voxel-driven FBP gather: for each output pixel it projects
+# the pixel centre onto the detector for each view, linearly samples
+# the filtered sinogram, and accumulates. Parallel beam has no source,
+# so there is no ``(sid/U)^2`` distance weighting.
+
+
+@_FDK_ACCURACY_DECORATOR
+def _parallel_2d_fbp_backproject_kernel(
+    d_sino, n_views, n_det,
+    d_image, Nx, Ny,
+    det_spacing, d_ray_dir, d_det_origin, d_det_u_vec,
+    cx, cy, voxel_spacing
+):
+    """Voxel-driven parallel-beam FBP backprojection gather (arbitrary trajectory).
+
+    For each output pixel ``(ix, iy)`` loops over views and accumulates
+    a linearly interpolated filtered-sinogram sample. The pixel's
+    detector coordinate is ``u = (P - det_origin) . det_u_vec`` (no
+    magnification because the rays are parallel).
+    """
+    iy, ix = cuda.grid(2)
+    if ix >= Nx or iy >= Ny:
+        return
+
+    x_v = (ix - cx)
+    y_v = (iy - cy)
+
+    det_spacing_v = det_spacing / voxel_spacing
+    half_u = n_det * 0.5
+
+    accum = 0.0
+    for iview in range(n_views):
+        dox = d_det_origin[iview, 0] / voxel_spacing
+        doy = d_det_origin[iview, 1] / voxel_spacing
+
+        ux = d_det_u_vec[iview, 0]
+        uy = d_det_u_vec[iview, 1]
+
+        rx = x_v - dox
+        ry = y_v - doy
+
+        u_det = rx * ux + ry * uy
+
+        fu = u_det / det_spacing_v + half_u
+        if fu < 0.0 or fu > (n_det - 1):
+            continue
+
+        iu0 = int(math.floor(fu))
+        if iu0 >= n_det - 1:
+            iu0 = n_det - 2
+        if iu0 < 0:
+            iu0 = 0
+        tu = fu - iu0
+        if tu < 0.0:
+            tu = 0.0
+        elif tu > 1.0:
+            tu = 1.0
+
+        s0 = d_sino[iview, iu0]
+        s1 = d_sino[iview, iu0 + 1]
+        sample = s0 * (1.0 - tu) + s1 * tu
+
+        accum += sample
+
+    d_image[iy, ix] = accum

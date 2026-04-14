@@ -1,113 +1,137 @@
+"""Circular-orbit parallel-beam FBP reconstruction (arbitrary-trajectory API).
+
+Uses the analytical helpers ported from the main branch:
+
+    ParallelProjectorFunction.apply   # forward projection
+    ramp_filter_1d                    # ramp filter along detector axis
+    angular_integration_weights       # per-view integration weights
+    parallel_weighted_backproject     # voxel-driven FBP gather with 1/(2*pi)
+
+Parallel beam has no source, so there is no ``(sid/U)^2`` distance
+weight - the gather kernel simply projects each pixel onto the detector
+along the ray direction and samples the filtered sinogram. The
+analytical ``1/(2*pi)`` Fourier-convention constant is applied inside
+``parallel_weighted_backproject``.
+"""
+
+import math
+
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 import torch.nn.functional as F
-from diffct.differentiable import ParallelProjectorFunction, ParallelBackprojectorFunction
-from diffct.geometry import circular_trajectory_2d_parallel
+import matplotlib.pyplot as plt
+
+from diffct import (
+    ParallelProjectorFunction,
+    circular_trajectory_2d_parallel,
+    ramp_filter_1d,
+    angular_integration_weights,
+    parallel_weighted_backproject,
+)
 
 
 def shepp_logan_2d(Nx, Ny):
-    Nx = int(Nx)
-    Ny = int(Ny)
-    phantom = np.zeros((Ny, Nx), dtype=np.float64)
+    phantom = np.zeros((Ny, Nx), dtype=np.float32)
     ellipses = [
-        (0.0, 0.0, 0.69, 0.92, 0, 1.0),
-        (0.0, -0.0184, 0.6624, 0.8740, 0, -0.8),
-        (0.22, 0.0, 0.11, 0.31, -18.0, -0.8),
-        (-0.22, 0.0, 0.16, 0.41, 18.0, -0.8),
-        (0.0, 0.35, 0.21, 0.25, 0, 0.7),
+        (0.0,    0.0,    0.69,   0.92,    0.0,  1.0),
+        (0.0,   -0.0184, 0.6624, 0.8740,  0.0, -0.8),
+        (0.22,   0.0,    0.11,   0.31,  -18.0, -0.8),
+        (-0.22,  0.0,    0.16,   0.41,   18.0, -0.8),
+        (0.0,    0.35,   0.21,   0.25,    0.0,  0.7),
     ]
-    cx = (Nx - 1) / 2
-    cy = (Ny - 1) / 2
-    for ix in range(Nx):
-        for iy in range(Ny):
-            xnorm = (ix - cx) / (Nx / 2)
-            ynorm = (iy - cy) / (Ny / 2)
-            val = 0.0
-            for (x0, y0, a, b, angdeg, ampl) in ellipses:
-                th = np.deg2rad(angdeg)
-                xprime = (xnorm - x0) * np.cos(th) + (ynorm - y0) * np.sin(th)
-                yprime = -(xnorm - x0) * np.sin(th) + (ynorm - y0) * np.cos(th)
-                if xprime * xprime / (a * a) + yprime * yprime / (b * b) <= 1.0:
-                    val += ampl
-            phantom[iy, ix] = val
-    phantom = np.clip(phantom, 0.0, 1.0)
-    return phantom
+    cx = Nx * 0.5
+    cy = Ny * 0.5
+    ys, xs = np.mgrid[0:Ny, 0:Nx].astype(np.float32)
+    xn = (xs - cx) / (Nx / 2)
+    yn = (ys - cy) / (Ny / 2)
+    for (x0, y0, a, b, angdeg, ampl) in ellipses:
+        th = math.radians(angdeg)
+        xp = (xn - x0) * math.cos(th) + (yn - y0) * math.sin(th)
+        yp = -(xn - x0) * math.sin(th) + (yn - y0) * math.cos(th)
+        mask = (xp * xp) / (a * a) + (yp * yp) / (b * b) <= 1.0
+        phantom[mask] += ampl
+    return np.clip(phantom, 0.0, 1.0)
 
-def ramp_filter(sinogram_tensor):
-    device = sinogram_tensor.device
-    num_views, num_det = sinogram_tensor.shape
-    freqs = torch.fft.fftfreq(num_det, device=device)
-    omega = 2.0 * torch.pi * freqs
-    ramp = torch.abs(omega)
-    ramp_2d = ramp.reshape(1, num_det)
-    sino_fft = torch.fft.fft(sinogram_tensor, dim=1)
-    filtered_fft = sino_fft * ramp_2d
-    filtered = torch.real(torch.fft.ifft(filtered_fft, dim=1))
-    
-    return filtered
 
 def main():
     Nx, Ny = 256, 256
     phantom = shepp_logan_2d(Nx, Ny)
-    num_angles = 360
-    angles_np = np.linspace(0, 2*np.pi, num_angles, endpoint=False).astype(np.float32)
 
+    # Parallel FBP integrates over half a rotation (0 to pi) because each
+    # ray and its 180-degree twin are the same measurement.
+    num_angles = 360
     num_detectors = 512
     detector_spacing = 1.0
     voxel_spacing = 1.0
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    image_torch = torch.tensor(phantom, device=device, dtype=torch.float32, requires_grad=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    image_torch = torch.tensor(phantom, device=device, dtype=torch.float32)
 
-    # Generate trajectory geometry for parallel beam
-    ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(num_angles, device=device)
+    ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(
+        num_angles, device=device
+    )
+    angles_torch = torch.linspace(
+        0.0, math.pi, num_angles + 1, device=device
+    )[:-1]
 
-    sinogram = ParallelProjectorFunction.apply(image_torch, ray_dir, det_origin, det_u_vec,
-                                               num_detectors, detector_spacing, voxel_spacing)
-    
-    sinogram_filt = ramp_filter(sinogram)
+    # ---- 1. forward projection ----
+    sinogram = ParallelProjectorFunction.apply(
+        image_torch, ray_dir, det_origin, det_u_vec,
+        num_detectors, detector_spacing, voxel_spacing,
+    )
 
-    reconstruction = F.relu(ParallelBackprojectorFunction.apply(sinogram_filt, ray_dir, det_origin, det_u_vec,
-                                                         detector_spacing, Ny, Nx, voxel_spacing)) # ReLU to ensure non-negativity
-    
-    # --- FBP normalization ---
-    # The backprojection is a sum over all angles. To approximate the integral,
-    # we need to multiply by the angular step d_theta.
-    # The FBP formula also includes a factor of 1/2 when integrating over [0, 2*pi].
-    # d_theta = 2 * pi / num_angles
-    # Normalization factor = (1/2) * d_theta = pi / num_angles
-    reconstruction = reconstruction * (np.pi / num_angles)
+    # ---- 2. ramp filter (no cosine pre-weight for parallel) ----
+    sinogram_filt = ramp_filter_1d(
+        sinogram,
+        dim=1,
+        sample_spacing=detector_spacing,
+        pad_factor=2,
+        window="hann",
+    ).contiguous()
 
-    loss = torch.mean((reconstruction - image_torch)**2)
-    loss.backward()
+    # ---- 3. angular integration weights ----
+    # Parallel beam covers [0, pi] so there is no redundancy factor.
+    d_beta = angular_integration_weights(
+        angles_torch, redundant_full_scan=False
+    ).view(-1, 1)
+    sinogram_filt = sinogram_filt * d_beta
 
-    print("Loss:", loss.item())
-    print("Phantom gradient center pixel:", image_torch.grad[Ny//2, Nx//2].item())
-    print("Reconstruction shape:", reconstruction.shape)
+    # ---- 4. voxel-driven FBP gather + 1/(2*pi) constant ----
+    reconstruction_raw = parallel_weighted_backproject(
+        sinogram_filt, ray_dir, det_origin, det_u_vec,
+        detector_spacing, Ny, Nx, voxel_spacing=voxel_spacing,
+    )
+    reconstruction = F.relu(reconstruction_raw)
+
+    raw_mse = torch.mean((reconstruction_raw - image_torch) ** 2).item()
+    clamped_mse = torch.mean((reconstruction - image_torch) ** 2).item()
+    print("Parallel Beam FBP example (arbitrary-trajectory API)")
+    print(f"  Raw MSE:             {raw_mse:.6f}")
+    print(f"  Clamped MSE:         {clamped_mse:.6f}")
+    print(f"  Raw reco range:      [{reconstruction_raw.min().item():.4f}, "
+          f"{reconstruction_raw.max().item():.4f}]")
+    print(f"  Phantom range:       [{float(phantom.min()):.4f}, "
+          f"{float(phantom.max()):.4f}]")
 
     sinogram_cpu = sinogram.detach().cpu().numpy()
     reco_cpu = reconstruction.detach().cpu().numpy()
 
-    plt.figure(figsize=(12,4))
-    plt.subplot(1,3,1)
-    plt.imshow(phantom, cmap='gray')
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1, 3, 1)
+    plt.imshow(phantom, cmap="gray")
     plt.title("Phantom")
-    plt.axis('off')
-    plt.subplot(1,3,2)
-    plt.imshow(sinogram_cpu, aspect='auto', cmap='gray')
-    plt.title("Differentiable Sinogram")
-    plt.axis('off')
-    plt.subplot(1,3,3)
-    plt.imshow(reco_cpu, cmap='gray')
-    plt.title("Differentiable Recon")
-    plt.axis('off')
+    plt.axis("off")
+    plt.subplot(1, 3, 2)
+    plt.imshow(sinogram_cpu, cmap="gray", aspect="auto")
+    plt.title("Parallel Sinogram")
+    plt.axis("off")
+    plt.subplot(1, 3, 3)
+    plt.imshow(reco_cpu, cmap="gray")
+    plt.title("Parallel Reconstruction")
+    plt.axis("off")
     plt.tight_layout()
     plt.show()
 
-    # print data range of the phantom and reco 
-    print("Phantom range:", phantom.min(), phantom.max())
-    print("Reco range:", reco_cpu.min(), reco_cpu.max())
 
 if __name__ == "__main__":
     main()

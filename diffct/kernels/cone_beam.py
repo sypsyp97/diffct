@@ -1,13 +1,14 @@
 """CUDA kernels for 3D cone beam projections.
 
 This module contains CUDA kernels implementing the Siddon ray-tracing method
-for 3D cone beam forward projection and backprojection.
+for 3D cone beam forward projection and backprojection, plus a dedicated
+voxel-driven FDK gather kernel for analytical reconstruction pipelines.
 """
 
 import math
 from numba import cuda
 
-from ..constants import _FASTMATH_DECORATOR, _INF, _EPSILON
+from ..constants import _FASTMATH_DECORATOR, _FDK_ACCURACY_DECORATOR, _INF, _EPSILON
 
 
 # ============================================================================
@@ -435,7 +436,191 @@ def _cone_3d_backward_kernel(
             tz += dt_z
 
 
-# ############################################################################
-# DIFFERENTIABLE TORCH FUNCTIONS
-# ############################################################################
+# ============================================================================
+# 3D Cone Beam Analytical FDK Backprojection Gather (voxel-driven)
+# ============================================================================
+#
+# Distinct from ``_cone_3d_backward_kernel`` above, which is the pure
+# Siddon adjoint ``P^T`` used by autograd. This kernel is the classical
+# voxel-driven FDK gather: for each output voxel it projects the voxel
+# centre onto the detector for each view, bilinearly samples the
+# already-filtered sinogram, and accumulates ``(sid/U_n)^2 * sample``.
+# Both forward and adjoint autograd paths deliberately stay on the
+# Siddon pair; only ``cone_weighted_backproject`` dispatches here.
 
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_fdk_backproject_kernel(
+    d_sino, n_views, n_u, n_v,
+    d_vol, Nx, Ny, Nz,
+    du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
+    cx, cy, cz, voxel_spacing
+):
+    """Voxel-driven FDK backprojection gather (arbitrary trajectory).
+
+    For each volume voxel, loops over all views and accumulates a
+    bilinearly-interpolated sinogram sample weighted by ``(sid_v/U_n)^2``,
+    where:
+
+      * ``sid_v = |S_v|`` is the per-view source-to-origin distance,
+      * ``U_n = (P - S_v) . n_v`` is the signed distance from the source
+        to the voxel along the detector normal ``n_v = u_v x v_v``.
+
+    For a canonical circular orbit this reduces to the classical
+    ``(sid/U)^2`` FDK weight with ``U = sid + x*sin(b) - y*cos(b)``.
+
+    Coalescing layout: ``d_vol`` has WHD layout ``(Nx, Ny, Nz)`` so its
+    innermost stride-1 axis is ``Nz``. We therefore unpack
+    ``(iz, iy, ix) = cuda.grid(3)`` and have the Python wrapper launch
+    the grid as ``_grid_3d(Nz, Ny, Nx)`` so ``iz`` is warp-adjacent and
+    the per-voxel writes are coalesced.
+    """
+    iz, iy, ix = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    # Voxel position in voxel-unit, origin-centred coordinates.
+    x_v = (ix - cx)
+    y_v = (iy - cy)
+    z_v = (iz - cz)
+
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+
+    half_u = n_u * 0.5
+    half_v = n_v * 0.5
+
+    accum = 0.0
+    for iview in range(n_views):
+        # Source position in voxel units.
+        sx = d_src_pos[iview, 0] / voxel_spacing
+        sy = d_src_pos[iview, 1] / voxel_spacing
+        sz = d_src_pos[iview, 2] / voxel_spacing
+
+        # Detector centre in voxel units.
+        dcx = d_det_center[iview, 0] / voxel_spacing
+        dcy = d_det_center[iview, 1] / voxel_spacing
+        dcz = d_det_center[iview, 2] / voxel_spacing
+
+        # Detector orientation (unit vectors, ratio-free).
+        ux = d_det_u_vec[iview, 0]
+        uy = d_det_u_vec[iview, 1]
+        uz = d_det_u_vec[iview, 2]
+        vx = d_det_v_vec[iview, 0]
+        vy = d_det_v_vec[iview, 1]
+        vz = d_det_v_vec[iview, 2]
+
+        # Detector normal n = u x v. Normalized defensively in case the
+        # caller supplied non-orthonormal u/v axes.
+        nx = uy * vz - uz * vy
+        ny = uz * vx - ux * vz
+        nz = ux * vy - uy * vx
+        n_len = math.sqrt(nx * nx + ny * ny + nz * nz)
+        if n_len < _EPSILON:
+            continue
+        nx /= n_len
+        ny /= n_len
+        nz /= n_len
+
+        # Orient the normal so it points from the source toward the
+        # detector. Without this flip, user-supplied (u_vec, v_vec) pairs
+        # whose cross product happens to point the other way would make
+        # every voxel's U_n negative and get silently skipped, producing
+        # a zero reconstruction. The circular_trajectory_3d helper already
+        # produces the right-handed convention so this is a no-op there.
+        align = (dcx - sx) * nx + (dcy - sy) * ny + (dcz - sz) * nz
+        if align < 0.0:
+            nx = -nx
+            ny = -ny
+            nz = -nz
+
+        # Signed distance from source to voxel along the detector normal
+        # (this is the U in the (sid/U)^2 FDK weight).
+        px = x_v - sx
+        py = y_v - sy
+        pz = z_v - sz
+        U_n = px * nx + py * ny + pz * nz
+        if U_n <= _EPSILON:
+            continue
+
+        # Source-to-detector distance along the normal.
+        sdd_n = (dcx - sx) * nx + (dcy - sy) * ny + (dcz - sz) * nz
+        if sdd_n <= _EPSILON:
+            continue
+
+        # Source-to-origin distance projected on the detector normal.
+        # This is the correct generalisation of the circular-orbit "sid"
+        # that appears in the (sid/U)^2 FDK weight. For a circular orbit
+        # it reduces to the constant ``sid`` (because |S| equals -S.n
+        # when n points from S toward the origin along the rotation
+        # axis). For non-circular trajectories it is the per-view
+        # source-to-iso projection, which is the principled heuristic
+        # when extending FDK beyond the circle.
+        sid_n = -sx * nx - sy * ny - sz * nz
+        if sid_n <= _EPSILON:
+            continue
+
+        mag = sdd_n / U_n
+
+        # Hit point on the detector plane.
+        hx = sx + mag * px
+        hy = sy + mag * py
+        hz = sz + mag * pz
+
+        # Detector coordinates relative to detector centre.
+        rx = hx - dcx
+        ry = hy - dcy
+        rz = hz - dcz
+
+        u_det = rx * ux + ry * uy + rz * uz
+        v_det = rx * vx + ry * vy + rz * vz
+
+        # Convert (u, v) to fractional bin index.
+        fu = u_det / du_v + half_u
+        fv = v_det / dv_v + half_v
+
+        if fu < 0.0 or fu > (n_u - 1) or fv < 0.0 or fv > (n_v - 1):
+            continue
+
+        iu0 = int(math.floor(fu))
+        iv0 = int(math.floor(fv))
+        if iu0 >= n_u - 1:
+            iu0 = n_u - 2
+        if iv0 >= n_v - 1:
+            iv0 = n_v - 2
+        if iu0 < 0:
+            iu0 = 0
+        if iv0 < 0:
+            iv0 = 0
+        tu = fu - iu0
+        tv = fv - iv0
+        if tu < 0.0:
+            tu = 0.0
+        elif tu > 1.0:
+            tu = 1.0
+        if tv < 0.0:
+            tv = 0.0
+        elif tv > 1.0:
+            tv = 1.0
+
+        s00 = d_sino[iview, iu0,     iv0    ]
+        s10 = d_sino[iview, iu0 + 1, iv0    ]
+        s01 = d_sino[iview, iu0,     iv0 + 1]
+        s11 = d_sino[iview, iu0 + 1, iv0 + 1]
+
+        omtu = 1.0 - tu
+        omtv = 1.0 - tv
+        sample = (
+            s00 * omtu * omtv +
+            s10 * tu   * omtv +
+            s01 * omtu * tv   +
+            s11 * tu   * tv
+        )
+
+        # FDK weight (sid_n / U_n)^2.
+        w_ratio = sid_n / U_n
+        w = w_ratio * w_ratio
+
+        accum += w * sample
+
+    d_vol[ix, iy, iz] = accum
