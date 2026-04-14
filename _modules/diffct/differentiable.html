@@ -95,6 +95,11 @@
 <span class="c1"># Trades numerical precision for performance in ray-tracing calculations</span>
 <span class="c1"># Safe for CT reconstruction where slight precision loss is acceptable for speed gains</span>
 <span class="n">_FASTMATH_DECORATOR</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fastmath</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="c1"># The analytical FDK gather kernel gets its own decorator with fastmath disabled.</span>
+<span class="c1"># FDK is a one-shot reconstruction so the few-percent speedup of fastmath is not</span>
+<span class="c1"># worth the loss of IEEE-correct rounding in the (sid/U)^2 distance weighting and</span>
+<span class="c1"># the bilinear detector interpolation near detector edges.</span>
+<span class="n">_FDK_ACCURACY_DECORATOR</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">jit</span><span class="p">(</span><span class="n">cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fastmath</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 
 <span class="n">_INF</span>                <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
 <span class="n">_EPSILON</span>            <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1e-6</span><span class="p">)</span>
@@ -405,6 +410,8 @@
     <span class="p">),</span> <span class="n">tpb</span>
 
 
+<div class="viewcode-block" id="detector_coordinates_1d">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.detector_coordinates_1d">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">detector_coordinates_1d</span><span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">detector_offset</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return centered detector coordinates in physical units.</span>
 
@@ -412,9 +419,12 @@
 <span class="sd">    This avoids a half-pixel center bias for even detector counts.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
-    <span class="k">return</span> <span class="p">(</span><span class="n">idx</span> <span class="o">-</span> <span class="p">(</span><span class="n">num_detectors</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">detector_spacing</span> <span class="o">+</span> <span class="n">detector_offset</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">idx</span> <span class="o">-</span> <span class="p">(</span><span class="n">num_detectors</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">detector_spacing</span> <span class="o">+</span> <span class="n">detector_offset</span></div>
 
 
+
+<div class="viewcode-block" id="angular_integration_weights">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.angular_integration_weights">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">angular_integration_weights</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute per-view integration weights from the provided angle samples.</span>
 
@@ -448,23 +458,32 @@
         <span class="n">w</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">a</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
         <span class="n">w</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">a</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">])</span>
         <span class="n">w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">w</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">w</span>
+    <span class="k">return</span> <span class="n">w</span></div>
 
 
+
+<div class="viewcode-block" id="fan_cosine_weights">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.fan_cosine_weights">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">fan_cosine_weights</span><span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">detector_offset</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return fan-beam cosine pre-weights ``cos(gamma)`` for each detector bin.&quot;&quot;&quot;</span>
     <span class="n">u</span> <span class="o">=</span> <span class="n">detector_coordinates_1d</span><span class="p">(</span><span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">detector_offset</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
     <span class="n">gamma</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">atan</span><span class="p">(</span><span class="n">u</span> <span class="o">/</span> <span class="n">sdd</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">gamma</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">gamma</span><span class="p">)</span></div>
 
 
+
+<div class="viewcode-block" id="cone_cosine_weights">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.cone_cosine_weights">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">cone_cosine_weights</span><span class="p">(</span><span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">detector_offset_u</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">detector_offset_v</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return FDK cosine pre-weights ``D/sqrt(D^2 + u^2 + v^2)`` on a 2D detector.&quot;&quot;&quot;</span>
     <span class="n">u</span> <span class="o">=</span> <span class="n">detector_coordinates_1d</span><span class="p">(</span><span class="n">det_u</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">detector_offset_u</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">det_u</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
     <span class="n">v</span> <span class="o">=</span> <span class="n">detector_coordinates_1d</span><span class="p">(</span><span class="n">det_v</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">detector_offset_v</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">det_v</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">sdd</span> <span class="o">*</span> <span class="n">sdd</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">u</span> <span class="o">+</span> <span class="n">v</span> <span class="o">*</span> <span class="n">v</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">sdd</span> <span class="o">*</span> <span class="n">sdd</span> <span class="o">+</span> <span class="n">u</span> <span class="o">*</span> <span class="n">u</span> <span class="o">+</span> <span class="n">v</span> <span class="o">*</span> <span class="n">v</span><span class="p">)</span></div>
 
 
+
+<div class="viewcode-block" id="parker_weights">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.parker_weights">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">parker_weights</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">detector_offset</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Return Parker redundancy weights for fan/cone short-scan geometries.</span>
 
@@ -525,19 +544,124 @@
         <span class="n">lead</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">b</span> <span class="o">/</span> <span class="n">ramp</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)))</span>
         <span class="n">trail</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">((</span><span class="n">coverage</span> <span class="o">-</span> <span class="n">b</span><span class="p">)</span> <span class="o">/</span> <span class="n">ramp</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)))</span>
         <span class="n">wb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">minimum</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">lead</span><span class="p">,</span> <span class="n">trail</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">lead</span><span class="p">))</span>
-    <span class="k">return</span> <span class="n">wb</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">wb</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">)</span></div>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">ramp_filter_1d</span><span class="p">(</span><span class="n">sinogram_tensor</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply a 1D ramp filter along ``dim`` using FFT.&quot;&quot;&quot;</span>
-    <span class="n">n</span> <span class="o">=</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span>
-    <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">fftfreq</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
-    <span class="n">ramp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">freqs</span><span class="p">)</span>
-    <span class="n">shape</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">ndim</span>
-    <span class="n">shape</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="o">=</span> <span class="n">n</span>
-    <span class="n">ramp</span> <span class="o">=</span> <span class="n">ramp</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span>
-    <span class="n">sino_fft</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">fft</span><span class="p">(</span><span class="n">sinogram_tensor</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">dim</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">real</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">ifft</span><span class="p">(</span><span class="n">sino_fft</span> <span class="o">*</span> <span class="n">ramp</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">dim</span><span class="p">))</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_ramp_window</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">freqs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build a frequency-domain apodization window for the ramp filter.</span>
+
+<span class="sd">    ``freqs`` are in cycles per sample (same convention as ``torch.fft.fftfreq``</span>
+<span class="sd">    and ``torch.fft.rfftfreq``). The normalized coordinate ``nf = 2 * |freqs|``</span>
+<span class="sd">    maps DC to 0 and the Nyquist bin to 1.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">name</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">freqs</span><span class="p">)</span>
+    <span class="n">nf</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">freqs</span><span class="p">)</span> <span class="o">*</span> <span class="mf">2.0</span>  <span class="c1"># [0, 1] at Nyquist</span>
+    <span class="n">nf</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">nf</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;_&quot;</span><span class="p">,</span> <span class="s2">&quot;-&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;hann&quot;</span><span class="p">,</span> <span class="s2">&quot;hanning&quot;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">nf</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;hamming&quot;</span><span class="p">,):</span>
+        <span class="k">return</span> <span class="mf">0.54</span> <span class="o">+</span> <span class="mf">0.46</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">nf</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;cosine&quot;</span><span class="p">,):</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">nf</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;shepp-logan&quot;</span><span class="p">,):</span>
+        <span class="c1"># sinc(nf/2); sinc(0)=1 by limit.</span>
+        <span class="n">arg</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">nf</span> <span class="o">*</span> <span class="mf">0.5</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+            <span class="n">nf</span> <span class="o">&gt;</span> <span class="mf">1e-8</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span> <span class="o">/</span> <span class="n">torch</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">nf</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;ram-lak&quot;</span><span class="p">,</span> <span class="s2">&quot;ramlak&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">freqs</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown ramp window &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="ramp_filter_1d">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.ramp_filter_1d">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">ramp_filter_1d</span><span class="p">(</span>
+    <span class="n">sinogram_tensor</span><span class="p">,</span>
+    <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">sample_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">pad_factor</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">window</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">use_rfft</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply a 1D ramp filter along ``dim`` using FFT.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    sinogram_tensor : torch.Tensor</span>
+<span class="sd">        Real-valued sinogram tensor.</span>
+<span class="sd">    dim : int, optional</span>
+<span class="sd">        Axis along which to filter. Default ``-1``.</span>
+<span class="sd">    sample_spacing : float, optional</span>
+<span class="sd">        Physical spacing between detector samples along ``dim``. The continuous</span>
+<span class="sd">        ramp filter has units of ``1/length``, so the FFT output is rescaled by</span>
+<span class="sd">        ``1/sample_spacing`` to respect physical units. Default ``1.0`` (pure</span>
+<span class="sd">        sample-unit behavior, matching the historical call signature).</span>
+<span class="sd">    pad_factor : int, optional</span>
+<span class="sd">        Zero-pad the signal to ``pad_factor * N`` along ``dim`` before the FFT</span>
+<span class="sd">        to suppress circular-convolution wrap-around artifacts. Default ``1``</span>
+<span class="sd">        (no padding).</span>
+<span class="sd">    window : str or None, optional</span>
+<span class="sd">        Frequency-domain apodization: ``None``/``&quot;ram-lak&quot;`` (unwindowed),</span>
+<span class="sd">        ``&quot;hann&quot;``, ``&quot;hamming&quot;``, ``&quot;cosine&quot;``, or ``&quot;shepp-logan&quot;``.</span>
+<span class="sd">        Default ``None``.</span>
+<span class="sd">    use_rfft : bool, optional</span>
+<span class="sd">        Use the real-valued FFT path when ``True``. Default ``True``.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    Pre-existing callers that pass only ``(sinogram_tensor, dim)`` keep the same</span>
+<span class="sd">    filter shape because the defaults preserve the original behavior up to the</span>
+<span class="sd">    rfft path (which is numerically equivalent for real inputs) and the</span>
+<span class="sd">    ``1/sample_spacing`` scale (which is exactly 1 when ``sample_spacing=1.0``).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dim_pos</span> <span class="o">=</span> <span class="n">dim</span> <span class="k">if</span> <span class="n">dim</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">ndim</span> <span class="o">+</span> <span class="n">dim</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="n">dim_pos</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">pad_factor</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">pad_factor</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">pad_factor</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">pad_factor</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">pad_factor</span><span class="p">)</span>
+    <span class="n">n_pad</span> <span class="o">=</span> <span class="n">n</span> <span class="o">*</span> <span class="n">pad_factor</span>
+    <span class="k">if</span> <span class="n">n_pad</span> <span class="o">&gt;</span> <span class="n">n</span><span class="p">:</span>
+        <span class="n">pad_total</span> <span class="o">=</span> <span class="n">n_pad</span> <span class="o">-</span> <span class="n">n</span>
+        <span class="n">pad_left</span> <span class="o">=</span> <span class="n">pad_total</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="n">pad_right</span> <span class="o">=</span> <span class="n">pad_total</span> <span class="o">-</span> <span class="n">pad_left</span>
+        <span class="n">pad_spec</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">ndim</span>
+        <span class="n">rev_dim</span> <span class="o">=</span> <span class="n">sinogram_tensor</span><span class="o">.</span><span class="n">ndim</span> <span class="o">-</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">dim_pos</span>
+        <span class="n">pad_spec</span><span class="p">[</span><span class="mi">2</span> <span class="o">*</span> <span class="n">rev_dim</span><span class="p">]</span> <span class="o">=</span> <span class="n">pad_left</span>
+        <span class="n">pad_spec</span><span class="p">[</span><span class="mi">2</span> <span class="o">*</span> <span class="n">rev_dim</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">pad_right</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">sinogram_tensor</span><span class="p">,</span> <span class="n">pad_spec</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;constant&quot;</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">pad_left</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">sinogram_tensor</span>
+
+    <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="n">sample_spacing</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">use_rfft</span> <span class="ow">and</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_floating_point</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+        <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">rfftfreq</span><span class="p">(</span><span class="n">n_pad</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">ramp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">freqs</span><span class="p">)</span> <span class="o">*</span> <span class="n">_ramp_window</span><span class="p">(</span><span class="n">window</span><span class="p">,</span> <span class="n">freqs</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>
+        <span class="n">shape</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span>
+        <span class="n">shape</span><span class="p">[</span><span class="n">dim_pos</span><span class="p">]</span> <span class="o">=</span> <span class="n">ramp</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">ramp</span> <span class="o">=</span> <span class="n">ramp</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span>
+        <span class="n">x_fft</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">rfft</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">dim_pos</span><span class="p">)</span>
+        <span class="n">x_filtered</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfft</span><span class="p">(</span><span class="n">x_fft</span> <span class="o">*</span> <span class="n">ramp</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n_pad</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">dim_pos</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">freqs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">fftfreq</span><span class="p">(</span><span class="n">n_pad</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">freqs</span> <span class="o">=</span> <span class="n">freqs</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">real</span><span class="o">.</span><span class="n">dtype</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">is_complex</span><span class="p">()</span> <span class="k">else</span> <span class="n">x</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">ramp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">freqs</span><span class="p">)</span> <span class="o">*</span> <span class="n">_ramp_window</span><span class="p">(</span><span class="n">window</span><span class="p">,</span> <span class="n">freqs</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span>
+        <span class="n">shape</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span>
+        <span class="n">shape</span><span class="p">[</span><span class="n">dim_pos</span><span class="p">]</span> <span class="o">=</span> <span class="n">ramp</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">ramp</span> <span class="o">=</span> <span class="n">ramp</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span>
+        <span class="n">x_fft</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">fft</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">dim_pos</span><span class="p">)</span>
+        <span class="n">x_filtered</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">real</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">ifft</span><span class="p">(</span><span class="n">x_fft</span> <span class="o">*</span> <span class="n">ramp</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">dim_pos</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">n_pad</span> <span class="o">&gt;</span> <span class="n">n</span><span class="p">:</span>
+        <span class="n">x_filtered</span> <span class="o">=</span> <span class="n">x_filtered</span><span class="o">.</span><span class="n">narrow</span><span class="p">(</span><span class="n">dim_pos</span><span class="p">,</span> <span class="n">pad_left</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">x_filtered</span></div>
+
 
 
 <span class="c1"># ############################################################################</span>
@@ -1026,49 +1150,14 @@
     <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
     <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
     <span class="n">det_offset</span><span class="p">,</span> <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span>
-    <span class="n">distance_weight</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam backprojection.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pure adjoint ``P^T`` of the fan-beam forward projector.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
-<span class="sd">    2D fan beam backprojection.</span>
-
-<span class="sd">    Parameters</span>
-<span class="sd">    ----------</span>
-<span class="sd">    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Input fan beam sinogram array on CUDA.</span>
-<span class="sd">    n_ang : int</span>
-<span class="sd">        Number of projection angles.</span>
-<span class="sd">    n_det : int</span>
-<span class="sd">        Number of detector elements.</span>
-<span class="sd">    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Output image gradient array on CUDA.</span>
-<span class="sd">    Nx : int</span>
-<span class="sd">        Number of voxels along the x-axis.</span>
-<span class="sd">    Ny : int</span>
-<span class="sd">        Number of voxels along the y-axis.</span>
-<span class="sd">    det_spacing : float</span>
-<span class="sd">        Physical spacing between detector elements.</span>
-<span class="sd">    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Precomputed cosine values of projection angles.</span>
-<span class="sd">    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Precomputed sine values of projection angles.</span>
-<span class="sd">    sdd : float</span>
-<span class="sd">        Source-to-Detector Distance (SDD), total distance from source to detector.</span>
-<span class="sd">    sid : float</span>
-<span class="sd">        Source-to-Isocenter Distance (SID), distance from source to isocenter.</span>
-<span class="sd">    cx : float</span>
-<span class="sd">        Half of image width in voxels.</span>
-<span class="sd">    cy : float</span>
-<span class="sd">        Half of image height in voxels.</span>
-<span class="sd">    voxel_spacing : float</span>
-<span class="sd">        Physical size of one voxel (in same units as det_spacing, sid, sdd).</span>
-
-<span class="sd">    Notes</span>
-<span class="sd">    -----</span>
-<span class="sd">    As the adjoint to the fan beam forward projection, this operation</span>
-<span class="sd">    distributes sinogram values back into the volume along divergent ray</span>
-<span class="sd">    paths using atomic operations for thread-safe accumulation.</span>
+<span class="sd">    Siddon ray-driven scatter with bilinear interpolation weights and no</span>
+<span class="sd">    distance weighting. Used by ``FanProjectorFunction.backward`` and</span>
+<span class="sd">    ``FanBackprojectorFunction.forward``. The analytical FBP path lives</span>
+<span class="sd">    in ``_fan_2d_fbp_backproject_kernel`` / ``fan_weighted_backproject``</span>
+<span class="sd">    and does *not* go through this kernel.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">iang</span><span class="p">,</span> <span class="n">idet</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">iang</span> <span class="o">&gt;=</span> <span class="n">n_ang</span> <span class="ow">or</span> <span class="n">idet</span> <span class="o">&gt;=</span> <span class="n">n_det</span><span class="p">:</span>
@@ -1148,22 +1237,11 @@
                 <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 
                 <span class="c1"># === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===</span>
-                <span class="c1"># Distribute contribution weighted by segment length and interpolation weights</span>
-                <span class="c1"># CUDA ATOMIC OPERATIONS: Critical for fan beam backprojection thread safety</span>
-                <span class="c1"># Fan beam rays converge at source, creating higher probability of voxel write conflicts</span>
-                <span class="c1"># Atomic operations prevent race conditions when multiple divergent rays write to same voxel</span>
-                <span class="c1"># Performance consideration: Fan beam geometry may have more atomic contention than parallel beam</span>
-                <span class="n">cval</span> <span class="o">=</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span>  <span class="c1"># Contribution value for this ray segment</span>
-                <span class="k">if</span> <span class="n">distance_weight</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">:</span>
-                    <span class="c1"># Fan-beam FBP distance weighting in rotated coordinates.</span>
-                    <span class="n">x_rel</span> <span class="o">=</span> <span class="p">(</span><span class="n">src_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
-                    <span class="n">y_rel</span> <span class="o">=</span> <span class="p">(</span><span class="n">src_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
-                    <span class="n">den</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">+</span> <span class="n">x_rel</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_rel</span> <span class="o">*</span> <span class="n">cos_a</span>
-                    <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">den</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
-                        <span class="n">cval</span> <span class="o">=</span> <span class="mf">0.0</span>
-                    <span class="k">else</span><span class="p">:</span>
-                        <span class="n">scale</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">/</span> <span class="n">den</span>
-                        <span class="n">cval</span> <span class="o">=</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">scale</span> <span class="o">*</span> <span class="n">scale</span>
+                <span class="c1"># Pure adjoint scatter: contribution is just val * seg_len,</span>
+                <span class="c1"># distributed onto the four nearest pixels with bilinear</span>
+                <span class="c1"># weights. No distance weighting - that belongs to the</span>
+                <span class="c1"># analytical FBP kernel, not this adjoint.</span>
+                <span class="n">cval</span> <span class="o">=</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span>
                 <span class="n">one_minus_dx</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">dx</span>
                 <span class="n">one_minus_dy</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">dy</span>
                 <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span><span class="p">,</span>     <span class="n">ix0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">*</span> <span class="n">one_minus_dy</span><span class="p">)</span>
@@ -1402,57 +1480,14 @@
     <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
     <span class="n">det_offset_u</span><span class="p">,</span> <span class="n">det_offset_v</span><span class="p">,</span>
     <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span> <span class="n">center_offset_z</span><span class="p">,</span>
-    <span class="n">distance_weight</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone-beam backprojection.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pure adjoint ``P^T`` of the cone-beam forward projector.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
-<span class="sd">    3D cone-beam backprojection.</span>
-
-<span class="sd">    Parameters</span>
-<span class="sd">    ----------</span>
-<span class="sd">    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Input cone-beam sinogram array on CUDA.</span>
-<span class="sd">    n_views : int</span>
-<span class="sd">        Number of projection views.</span>
-<span class="sd">    n_u : int</span>
-<span class="sd">        Number of detector elements along the u-axis.</span>
-<span class="sd">    n_v : int</span>
-<span class="sd">        Number of detector elements along the v-axis.</span>
-<span class="sd">    d_vol : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Output 3D volume gradient array on CUDA.</span>
-<span class="sd">    Nx : int</span>
-<span class="sd">        Number of voxels along the x-axis.</span>
-<span class="sd">    Ny : int</span>
-<span class="sd">        Number of voxels along the y-axis.</span>
-<span class="sd">    Nz : int</span>
-<span class="sd">        Number of voxels along the z-axis.</span>
-<span class="sd">    du : float</span>
-<span class="sd">        Physical spacing between detector elements along the u-axis.</span>
-<span class="sd">    dv : float</span>
-<span class="sd">        Physical spacing between detector elements along the v-axis.</span>
-<span class="sd">    d_cos : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Precomputed cosine values of projection angles.</span>
-<span class="sd">    d_sin : numba.cuda.cudadrv.devicearray.DeviceNDArray</span>
-<span class="sd">        Precomputed sine values of projection angles.</span>
-<span class="sd">    sdd : float</span>
-<span class="sd">        Source-to-Detector Distance (SDD), total distance from source to detector.</span>
-<span class="sd">    sid : float</span>
-<span class="sd">        Source-to-Isocenter Distance (SID), distance from source to isocenter.</span>
-<span class="sd">    cx : float</span>
-<span class="sd">        Half of volume width along x-axis (in voxels).</span>
-<span class="sd">    cy : float</span>
-<span class="sd">        Half of volume height along y-axis (in voxels).</span>
-<span class="sd">    cz : float</span>
-<span class="sd">        Half of volume depth along z-axis (in voxels).</span>
-<span class="sd">    voxel_spacing : float</span>
-<span class="sd">        Physical size of one voxel (in same units as du, dv, sid, sdd).</span>
-
-<span class="sd">    Notes</span>
-<span class="sd">    -----</span>
-<span class="sd">    As the adjoint to the cone-beam forward projection, this operation</span>
-<span class="sd">    distributes sinogram values back into the 3D volume along ray paths using</span>
-<span class="sd">    atomic operations for thread-safe accumulation.</span>
+<span class="sd">    Siddon ray-driven scatter with trilinear interpolation weights and no</span>
+<span class="sd">    distance weighting. Used by ``ConeProjectorFunction.backward`` and</span>
+<span class="sd">    ``ConeBackprojectorFunction.forward``. The analytical FDK path lives</span>
+<span class="sd">    in ``_cone_3d_fdk_backproject_kernel`` / ``cone_weighted_backproject``</span>
+<span class="sd">    and does *not* go through this kernel.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">iview</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iv</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">iview</span> <span class="o">&gt;=</span> <span class="n">n_views</span> <span class="ow">or</span> <span class="n">iu</span> <span class="o">&gt;=</span> <span class="n">n_u</span> <span class="ow">or</span> <span class="n">iv</span> <span class="o">&gt;=</span> <span class="n">n_v</span><span class="p">:</span>
@@ -1557,21 +1592,14 @@
                 <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
                 <span class="n">iz0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iz0</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
 
-                <span class="c1"># Precompute complements and contribution</span>
+                <span class="c1"># Precompute complements and contribution. Pure adjoint:</span>
+                <span class="c1"># cval = g * seg_len, distributed onto the eight nearest</span>
+                <span class="c1"># voxels with trilinear weights. Distance weighting lives</span>
+                <span class="c1"># in the analytical FDK kernel, not here.</span>
                 <span class="n">omdx</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">dx</span>
                 <span class="n">omdy</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">dy</span>
                 <span class="n">omdz</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">dz</span>
                 <span class="n">cval</span> <span class="o">=</span> <span class="n">g</span> <span class="o">*</span> <span class="n">seg_len</span>
-                <span class="k">if</span> <span class="n">distance_weight</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">:</span>
-                    <span class="c1"># FDK distance weighting term in rotated coordinates.</span>
-                    <span class="n">x_rel</span> <span class="o">=</span> <span class="p">(</span><span class="n">src_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
-                    <span class="n">y_rel</span> <span class="o">=</span> <span class="p">(</span><span class="n">src_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
-                    <span class="n">den</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">+</span> <span class="n">x_rel</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_rel</span> <span class="o">*</span> <span class="n">cos_a</span>
-                    <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">den</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
-                        <span class="n">cval</span> <span class="o">=</span> <span class="mf">0.0</span>
-                    <span class="k">else</span><span class="p">:</span>
-                        <span class="n">scale</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">/</span> <span class="n">den</span>
-                        <span class="n">cval</span> <span class="o">=</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">scale</span> <span class="o">*</span> <span class="n">scale</span>
 
                 <span class="c1"># === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===</span>
                 <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">omdz</span><span class="p">)</span>
@@ -1597,6 +1625,278 @@
             <span class="n">t</span> <span class="o">=</span> <span class="n">tz</span>
             <span class="n">iz</span> <span class="o">+=</span> <span class="n">step_z</span>
             <span class="n">tz</span> <span class="o">+=</span> <span class="n">dt_z</span>
+
+
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Analytical FDK backprojection kernel (voxel-driven gather)</span>
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># The Siddon-based ``_cone_3d_backward_kernel`` above is the exact adjoint of</span>
+<span class="c1"># ``_cone_3d_forward_kernel`` and stays unchanged so that the cone autograd</span>
+<span class="c1"># path in ConeProjectorFunction / ConeBackprojectorFunction / the iterative</span>
+<span class="c1"># example is bit-for-bit untouched. FDK reconstruction is a different</span>
+<span class="c1"># operation: it wants the classical voxel-driven gather form, where each</span>
+<span class="c1"># voxel reads a single bilinearly-interpolated sample from the filtered</span>
+<span class="c1"># sinogram at the (u, v) it projects to, weighted by ``(SID / U)^2``. This</span>
+<span class="c1"># dedicated kernel implements that gather and is only called by</span>
+<span class="c1"># ``cone_weighted_backproject``.</span>
+
+<span class="nd">@_FDK_ACCURACY_DECORATOR</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_cone_3d_fdk_backproject_kernel</span><span class="p">(</span>
+    <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
+    <span class="n">d_vol</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
+    <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
+    <span class="n">det_offset_u</span><span class="p">,</span> <span class="n">det_offset_v</span><span class="p">,</span>
+    <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span> <span class="n">center_offset_z</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Voxel-driven FDK backprojection gather.</span>
+
+<span class="sd">    For each voxel in the output volume, for each view, compute the source-</span>
+<span class="sd">    to-voxel distance ``U`` along the central ray direction, project the</span>
+<span class="sd">    voxel onto the detector, bilinearly sample the filtered sinogram, and</span>
+<span class="sd">    accumulate ``(SID/U)^2 * sample``. The cosine pre-weight, ramp filter and</span>
+<span class="sd">    angular integration weights are expected to already have been baked into</span>
+<span class="sd">    ``d_sino`` by the Python wrapper.</span>
+
+<span class="sd">    Geometry conventions match the existing cone forward/backward kernels:</span>
+<span class="sd">    the source rotates in the xy-plane around the isocenter at radius SID,</span>
+<span class="sd">    the detector is a plane at distance SDD from the source perpendicular to</span>
+<span class="sd">    the central ray, and all ``*_offset_*`` values are already in voxel</span>
+<span class="sd">    units at call time. Indices follow the existing permuted layout where</span>
+<span class="sd">    ``ix`` marches along the W axis, ``iy`` along H and ``iz`` along D.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">iz</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span> <span class="ow">or</span> <span class="n">iz</span> <span class="o">&gt;=</span> <span class="n">Nz</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="c1"># Voxel position in the &quot;voxel-units, isocenter-centered&quot; frame used by</span>
+    <span class="c1"># the shared kernels. Matches the inverse of ``mid = src + t*dir + cx``.</span>
+    <span class="n">x_v</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
+    <span class="n">y_v</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
+    <span class="n">z_v</span> <span class="o">=</span> <span class="p">(</span><span class="n">iz</span> <span class="o">-</span> <span class="n">cz</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_z</span>
+
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">du_v</span> <span class="o">=</span> <span class="n">du</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">dv_v</span> <span class="o">=</span> <span class="n">dv</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+
+    <span class="n">u_half</span> <span class="o">=</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
+    <span class="n">v_half</span> <span class="o">=</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
+
+    <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">iview</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_views</span><span class="p">):</span>
+        <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>
+        <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>
+
+        <span class="c1"># Distance from source to voxel along the central ray direction.</span>
+        <span class="c1"># Source: (-sid_v*sin_a, sid_v*cos_a, 0). Central ray: (sin_a, -cos_a, 0).</span>
+        <span class="n">U</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_v</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_v</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">U</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">mag</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">/</span> <span class="n">U</span>
+        <span class="c1"># Perpendicular in-plane detector coordinate at the detector plane.</span>
+        <span class="n">u_det</span> <span class="o">=</span> <span class="p">(</span><span class="n">x_v</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_v</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">*</span> <span class="n">mag</span>
+        <span class="n">v_det</span> <span class="o">=</span> <span class="n">z_v</span> <span class="o">*</span> <span class="n">mag</span>
+
+        <span class="c1"># Detector bin indices. Inverse of the forward kernel&#39;s u = (iu - (n_u-1)/2)*du + offset.</span>
+        <span class="n">fu</span> <span class="o">=</span> <span class="p">(</span><span class="n">u_det</span> <span class="o">-</span> <span class="n">det_offset_u</span><span class="p">)</span> <span class="o">/</span> <span class="n">du_v</span> <span class="o">+</span> <span class="n">u_half</span>
+        <span class="n">fv</span> <span class="o">=</span> <span class="p">(</span><span class="n">v_det</span> <span class="o">-</span> <span class="n">det_offset_v</span><span class="p">)</span> <span class="o">/</span> <span class="n">dv_v</span> <span class="o">+</span> <span class="n">v_half</span>
+
+        <span class="k">if</span> <span class="n">fu</span> <span class="o">&lt;</span> <span class="mf">0.0</span> <span class="ow">or</span> <span class="n">fu</span> <span class="o">&gt;</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="ow">or</span> <span class="n">fv</span> <span class="o">&lt;</span> <span class="mf">0.0</span> <span class="ow">or</span> <span class="n">fv</span> <span class="o">&gt;</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">continue</span>
+
+        <span class="n">iu0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">fu</span><span class="p">))</span>
+        <span class="n">iv0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">fv</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">iu0</span> <span class="o">&gt;=</span> <span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">iu0</span> <span class="o">=</span> <span class="n">n_u</span> <span class="o">-</span> <span class="mi">2</span>
+        <span class="k">if</span> <span class="n">iv0</span> <span class="o">&gt;=</span> <span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">iv0</span> <span class="o">=</span> <span class="n">n_v</span> <span class="o">-</span> <span class="mi">2</span>
+        <span class="k">if</span> <span class="n">iu0</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">iu0</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">iv0</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">iv0</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">tu</span> <span class="o">=</span> <span class="n">fu</span> <span class="o">-</span> <span class="n">iu0</span>
+        <span class="n">tv</span> <span class="o">=</span> <span class="n">fv</span> <span class="o">-</span> <span class="n">iv0</span>
+        <span class="k">if</span> <span class="n">tu</span> <span class="o">&lt;</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="n">tu</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">elif</span> <span class="n">tu</span> <span class="o">&gt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">tu</span> <span class="o">=</span> <span class="mf">1.0</span>
+        <span class="k">if</span> <span class="n">tv</span> <span class="o">&lt;</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="n">tv</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">elif</span> <span class="n">tv</span> <span class="o">&gt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">tv</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+        <span class="n">s00</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">iu0</span><span class="p">,</span>     <span class="n">iv0</span>    <span class="p">]</span>
+        <span class="n">s10</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">iu0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iv0</span>    <span class="p">]</span>
+        <span class="n">s01</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">iu0</span><span class="p">,</span>     <span class="n">iv0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">s11</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">iu0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iv0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+
+        <span class="n">omtu</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">tu</span>
+        <span class="n">omtv</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">tv</span>
+        <span class="n">sample</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">s00</span> <span class="o">*</span> <span class="n">omtu</span> <span class="o">*</span> <span class="n">omtv</span>
+            <span class="o">+</span> <span class="n">s10</span> <span class="o">*</span> <span class="n">tu</span>   <span class="o">*</span> <span class="n">omtv</span>
+            <span class="o">+</span> <span class="n">s01</span> <span class="o">*</span> <span class="n">omtu</span> <span class="o">*</span> <span class="n">tv</span>
+            <span class="o">+</span> <span class="n">s11</span> <span class="o">*</span> <span class="n">tu</span>   <span class="o">*</span> <span class="n">tv</span>
+        <span class="p">)</span>
+
+        <span class="n">w</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">/</span> <span class="n">U</span>
+        <span class="n">accum</span> <span class="o">+=</span> <span class="p">(</span><span class="n">w</span> <span class="o">*</span> <span class="n">w</span><span class="p">)</span> <span class="o">*</span> <span class="n">sample</span>
+
+    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">iz</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
+
+
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Analytical parallel-beam FBP backprojection kernel (voxel-driven gather)</span>
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Parallel beam has no source and therefore no ``(sid/U)^2`` distance</span>
+<span class="c1"># weight - the gather is just a linear detector interpolation summed</span>
+<span class="c1"># over views. Unlike the Siddon-scatter adjoint, this kernel has no</span>
+<span class="c1"># per-angle ``seg_len`` bias, so it delivers the same one-percent</span>
+<span class="c1"># calibration accuracy as the fan and cone gather kernels. Only</span>
+<span class="c1"># ``parallel_weighted_backproject`` calls it; autograd keeps using</span>
+<span class="c1"># ``_parallel_2d_backward_kernel`` for the pure adjoint path.</span>
+
+<span class="nd">@_FDK_ACCURACY_DECORATOR</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_parallel_2d_fbp_backproject_kernel</span><span class="p">(</span>
+    <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
+    <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
+    <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+    <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
+    <span class="n">det_offset</span><span class="p">,</span> <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Voxel-driven parallel-beam FBP backprojection gather.</span>
+
+<span class="sd">    For each pixel and each view, compute the detector-u coordinate the</span>
+<span class="sd">    pixel projects to (``u = -x*sin_a + y*cos_a`` in voxel units,</span>
+<span class="sd">    matching the parallel forward kernel&#39;s ``pnt = (-u*sin_a, u*cos_a)``</span>
+<span class="sd">    and ``dir = (cos_a, sin_a)`` convention), linearly sample the</span>
+<span class="sd">    filtered sinogram at that position, and accumulate. Cosine</span>
+<span class="sd">    pre-weighting, ramp filtering and per-view integration weights are</span>
+<span class="sd">    expected to already be baked into ``d_sino`` by the Python wrapper.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">x_v</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
+    <span class="n">y_v</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
+
+    <span class="n">det_v</span> <span class="o">=</span> <span class="n">det_spacing</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">u_half</span> <span class="o">=</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
+
+    <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">iang</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_ang</span><span class="p">):</span>
+        <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>
+        <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>
+
+        <span class="c1"># Detector-u coordinate of the pixel (parallel convention).</span>
+        <span class="n">u_pix</span> <span class="o">=</span> <span class="o">-</span><span class="n">x_v</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">+</span> <span class="n">y_v</span> <span class="o">*</span> <span class="n">cos_a</span>
+
+        <span class="c1"># Inverse of the forward kernel&#39;s u index formula.</span>
+        <span class="n">fu</span> <span class="o">=</span> <span class="p">(</span><span class="n">u_pix</span> <span class="o">-</span> <span class="n">det_offset</span><span class="p">)</span> <span class="o">/</span> <span class="n">det_v</span> <span class="o">+</span> <span class="n">u_half</span>
+        <span class="k">if</span> <span class="n">fu</span> <span class="o">&lt;</span> <span class="mf">0.0</span> <span class="ow">or</span> <span class="n">fu</span> <span class="o">&gt;</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">continue</span>
+
+        <span class="n">idet0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">fu</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">idet0</span> <span class="o">&gt;=</span> <span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">idet0</span> <span class="o">=</span> <span class="n">n_det</span> <span class="o">-</span> <span class="mi">2</span>
+        <span class="k">if</span> <span class="n">idet0</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">idet0</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">tu</span> <span class="o">=</span> <span class="n">fu</span> <span class="o">-</span> <span class="n">idet0</span>
+        <span class="k">if</span> <span class="n">tu</span> <span class="o">&lt;</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="n">tu</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">elif</span> <span class="n">tu</span> <span class="o">&gt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">tu</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+        <span class="n">s0</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet0</span><span class="p">]</span>
+        <span class="n">s1</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">accum</span> <span class="o">+=</span> <span class="n">s0</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">tu</span><span class="p">)</span> <span class="o">+</span> <span class="n">s1</span> <span class="o">*</span> <span class="n">tu</span>
+
+    <span class="n">d_image</span><span class="p">[</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
+
+
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Analytical fan-beam FBP backprojection kernel (voxel-driven gather)</span>
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Same design as the cone FDK gather above but in 2D. The Siddon-based</span>
+<span class="c1"># ``_fan_2d_backward_kernel`` stays the pure adjoint of the fan forward</span>
+<span class="c1"># projector and drives autograd; this dedicated FBP kernel is the</span>
+<span class="c1"># analytical path and is only invoked by ``fan_weighted_backproject``.</span>
+
+<span class="nd">@_FDK_ACCURACY_DECORATOR</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fan_2d_fbp_backproject_kernel</span><span class="p">(</span>
+    <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
+    <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
+    <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
+    <span class="n">det_offset</span><span class="p">,</span> <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Voxel-driven fan-beam FBP backprojection gather.</span>
+
+<span class="sd">    For each image pixel and each view, compute the source-to-pixel</span>
+<span class="sd">    distance ``U`` along the central ray, project the pixel onto the</span>
+<span class="sd">    detector, linearly sample the filtered sinogram, and accumulate</span>
+<span class="sd">    ``(SID/U)^2 * sample``. Cosine pre-weighting, ramp filtering and</span>
+<span class="sd">    per-view integration weights are expected to already be baked into</span>
+<span class="sd">    ``d_sino`` by the Python wrapper. Matches the fan forward kernel&#39;s</span>
+<span class="sd">    geometry: source at ``(-sid_v*sin_a, sid_v*cos_a)`` relative to the</span>
+<span class="sd">    isocenter, detector at distance SDD from the source perpendicular</span>
+<span class="sd">    to the central ray, ``u`` on the detector is in-plane.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="c1"># Pixel position in the &quot;voxel-units, isocenter-centered&quot; frame used</span>
+    <span class="c1"># by the Siddon forward kernel. Matches the inverse of</span>
+    <span class="c1"># ``mid = src + t*dir + cx`` in the forward kernel.</span>
+    <span class="n">x_v</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
+    <span class="n">y_v</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
+
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">det_v</span> <span class="o">=</span> <span class="n">det_spacing</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">u_half</span> <span class="o">=</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
+
+    <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">iang</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_ang</span><span class="p">):</span>
+        <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>
+        <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>
+
+        <span class="c1"># Distance from source to pixel along the central ray direction.</span>
+        <span class="n">U</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_v</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_v</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">U</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">mag</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">/</span> <span class="n">U</span>
+        <span class="n">u_det</span> <span class="o">=</span> <span class="p">(</span><span class="n">x_v</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_v</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">*</span> <span class="n">mag</span>
+
+        <span class="c1"># Inverse of the forward kernel&#39;s u index formula.</span>
+        <span class="n">fu</span> <span class="o">=</span> <span class="p">(</span><span class="n">u_det</span> <span class="o">-</span> <span class="n">det_offset</span><span class="p">)</span> <span class="o">/</span> <span class="n">det_v</span> <span class="o">+</span> <span class="n">u_half</span>
+        <span class="k">if</span> <span class="n">fu</span> <span class="o">&lt;</span> <span class="mf">0.0</span> <span class="ow">or</span> <span class="n">fu</span> <span class="o">&gt;</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">continue</span>
+
+        <span class="n">idet0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">fu</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">idet0</span> <span class="o">&gt;=</span> <span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">idet0</span> <span class="o">=</span> <span class="n">n_det</span> <span class="o">-</span> <span class="mi">2</span>
+        <span class="k">if</span> <span class="n">idet0</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">idet0</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">tu</span> <span class="o">=</span> <span class="n">fu</span> <span class="o">-</span> <span class="n">idet0</span>
+        <span class="k">if</span> <span class="n">tu</span> <span class="o">&lt;</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="n">tu</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">elif</span> <span class="n">tu</span> <span class="o">&gt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">tu</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+        <span class="n">s0</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet0</span><span class="p">]</span>
+        <span class="n">s1</span> <span class="o">=</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">idet0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">sample</span> <span class="o">=</span> <span class="n">s0</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">tu</span><span class="p">)</span> <span class="o">+</span> <span class="n">s1</span> <span class="o">*</span> <span class="n">tu</span>
+
+        <span class="n">w</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">/</span> <span class="n">U</span>
+        <span class="n">accum</span> <span class="o">+=</span> <span class="p">(</span><span class="n">w</span> <span class="o">*</span> <span class="n">w</span><span class="p">)</span> <span class="o">*</span> <span class="n">sample</span>
+
+    <span class="n">d_image</span><span class="p">[</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
 
 
 <span class="c1"># ############################################################################</span>
@@ -1996,8 +2296,10 @@
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
 <span class="sd">    method with interpolation for fan beam geometry, where rays diverge from a point</span>
 <span class="sd">    X-ray source to a linear detector array. The forward pass computes sinograms</span>
-<span class="sd">    using divergent beam geometry, and the backward pass computes gradients via</span>
-<span class="sd">    adjoint backprojection with geometric ``1/U^2`` distance weighting.</span>
+<span class="sd">    using divergent beam geometry. The backward pass returns the **pure adjoint**</span>
+<span class="sd">    ``P^T`` (Siddon scatter, no distance weighting) so that it is the correct</span>
+<span class="sd">    gradient of ``y = P(x)`` with respect to ``x``. Analytical fan-beam FBP</span>
+<span class="sd">    distance weighting is handled in ``fan_weighted_backproject``, not here.</span>
 <span class="sd">    </span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
@@ -2162,12 +2464,13 @@
         <span class="n">center_offset_x_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_x</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="n">center_offset_y_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_y</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
 
+        <span class="c1"># Pure adjoint P^T of the Siddon forward projector. FBP distance</span>
+        <span class="c1"># weighting lives in fan_weighted_backproject, not the gradient path.</span>
         <span class="n">_fan_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
             <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_img_grad</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="k">return</span> <span class="n">grad_img</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span></div>
@@ -2186,12 +2489,12 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
-<span class="sd">    method with interpolation for fan beam backprojection. Implements the adjoint</span>
-<span class="sd">    of the fan beam projection operator with geometric ``1/U^2`` distance weighting,</span>
-<span class="sd">    distributing sinogram values back into the reconstruction volume along divergent</span>
-<span class="sd">    ray paths. The forward pass</span>
-<span class="sd">    computes reconstruction from sinogram data, and the backward pass computes</span>
-<span class="sd">    gradients via forward projection.</span>
+<span class="sd">    method with interpolation for fan beam backprojection. The forward pass runs</span>
+<span class="sd">    the **pure adjoint** ``P^T`` of the fan forward projector (Siddon scatter</span>
+<span class="sd">    with bilinear interpolation, no distance weighting), and the backward pass</span>
+<span class="sd">    computes gradients via forward projection. The forward/backward pair is</span>
+<span class="sd">    therefore a self-consistent autograd adjoint pair. Analytical FBP distance</span>
+<span class="sd">    weighting lives in ``fan_weighted_backproject`` and is *not* applied here.</span>
 <span class="sd">    </span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
@@ -2294,12 +2597,13 @@
         <span class="n">center_offset_x_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_x</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="n">center_offset_y_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_y</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
 
+        <span class="c1"># Pure adjoint. See the class docstring - this Function is</span>
+        <span class="c1"># deliberately *not* the weighted FBP path.</span>
         <span class="n">_fan_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
             <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
@@ -2388,9 +2692,12 @@
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
 <span class="sd">    method with interpolation for 3D cone beam geometry. Rays emanate from a point</span>
 <span class="sd">    X-ray source to a 2D detector array capturing volumetric projection data.</span>
-<span class="sd">    The forward pass computes 3D projections, and the backward pass computes</span>
-<span class="sd">    gradients via adjoint 3D backprojection with geometric ``1/U^2`` distance</span>
-<span class="sd">    weighting. Requires significant GPU memory.</span>
+<span class="sd">    The forward pass computes 3D projections. The backward pass returns the</span>
+<span class="sd">    **pure adjoint** ``P^T`` of the forward projector - a Siddon ray-driven</span>
+<span class="sd">    scatter with trilinear interpolation weights and no distance weighting -</span>
+<span class="sd">    so that ``P^T`` is the mathematically correct gradient of ``y = P(x)``</span>
+<span class="sd">    with respect to ``x``. Analytical FDK distance weighting is handled</span>
+<span class="sd">    separately in ``cone_weighted_backproject``, not here.</span>
 <span class="sd">    </span>
 <span class="sd">    </span>
 <span class="sd">    Examples</span>
@@ -2584,13 +2891,16 @@
         <span class="n">center_offset_y_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_y</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="n">center_offset_z_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_z</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
 
+        <span class="c1"># Pure adjoint P^T of the Siddon forward projector, no</span>
+        <span class="c1"># (sdd/U)^2 weighting. This is the correct gradient of</span>
+        <span class="c1"># y = P(x) with respect to x. FDK distance weighting lives</span>
+        <span class="c1"># in cone_weighted_backproject, not in the gradient path.</span>
         <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
             <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">d_vol_grad</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
             <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">grad_vol</span> <span class="o">=</span> <span class="n">grad_vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
@@ -2611,10 +2921,14 @@
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
 <span class="sd">    method with interpolation for 3D cone beam backprojection. The forward pass</span>
-<span class="sd">    computes a 3D reconstruction from cone beam projection data using weighted</span>
-<span class="sd">    backprojection (geometric ``1/U^2`` term) as the adjoint operation. The</span>
-<span class="sd">    backward pass computes gradients via 3D cone beam forward projection. Requires</span>
-<span class="sd">    CUDA-capable hardware and consistent device placements.</span>
+<span class="sd">    runs the **pure adjoint** ``P^T`` of the cone forward projector: a Siddon</span>
+<span class="sd">    ray-driven scatter with trilinear interpolation weights and no distance</span>
+<span class="sd">    weighting. The backward pass computes gradients via 3D cone beam forward</span>
+<span class="sd">    projection, which is exactly the adjoint of this pure ``P^T`` - so the</span>
+<span class="sd">    forward/backward pair is self-consistent for autograd. Analytical FDK</span>
+<span class="sd">    distance weighting belongs in ``cone_weighted_backproject`` and is *not*</span>
+<span class="sd">    applied here. Requires CUDA-capable hardware and consistent device</span>
+<span class="sd">    placements.</span>
 <span class="sd">    </span>
 <span class="sd">    This operation may be memory- and computationally-intensive due to 3D geometry.</span>
 <span class="sd">    Consider using gradient checkpointing, smaller volumes, or distributed computing</span>
@@ -2737,13 +3051,15 @@
         <span class="n">center_offset_y_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_y</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
         <span class="n">center_offset_z_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_z</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
 
+        <span class="c1"># Pure adjoint of the Siddon forward projector. See the class</span>
+        <span class="c1"># docstring for why this Function deliberately does *not*</span>
+        <span class="c1"># apply FDK distance weighting.</span>
         <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
             <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
             <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
             <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
             <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
-            <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="n">angles</span><span class="p">)</span>
@@ -2832,23 +3148,33 @@
 
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">fan_weighted_backproject</span><span class="p">(</span>
+<div class="viewcode-block" id="parallel_weighted_backproject">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.parallel_weighted_backproject">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">parallel_weighted_backproject</span><span class="p">(</span>
     <span class="n">sinogram</span><span class="p">,</span>
     <span class="n">angles</span><span class="p">,</span>
     <span class="n">detector_spacing</span><span class="p">,</span>
     <span class="n">H</span><span class="p">,</span>
     <span class="n">W</span><span class="p">,</span>
-    <span class="n">sdd</span><span class="p">,</span>
-    <span class="n">sid</span><span class="p">,</span>
     <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
     <span class="n">detector_offset</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
     <span class="n">center_offset_x</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
     <span class="n">center_offset_y</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fan-beam weighted backprojection for analytical FBP pipelines.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parallel-beam backprojection for analytical FBP pipelines.</span>
 
-<span class="sd">    This uses the same Siddon traversal as `FanBackprojectorFunction` but enables</span>
-<span class="sd">    geometric distance weighting in the accumulation step.</span>
+<span class="sd">    Dispatches to the dedicated parallel-beam FBP voxel-driven gather</span>
+<span class="sd">    kernel (``_parallel_2d_fbp_backproject_kernel``). The shared</span>
+<span class="sd">    Siddon-based parallel backward kernel continues to serve the</span>
+<span class="sd">    autograd adjoint path used by ``ParallelProjectorFunction`` /</span>
+<span class="sd">    ``ParallelBackprojectorFunction``; this function is only the</span>
+<span class="sd">    analytical FBP path. There is no distance weighting in parallel</span>
+<span class="sd">    geometry (no source, no magnification), so the kernel simply</span>
+<span class="sd">    gathers one linearly-interpolated detector sample per view per</span>
+<span class="sd">    pixel and sums. The analytical ``1/(2*pi)`` FBP constant is</span>
+<span class="sd">    applied inside the wrapper so the returned image is already</span>
+<span class="sd">    amplitude-calibrated - a unit-density disk reconstructs to</span>
+<span class="sd">    amplitude 1.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;sinogram must be on CUDA device&quot;</span><span class="p">)</span>
@@ -2866,7 +3192,7 @@
     <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
     <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
-    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">)</span>
+    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">)</span>
     <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">Nx</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">Ny</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
     <span class="n">det_offset_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
     <span class="n">center_offset_x_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_x</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
@@ -2874,16 +3200,89 @@
 
     <span class="n">pt_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">current_stream</span><span class="p">()</span>
     <span class="n">numba_stream</span> <span class="o">=</span> <span class="n">_get_numba_external_stream_for</span><span class="p">(</span><span class="n">pt_stream</span><span class="p">)</span>
-    <span class="n">_fan_2d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+    <span class="n">_parallel_2d_fbp_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+        <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
+        <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
+        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
+        <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="c1"># Parallel-beam analytical FBP scale: only the ``1/(2*pi)``</span>
+    <span class="c1"># Fourier convention factor is needed (no SDD/SID magnification</span>
+    <span class="c1"># because parallel beam has no source).</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
+    <span class="n">reco</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">scale</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">reco</span></div>
+
+
+
+<div class="viewcode-block" id="fan_weighted_backproject">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.fan_weighted_backproject">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fan_weighted_backproject</span><span class="p">(</span>
+    <span class="n">sinogram</span><span class="p">,</span>
+    <span class="n">angles</span><span class="p">,</span>
+    <span class="n">detector_spacing</span><span class="p">,</span>
+    <span class="n">H</span><span class="p">,</span>
+    <span class="n">W</span><span class="p">,</span>
+    <span class="n">sdd</span><span class="p">,</span>
+    <span class="n">sid</span><span class="p">,</span>
+    <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">detector_offset</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">center_offset_x</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">center_offset_y</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fan-beam weighted backprojection for analytical FBP pipelines.</span>
+
+<span class="sd">    Dispatches to the dedicated fan FBP voxel-driven gather kernel</span>
+<span class="sd">    (``_fan_2d_fbp_backproject_kernel``). The shared Siddon-based fan</span>
+<span class="sd">    backward kernel continues to serve the autograd adjoint path used by</span>
+<span class="sd">    ``FanProjectorFunction`` / ``FanBackprojectorFunction``; this function</span>
+<span class="sd">    is only the analytical FBP path. Uses ``(SID/U)^2`` distance</span>
+<span class="sd">    weighting with linear detector-gather and applies the same</span>
+<span class="sd">    ``sdd/(2*pi*sid)`` analytical FBP constant that the cone FDK path</span>
+<span class="sd">    uses, so a unit-density disk reconstructs to amplitude 1.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;sinogram must be on CUDA device&quot;</span><span class="p">)</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+
+    <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">=</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span>
+    <span class="n">reco</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">d_sino</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+    <span class="n">d_reco</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">reco</span><span class="p">)</span>
+    <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
+    <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
+
+    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">)</span>
+    <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">Nx</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">Ny</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">det_offset_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
+    <span class="n">center_offset_x_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_x</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
+    <span class="n">center_offset_y_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_y</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
+
+    <span class="n">pt_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">current_stream</span><span class="p">()</span>
+    <span class="n">numba_stream</span> <span class="o">=</span> <span class="n">_get_numba_external_stream_for</span><span class="p">(</span><span class="n">pt_stream</span><span class="p">)</span>
+    <span class="n">_fan_2d_fbp_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
         <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
         <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
         <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
         <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
-        <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
     <span class="p">)</span>
-    <span class="k">return</span> <span class="n">reco</span>
+    <span class="c1"># Same analytical scale as the cone FDK path. See the comment on</span>
+    <span class="c1"># ``cone_weighted_backproject`` for the derivation; both 2D fan FBP</span>
+    <span class="c1"># and 3D cone FDK share this constant because the ramp filter is</span>
+    <span class="c1"># applied on the physical detector plane in both cases.</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">sdd</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sid</span><span class="p">))</span>
+    <span class="n">reco</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">scale</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">reco</span></div>
 
 
+
+<div class="viewcode-block" id="cone_weighted_backproject">
+<a class="viewcode-back" href="../../api.html#diffct.differentiable.cone_weighted_backproject">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">cone_weighted_backproject</span><span class="p">(</span>
     <span class="n">sinogram</span><span class="p">,</span>
     <span class="n">angles</span><span class="p">,</span>
@@ -2901,7 +3300,16 @@
     <span class="n">center_offset_y</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
     <span class="n">center_offset_z</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Cone-beam weighted backprojection for analytical FDK pipelines.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Cone-beam weighted backprojection for analytical FDK pipelines.</span>
+
+<span class="sd">    Dispatches to the dedicated FDK voxel-driven gather kernel</span>
+<span class="sd">    (``_cone_3d_fdk_backproject_kernel``). The shared Siddon-based cone</span>
+<span class="sd">    backward kernel continues to serve the autograd adjoint path used by</span>
+<span class="sd">    ``ConeProjectorFunction`` / ``ConeBackprojectorFunction``; this function</span>
+<span class="sd">    is only the analytical FDK path, and it uses a ``(SID/U)^2`` weight with</span>
+<span class="sd">    a bilinear detector gather to stay consistent with the classical FDK</span>
+<span class="sd">    formulation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;sinogram must be on CUDA device&quot;</span><span class="p">)</span>
     <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">device</span>
@@ -2911,6 +3319,8 @@
     <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span>
     <span class="n">_validate_3d_memory_layout</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">expected_order</span><span class="o">=</span><span class="s1">&#39;VHW&#39;</span><span class="p">)</span>
 
+    <span class="c1"># Keep the same WHD permuted buffer layout as the shared kernels use, so</span>
+    <span class="c1"># the final ``permute(2, 1, 0)`` returns a (D, H, W) contiguous result.</span>
     <span class="n">vol_perm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
     <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span> <span class="o">=</span> <span class="n">_trig_tables</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
 
@@ -2919,7 +3329,7 @@
     <span class="n">d_cos_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_cos</span><span class="p">)</span>
     <span class="n">d_sin_arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">d_sin</span><span class="p">)</span>
 
-    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">)</span>
+    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">)</span>
     <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">W</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">H</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">D</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
     <span class="n">det_offset_u_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset_u</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
     <span class="n">det_offset_v_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset_v</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
@@ -2929,15 +3339,30 @@
 
     <span class="n">pt_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">current_stream</span><span class="p">()</span>
     <span class="n">numba_stream</span> <span class="o">=</span> <span class="n">_get_numba_external_stream_for</span><span class="p">(</span><span class="n">pt_stream</span><span class="p">)</span>
-    <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+    <span class="n">_cone_3d_fdk_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
         <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
         <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
         <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
         <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
         <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
-        <span class="n">_DTYPE</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
     <span class="p">)</span>
-    <span class="k">return</span> <span class="n">vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="c1"># Final analytical FDK scale factor. Two pieces:</span>
+    <span class="c1"># - 1/(2*pi): the repo&#39;s ramp_filter_1d computes</span>
+    <span class="c1">#     IFFT(|2*pi*fftfreq|*FFT[.])</span>
+    <span class="c1">#   which implements the ``|omega|`` ramp in the radian-frequency</span>
+    <span class="c1">#   convention. The classical FBP / FDK formula carries an explicit</span>
+    <span class="c1">#   1/(2*pi) from the inverse Fourier integral that this discretization</span>
+    <span class="c1">#   does not absorb, so it must be applied on the spatial side.</span>
+    <span class="c1"># - sdd/sid: the ramp filter runs on the physical detector grid</span>
+    <span class="c1">#   (spacing du), but the FDK inversion is written in the virtual</span>
+    <span class="c1">#   isocenter-plane detector (spacing du*sid/sdd). Rescaling one-</span>
+    <span class="c1">#   dimensional convolution between those two scales leaves an</span>
+    <span class="c1">#   ``sdd/sid`` magnification factor on the filtered sinogram.</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">sdd</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sid</span><span class="p">))</span>
+    <span class="n">vol</span> <span class="o">=</span> <span class="n">vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="n">vol</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">scale</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">vol</span></div>
+
 </pre></div>
 
            </div>

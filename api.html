@@ -89,6 +89,20 @@
 </li>
 </ul>
 </li>
+<li class="toctree-l2"><a class="reference internal" href="#analytical-reconstruction-helpers">Analytical Reconstruction Helpers</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.detector_coordinates_1d"><code class="docutils literal notranslate"><span class="pre">detector_coordinates_1d()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.angular_integration_weights"><code class="docutils literal notranslate"><span class="pre">angular_integration_weights()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.fan_cosine_weights"><code class="docutils literal notranslate"><span class="pre">fan_cosine_weights()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.cone_cosine_weights"><code class="docutils literal notranslate"><span class="pre">cone_cosine_weights()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.parker_weights"><code class="docutils literal notranslate"><span class="pre">parker_weights()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.ramp_filter_1d"><code class="docutils literal notranslate"><span class="pre">ramp_filter_1d()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.parallel_weighted_backproject"><code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.fan_weighted_backproject"><code class="docutils literal notranslate"><span class="pre">fan_weighted_backproject()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#diffct.differentiable.cone_weighted_backproject"><code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#ramp-filter-options">Ramp Filter Options</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#analytical-fbp-fdk-architecture">Analytical FBP / FDK architecture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#usage-notes">Usage Notes</a></li>
 </ul>
 </li>
@@ -121,20 +135,33 @@
              
   <section id="api-reference">
 <h1>API Reference<a class="headerlink" href="#api-reference" title="Link to this heading"></a></h1>
-<p>This section provides comprehensive documentation for all differentiable CT operators in <cite>diffct</cite>. Each function is implemented as a PyTorch autograd Function, enabling seamless gradient computation through the CT reconstruction pipeline.</p>
+<p>This section provides documentation for the differentiable CT operators
+and analytical reconstruction helpers in <code class="docutils literal notranslate"><span class="pre">diffct</span></code>. Each autograd class
+is a PyTorch <code class="docutils literal notranslate"><span class="pre">torch.autograd.Function</span></code> that runs a CUDA kernel under
+the hood, enabling gradient propagation through the full projection /
+backprojection pipeline. The analytical helpers (<code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code>,
+<code class="docutils literal notranslate"><span class="pre">cone_cosine_weights</span></code>, <code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code> and friends) are
+intentionally kept as plain functions so they can be composed with the
+autograd operators or used directly in one-shot FBP / FDK pipelines.</p>
 <section id="overview">
 <h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
-<p>The <cite>diffct</cite> library provides six main differentiable operators organized by geometry type:</p>
+<p>The library exposes three families of operators, grouped by geometry:</p>
 <ul class="simple">
-<li><p><strong>Parallel Beam (2D):</strong> Traditional parallel-beam CT geometry</p></li>
-<li><p><strong>Fan Beam (2D):</strong> Fan-beam geometry with configurable source-detector setup</p></li>
-<li><p><strong>Cone Beam (3D):</strong> Full 3D cone-beam geometry for volumetric reconstruction</p></li>
+<li><p><strong>Parallel beam (2D):</strong> parallel-beam geometry for 2D reconstruction.</p></li>
+<li><p><strong>Fan beam (2D):</strong> divergent fan-beam geometry.</p></li>
+<li><p><strong>Cone beam (3D):</strong> full 3D cone-beam geometry for volumetric
+reconstruction with a 2D flat-panel detector.</p></li>
 </ul>
-<p>Each geometry type includes both forward projection and backprojection operators that are fully differentiable and CUDA-accelerated.</p>
+<p>Each geometry ships a differentiable forward projector and a
+differentiable backprojector that are adjoints of each other (the
+backprojector is the gradient of the projector). For cone-beam the
+analytical FDK path is routed through a dedicated voxel-driven gather
+kernel; see the <code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code> notes below.</p>
 </section>
 <section id="parallel-beam-operators">
 <h2>Parallel Beam Operators<a class="headerlink" href="#parallel-beam-operators" title="Link to this heading"></a></h2>
-<p>The parallel beam geometry assumes parallel X-ray beams, commonly used in synchrotron CT and some medical CT scanners.</p>
+<p>The parallel beam geometry assumes parallel X-ray beams, commonly used
+in synchrotron CT and some medical CT scanners.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.ParallelProjectorFunction">
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ParallelProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ParallelProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ParallelProjectorFunction" title="Link to this definition"></a></dt>
@@ -323,7 +350,8 @@ transform) of a sinogram using CUDA acceleration.</p>
 </section>
 <section id="fan-beam-operators">
 <h2>Fan Beam Operators<a class="headerlink" href="#fan-beam-operators" title="Link to this heading"></a></h2>
-<p>Fan beam geometry uses a point X-ray source with a fan-shaped beam, typical in medical CT scanners.</p>
+<p>Fan beam geometry uses a point X-ray source with a fan-shaped beam,
+typical in medical CT scanners.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.FanProjectorFunction">
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">FanProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#FanProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.FanProjectorFunction" title="Link to this definition"></a></dt>
@@ -335,8 +363,10 @@ transform) of a sinogram using CUDA acceleration.</p>
 <p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
 method with interpolation for fan beam geometry, where rays diverge from a point
 X-ray source to a linear detector array. The forward pass computes sinograms
-using divergent beam geometry, and the backward pass computes gradients via
-adjoint backprojection with geometric <code class="docutils literal notranslate"><span class="pre">1/U^2</span></code> distance weighting.</p>
+using divergent beam geometry. The backward pass returns the <strong>pure adjoint</strong>
+<code class="docutils literal notranslate"><span class="pre">P^T</span></code> (Siddon scatter, no distance weighting) so that it is the correct
+gradient of <code class="docutils literal notranslate"><span class="pre">y</span> <span class="pre">=</span> <span class="pre">P(x)</span></code> with respect to <code class="docutils literal notranslate"><span class="pre">x</span></code>. Analytical fan-beam FBP
+distance weighting is handled in <code class="docutils literal notranslate"><span class="pre">fan_weighted_backproject</span></code>, not here.</p>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct.differentiable</span><span class="w"> </span><span class="kn">import</span> <span class="n">FanProjectorFunction</span>
@@ -426,12 +456,12 @@ source to the center of rotation (isocenter).</p></li>
 <p>PyTorch autograd function for differentiable 2D fan beam backprojection.</p>
 <p class="rubric">Notes</p>
 <p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-method with interpolation for fan beam backprojection. Implements the adjoint
-of the fan beam projection operator with geometric <code class="docutils literal notranslate"><span class="pre">1/U^2</span></code> distance weighting,
-distributing sinogram values back into the reconstruction volume along divergent
-ray paths. The forward pass
-computes reconstruction from sinogram data, and the backward pass computes
-gradients via forward projection.</p>
+method with interpolation for fan beam backprojection. The forward pass runs
+the <strong>pure adjoint</strong> <code class="docutils literal notranslate"><span class="pre">P^T</span></code> of the fan forward projector (Siddon scatter
+with bilinear interpolation, no distance weighting), and the backward pass
+computes gradients via forward projection. The forward/backward pair is
+therefore a self-consistent autograd adjoint pair. Analytical FBP distance
+weighting lives in <code class="docutils literal notranslate"><span class="pre">fan_weighted_backproject</span></code> and is <em>not</em> applied here.</p>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct.differentiable</span><span class="w"> </span><span class="kn">import</span> <span class="n">FanBackprojectorFunction</span>
@@ -516,7 +546,13 @@ source to the center of rotation (isocenter).</p></li>
 </section>
 <section id="cone-beam-operators">
 <h2>Cone Beam Operators<a class="headerlink" href="#cone-beam-operators" title="Link to this heading"></a></h2>
-<p>Cone beam geometry extends fan beam to 3D with a cone-shaped X-ray beam for volumetric reconstruction.</p>
+<p>Cone beam geometry extends fan beam to 3D with a cone-shaped X-ray beam
+and a 2D detector. <code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code> and
+<code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code> are exact adjoints of each other (Siddon
+traversal with trilinear interpolation) and drive the iterative cone
+example. For analytical FDK, use <code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code> — it
+dispatches to a dedicated voxel-driven gather kernel with the classical
+<code class="docutils literal notranslate"><span class="pre">(sid/U)^2</span></code> distance weighting.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction">
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ConeProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction" title="Link to this definition"></a></dt>
@@ -528,9 +564,12 @@ source to the center of rotation (isocenter).</p></li>
 <p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
 method with interpolation for 3D cone beam geometry. Rays emanate from a point
 X-ray source to a 2D detector array capturing volumetric projection data.
-The forward pass computes 3D projections, and the backward pass computes
-gradients via adjoint 3D backprojection with geometric <code class="docutils literal notranslate"><span class="pre">1/U^2</span></code> distance
-weighting. Requires significant GPU memory.</p>
+The forward pass computes 3D projections. The backward pass returns the
+<strong>pure adjoint</strong> <code class="docutils literal notranslate"><span class="pre">P^T</span></code> of the forward projector - a Siddon ray-driven
+scatter with trilinear interpolation weights and no distance weighting -
+so that <code class="docutils literal notranslate"><span class="pre">P^T</span></code> is the mathematically correct gradient of <code class="docutils literal notranslate"><span class="pre">y</span> <span class="pre">=</span> <span class="pre">P(x)</span></code>
+with respect to <code class="docutils literal notranslate"><span class="pre">x</span></code>. Analytical FDK distance weighting is handled
+separately in <code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code>, not here.</p>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct.differentiable</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConeProjectorFunction</span>
@@ -623,10 +662,14 @@ source to the center of rotation (isocenter).</p></li>
 <p class="rubric">Notes</p>
 <p>Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
 method with interpolation for 3D cone beam backprojection. The forward pass
-computes a 3D reconstruction from cone beam projection data using weighted
-backprojection (geometric <code class="docutils literal notranslate"><span class="pre">1/U^2</span></code> term) as the adjoint operation. The
-backward pass computes gradients via 3D cone beam forward projection. Requires
-CUDA-capable hardware and consistent device placements.</p>
+runs the <strong>pure adjoint</strong> <code class="docutils literal notranslate"><span class="pre">P^T</span></code> of the cone forward projector: a Siddon
+ray-driven scatter with trilinear interpolation weights and no distance
+weighting. The backward pass computes gradients via 3D cone beam forward
+projection, which is exactly the adjoint of this pure <code class="docutils literal notranslate"><span class="pre">P^T</span></code> - so the
+forward/backward pair is self-consistent for autograd. Analytical FDK
+distance weighting belongs in <code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code> and is <em>not</em>
+applied here. Requires CUDA-capable hardware and consistent device
+placements.</p>
 <p>This operation may be memory- and computationally-intensive due to 3D geometry.
 Consider using gradient checkpointing, smaller volumes, or distributed computing
 for large-scale applications, and ensure sufficient GPU memory is available.</p>
@@ -718,24 +761,235 @@ source to the center of rotation (isocenter).</p></li>
 </dd></dl>
 
 </section>
+<section id="analytical-reconstruction-helpers">
+<h2>Analytical Reconstruction Helpers<a class="headerlink" href="#analytical-reconstruction-helpers" title="Link to this heading"></a></h2>
+<p>These helpers build the per-view pre-weights, angle-integration weights,
+filter, and backprojection pieces of an analytical FBP/FDK pipeline.
+They are plain functions (no autograd state) and can be freely mixed
+with the autograd operators above.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.detector_coordinates_1d">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">detector_coordinates_1d</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#detector_coordinates_1d"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.detector_coordinates_1d" title="Link to this definition"></a></dt>
+<dd><p>Return centered detector coordinates in physical units.</p>
+<p>Coordinates follow the convention <code class="docutils literal notranslate"><span class="pre">(i</span> <span class="pre">-</span> <span class="pre">(N-1)/2)</span> <span class="pre">*</span> <span class="pre">spacing</span> <span class="pre">+</span> <span class="pre">offset</span></code>.
+This avoids a half-pixel center bias for even detector counts.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.angular_integration_weights">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">angular_integration_weights</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">redundant_full_scan</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#angular_integration_weights"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.angular_integration_weights" title="Link to this definition"></a></dt>
+<dd><p>Compute per-view integration weights from the provided angle samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D projection angles in radians.</p></li>
+<li><p><strong>redundant_full_scan</strong> (<em>bool</em><em>, </em><em>optional</em>) – If <code class="docutils literal notranslate"><span class="pre">True</span></code>, applies a 0.5 factor for near-<code class="docutils literal notranslate"><span class="pre">2*pi</span></code> scans to account for
+view redundancy in reconstruction formulas using full circular data.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.fan_cosine_weights">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">fan_cosine_weights</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#fan_cosine_weights"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.fan_cosine_weights" title="Link to this definition"></a></dt>
+<dd><p>Return fan-beam cosine pre-weights <code class="docutils literal notranslate"><span class="pre">cos(gamma)</span></code> for each detector bin.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.cone_cosine_weights">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">cone_cosine_weights</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">det_u</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">det_v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_u</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_v</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#cone_cosine_weights"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.cone_cosine_weights" title="Link to this definition"></a></dt>
+<dd><p>Return FDK cosine pre-weights <code class="docutils literal notranslate"><span class="pre">D/sqrt(D^2</span> <span class="pre">+</span> <span class="pre">u^2</span> <span class="pre">+</span> <span class="pre">v^2)</span></code> on a 2D detector.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.parker_weights">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">parker_weights</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#parker_weights"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.parker_weights" title="Link to this definition"></a></dt>
+<dd><p>Return Parker redundancy weights for fan/cone short-scan geometries.</p>
+<p>For full scans (near <code class="docutils literal notranslate"><span class="pre">2*pi</span></code>), this returns all ones.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.ramp_filter_1d">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ramp_filter_1d</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram_tensor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dim</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pad_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">window</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_rfft</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ramp_filter_1d"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ramp_filter_1d" title="Link to this definition"></a></dt>
+<dd><p>Apply a 1D ramp filter along <code class="docutils literal notranslate"><span class="pre">dim</span></code> using FFT.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sinogram_tensor</strong> (<em>torch.Tensor</em>) – Real-valued sinogram tensor.</p></li>
+<li><p><strong>dim</strong> (<em>int</em><em>, </em><em>optional</em>) – Axis along which to filter. Default <code class="docutils literal notranslate"><span class="pre">-1</span></code>.</p></li>
+<li><p><strong>sample_spacing</strong> (<em>float</em><em>, </em><em>optional</em>) – Physical spacing between detector samples along <code class="docutils literal notranslate"><span class="pre">dim</span></code>. The continuous
+ramp filter has units of <code class="docutils literal notranslate"><span class="pre">1/length</span></code>, so the FFT output is rescaled by
+<code class="docutils literal notranslate"><span class="pre">1/sample_spacing</span></code> to respect physical units. Default <code class="docutils literal notranslate"><span class="pre">1.0</span></code> (pure
+sample-unit behavior, matching the historical call signature).</p></li>
+<li><p><strong>pad_factor</strong> (<em>int</em><em>, </em><em>optional</em>) – Zero-pad the signal to <code class="docutils literal notranslate"><span class="pre">pad_factor</span> <span class="pre">*</span> <span class="pre">N</span></code> along <code class="docutils literal notranslate"><span class="pre">dim</span></code> before the FFT
+to suppress circular-convolution wrap-around artifacts. Default <code class="docutils literal notranslate"><span class="pre">1</span></code>
+(no padding).</p></li>
+<li><p><strong>window</strong> (<em>str</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Frequency-domain apodization: <code class="docutils literal notranslate"><span class="pre">None</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;ram-lak&quot;</span></code> (unwindowed),
+<code class="docutils literal notranslate"><span class="pre">&quot;hann&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;hamming&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;cosine&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&quot;shepp-logan&quot;</span></code>.
+Default <code class="docutils literal notranslate"><span class="pre">None</span></code>.</p></li>
+<li><p><strong>use_rfft</strong> (<em>bool</em><em>, </em><em>optional</em>) – Use the real-valued FFT path when <code class="docutils literal notranslate"><span class="pre">True</span></code>. Default <code class="docutils literal notranslate"><span class="pre">True</span></code>.</p></li>
+</ul>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>Pre-existing callers that pass only <code class="docutils literal notranslate"><span class="pre">(sinogram_tensor,</span> <span class="pre">dim)</span></code> keep the same
+filter shape because the defaults preserve the original behavior up to the
+rfft path (which is numerically equivalent for real inputs) and the
+<code class="docutils literal notranslate"><span class="pre">1/sample_spacing</span></code> scale (which is exactly 1 when <code class="docutils literal notranslate"><span class="pre">sample_spacing=1.0</span></code>).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.parallel_weighted_backproject">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">parallel_weighted_backproject</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#parallel_weighted_backproject"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.parallel_weighted_backproject" title="Link to this definition"></a></dt>
+<dd><p>Parallel-beam backprojection for analytical FBP pipelines.</p>
+<p>Dispatches to the dedicated parallel-beam FBP voxel-driven gather
+kernel (<code class="docutils literal notranslate"><span class="pre">_parallel_2d_fbp_backproject_kernel</span></code>). The shared
+Siddon-based parallel backward kernel continues to serve the
+autograd adjoint path used by <code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction</span></code> /
+<code class="docutils literal notranslate"><span class="pre">ParallelBackprojectorFunction</span></code>; this function is only the
+analytical FBP path. There is no distance weighting in parallel
+geometry (no source, no magnification), so the kernel simply
+gathers one linearly-interpolated detector sample per view per
+pixel and sums. The analytical <code class="docutils literal notranslate"><span class="pre">1/(2*pi)</span></code> FBP constant is
+applied inside the wrapper so the returned image is already
+amplitude-calibrated - a unit-density disk reconstructs to
+amplitude 1.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.fan_weighted_backproject">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">fan_weighted_backproject</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#fan_weighted_backproject"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.fan_weighted_backproject" title="Link to this definition"></a></dt>
+<dd><p>Fan-beam weighted backprojection for analytical FBP pipelines.</p>
+<p>Dispatches to the dedicated fan FBP voxel-driven gather kernel
+(<code class="docutils literal notranslate"><span class="pre">_fan_2d_fbp_backproject_kernel</span></code>). The shared Siddon-based fan
+backward kernel continues to serve the autograd adjoint path used by
+<code class="docutils literal notranslate"><span class="pre">FanProjectorFunction</span></code> / <code class="docutils literal notranslate"><span class="pre">FanBackprojectorFunction</span></code>; this function
+is only the analytical FBP path. Uses <code class="docutils literal notranslate"><span class="pre">(SID/U)^2</span></code> distance
+weighting with linear detector-gather and applies the same
+<code class="docutils literal notranslate"><span class="pre">sdd/(2*pi*sid)</span></code> analytical FBP constant that the cone FDK path
+uses, so a unit-density disk reconstructs to amplitude 1.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.differentiable.cone_weighted_backproject">
+<span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">cone_weighted_backproject</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">D</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">W</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dv</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_u</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset_v</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_x</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_y</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">center_offset_z</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#cone_weighted_backproject"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.cone_weighted_backproject" title="Link to this definition"></a></dt>
+<dd><p>Cone-beam weighted backprojection for analytical FDK pipelines.</p>
+<p>Dispatches to the dedicated FDK voxel-driven gather kernel
+(<code class="docutils literal notranslate"><span class="pre">_cone_3d_fdk_backproject_kernel</span></code>). The shared Siddon-based cone
+backward kernel continues to serve the autograd adjoint path used by
+<code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code> / <code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code>; this function
+is only the analytical FDK path, and it uses a <code class="docutils literal notranslate"><span class="pre">(SID/U)^2</span></code> weight with
+a bilinear detector gather to stay consistent with the classical FDK
+formulation.</p>
+</dd></dl>
+
+</section>
+<section id="ramp-filter-options">
+<h2>Ramp Filter Options<a class="headerlink" href="#ramp-filter-options" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code> is a generic 1D ramp filter used by every analytical
+reconstruction example. Its call signature is:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ramp_filter_1d</span><span class="p">(</span><span class="n">sinogram_tensor</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">sample_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+               <span class="n">pad_factor</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">use_rfft</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">sample_spacing</span></code></dt><dd><p>Physical detector-cell spacing along <code class="docutils literal notranslate"><span class="pre">dim</span></code> (e.g. <code class="docutils literal notranslate"><span class="pre">du</span></code> for the
+cone-beam case). The filter is rescaled by <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">/</span> <span class="pre">sample_spacing</span></code>
+internally so the output is in physical units and the
+reconstruction amplitude stays calibrated when detector pitch
+changes. Pass <code class="docutils literal notranslate"><span class="pre">1.0</span></code> to reproduce the historical sample-unit
+behavior.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">pad_factor</span></code></dt><dd><p>Zero-pad the signal to <code class="docutils literal notranslate"><span class="pre">pad_factor</span> <span class="pre">*</span> <span class="pre">N</span></code> samples along <code class="docutils literal notranslate"><span class="pre">dim</span></code>
+before the FFT. Common values:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">1</span></code> (default): no padding, fastest but prone to circular
+convolution wrap-around at the detector edges.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">2</span></code>: recommended for cone-beam FDK, good trade-off.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">4</span></code>: stricter padding for objects close to the detector edge.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">window</span></code></dt><dd><p>Frequency-domain apodization multiplied onto the bare Ram-Lak ramp:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">None</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;ram-lak&quot;</span></code>: unwindowed Ram-Lak, sharpest, highest
+noise.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;hann&quot;</span></code>: Hann window, strong high-frequency suppression.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;hamming&quot;</span></code>: slightly milder than Hann.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;cosine&quot;</span></code>: half-cosine rolloff.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;shepp-logan&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">sinc</span></code> rolloff, classical choice.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">use_rfft</span></code></dt><dd><p>Use <code class="docutils literal notranslate"><span class="pre">torch.fft.rfft</span></code> / <code class="docutils literal notranslate"><span class="pre">irfft</span></code> when the input is real. Defaults
+to <code class="docutils literal notranslate"><span class="pre">True</span></code>; set to <code class="docutils literal notranslate"><span class="pre">False</span></code> only if you need the complex FFT path.</p>
+</dd>
+</dl>
+</section>
+<section id="analytical-fbp-fdk-architecture">
+<h2>Analytical FBP / FDK architecture<a class="headerlink" href="#analytical-fbp-fdk-architecture" title="Link to this heading"></a></h2>
+<p>Each of the three analytical backprojection helpers dispatches to a
+dedicated voxel-driven gather kernel (parallel / fan / cone), separate
+from the Siddon-based ray-driven scatter kernels that drive autograd.
+The autograd kernels are the pure adjoints <code class="docutils literal notranslate"><span class="pre">P^T</span></code> of the forward
+projectors (no distance weighting, no magnification scale), so the
+autograd classes form self-consistent forward/backward adjoint pairs.
+The analytical helpers on top apply the appropriate FBP/FDK distance
+weighting and the analytical scale so the returned image is already
+amplitude-calibrated.</p>
+<p>Scale factors applied inside the analytical helpers:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code>: multiplies by <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi)</span></code>
+(Fourier-convention constant; parallel beam has no source and no
+magnification).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fan_weighted_backproject</span></code>: multiplies by <code class="docutils literal notranslate"><span class="pre">sdd</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid)</span></code>
+(Fourier constant times physical-detector-to-isocenter-plane
+magnification).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code>: multiplies by <code class="docutils literal notranslate"><span class="pre">sdd</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid)</span></code>
+(same derivation as the fan case; the extra third dimension does
+not change the ramp-filter convention).</p></li>
+</ul>
+<p>All three helpers use <code class="docutils literal notranslate"><span class="pre">(sid</span> <span class="pre">/</span> <span class="pre">U)^2</span></code> as the FDK/FBP distance weight
+for the divergent-beam cases (fan and cone), where
+<code class="docutils literal notranslate"><span class="pre">U</span> <span class="pre">=</span> <span class="pre">sid</span> <span class="pre">+</span> <span class="pre">x*sin(phi)</span> <span class="pre">-</span> <span class="pre">y*cos(phi)</span></code> is the distance from the source
+to the pixel/voxel along the central ray direction. Parallel beam has
+no distance weighting.</p>
+</section>
 <section id="usage-notes">
 <h2>Usage Notes<a class="headerlink" href="#usage-notes" title="Link to this heading"></a></h2>
-<p><strong>Memory Management:</strong>
-- All operators work with GPU tensors for optimal performance
-- Ensure sufficient GPU memory for your problem size
-- Use <code class="docutils literal notranslate"><span class="pre">torch.cuda.empty_cache()</span></code> if encountering memory issues</p>
-<p><strong>Gradient Computation:</strong>
-- All operators support automatic differentiation
-- Gradients flow through both forward and backward passes
-- Set <code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code> on input tensors to enable gradients</p>
-<p><strong>Performance Considerations:</strong>
-- Use contiguous tensors for optimal memory access
-- Consider batch processing for multiple reconstructions
-- Profile your code to identify bottlenecks</p>
-<p><strong>Coordinate Systems:</strong>
-- Image/volume coordinates: (0,0) at top-left corner
-- Detector coordinates: centered at detector array center
-- Rotation: counter-clockwise around z-axis (right-hand rule)</p>
+<p><strong>Memory Management</strong></p>
+<ul class="simple">
+<li><p>All operators work on CUDA tensors for optimal performance.</p></li>
+<li><p>Ensure sufficient GPU memory for the chosen volume / sinogram size.</p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">torch.cuda.empty_cache()</span></code> to release cached allocations when
+switching to a large job.</p></li>
+</ul>
+<p><strong>Gradient Computation</strong></p>
+<ul class="simple">
+<li><p>All autograd operators support automatic differentiation.</p></li>
+<li><p>Gradients flow through both forward and adjoint paths.</p></li>
+<li><p>Set <code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code> on input tensors to enable gradients.</p></li>
+<li><p>Analytical helpers (<code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code>, <code class="docutils literal notranslate"><span class="pre">angular_integration_weights</span></code>,
+<code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code>, …) are also differentiable in the
+torch sense (they are pure tensor ops / autograd.Functions), so you
+can use them inside a loss.</p></li>
+</ul>
+<p><strong>Performance Considerations</strong></p>
+<ul class="simple">
+<li><p>Pass contiguous tensors with the expected dimension order
+(<code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> for 3D volumes, <code class="docutils literal notranslate"><span class="pre">(num_views,</span> <span class="pre">det_u,</span> <span class="pre">det_v)</span></code> for cone
+sinograms). The library validates layout and will raise if a
+non-contiguous or transposed tensor is passed.</p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">pad_factor=2</span></code> in <code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code> for cone-beam FDK; the
+extra FFT cost is usually negligible compared to the backprojection.</p></li>
+</ul>
+<p><strong>Coordinate Systems</strong></p>
+<ul class="simple">
+<li><p>Image / volume coordinates: integer indices, <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">0,</span> <span class="pre">0)</span></code> at the
+corner of the array.</p></li>
+<li><p>Detector coordinates: centered at the detector array center, with
+<code class="docutils literal notranslate"><span class="pre">u</span></code> in-plane and <code class="docutils literal notranslate"><span class="pre">v</span></code> axial for cone beam.</p></li>
+<li><p>Rotation: counter-clockwise around the z-axis (right-hand rule).</p></li>
+</ul>
 </section>
 </section>
 
