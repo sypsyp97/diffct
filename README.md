@@ -7,6 +7,8 @@
 [![CI/CD](https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square)](https://github.com/sypsyp97/diffct/actions)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sypsyp97/diffct)
 
+🌏 **Language**: English | [简体中文](README.zh.md)
+
 A high-performance, CUDA-accelerated library for circular orbits CT
 reconstruction with end-to-end differentiable operators, amplitude-
 calibrated analytical FBP / FDK, and a separable-footprint projector
@@ -244,7 +246,8 @@ diffct/
 ├── pyproject.toml             # project metadata
 ├── pytest.ini
 ├── CHANGELOG.md               # Keep-a-Changelog release notes
-├── README.md
+├── README.md                  # English README (this file)
+├── README.zh.md               # 简体中文 README
 └── LICENSE
 ```
 
