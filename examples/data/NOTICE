@@ -1,0 +1,60 @@
+examples/data - Third-party data attribution
+=============================================
+
+walnut_cone.npz
+---------------
+
+This file is a downsampled, preprocessed derivative of the dataset:
+
+    Meaney, Alexander (2022). "Cone-Beam Computed Tomography Dataset
+    of a Walnut." Zenodo. https://doi.org/10.5281/zenodo.6986012
+
+Original authors: Alexander Meaney, University of Helsinki Industrial
+Mathematics Computed Tomography Laboratory, Finland.
+
+Original license: Creative Commons Attribution 4.0 International
+(CC-BY-4.0).  https://creativecommons.org/licenses/by/4.0/
+
+The original dataset is a stack of 721 X-ray projections of a walnut
+acquired on an Oxford Instruments XTF5011 / Hamamatsu C7942CA-22 cone-
+beam scanner, at a source-to-detector distance of 553.74 mm and a
+source-to-origin distance of 210.66 mm, with a 0.050 mm detector pixel
+pitch and 0.5 degree angular step.  The derivative included here has
+been:
+
+  - spatially binned 8x (2368x2240 -> 296x280 detector pixels),
+  - cropped to the central 256x256 detector region,
+  - angularly subsampled every 3rd view (721 -> 241 projections),
+  - flat-field normalised per-projection (using the 99.5th percentile
+    of each raw uint16 image as the "air" reference; no separate
+    dark scan is available in the source record, so we assume zero
+    dark field) and converted to line integrals via ``-log(I / I0)``,
+  - stored as float16 in a compressed .npz together with the
+    physical geometry (sdd, sid, binned pixel pitch, angles in
+    radians). Total file size on disk: ~20 MB.
+
+The preprocessing script used to build this file is shipped alongside
+it at ``examples/data/preprocess_walnut.py``. To regenerate the .npz
+from the original Zenodo archive:
+
+  1. Download all eight projection ZIPs (~4 GB total) from
+     https://zenodo.org/records/6986012 into a scratch directory:
+
+         20201111_walnut_projections_1.zip ... _8.zip
+
+  2. Install ``tifffile`` (``pip install tifffile``).
+
+  3. Run::
+
+         python examples/data/preprocess_walnut.py \
+             examples/data/walnut_cone.npz \
+             /path/to/scratch/with/zips
+
+The script streams each TIFF from the ZIPs without full extraction.
+Peak memory usage is below 1 GB.
+
+No walnut was harmed in the making of this file.
+
+This derivative file is distributed under the same CC-BY-4.0 license
+as the original. When you use or redistribute it, please cite the
+original Zenodo record above in addition to any citation of diffct.

@@ -62,9 +62,16 @@ published to PyPI. If you find any bugs please
   (fan) and ``backend="sf_tr"`` / ``"sf_tt"`` (cone) selectors on
   every ``FanProjectorFunction`` / ``ConeProjectorFunction`` call
   expose voxel-driven SF projectors (Long-Fessler-Balter, IEEE TMI
-  2010). In the full analytical FBP / FDK pipeline these measurably
-  lower reconstruction MSE by ~17 % on standard Shepp-Logan phantoms
-  versus the default Siddon backend, at ~2-3x forward cost.
+  2010). The matched SF forward model is a cell-integrated
+  alternative to ray-sampled Siddon and is useful when an iterative
+  or learned pipeline wants a **mass-conserving** forward operator.
+  The analytical FBP / FDK gather (``backend="sf"`` on
+  ``fan_weighted_backproject`` / ``cone_weighted_backproject``) uses
+  LEAP's chord-weighted matched-adjoint form
+  (``projectors_SF.cu``); on standard Shepp-Logan phantoms it
+  reaches Siddon-VD parity in both amplitude and MSE (within ~1 %).
+  See the Core Algorithm section below for when SF is worth the
+  extra ~2-3x forward cost.
 - **Tested:** 66 pytest tests covering adjoint identity, gradcheck,
   smoke, FBP / FDK accuracy per geometry, detector / center offsets,
   and 29 ramp-filter window cases. Opt-in 27-case
@@ -76,6 +83,134 @@ published to PyPI. If you find any bugs please
 - **Parallel Beam:** 2D parallel-beam geometry
 - **Fan Beam:** 2D fan-beam geometry
 - **Cone Beam:** 3D cone-beam geometry
+
+## 🔬 Core Algorithm
+
+At the heart of every `diffct` projector / backprojector pair is
+**Siddon's algorithm** ([Siddon 1985](https://doi.org/10.1118/1.595715))
+— a ray-driven integer DDA that walks each ray through the voxel
+grid, stepping forward only at voxel boundaries and giving exact
+parametric intersection lengths in `O(N)` per ray.
+
+The classical Siddon samples the *cell value* at each step
+(nearest-neighbor). `diffct` instead uses **bilinear (2D) /
+trilinear (3D) interpolation** of the surrounding voxel corners at
+every sample point. The same interpolation appears twice in the
+analytical pipeline, both in the Siddon forward projector walking
+the image, and in the voxel-driven FBP / FDK gather backprojector
+(`*_weighted_backproject`) sampling the filtered sinogram at each
+voxel's projected detector footprint. The matched autograd adjoint
+uses exactly the same weights as a scatter-add, giving a byte-
+accurate adjoint verified by `<Ax, y> ≈ <x, A^T y>` at float32
+precision (see `tests/test_adjoint_inner_product.py`).
+
+**Why this choice.** Interpolation weights are continuous in the
+voxel values, so `∂sinogram / ∂voxel` is well-defined everywhere
+and `torch.autograd` flows gradients back through the projector
+without surrogate tricks or straight-through estimators. Nearest-
+neighbor Siddon would give piecewise-constant outputs with zero
+gradient on the interior of each cell — fine for one-shot FBP /
+FDK, useless for iterative or learned reconstruction. A single
+integer-DDA kernel also keeps the forward and adjoint code
+structurally identical across parallel, fan, and cone, which is
+what makes the adjoint byte-accurate in the first place.
+
+**The trade-off: slight blur.** Bi / trilinear interpolation behaves
+like a mild low-pass filter on top of the voxel grid, so the
+effective reconstruction MTF rolls off a bit earlier than a cell-
+integrated projector would give. To recover that resolution the
+sharpest knob is the ramp filter window:
+
+- **Ramp filter window**: `ramp_filter_1d(window=...)` picks the
+  frequency-domain apodization applied on top of the ramp. In order
+  of sharpness: `"ram-lak"` > `"hamming"` > `"hann"`. Sharper
+  windows recover more high frequency content at the cost of more
+  visible ringing / noise. This is by far the biggest knob on the
+  reconstruction MTF at typical CBCT geometries.
+
+**Separable-footprint (SF) backend — honest scope.** The optional
+`backend="sf"` (fan) and `"sf_tr"` / `"sf_tt"` (cone) selectors on
+`fan_weighted_backproject` and `cone_weighted_backproject` replace
+the default bilinear voxel-driven gather with a gather that
+integrates the filtered sinogram over each voxel's projected
+trapezoidal footprint, in LEAP's chord-weighted matched-adjoint
+form (`projectors_SF.cu`). What you actually get, verified on
+Shepp-Logan and the walnut dataset:
+
+- **Amplitude:** matches Siddon VD to within ~1 % at nominal,
+  sub-nominal (`voxel = 0.5 * detector_pitch * sid / sdd`) and
+  mildly supra-nominal voxel grids. Both backends are consistent
+  with the same analytical FBP / FDK scale constant on unit-
+  density phantoms.
+- **MSE / SSIM:** SF is typically a whisker better than VD
+  (fractions of a percent) on standard phantoms; do not expect a
+  noticeable MSE win from the backend alone.
+- **Visible MTF:** at the ~1.5-3x CBCT magnifications used in
+  fan / cone examples, SF and VD produce **visually
+  indistinguishable** edge profiles. Plot a line through a sharp
+  edge and the two curves trace each other. The "SF is sharper at
+  sub-nominal" claim you see in the SF literature is real in the
+  extreme-sub-nominal regime (voxel much smaller than one detector
+  bin) but invisible at the geometries in the shipped examples.
+
+So why ship the SF backend at all? Because the **forward** side is
+the actually interesting one:
+
+- SF forward is **mass-conserving** per voxel — a single voxel's
+  contribution is spread across the correct multi-bin footprint
+  instead of concentrated at one bin, which matters for iterative
+  reconstruction, learned priors, and any loss that compares
+  sinograms directly. Siddon-bilinear forward is a point sampler
+  and only conserves mass statistically.
+- SF's matched adjoint is byte-accurate (verified by
+  `tests/test_adjoint_inner_product.py`), so gradients flow
+  correctly through the cell-integrated forward model.
+- The SF-matched autograd adjoint and the LEAP chord-weighted FBP
+  gather live in different kernels: the first is used by
+  `FanProjectorFunction` / `ConeProjectorFunction` on the backward
+  pass, the second is used by `fan_weighted_backproject` /
+  `cone_weighted_backproject` when you pick the SF backend. Both
+  are exposed; picking `backend="sf"` on both sides gives you a
+  consistent cell-integrated pipeline.
+
+**Bottom line.** If you just want the cleanest FBP / FDK of a
+Shepp-Logan or a walnut on typical CBCT geometry, stay on
+`backend="siddon"` and tune the ramp window. Switch to
+`backend="sf"` / `"sf_tr"` / `"sf_tt"` when you care about the
+*forward model* being cell-integrated — iterative reconstruction,
+learned priors, sinogram-level losses, or comparing against a LEAP
+baseline. Concrete usage of both paths is in `examples/fbp_fan.py`,
+`examples/fdk_cone.py` and `examples/realdata_walnut_fdk.py`.
+
+## 🥜 Real-data Example
+
+Cone-beam FDK reconstruction of a real walnut from the Helsinki
+industrial CBCT scanner ([Meaney 2022, Zenodo
+10.5281/zenodo.6986012](https://doi.org/10.5281/zenodo.6986012),
+CC-BY 4.0). The shipped sinogram at
+[`examples/data/walnut_cone.npz`](examples/data/walnut_cone.npz)
+is a 241-view, 256x256-per-view, flat-field-normalised and logged
+subset of the original 721 x 2368 x 2240 uint16 acquisition (binned
+8x, cropped 256x256, float16, ~25 MB). A sample reconstruction
+montage is shipped at
+[`examples/data/walnut_reco.png`](examples/data/walnut_reco.png).
+Run the full analytical FDK pipeline with
+
+```bash
+python examples/realdata_walnut_fdk.py
+```
+
+The same analytical wrappers (`cone_cosine_weights`, `ramp_filter_1d`,
+`angular_integration_weights`, `cone_weighted_backproject`) that
+reconstruct Shepp-Logan phantoms in `fdk_cone.py` are used here with
+no algorithmic changes — only the geometry is swapped for the one
+stored in the `.npz`. The example reconstructs at half the nominal
+voxel size on a 512³ grid with `backend="sf_tr"` and a Hamming
+ramp window; you can switch to `backend="siddon"` and get a
+visually equivalent result (the backend choice is a forward-model
+preference here, not a reconstruction-sharpness knob). See
+[`examples/data/NOTICE`](examples/data/NOTICE) for the full
+attribution and the regeneration procedure.
 
 ## 🧩 Code Structure
 
@@ -91,7 +226,16 @@ diffct/
 │   ├── fdk_cone.py            # with Parker short-scan switch
 │   ├── iterative_reco_parallel.py
 │   ├── iterative_reco_fan.py
-│   └── iterative_reco_cone.py
+│   ├── iterative_reco_cone.py
+│   ├── realdata_fbp_parallel.py  # synthetic real-data pipeline
+│   ├── realdata_fbp_fan.py       #   (Beer-Lambert + Poisson + -log)
+│   ├── realdata_fdk_cone.py
+│   ├── realdata_walnut_fdk.py    # real Helsinki walnut CBCT data
+│   └── data/
+│       ├── walnut_cone.npz    # ~25 MB preprocessed walnut sinogram
+│       ├── walnut_reco.png    # sample FDK reconstruction montage
+│       ├── preprocess_walnut.py  # regenerator from Zenodo source
+│       └── NOTICE             # CC-BY 4.0 attribution
 ├── tests/
 │   ├── test_*.py              # adjoint / gradcheck / accuracy /
 │   │                          # offsets / weights / ramp-filter
@@ -209,5 +353,13 @@ This project was highly inspired by:
 
 - [PYRO-NN](https://github.com/csyben/PYRO-NN)
 - [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT)
+- [LEAP](https://github.com/LLNL/LEAP) (LLNL / Hyojin Kim et al.)
+  — the LEAP chord-weighted matched-adjoint form in
+  [`projectors_SF.cu`](https://github.com/LLNL/LEAP/blob/main/src/projectors_SF.cu)
+  is the reference implementation that the 1.3.1 analytical SF
+  backprojection kernels (`_fan_2d_sf_fbp_backproject_kernel`,
+  `_cone_3d_sf_tr_fdk_backproject_kernel`,
+  `_cone_3d_sf_tt_fdk_backproject_kernel`) in diffct are ported
+  from. Apache 2.0-licensed, big thanks to the LEAP team.
 
 Issues and contributions are welcome!

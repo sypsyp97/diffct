@@ -150,38 +150,38 @@ def main():
     #
     #   "siddon" (default) - Ray-driven Siddon traversal with bilinear
     #                        interpolation on the image. One thread per
-    #                        (view, detector bin). Fastest forward, and
-    #                        on raw-forward accuracy against the
-    #                        analytical Radon transform it is slightly
-    #                        sharper than SF (Siddon's bilinear
-    #                        interpolation already smooths the voxel
-    #                        grid). Choose this when you only need a
-    #                        forward projection and not a reconstruction.
+    #                        (view, detector bin). Fastest forward. Pick
+    #                        this when you only need a forward projection
+    #                        and not a matched cell-integrated model.
     #
     #   "sf"               - Voxel-driven separable-footprint projector
     #                        (SF-TR of Long-Fessler-Balter, IEEE TMI 2010).
     #                        Each voxel's projection footprint is a
     #                        trapezoid built from the four projected
     #                        corners and closed-form integrated over each
-    #                        detector cell, so mass is conserved per
-    #                        voxel (the total integrated sinogram mass
-    #                        from one voxel equals ``chord * value``
-    #                        exactly). About 3x slower forward than
-    #                        "siddon", but **in this exact analytical
-    #                        FBP pipeline it yields a ~17 % lower
-    #                        reconstruction MSE** on the 256x256
-    #                        Shepp-Logan phantom here (raw MSE drops
-    #                        from ~0.00216 with siddon to ~0.00178 with
-    #                        sf). The mechanism is that SF's cell-
-    #                        integrated sinogram pairs more naturally
-    #                        with the voxel-driven FBP gather
-    #                        backprojector than Siddon's thin-ray
-    #                        sampling, which feeds extra high-frequency
-    #                        ringing into the ramp filter. Recommended
-    #                        for analytical FBP reconstruction where
-    #                        reconstruction quality matters more than
-    #                        forward runtime.
-    projector_backend = "siddon"
+    #                        detector cell, so **mass is conserved per
+    #                        voxel**. About 3x slower forward than
+    #                        "siddon". On analytical FBP reconstructions
+    #                        with the matched SF gather backprojector
+    #                        (``fan_weighted_backproject(backend="sf")``),
+    #                        SF and VD produce visually identical edge
+    #                        profiles on Shepp-Logan at typical CBCT
+    #                        magnifications - the "SF is sharper"
+    #                        advantage that shows up in the SF / LEAP
+    #                        literature only manifests at extreme
+    #                        sub-nominal voxel sizes that are not hit
+    #                        in standard examples. The real reason to
+    #                        pick "sf" is the **forward** side: if you
+    #                        plan to use this projector inside an
+    #                        iterative reco, a learned prior, or any
+    #                        loss that compares sinograms directly,
+    #                        a cell-integrated mass-conserving forward
+    #                        is the right model.
+    #
+    # The default is kept at "sf" so the reader can see the SF path run
+    # end-to-end; switching it to "siddon" gives a visually equivalent
+    # reconstruction at this geometry.
+    projector_backend = "sf"
 
     # ------------------------------------------------------------------
     # 5. Forward projection: image -> fan sinogram
@@ -263,12 +263,32 @@ def main():
     sinogram_filt = sinogram_filt * d_beta
 
     # --- 6.5  Voxel-driven FBP backprojection ------------------------
-    # ``fan_weighted_backproject`` dispatches to the dedicated fan FBP
-    # gather kernel. For each pixel it projects onto the detector,
-    # linearly samples the filtered sinogram, multiplies by
-    # ``(sid/U)^2`` and accumulates over views. The analytical
-    # ``sdd/(2*pi*sid)`` FBP constant is applied inside the wrapper so
-    # the returned image is already amplitude-calibrated.
+    # ``fan_weighted_backproject`` dispatches to one of two fan FBP
+    # gather kernels based on ``backend``:
+    #
+    #   "siddon" (default) - bilinear voxel-driven gather: linearly
+    #                        sample the filtered sinogram at each
+    #                        pixel's projected u-coordinate, multiply
+    #                        by ``(sid/U)^2`` and accumulate.
+    #   "sf"               - LEAP-style chord-weighted separable-
+    #                        footprint gather: integrate the filtered
+    #                        sinogram over each pixel's trapezoidal
+    #                        footprint and weight by the in-plane
+    #                        chord through the voxel plus the fan
+    #                        ``sid/U`` first-power weight (matches the
+    #                        matched-adjoint form in LEAP's
+    #                        ``projectors_SF.cu``). Amplitude-calibrated
+    #                        against the Siddon path on Shepp-Logan;
+    #                        edge profiles at typical CBCT geometries
+    #                        are visually indistinguishable from the
+    #                        Siddon path. Pick this when you want a
+    #                        cell-integrated forward / backward model
+    #                        matched to the SF forward projector.
+    #
+    # Here we pass the same ``projector_backend`` we picked at step
+    # 4.5 so forward and backward stay consistent. Amplitude is
+    # calibrated by the wrapper so the returned image is ready to
+    # compare against ``image_torch`` directly.
     reconstruction_raw = fan_weighted_backproject(
         sinogram_filt,
         angles_torch,
@@ -279,6 +299,7 @@ def main():
         sid,
         voxel_spacing=voxel_spacing,
         detector_offset=detector_offset,
+        backend=projector_backend,
     )
     reconstruction = F.relu(reconstruction_raw)
 

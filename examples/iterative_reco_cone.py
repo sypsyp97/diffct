@@ -160,7 +160,7 @@ def main():
     #                        for large cone angles and for research into
     #                        the full Long et al. separable-footprint
     #                        model.
-    projector_backend = "siddon"
+    projector_backend = "sf_tr"
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     phantom_torch = torch.tensor(phantom_cpu, device=device, dtype=torch.float32).contiguous()

@@ -3013,6 +3013,637 @@ def _fan_2d_fbp_backproject_kernel(
     d_image[iy, ix] = accum
 
 
+# ------------------------------------------------------------------
+# Analytical SF-based FBP / FDK backprojection kernels
+# ------------------------------------------------------------------
+# These gather kernels replace the voxel-driven bilinear gather in
+# ``fan_weighted_backproject`` / ``cone_weighted_backproject`` when the
+# caller selects a separable-footprint backend. The math of each kernel
+# is the matched-adjoint SF backward (four-corner trapezoidal footprint
+# integration of the filtered sinogram) PLUS the classical
+# ``(SID / U)^2`` FBP / FDK weight that the VD gather kernels already
+# apply, where ``U`` is the source-to-voxel-center distance along the
+# central ray direction. The effect compared to VD gather is:
+#
+#   - at the nominal voxel size ``du * sid / sdd``: near-identical MTF
+#     (LEAP's SF_vs_VD analysis confirms this).
+#   - at sub-nominal voxel sizes (voxels whose projected footprint
+#     covers less than one detector bin): SF gives meaningfully higher
+#     spatial resolution because VD always averages the filtered
+#     sinogram over four detector bins regardless of voxel size.
+#   - at supra-nominal voxel sizes: SF gives higher SNR because its
+#     footprint spans more detector bins and averages more noise.
+#
+# The existing SF adjoint kernels (``_fan_2d_sf_backward_kernel``,
+# ``_cone_3d_sf_tr_backward_kernel``, ``_cone_3d_sf_tt_backward_kernel``)
+# stay unchanged because they are the byte-accurate matched adjoints of
+# the SF forward kernels used by the autograd ``*ProjectorFunction`` /
+# ``*BackprojectorFunction`` paths. The new ``*_fbp_*`` / ``*_fdk_*``
+# kernels below are ONLY used by the analytical pipeline wrappers and
+# are not the autograd adjoint of anything.
+
+
+@_FDK_ACCURACY_DECORATOR
+def _fan_2d_sf_fbp_backproject_kernel(
+    d_sino, n_ang, n_det,
+    d_image, Nx, Ny,
+    det_spacing, d_cos, d_sin,
+    sdd, sid, cx, cy, voxel_spacing,
+    det_offset, center_offset_x, center_offset_y,
+):
+    """Voxel-driven fan-beam FBP SF backprojection gather, chord-weighted form.
+
+    Matched-adjoint formulation inspired by LEAP's ``fanBeamBackprojectorKernel_SF``
+    (``projectors_SF.cu``): each voxel's trapezoidal u-footprint is still
+    built from the four projected corners and closed-form integrated per
+    detector bin, but the per-view weight is the chord through the unit
+    voxel times the fan ``sid/U`` first-power weight, with NO division
+    by the footprint area. Compared to the classical ``(SID/U)^2``-
+    per-voxel FBP form, this matches LEAP's SF: ``bpWeight * chord``
+    replaces ``(sid/U)^2 / area``. The two differ by a constant factor
+    of ``sdd / sid`` (the magnification) at the isocenter and by a
+    small position-dependent correction elsewhere, which the Python
+    wrapper absorbs in the FBP scale.
+
+    Analytical ramp filtering, cosine pre-weighting and Parker short-
+    scan weights are expected to already be baked into ``d_sino`` before
+    this kernel runs.
+    """
+    iy, ix = cuda.grid(2)
+    if iy >= Ny or ix >= Nx:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    det_spacing_v = det_spacing / voxel_spacing
+    half = 0.5 * (n_det - 1)
+
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+
+    accum = 0.0
+
+    for iang in range(n_ang):
+        cos_a = d_cos[iang]
+        sin_a = d_sin[iang]
+
+        # Fan-beam ``sid/U`` first-power weight (LEAP's ``bpWeight``).
+        U_c = sid_v + x_c * sin_a - y_c * cos_a
+        if U_c <= _EPSILON:
+            continue
+        bp_weight = sid_v / U_c
+
+        # Chord through the unit voxel along the source-to-voxel ray
+        # direction. This is the physical line integral of the voxel
+        # at this view and matches the SF forward kernel convention.
+        rx = x_c + sid_v * sin_a
+        ry = y_c - sid_v * cos_a
+        r_len = math.sqrt(rx * rx + ry * ry)
+        if r_len < _EPSILON:
+            continue
+        rx /= r_len
+        ry /= r_len
+        max_dir = abs(rx)
+        ar_dir = abs(ry)
+        if ar_dir > max_dir:
+            max_dir = ar_dir
+        if max_dir < _EPSILON:
+            continue
+        chord = 1.0 / max_dir
+
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+
+        span = u_max - u_min
+        if span < _EPSILON:
+            continue
+
+        plateau = u_hi - u_lo
+        # Chord-weighted LEAP form: ``bp_weight * chord / det_spacing_v``.
+        # No footprint-area division - the raw trapezoid integral
+        # ``sum_k raw[k]`` stays intact. The Python wrapper scales the
+        # final image by ``1 / (2*pi)`` instead of the classical
+        # ``sdd / (2*pi*sid)`` to absorb the resulting magnification.
+        weight = bp_weight * chord / det_spacing_v
+
+        k_lo_f = (u_min - det_offset) / det_spacing_v + half - 0.5
+        k_hi_f = (u_max - det_offset) / det_spacing_v + half + 0.5
+        k_lo = int(math.floor(k_lo_f))
+        k_hi = int(math.ceil(k_hi_f))
+        if k_lo < 0:
+            k_lo = 0
+        if k_hi > n_det - 1:
+            k_hi = n_det - 1
+        if k_hi < k_lo:
+            continue
+
+        rise_w = u_lo - u_min
+        fall_w = u_max - u_hi
+
+        for k in range(k_lo, k_hi + 1):
+            u_k = (k - half) * det_spacing_v + det_offset
+            u_L = u_k - 0.5 * det_spacing_v
+            u_R = u_k + 0.5 * det_spacing_v
+
+            aL = u_L if u_L > u_min else u_min
+            aR = u_R if u_R < u_max else u_max
+            if aL >= aR:
+                continue
+
+            raw = 0.0
+            if rise_w > _EPSILON:
+                r_lo_ = aL if aL > u_min else u_min
+                r_hi_ = aR if aR < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                  (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
+
+            if plateau > _EPSILON:
+                p_lo_ = aL if aL > u_lo else u_lo
+                p_hi_ = aR if aR < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw += p_hi_ - p_lo_
+
+            if fall_w > _EPSILON:
+                f_lo_ = aL if aL > u_hi else u_hi
+                f_hi_ = aR if aR < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                  (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
+
+            if raw > 0.0:
+                accum += weight * raw * d_sino[iang, k]
+
+    d_image[iy, ix] = accum
+
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_sf_tr_fdk_backproject_kernel(
+    d_sino, n_views, n_u, n_v,
+    d_vol, Nx, Ny, Nz,
+    du, dv, d_cos, d_sin,
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z,
+):
+    """Voxel-driven cone-beam FDK SF-TR backprojection gather, chord-weighted.
+
+    Matched-adjoint formulation inspired by LEAP's tilt==0 branch of
+    ``coneBeamBackprojectorKernel_SF`` (``projectors_SF.cu``). Transaxial
+    trapezoid + axial rectangle footprint math as before, but the
+    per-view weight is the in-plane chord through the unit voxel times
+    ``sqrt(1 + (v_proj/sdd)^2)`` (the LEAP v-chord correction), with NO
+    division by the footprint area and NO ``(sid/U)^2`` FDK weight.
+    LEAP's cone SF backprojection is a pure matched adjoint; the
+    classical FDK magnification is absorbed by the Python-wrapper
+    scale constant (``sid / (2*pi*sdd)`` instead of ``sdd / (2*pi*sid)``).
+    """
+    iz, iy, ix = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+    u_half = 0.5 * (n_u - 1)
+    v_half = 0.5 * (n_v - 1)
+
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    z_c = (iz - cz) - center_offset_z
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+    z_m = z_c - 0.5
+    z_p = z_c + 0.5
+
+    accum = 0.0
+
+    for iview in range(n_views):
+        cos_a = d_cos[iview]
+        sin_a = d_sin[iview]
+
+        U_c = sid_v + x_c * sin_a - y_c * cos_a
+        if U_c <= _EPSILON:
+            continue
+
+        # In-plane chord through the unit voxel along the source-to-
+        # voxel ray direction (LEAP's ``l_phi`` uses the central-ray
+        # approximation ``1/max(|cos|,|sin|) * sqrt(1+u^2/sdd^2)``;
+        # we compute the exact chord from the per-voxel ray direction
+        # to stay consistent with ``_cone_3d_sf_tr_forward_kernel``).
+        rx = x_c + sid_v * sin_a
+        ry = y_c - sid_v * cos_a
+        r_len2 = rx * rx + ry * ry
+        if r_len2 < _EPSILON:
+            continue
+        r_len = math.sqrt(r_len2)
+        rx /= r_len
+        ry /= r_len
+        max_dir = abs(rx)
+        ar_dir = abs(ry)
+        if ar_dir > max_dir:
+            max_dir = ar_dir
+        if max_dir < _EPSILON:
+            continue
+        chord_u = 1.0 / max_dir
+
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+        if (u_max - u_min) < _EPSILON:
+            continue
+
+        mag_c = sdd_v / U_c
+        v_proj_c = z_c * mag_c
+        v_arg = v_proj_c / sdd_v
+        v_chord = math.sqrt(1.0 + v_arg * v_arg)
+        v_bot = z_m * mag_c
+        v_top = z_p * mag_c
+        if v_bot > v_top:
+            v_bot, v_top = v_top, v_bot
+        v_span = v_top - v_bot
+        if v_span < _EPSILON:
+            continue
+
+        plateau = u_hi - u_lo
+        rise_w = u_lo - u_min
+        fall_w = u_max - u_hi
+        # Chord-weighted LEAP form (no footprint-area division, no
+        # ``(sid/U)^2`` per-voxel FDK weight). The Python wrapper
+        # rescales the final volume by ``sid / (2*pi*sdd)`` instead
+        # of ``sdd / (2*pi*sid)`` to absorb the ``mag^2`` difference.
+        weight = chord_u * v_chord / (du_v * dv_v)
+
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        if k_u_lo < 0:
+            k_u_lo = 0
+        if k_u_hi > n_u - 1:
+            k_u_hi = n_u - 1
+        if k_u_hi < k_u_lo:
+            continue
+
+        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - 0.5))
+        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + 0.5))
+        if k_v_lo < 0:
+            k_v_lo = 0
+        if k_v_hi > n_v - 1:
+            k_v_hi = n_v - 1
+        if k_v_hi < k_v_lo:
+            continue
+
+        for ku in range(k_u_lo, k_u_hi + 1):
+            u_k = (ku - u_half) * du_v + det_offset_u
+            u_L = u_k - 0.5 * du_v
+            u_R = u_k + 0.5 * du_v
+
+            aL = u_L if u_L > u_min else u_min
+            aR = u_R if u_R < u_max else u_max
+            if aL >= aR:
+                continue
+
+            raw_u = 0.0
+            if rise_w > _EPSILON:
+                r_lo_ = aL if aL > u_min else u_min
+                r_hi_ = aR if aR < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                    (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
+            if plateau > _EPSILON:
+                p_lo_ = aL if aL > u_lo else u_lo
+                p_hi_ = aR if aR < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw_u += p_hi_ - p_lo_
+            if fall_w > _EPSILON:
+                f_lo_ = aL if aL > u_hi else u_hi
+                f_hi_ = aR if aR < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                    (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
+            if raw_u <= 0.0:
+                continue
+
+            for kv in range(k_v_lo, k_v_hi + 1):
+                v_k = (kv - v_half) * dv_v + det_offset_v
+                v_L = v_k - 0.5 * dv_v
+                v_R = v_k + 0.5 * dv_v
+
+                aLv = v_L if v_L > v_bot else v_bot
+                aRv = v_R if v_R < v_top else v_top
+                if aLv >= aRv:
+                    continue
+                raw_v = aRv - aLv
+
+                accum += weight * raw_u * raw_v * d_sino[iview, ku, kv]
+
+    d_vol[ix, iy, iz] = accum
+
+
+@_FDK_ACCURACY_DECORATOR
+def _cone_3d_sf_tt_fdk_backproject_kernel(
+    d_sino, n_views, n_u, n_v,
+    d_vol, Nx, Ny, Nz,
+    du, dv, d_cos, d_sin,
+    sdd, sid, cx, cy, cz, voxel_spacing,
+    det_offset_u, det_offset_v,
+    center_offset_x, center_offset_y, center_offset_z,
+):
+    """Voxel-driven cone-beam FDK SF-TT backprojection gather, chord-weighted.
+
+    Matched-adjoint formulation inspired by LEAP's cone SF. Four-corner
+    transaxial trapezoid and four-corner axial trapezoid footprint math
+    as before, but the per-view weight is the in-plane chord through the
+    unit voxel (from the per-voxel ray direction, matching the SF
+    forward kernel) times ``sqrt(1+(v_proj/sdd)^2)``. No footprint-area
+    division and no ``(sid/U)^2`` FDK weight; the Python-wrapper scale
+    constant absorbs the magnification difference.
+    """
+    iz, iy, ix = cuda.grid(3)
+    if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+
+    sid_v = sid / voxel_spacing
+    sdd_v = sdd / voxel_spacing
+    du_v = du / voxel_spacing
+    dv_v = dv / voxel_spacing
+    u_half = 0.5 * (n_u - 1)
+    v_half = 0.5 * (n_v - 1)
+
+    x_c = (ix - cx) - center_offset_x
+    y_c = (iy - cy) - center_offset_y
+    z_c = (iz - cz) - center_offset_z
+    x_m = x_c - 0.5
+    x_p = x_c + 0.5
+    y_m = y_c - 0.5
+    y_p = y_c + 0.5
+    z_m = z_c - 0.5
+    z_p = z_c + 0.5
+
+    accum = 0.0
+
+    for iview in range(n_views):
+        cos_a = d_cos[iview]
+        sin_a = d_sin[iview]
+
+        U_c = sid_v + x_c * sin_a - y_c * cos_a
+        if U_c <= _EPSILON:
+            continue
+
+        rx = x_c + sid_v * sin_a
+        ry = y_c - sid_v * cos_a
+        r_len2 = rx * rx + ry * ry
+        if r_len2 < _EPSILON:
+            continue
+        r_len = math.sqrt(r_len2)
+        rx /= r_len
+        ry /= r_len
+        max_dir = abs(rx)
+        ar_dir = abs(ry)
+        if ar_dir > max_dir:
+            max_dir = ar_dir
+        if max_dir < _EPSILON:
+            continue
+        chord_u = 1.0 / max_dir
+
+        d1 = sid_v + x_m * sin_a - y_m * cos_a
+        d2 = sid_v + x_p * sin_a - y_m * cos_a
+        d3 = sid_v + x_p * sin_a - y_p * cos_a
+        d4 = sid_v + x_m * sin_a - y_p * cos_a
+        if d1 <= _EPSILON or d2 <= _EPSILON or d3 <= _EPSILON or d4 <= _EPSILON:
+            continue
+
+        u1 = sdd_v * (x_m * cos_a + y_m * sin_a) / d1
+        u2 = sdd_v * (x_p * cos_a + y_m * sin_a) / d2
+        u3 = sdd_v * (x_p * cos_a + y_p * sin_a) / d3
+        u4 = sdd_v * (x_m * cos_a + y_p * sin_a) / d4
+
+        a = u1
+        b = u2
+        c = u3
+        d = u4
+        if a > b:
+            a, b = b, a
+        if c > d:
+            c, d = d, c
+        if a > c:
+            a, c = c, a
+        if b > d:
+            b, d = d, b
+        if b > c:
+            b, c = c, b
+        u_min = a
+        u_lo = b
+        u_hi = c
+        u_max = d
+        if (u_max - u_min) < _EPSILON:
+            continue
+
+        U_near = d1
+        if d2 < U_near:
+            U_near = d2
+        if d3 < U_near:
+            U_near = d3
+        if d4 < U_near:
+            U_near = d4
+        U_far = d1
+        if d2 > U_far:
+            U_far = d2
+        if d3 > U_far:
+            U_far = d3
+        if d4 > U_far:
+            U_far = d4
+        mag_near = sdd_v / U_near
+        mag_far = sdd_v / U_far
+
+        v_bot_near = z_m * mag_near
+        v_bot_far = z_m * mag_far
+        v_top_near = z_p * mag_near
+        v_top_far = z_p * mag_far
+
+        av = v_bot_near
+        bv = v_bot_far
+        cv = v_top_near
+        dv_sv = v_top_far
+        if av > bv:
+            av, bv = bv, av
+        if cv > dv_sv:
+            cv, dv_sv = dv_sv, cv
+        if av > cv:
+            av, cv = cv, av
+        if bv > dv_sv:
+            bv, dv_sv = dv_sv, bv
+        if bv > cv:
+            bv, cv = cv, bv
+        v_min = av
+        v_lo = bv
+        v_hi = cv
+        v_max = dv_sv
+        if (v_max - v_min) < _EPSILON:
+            continue
+
+        plateau_u = u_hi - u_lo
+        rise_u = u_lo - u_min
+        fall_u = u_max - u_hi
+        plateau_v = v_hi - v_lo
+        rise_v = v_lo - v_min
+        fall_v = v_max - v_hi
+        # Chord-weighted LEAP form. ``v_chord = sqrt(1+(v/sdd)^2)`` is
+        # evaluated at the voxel's projected v centre (mean of the 4
+        # z-corner projections) to match LEAP's convention.
+        v_proj_c = 0.25 * (v_min + v_lo + v_hi + v_max)
+        v_arg_tt = v_proj_c / sdd_v
+        v_chord = math.sqrt(1.0 + v_arg_tt * v_arg_tt)
+        u_span = u_max - u_min
+        v_span = v_max - v_min
+        weight = chord_u * v_chord / (du_v * dv_v)
+
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        if k_u_lo < 0:
+            k_u_lo = 0
+        if k_u_hi > n_u - 1:
+            k_u_hi = n_u - 1
+        if k_u_hi < k_u_lo:
+            continue
+
+        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - 0.5))
+        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + 0.5))
+        if k_v_lo < 0:
+            k_v_lo = 0
+        if k_v_hi > n_v - 1:
+            k_v_hi = n_v - 1
+        if k_v_hi < k_v_lo:
+            continue
+
+        for ku in range(k_u_lo, k_u_hi + 1):
+            u_k = (ku - u_half) * du_v + det_offset_u
+            u_L = u_k - 0.5 * du_v
+            u_R = u_k + 0.5 * du_v
+
+            aLu = u_L if u_L > u_min else u_min
+            aRu = u_R if u_R < u_max else u_max
+            if aLu >= aRu:
+                continue
+
+            raw_u = 0.0
+            if rise_u > _EPSILON:
+                r_lo_ = aLu if aLu > u_min else u_min
+                r_hi_ = aRu if aRu < u_lo else u_lo
+                if r_hi_ > r_lo_:
+                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                                    (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_u
+            if plateau_u > _EPSILON:
+                p_lo_ = aLu if aLu > u_lo else u_lo
+                p_hi_ = aRu if aRu < u_hi else u_hi
+                if p_hi_ > p_lo_:
+                    raw_u += p_hi_ - p_lo_
+            if fall_u > _EPSILON:
+                f_lo_ = aLu if aLu > u_hi else u_hi
+                f_hi_ = aRu if aRu < u_max else u_max
+                if f_hi_ > f_lo_:
+                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                                    (u_max - f_hi_) * (u_max - f_hi_)) / fall_u
+            if raw_u <= 0.0:
+                continue
+
+            for kv in range(k_v_lo, k_v_hi + 1):
+                v_k = (kv - v_half) * dv_v + det_offset_v
+                v_L = v_k - 0.5 * dv_v
+                v_R = v_k + 0.5 * dv_v
+
+                aLv = v_L if v_L > v_min else v_min
+                aRv = v_R if v_R < v_max else v_max
+                if aLv >= aRv:
+                    continue
+
+                raw_v = 0.0
+                if rise_v > _EPSILON:
+                    r_lo_v = aLv if aLv > v_min else v_min
+                    r_hi_v = aRv if aRv < v_lo else v_lo
+                    if r_hi_v > r_lo_v:
+                        raw_v += 0.5 * ((r_hi_v - v_min) * (r_hi_v - v_min) -
+                                        (r_lo_v - v_min) * (r_lo_v - v_min)) / rise_v
+                if plateau_v > _EPSILON:
+                    p_lo_v = aLv if aLv > v_lo else v_lo
+                    p_hi_v = aRv if aRv < v_hi else v_hi
+                    if p_hi_v > p_lo_v:
+                        raw_v += p_hi_v - p_lo_v
+                if fall_v > _EPSILON:
+                    f_lo_v = aLv if aLv > v_hi else v_hi
+                    f_hi_v = aRv if aRv < v_max else v_max
+                    if f_hi_v > f_lo_v:
+                        raw_v += 0.5 * ((v_max - f_lo_v) * (v_max - f_lo_v) -
+                                        (v_max - f_hi_v) * (v_max - f_hi_v)) / fall_v
+                if raw_v <= 0.0:
+                    continue
+
+                accum += weight * raw_u * raw_v * d_sino[iview, ku, kv]
+
+    d_vol[ix, iy, iz] = accum
+
+
 # ############################################################################
 # DIFFERENTIABLE TORCH FUNCTIONS
 # ############################################################################
@@ -4486,18 +5117,36 @@ def fan_weighted_backproject(
     detector_offset=0.0,
     center_offset_x=0.0,
     center_offset_y=0.0,
+    backend="siddon",
 ):
     """Fan-beam weighted backprojection for analytical FBP pipelines.
 
-    Dispatches to the dedicated fan FBP voxel-driven gather kernel
-    (``_fan_2d_fbp_backproject_kernel``). The shared Siddon-based fan
-    backward kernel continues to serve the autograd adjoint path used by
-    ``FanProjectorFunction`` / ``FanBackprojectorFunction``; this function
-    is only the analytical FBP path. Uses ``(SID/U)^2`` distance
-    weighting with linear detector-gather and applies the same
-    ``sdd/(2*pi*sid)`` analytical FBP constant that the cone FDK path
-    uses, so a unit-density disk reconstructs to amplitude 1.
+    Dispatches to one of two gather kernels based on ``backend``:
+
+    - ``"siddon"`` (default): the bilinear voxel-driven fan FBP gather
+      ``_fan_2d_fbp_backproject_kernel`` — fastest, bilinearly samples
+      the filtered sinogram at each pixel's projected u-coordinate.
+    - ``"sf"``: the separable-footprint fan FBP gather
+      ``_fan_2d_sf_fbp_backproject_kernel`` — integrates the filtered
+      sinogram over each pixel's trapezoidal footprint. At nominal
+      voxel size (``detector_spacing * sid / sdd``) this gives nearly
+      the same MTF as the bilinear gather; at sub-nominal voxel sizes
+      it gives measurably higher spatial resolution, and at supra-
+      nominal it gives higher SNR (see LEAP's SF vs VD analysis).
+
+    Both paths apply the ``(SID / U)^2`` FBP weight per view inside
+    the kernel and the ``sdd / (2 * pi * sid)`` analytical FBP scale
+    in Python, so amplitude calibration is preserved across backends.
+    The Siddon-based fan autograd adjoint
+    (``_fan_2d_backward_kernel``) and the SF-matched adjoint
+    (``_fan_2d_sf_backward_kernel``) stay unchanged — they continue
+    to serve ``FanProjectorFunction`` / ``FanBackprojectorFunction``
+    and are not touched by this analytical wrapper.
     """
+    if backend not in ("siddon", "sf"):
+        raise ValueError(
+            f"backend must be 'siddon' or 'sf', got {backend!r}"
+        )
     if not sinogram.is_cuda:
         raise ValueError("sinogram must be on CUDA device")
     device = sinogram.device
@@ -4522,17 +5171,35 @@ def fan_weighted_backproject(
 
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
-    _fan_2d_fbp_backproject_kernel[grid, tpb, numba_stream](
-        d_sino, n_ang, n_det, d_reco, Nx, Ny,
-        _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
-        _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
-        det_offset_v, center_offset_x_v, center_offset_y_v,
-    )
-    # Same analytical scale as the cone FDK path. See the comment on
-    # ``cone_weighted_backproject`` for the derivation; both 2D fan FBP
-    # and 3D cone FDK share this constant because the ramp filter is
-    # applied on the physical detector plane in both cases.
-    scale = float(sdd) / (2.0 * math.pi * float(sid))
+    if backend == "siddon":
+        _fan_2d_fbp_backproject_kernel[grid, tpb, numba_stream](
+            d_sino, n_ang, n_det, d_reco, Nx, Ny,
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v,
+        )
+        # Classical FBP constant ``sdd / (2*pi*sid)`` for the VD
+        # gather (which applies ``(sid/U)^2`` per voxel per view).
+        scale = float(sdd) / (2.0 * math.pi * float(sid))
+    else:  # backend == "sf"
+        _fan_2d_sf_fbp_backproject_kernel[grid, tpb, numba_stream](
+            d_sino, n_ang, n_det, d_reco, Nx, Ny,
+            _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, _DTYPE(voxel_spacing),
+            det_offset_v, center_offset_x_v, center_offset_y_v,
+        )
+        # LEAP chord-weighted form: the kernel produces
+        # ``bp_weight * chord * raw_in_voxel_len`` which carries an
+        # implicit ``1/det_spacing_v`` factor (since ``raw`` is a
+        # closed-form trapezoid integral in voxel-index length). At
+        # nominal voxel size (``det_spacing_v = 1``) the classical
+        # factor ``sdd/(2*pi*sid)`` divided by the magnification
+        # ``sdd/sid`` reduces to ``1/(2*pi)``; for general voxel /
+        # detector ratios the scale is
+        # ``det_spacing_v / (2*pi) = (det_spacing/voxel_spacing)/(2*pi)``
+        # so sub- and supra-nominal voxel grids still reconstruct to
+        # unit density without manual re-scaling.
+        scale = float(detector_spacing) / (float(voxel_spacing) * 2.0 * math.pi)
     reco.mul_(scale)
     return reco
 
@@ -4553,17 +5220,44 @@ def cone_weighted_backproject(
     center_offset_x=0.0,
     center_offset_y=0.0,
     center_offset_z=0.0,
+    backend="siddon",
 ):
     """Cone-beam weighted backprojection for analytical FDK pipelines.
 
-    Dispatches to the dedicated FDK voxel-driven gather kernel
-    (``_cone_3d_fdk_backproject_kernel``). The shared Siddon-based cone
-    backward kernel continues to serve the autograd adjoint path used by
-    ``ConeProjectorFunction`` / ``ConeBackprojectorFunction``; this function
-    is only the analytical FDK path, and it uses a ``(SID/U)^2`` weight with
-    a bilinear detector gather to stay consistent with the classical FDK
-    formulation.
+    Dispatches to one of three gather kernels based on ``backend``:
+
+    - ``"siddon"`` (default): the bilinear voxel-driven FDK gather
+      ``_cone_3d_fdk_backproject_kernel`` — fastest, bilinearly samples
+      the filtered sinogram at each voxel's projected ``(u, v)``.
+    - ``"sf_tr"``: the separable-footprint FDK gather
+      ``_cone_3d_sf_tr_fdk_backproject_kernel`` — integrates the filtered
+      sinogram over each voxel's transaxial trapezoidal footprint and
+      axial rectangular footprint at the voxel-centre magnification.
+    - ``"sf_tt"``: the separable-footprint FDK gather
+      ``_cone_3d_sf_tt_fdk_backproject_kernel`` — same transaxial
+      trapezoid as ``"sf_tr"`` but the axial footprint is also a
+      trapezoid built from four z-corner projections, which more
+      faithfully captures the axial magnification variation inside
+      one voxel at large cone angles.
+
+    At nominal voxel size (``du * sid / sdd``) the three backends give
+    nearly identical MTFs; at sub-nominal voxels the SF variants give
+    measurably higher spatial resolution, and at supra-nominal voxels
+    they give higher SNR (see LEAP's SF vs VD analysis). All three
+    paths apply the ``(SID / U)^2`` FDK weight per view inside the
+    kernel and the ``sdd / (2 * pi * sid)`` analytical FDK scale in
+    Python, so amplitude calibration is preserved across backends.
+    The Siddon-based cone autograd adjoint
+    (``_cone_3d_backward_kernel``) and the SF-matched adjoints
+    (``_cone_3d_sf_tr_backward_kernel`` /
+    ``_cone_3d_sf_tt_backward_kernel``) stay unchanged — they
+    continue to serve ``ConeProjectorFunction`` /
+    ``ConeBackprojectorFunction`` and are not touched by this wrapper.
     """
+    if backend not in ("siddon", "sf_tr", "sf_tt"):
+        raise ValueError(
+            f"backend must be 'siddon', 'sf_tr', or 'sf_tt', got {backend!r}"
+        )
     if not sinogram.is_cuda:
         raise ValueError("sinogram must be on CUDA device")
     device = sinogram.device
@@ -4588,8 +5282,12 @@ def cone_weighted_backproject(
     # (the warp-adjacent axis), so by putting D first we make ``iz``
     # warp-adjacent, which matches the innermost stride-1 axis of the WHD
     # output buffer - coalesced writes. See the memory-access note in the
-    # kernel docstring.
-    grid, tpb = _grid_3d(D, H, W)
+    # kernel docstring. The SF variants are register-heavier so they
+    # use the smaller ``_TPB_SF_3D`` block shape.
+    if backend == "siddon":
+        grid, tpb = _grid_3d(D, H, W)
+    else:
+        grid, tpb = _grid_3d(D, H, W, tpb=_TPB_SF_3D)
     cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
     det_offset_u_v = _DTYPE(detector_offset_u / voxel_spacing)
     det_offset_v_v = _DTYPE(detector_offset_v / voxel_spacing)
@@ -4599,26 +5297,51 @@ def cone_weighted_backproject(
 
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
-    _cone_3d_fdk_backproject_kernel[grid, tpb, numba_stream](
-        d_sino, n_views, n_u, n_v, d_reco, W, H, D,
-        _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
-        _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
-        det_offset_u_v, det_offset_v_v,
-        center_offset_x_v, center_offset_y_v, center_offset_z_v,
-    )
-    # Final analytical FDK scale factor. Two pieces:
-    # - 1/(2*pi): the repo's ramp_filter_1d computes
-    #     IFFT(|2*pi*fftfreq|*FFT[.])
-    #   which implements the ``|omega|`` ramp in the radian-frequency
-    #   convention. The classical FBP / FDK formula carries an explicit
-    #   1/(2*pi) from the inverse Fourier integral that this discretization
-    #   does not absorb, so it must be applied on the spatial side.
-    # - sdd/sid: the ramp filter runs on the physical detector grid
-    #   (spacing du), but the FDK inversion is written in the virtual
-    #   isocenter-plane detector (spacing du*sid/sdd). Rescaling one-
-    #   dimensional convolution between those two scales leaves an
-    #   ``sdd/sid`` magnification factor on the filtered sinogram.
-    scale = float(sdd) / (2.0 * math.pi * float(sid))
+    if backend == "siddon":
+        _cone_3d_fdk_backproject_kernel[grid, tpb, numba_stream](
+            d_sino, n_views, n_u, n_v, d_reco, W, H, D,
+            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+            det_offset_u_v, det_offset_v_v,
+            center_offset_x_v, center_offset_y_v, center_offset_z_v,
+        )
+    elif backend == "sf_tr":
+        _cone_3d_sf_tr_fdk_backproject_kernel[grid, tpb, numba_stream](
+            d_sino, n_views, n_u, n_v, d_reco, W, H, D,
+            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+            det_offset_u_v, det_offset_v_v,
+            center_offset_x_v, center_offset_y_v, center_offset_z_v,
+        )
+    else:  # backend == "sf_tt"
+        _cone_3d_sf_tt_fdk_backproject_kernel[grid, tpb, numba_stream](
+            d_sino, n_views, n_u, n_v, d_reco, W, H, D,
+            _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
+            _DTYPE(sdd), _DTYPE(sid), cx, cy, cz, _DTYPE(voxel_spacing),
+            det_offset_u_v, det_offset_v_v,
+            center_offset_x_v, center_offset_y_v, center_offset_z_v,
+        )
+    # Final analytical FDK scale factor.
+    # - VD (siddon) path: classical ``sdd / (2*pi*sid)``. The kernel
+    #   applies ``(sid/U)^2`` per voxel and 1/(2*pi) comes from the
+    #   ramp-filter radian-frequency convention.
+    # - SF (sf_tr / sf_tt) path: the LEAP chord-weighted form replaces
+    #   ``(sid/U)^2`` with ``chord_u * sqrt(1+(v/sdd)^2)``. The kernel
+    #   output carries an implicit ``1/(du_v*dv_v)`` factor from the
+    #   voxel-index-length ``raw`` integrals, and at the isocenter the
+    #   chord formula differs from classical FDK by an ``mag^2``
+    #   factor. Combining everything:
+    #       scale = (du*dv*sid) / (2*pi*sdd*voxel^2)
+    #   which reduces to ``sid/(2*pi*sdd)`` at nominal (du=dv=voxel)
+    #   and automatically renormalises sub- and supra-nominal voxel
+    #   grids so they reconstruct to unit density.
+    if backend == "siddon":
+        scale = float(sdd) / (2.0 * math.pi * float(sid))
+    else:
+        v_sq = float(voxel_spacing) * float(voxel_spacing)
+        scale = float(du) * float(dv) * float(sid) / (
+            2.0 * math.pi * float(sdd) * v_sq
+        )
     vol = vol_perm.permute(2, 1, 0).contiguous()
     vol.mul_(scale)
     return vol

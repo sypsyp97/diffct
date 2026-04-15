@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-04-15
+
+### Added
+- **Real-data walnut FDK example** at `examples/realdata_walnut_fdk.py`,
+  running the full analytical FDK pipeline on a preprocessed subset of
+  the Helsinki walnut cone-beam CT dataset ([Meaney 2022, Zenodo
+  10.5281/zenodo.6986012](https://doi.org/10.5281/zenodo.6986012),
+  CC-BY 4.0). The 241-view, 256×256-per-view sinogram is shipped at
+  `examples/data/walnut_cone.npz` (~25 MB, float16, 8× binned, 256²
+  center crop) together with a `preprocess_walnut.py` regenerator
+  script, an attribution `NOTICE`, and a `walnut_reco.png` sample
+  montage. Reconstructs at half the nominal voxel size on a 512³ grid
+  using `backend="sf_tr"` + Hamming ramp window.
+- **Synthetic "real-data" pipeline examples** for all three geometries
+  (`examples/realdata_fbp_parallel.py`, `realdata_fbp_fan.py`,
+  `realdata_fdk_cone.py`) that run a Beer-Lambert + Poisson + `-log`
+  forward model on Shepp-Logan and reconstruct with the analytical
+  pipeline, showing the proper place for `-log` preprocessing.
+- **Chinese README** at `README.zh.md`, mirroring `README.md` with
+  bidirectional language links in both files.
+- **Core Algorithm section** in the READMEs (EN + ZH) explaining the
+  Siddon + bilinear/trilinear interpolation design choice, the
+  trade-off (slight blur at nominal voxel size), and when to pick
+  SF vs VD honestly (see "Changed" below).
+
+### Changed
+- **SF FBP / FDK backprojection kernels rewritten in LEAP's
+  chord-weighted matched-adjoint form** (from `projectors_SF.cu`).
+  The three analytical SF gather kernels
+  (`_fan_2d_sf_fbp_backproject_kernel`,
+  `_cone_3d_sf_tr_fdk_backproject_kernel`,
+  `_cone_3d_sf_tt_fdk_backproject_kernel`) now use the per-voxel
+  chord through the unit voxel instead of a `(sid/U)²`-plus-footprint-
+  area form, with a matching `sqrt(1+(v/sdd)²)` axial chord correction
+  on the cone side. Amplitude is calibrated against Siddon VD at
+  every voxel / detector-pitch combination tested (nominal, 0.64×
+  sub-nominal, 0.40× sub-nominal, supra-nominal) via the new
+  `det_spacing/(voxel·2π)` fan scale and
+  `(du·dv·sid)/(2π·sdd·voxel²)` cone scale constants.
+- **Honest README Core Algorithm section on SF vs VD.** The earlier
+  "SF lowers MSE by ~17 %" and "SF is measurably sharper at sub-
+  nominal" claims in 1.3.0 are walked back: on Shepp-Logan and the
+  walnut dataset, LEAP-form SF and Siddon VD produce visually
+  indistinguishable edge profiles at typical CBCT magnifications,
+  and MSE differences are fractions of a percent. SF's real value
+  is its **mass-conserving cell-integrated forward model**, which
+  matters for iterative reconstruction, learned priors, and
+  sinogram-level losses — not as a drop-in sharpness knob on
+  analytical FBP / FDK. The shipped `fbp_fan.py`, `fdk_cone.py`,
+  and `realdata_walnut_fdk.py` example comments are updated to
+  match.
+
+### Fixed
+- **SF FBP / FDK weight normalization** when the voxel's trapezoidal
+  footprint straddles the default 4-corner sort. The 1.3.0 SF
+  backprojection kernels used `fdk_w / (span · v_span)` (bounding-box
+  area) which under-amplified oblique views by up to 2× per axis and
+  produced a dim, angularly-modulated reconstruction. Diagnosed by
+  inspecting a Shepp-Logan SF reconstruction, corrected first to
+  `fdk_w / ((span+plateau)/2 · v_span)` (true trapezoid area) and
+  then fully replaced by the LEAP chord-weighted form above.
+
+### Acknowledgements
+- [LEAP](https://github.com/LLNL/LEAP) (LLNL / Hyojin Kim et al.)
+  added to `README.md` / `README.zh.md` Acknowledgements.
+  `projectors_SF.cu` is the reference implementation the new
+  analytical SF backprojection kernels are ported from.
+
 ## [1.3.0] - 2026-04-14
 
 ### Added

@@ -213,55 +213,49 @@ def main():
     #
     #   "siddon"           - 3D ray-driven Siddon traversal with
     #                        trilinear interpolation. One thread per
-    #                        (view, det_u, det_v). Fastest forward, and
-    #                        on raw-forward accuracy against the
-    #                        analytical ellipsoid Radon transform it is
-    #                        slightly sharper than SF (trilinear
-    #                        interpolation already smooths the voxel
-    #                        grid). Choose this when you only need a
-    #                        forward projection and not a reconstruction.
+    #                        (view, det_u, det_v). Fastest forward.
+    #                        Pick this when you only need a forward
+    #                        projection and don't need a matched cell-
+    #                        integrated model.
     #
     #   "sf_tr"            - 3D voxel-driven separable-footprint with a
     #                        trapezoidal transaxial (u) footprint and a
     #                        rectangular axial (v) footprint evaluated
-    #                        at the voxel-centre magnification. Mass-
-    #                        conserving per voxel, closed-form
-    #                        integrated over each detector cell in both
-    #                        u and v. About 2x slower than siddon in
-    #                        our benchmarks, but **in this exact
-    #                        analytical FDK pipeline it yields a ~17 %
-    #                        lower reconstruction MSE** on the 128^3
-    #                        Shepp-Logan phantom here (raw MSE drops
-    #                        from ~0.00325 with siddon to ~0.00271 with
-    #                        sf_tr). The mechanism is that SF's cell-
-    #                        integrated sinogram pairs more naturally
-    #                        with the voxel-driven FDK gather back-
-    #                        projector than Siddon's thin-ray sampling,
-    #                        which feeds extra high-frequency ringing
-    #                        into the ramp filter. Recommended for
-    #                        analytical FDK reconstruction where
-    #                        reconstruction quality matters.
+    #                        at the voxel-centre magnification. **Mass-
+    #                        conserving per voxel**, closed-form
+    #                        integrated over each detector cell in
+    #                        both u and v. About 2x slower than siddon
+    #                        in our benchmarks. On analytical FDK with
+    #                        the matched SF gather backprojector
+    #                        (``cone_weighted_backproject(backend=
+    #                        "sf_tr")``) SF and Siddon VD produce
+    #                        visually equivalent edge profiles on
+    #                        Shepp-Logan and the walnut example at
+    #                        typical CBCT geometries; the "SF is sharper
+    #                        at sub-nominal" claim you see in the SF /
+    #                        LEAP literature only shows up in an extreme
+    #                        sub-nominal regime that isn't hit by the
+    #                        default geometries shipped here. The real
+    #                        reason to pick "sf_tr" is that you want a
+    #                        **cell-integrated forward model** for
+    #                        iterative reco / learned priors / sinogram
+    #                        losses.
     #
-    #   "sf_tt" (default)  - Same transaxial trapezoid as SF-TR but the
+    #   "sf_tt"            - Same transaxial trapezoid as SF-TR but the
     #                        axial footprint is ALSO a trapezoid, built
     #                        from four ``(U_near, U_far) x (z_bot, z_top)``
-    #                        corner projections. In principle this
-    #                        captures the variation of axial magnification
-    #                        inside a single voxel at large cone angles
-    #                        where the near edge and far edge of the
-    #                        voxel project to different v positions. In
-    #                        practice the extra axial trapezoid refines
-    #                        the SF-TR result by only ~0.001 in raw RMSE
-    #                        at the cost of another ~40 % forward
-    #                        runtime; useful for extreme cone angles or
-    #                        for research that needs the full Long et al.
-    #                        separable-footprint decomposition.
+    #                        corner projections. Captures the variation
+    #                        of axial magnification inside a single voxel
+    #                        at large cone angles. In practice this
+    #                        refines the SF-TR result marginally at the
+    #                        cost of ~40% more runtime.
     #
-    # All three SF backends are implemented as matched voxel-driven
-    # scatter (forward) / gather (adjoint) CUDA kernel pairs with
-    # byte-accurate adjoints verified by the adjoint inner-product and
-    # gradcheck test suites.
-    projector_backend = "sf_tt"
+    # All three backends are byte-accurate matched adjoint pairs on the
+    # autograd path (verified by ``tests/test_adjoint_inner_product.py``).
+    # The default is kept at "sf_tr" so the reader sees the SF path run
+    # end-to-end; switching to "siddon" gives a visually equivalent FDK
+    # reconstruction at this geometry.
+    projector_backend = "sf_tr"
 
     # ------------------------------------------------------------------
     # 5. Forward projection: volume -> sinogram
@@ -393,16 +387,37 @@ def main():
     sinogram_filt = sinogram_filt * d_beta
 
     # --- 6.4  Voxel-driven FDK backprojection -------------------------
-    # ``cone_weighted_backproject`` now dispatches to a dedicated
-    # voxel-driven gather kernel (separate from the Siddon-based
-    # autograd cone backprojector). For every voxel it computes the
-    # detector ``(u, v)`` the voxel projects to, bilinearly samples the
-    # filtered sinogram there, and accumulates ``(sid / U)^2 * sample``
-    # over all views, where ``U`` is the distance from the source to
-    # the voxel along the central ray direction. The final
-    # ``sdd / (2*pi*sid)`` analytical FDK constant is applied inside
-    # the wrapper so the returned volume is already in the right
-    # physical amplitude and no further scaling is needed.
+    # ``cone_weighted_backproject`` dispatches to one of three voxel-
+    # driven gather kernels based on ``backend``:
+    #
+    #   "siddon" (default) - bilinear gather: for each voxel compute
+    #                        its projected detector ``(u, v)``,
+    #                        bilinearly sample the filtered sinogram
+    #                        and accumulate ``(sid/U)^2 * sample``.
+    #   "sf_tr"            - LEAP-style chord-weighted separable-
+    #                        footprint gather: integrate the filtered
+    #                        sinogram over each voxel's transaxial
+    #                        trapezoidal footprint and axial
+    #                        rectangular footprint, weighted by the
+    #                        in-plane chord through the voxel and the
+    #                        ``sqrt(1+(v/sdd)^2)`` axial correction
+    #                        (matches the tilt==0 branch of LEAP's
+    #                        ``coneBeamBackprojectorKernel_SF`` in
+    #                        ``projectors_SF.cu``). Matches the SF-TR
+    #                        forward projector.
+    #   "sf_tt"            - same as "sf_tr" but the axial footprint
+    #                        is also a trapezoid built from four
+    #                        z-corner projections. Matches SF-TT.
+    #
+    # On Shepp-Logan and the walnut example all three backends give
+    # visually indistinguishable edge profiles and amplitude matches
+    # within ~1%; the SF backends are worth the ~2-3x forward cost
+    # only if you also want a cell-integrated *forward* model
+    # (iterative reco, learned priors, sinogram losses). Here we pass
+    # the same ``projector_backend`` we picked at step 4.5 so forward
+    # and backward stay consistent. Amplitude is calibrated inside
+    # the wrapper so the returned volume is ready to compare against
+    # ``phantom_torch`` directly.
     reconstruction_raw = cone_weighted_backproject(
         sinogram_filt,
         angles_torch,
@@ -416,6 +431,7 @@ def main():
         voxel_spacing=voxel_spacing,
         detector_offset_u=detector_offset_u,
         detector_offset_v=detector_offset_v,
+        backend=projector_backend,
     )
 
     # Optional non-negativity clamp. FDK can produce small negative
