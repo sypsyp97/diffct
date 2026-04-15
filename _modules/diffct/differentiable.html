@@ -3107,6 +3107,637 @@
     <span class="n">d_image</span><span class="p">[</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
 
 
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># Analytical SF-based FBP / FDK backprojection kernels</span>
+<span class="c1"># ------------------------------------------------------------------</span>
+<span class="c1"># These gather kernels replace the voxel-driven bilinear gather in</span>
+<span class="c1"># ``fan_weighted_backproject`` / ``cone_weighted_backproject`` when the</span>
+<span class="c1"># caller selects a separable-footprint backend. The math of each kernel</span>
+<span class="c1"># is the matched-adjoint SF backward (four-corner trapezoidal footprint</span>
+<span class="c1"># integration of the filtered sinogram) PLUS the classical</span>
+<span class="c1"># ``(SID / U)^2`` FBP / FDK weight that the VD gather kernels already</span>
+<span class="c1"># apply, where ``U`` is the source-to-voxel-center distance along the</span>
+<span class="c1"># central ray direction. The effect compared to VD gather is:</span>
+<span class="c1">#</span>
+<span class="c1">#   - at the nominal voxel size ``du * sid / sdd``: near-identical MTF</span>
+<span class="c1">#     (LEAP&#39;s SF_vs_VD analysis confirms this).</span>
+<span class="c1">#   - at sub-nominal voxel sizes (voxels whose projected footprint</span>
+<span class="c1">#     covers less than one detector bin): SF gives meaningfully higher</span>
+<span class="c1">#     spatial resolution because VD always averages the filtered</span>
+<span class="c1">#     sinogram over four detector bins regardless of voxel size.</span>
+<span class="c1">#   - at supra-nominal voxel sizes: SF gives higher SNR because its</span>
+<span class="c1">#     footprint spans more detector bins and averages more noise.</span>
+<span class="c1">#</span>
+<span class="c1"># The existing SF adjoint kernels (``_fan_2d_sf_backward_kernel``,</span>
+<span class="c1"># ``_cone_3d_sf_tr_backward_kernel``, ``_cone_3d_sf_tt_backward_kernel``)</span>
+<span class="c1"># stay unchanged because they are the byte-accurate matched adjoints of</span>
+<span class="c1"># the SF forward kernels used by the autograd ``*ProjectorFunction`` /</span>
+<span class="c1"># ``*BackprojectorFunction`` paths. The new ``*_fbp_*`` / ``*_fdk_*``</span>
+<span class="c1"># kernels below are ONLY used by the analytical pipeline wrappers and</span>
+<span class="c1"># are not the autograd adjoint of anything.</span>
+
+
+<span class="nd">@_FDK_ACCURACY_DECORATOR</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fan_2d_sf_fbp_backproject_kernel</span><span class="p">(</span>
+    <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span>
+    <span class="n">d_image</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
+    <span class="n">det_spacing</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
+    <span class="n">det_offset</span><span class="p">,</span> <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Voxel-driven fan-beam FBP SF backprojection gather, chord-weighted form.</span>
+
+<span class="sd">    Matched-adjoint formulation inspired by LEAP&#39;s ``fanBeamBackprojectorKernel_SF``</span>
+<span class="sd">    (``projectors_SF.cu``): each voxel&#39;s trapezoidal u-footprint is still</span>
+<span class="sd">    built from the four projected corners and closed-form integrated per</span>
+<span class="sd">    detector bin, but the per-view weight is the chord through the unit</span>
+<span class="sd">    voxel times the fan ``sid/U`` first-power weight, with NO division</span>
+<span class="sd">    by the footprint area. Compared to the classical ``(SID/U)^2``-</span>
+<span class="sd">    per-voxel FBP form, this matches LEAP&#39;s SF: ``bpWeight * chord``</span>
+<span class="sd">    replaces ``(sid/U)^2 / area``. The two differ by a constant factor</span>
+<span class="sd">    of ``sdd / sid`` (the magnification) at the isocenter and by a</span>
+<span class="sd">    small position-dependent correction elsewhere, which the Python</span>
+<span class="sd">    wrapper absorbs in the FBP scale.</span>
+
+<span class="sd">    Analytical ramp filtering, cosine pre-weighting and Parker short-</span>
+<span class="sd">    scan weights are expected to already be baked into ``d_sino`` before</span>
+<span class="sd">    this kernel runs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">iy</span><span class="p">,</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span> <span class="ow">or</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">det_spacing_v</span> <span class="o">=</span> <span class="n">det_spacing</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">half</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">x_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
+    <span class="n">y_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
+    <span class="n">x_m</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">x_p</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="n">y_m</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">y_p</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+
+    <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">for</span> <span class="n">iang</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_ang</span><span class="p">):</span>
+        <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>
+        <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iang</span><span class="p">]</span>
+
+        <span class="c1"># Fan-beam ``sid/U`` first-power weight (LEAP&#39;s ``bpWeight``).</span>
+        <span class="n">U_c</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_c</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_c</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">U_c</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">bp_weight</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">/</span> <span class="n">U_c</span>
+
+        <span class="c1"># Chord through the unit voxel along the source-to-voxel ray</span>
+        <span class="c1"># direction. This is the physical line integral of the voxel</span>
+        <span class="c1"># at this view and matches the SF forward kernel convention.</span>
+        <span class="n">rx</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">+</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">sin_a</span>
+        <span class="n">ry</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">-</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">r_len</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">rx</span> <span class="o">*</span> <span class="n">rx</span> <span class="o">+</span> <span class="n">ry</span> <span class="o">*</span> <span class="n">ry</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">r_len</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">rx</span> <span class="o">/=</span> <span class="n">r_len</span>
+        <span class="n">ry</span> <span class="o">/=</span> <span class="n">r_len</span>
+        <span class="n">max_dir</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">rx</span><span class="p">)</span>
+        <span class="n">ar_dir</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">ry</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ar_dir</span> <span class="o">&gt;</span> <span class="n">max_dir</span><span class="p">:</span>
+            <span class="n">max_dir</span> <span class="o">=</span> <span class="n">ar_dir</span>
+        <span class="k">if</span> <span class="n">max_dir</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">chord</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">max_dir</span>
+
+        <span class="n">d1</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_m</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d2</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_p</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d3</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_p</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d4</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_m</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">d1</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d2</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d3</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d4</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">u1</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_m</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d1</span>
+        <span class="n">u2</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_p</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d2</span>
+        <span class="n">u3</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_p</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d3</span>
+        <span class="n">u4</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_m</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d4</span>
+
+        <span class="n">a</span> <span class="o">=</span> <span class="n">u1</span>
+        <span class="n">b</span> <span class="o">=</span> <span class="n">u2</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">u3</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">u4</span>
+        <span class="k">if</span> <span class="n">a</span> <span class="o">&gt;</span> <span class="n">b</span><span class="p">:</span>
+            <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span>
+        <span class="k">if</span> <span class="n">c</span> <span class="o">&gt;</span> <span class="n">d</span><span class="p">:</span>
+            <span class="n">c</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">d</span><span class="p">,</span> <span class="n">c</span>
+        <span class="k">if</span> <span class="n">a</span> <span class="o">&gt;</span> <span class="n">c</span><span class="p">:</span>
+            <span class="n">a</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">c</span><span class="p">,</span> <span class="n">a</span>
+        <span class="k">if</span> <span class="n">b</span> <span class="o">&gt;</span> <span class="n">d</span><span class="p">:</span>
+            <span class="n">b</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">d</span><span class="p">,</span> <span class="n">b</span>
+        <span class="k">if</span> <span class="n">b</span> <span class="o">&gt;</span> <span class="n">c</span><span class="p">:</span>
+            <span class="n">b</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">c</span><span class="p">,</span> <span class="n">b</span>
+        <span class="n">u_min</span> <span class="o">=</span> <span class="n">a</span>
+        <span class="n">u_lo</span> <span class="o">=</span> <span class="n">b</span>
+        <span class="n">u_hi</span> <span class="o">=</span> <span class="n">c</span>
+        <span class="n">u_max</span> <span class="o">=</span> <span class="n">d</span>
+
+        <span class="n">span</span> <span class="o">=</span> <span class="n">u_max</span> <span class="o">-</span> <span class="n">u_min</span>
+        <span class="k">if</span> <span class="n">span</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">plateau</span> <span class="o">=</span> <span class="n">u_hi</span> <span class="o">-</span> <span class="n">u_lo</span>
+        <span class="c1"># Chord-weighted LEAP form: ``bp_weight * chord / det_spacing_v``.</span>
+        <span class="c1"># No footprint-area division - the raw trapezoid integral</span>
+        <span class="c1"># ``sum_k raw[k]`` stays intact. The Python wrapper scales the</span>
+        <span class="c1"># final image by ``1 / (2*pi)`` instead of the classical</span>
+        <span class="c1"># ``sdd / (2*pi*sid)`` to absorb the resulting magnification.</span>
+        <span class="n">weight</span> <span class="o">=</span> <span class="n">bp_weight</span> <span class="o">*</span> <span class="n">chord</span> <span class="o">/</span> <span class="n">det_spacing_v</span>
+
+        <span class="n">k_lo_f</span> <span class="o">=</span> <span class="p">(</span><span class="n">u_min</span> <span class="o">-</span> <span class="n">det_offset</span><span class="p">)</span> <span class="o">/</span> <span class="n">det_spacing_v</span> <span class="o">+</span> <span class="n">half</span> <span class="o">-</span> <span class="mf">0.5</span>
+        <span class="n">k_hi_f</span> <span class="o">=</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">det_offset</span><span class="p">)</span> <span class="o">/</span> <span class="n">det_spacing_v</span> <span class="o">+</span> <span class="n">half</span> <span class="o">+</span> <span class="mf">0.5</span>
+        <span class="n">k_lo</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">k_lo_f</span><span class="p">))</span>
+        <span class="n">k_hi</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">k_hi_f</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">k_lo</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">k_lo</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">k_hi</span> <span class="o">&gt;</span> <span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">k_hi</span> <span class="o">=</span> <span class="n">n_det</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="n">k_hi</span> <span class="o">&lt;</span> <span class="n">k_lo</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">rise_w</span> <span class="o">=</span> <span class="n">u_lo</span> <span class="o">-</span> <span class="n">u_min</span>
+        <span class="n">fall_w</span> <span class="o">=</span> <span class="n">u_max</span> <span class="o">-</span> <span class="n">u_hi</span>
+
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k_lo</span><span class="p">,</span> <span class="n">k_hi</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="n">u_k</span> <span class="o">=</span> <span class="p">(</span><span class="n">k</span> <span class="o">-</span> <span class="n">half</span><span class="p">)</span> <span class="o">*</span> <span class="n">det_spacing_v</span> <span class="o">+</span> <span class="n">det_offset</span>
+            <span class="n">u_L</span> <span class="o">=</span> <span class="n">u_k</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">det_spacing_v</span>
+            <span class="n">u_R</span> <span class="o">=</span> <span class="n">u_k</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">det_spacing_v</span>
+
+            <span class="n">aL</span> <span class="o">=</span> <span class="n">u_L</span> <span class="k">if</span> <span class="n">u_L</span> <span class="o">&gt;</span> <span class="n">u_min</span> <span class="k">else</span> <span class="n">u_min</span>
+            <span class="n">aR</span> <span class="o">=</span> <span class="n">u_R</span> <span class="k">if</span> <span class="n">u_R</span> <span class="o">&lt;</span> <span class="n">u_max</span> <span class="k">else</span> <span class="n">u_max</span>
+            <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;=</span> <span class="n">aR</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">raw</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="k">if</span> <span class="n">rise_w</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">r_lo_</span> <span class="o">=</span> <span class="n">aL</span> <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;</span> <span class="n">u_min</span> <span class="k">else</span> <span class="n">u_min</span>
+                <span class="n">r_hi_</span> <span class="o">=</span> <span class="n">aR</span> <span class="k">if</span> <span class="n">aR</span> <span class="o">&lt;</span> <span class="n">u_lo</span> <span class="k">else</span> <span class="n">u_lo</span>
+                <span class="k">if</span> <span class="n">r_hi_</span> <span class="o">&gt;</span> <span class="n">r_lo_</span><span class="p">:</span>
+                    <span class="n">raw</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">r_hi_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_hi_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">-</span>
+                                  <span class="p">(</span><span class="n">r_lo_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_lo_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">))</span> <span class="o">/</span> <span class="n">rise_w</span>
+
+            <span class="k">if</span> <span class="n">plateau</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">p_lo_</span> <span class="o">=</span> <span class="n">aL</span> <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;</span> <span class="n">u_lo</span> <span class="k">else</span> <span class="n">u_lo</span>
+                <span class="n">p_hi_</span> <span class="o">=</span> <span class="n">aR</span> <span class="k">if</span> <span class="n">aR</span> <span class="o">&lt;</span> <span class="n">u_hi</span> <span class="k">else</span> <span class="n">u_hi</span>
+                <span class="k">if</span> <span class="n">p_hi_</span> <span class="o">&gt;</span> <span class="n">p_lo_</span><span class="p">:</span>
+                    <span class="n">raw</span> <span class="o">+=</span> <span class="n">p_hi_</span> <span class="o">-</span> <span class="n">p_lo_</span>
+
+            <span class="k">if</span> <span class="n">fall_w</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">f_lo_</span> <span class="o">=</span> <span class="n">aL</span> <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;</span> <span class="n">u_hi</span> <span class="k">else</span> <span class="n">u_hi</span>
+                <span class="n">f_hi_</span> <span class="o">=</span> <span class="n">aR</span> <span class="k">if</span> <span class="n">aR</span> <span class="o">&lt;</span> <span class="n">u_max</span> <span class="k">else</span> <span class="n">u_max</span>
+                <span class="k">if</span> <span class="n">f_hi_</span> <span class="o">&gt;</span> <span class="n">f_lo_</span><span class="p">:</span>
+                    <span class="n">raw</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_lo_</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_lo_</span><span class="p">)</span> <span class="o">-</span>
+                                  <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_hi_</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_hi_</span><span class="p">))</span> <span class="o">/</span> <span class="n">fall_w</span>
+
+            <span class="k">if</span> <span class="n">raw</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">:</span>
+                <span class="n">accum</span> <span class="o">+=</span> <span class="n">weight</span> <span class="o">*</span> <span class="n">raw</span> <span class="o">*</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iang</span><span class="p">,</span> <span class="n">k</span><span class="p">]</span>
+
+    <span class="n">d_image</span><span class="p">[</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
+
+
+<span class="nd">@_FDK_ACCURACY_DECORATOR</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_cone_3d_sf_tr_fdk_backproject_kernel</span><span class="p">(</span>
+    <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
+    <span class="n">d_vol</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
+    <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
+    <span class="n">det_offset_u</span><span class="p">,</span> <span class="n">det_offset_v</span><span class="p">,</span>
+    <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span> <span class="n">center_offset_z</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Voxel-driven cone-beam FDK SF-TR backprojection gather, chord-weighted.</span>
+
+<span class="sd">    Matched-adjoint formulation inspired by LEAP&#39;s tilt==0 branch of</span>
+<span class="sd">    ``coneBeamBackprojectorKernel_SF`` (``projectors_SF.cu``). Transaxial</span>
+<span class="sd">    trapezoid + axial rectangle footprint math as before, but the</span>
+<span class="sd">    per-view weight is the in-plane chord through the unit voxel times</span>
+<span class="sd">    ``sqrt(1 + (v_proj/sdd)^2)`` (the LEAP v-chord correction), with NO</span>
+<span class="sd">    division by the footprint area and NO ``(sid/U)^2`` FDK weight.</span>
+<span class="sd">    LEAP&#39;s cone SF backprojection is a pure matched adjoint; the</span>
+<span class="sd">    classical FDK magnification is absorbed by the Python-wrapper</span>
+<span class="sd">    scale constant (``sid / (2*pi*sdd)`` instead of ``sdd / (2*pi*sid)``).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">iz</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span> <span class="ow">or</span> <span class="n">iz</span> <span class="o">&gt;=</span> <span class="n">Nz</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">du_v</span> <span class="o">=</span> <span class="n">du</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">dv_v</span> <span class="o">=</span> <span class="n">dv</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">u_half</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">v_half</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">x_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
+    <span class="n">y_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
+    <span class="n">z_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">iz</span> <span class="o">-</span> <span class="n">cz</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_z</span>
+    <span class="n">x_m</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">x_p</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="n">y_m</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">y_p</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="n">z_m</span> <span class="o">=</span> <span class="n">z_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">z_p</span> <span class="o">=</span> <span class="n">z_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+
+    <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">for</span> <span class="n">iview</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_views</span><span class="p">):</span>
+        <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>
+        <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>
+
+        <span class="n">U_c</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_c</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_c</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">U_c</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="c1"># In-plane chord through the unit voxel along the source-to-</span>
+        <span class="c1"># voxel ray direction (LEAP&#39;s ``l_phi`` uses the central-ray</span>
+        <span class="c1"># approximation ``1/max(|cos|,|sin|) * sqrt(1+u^2/sdd^2)``;</span>
+        <span class="c1"># we compute the exact chord from the per-voxel ray direction</span>
+        <span class="c1"># to stay consistent with ``_cone_3d_sf_tr_forward_kernel``).</span>
+        <span class="n">rx</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">+</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">sin_a</span>
+        <span class="n">ry</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">-</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">r_len2</span> <span class="o">=</span> <span class="n">rx</span> <span class="o">*</span> <span class="n">rx</span> <span class="o">+</span> <span class="n">ry</span> <span class="o">*</span> <span class="n">ry</span>
+        <span class="k">if</span> <span class="n">r_len2</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">r_len</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">r_len2</span><span class="p">)</span>
+        <span class="n">rx</span> <span class="o">/=</span> <span class="n">r_len</span>
+        <span class="n">ry</span> <span class="o">/=</span> <span class="n">r_len</span>
+        <span class="n">max_dir</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">rx</span><span class="p">)</span>
+        <span class="n">ar_dir</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">ry</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ar_dir</span> <span class="o">&gt;</span> <span class="n">max_dir</span><span class="p">:</span>
+            <span class="n">max_dir</span> <span class="o">=</span> <span class="n">ar_dir</span>
+        <span class="k">if</span> <span class="n">max_dir</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">chord_u</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">max_dir</span>
+
+        <span class="n">d1</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_m</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d2</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_p</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d3</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_p</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d4</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_m</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">d1</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d2</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d3</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d4</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">u1</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_m</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d1</span>
+        <span class="n">u2</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_p</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d2</span>
+        <span class="n">u3</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_p</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d3</span>
+        <span class="n">u4</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_m</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d4</span>
+
+        <span class="n">a</span> <span class="o">=</span> <span class="n">u1</span>
+        <span class="n">b</span> <span class="o">=</span> <span class="n">u2</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">u3</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">u4</span>
+        <span class="k">if</span> <span class="n">a</span> <span class="o">&gt;</span> <span class="n">b</span><span class="p">:</span>
+            <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span>
+        <span class="k">if</span> <span class="n">c</span> <span class="o">&gt;</span> <span class="n">d</span><span class="p">:</span>
+            <span class="n">c</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">d</span><span class="p">,</span> <span class="n">c</span>
+        <span class="k">if</span> <span class="n">a</span> <span class="o">&gt;</span> <span class="n">c</span><span class="p">:</span>
+            <span class="n">a</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">c</span><span class="p">,</span> <span class="n">a</span>
+        <span class="k">if</span> <span class="n">b</span> <span class="o">&gt;</span> <span class="n">d</span><span class="p">:</span>
+            <span class="n">b</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">d</span><span class="p">,</span> <span class="n">b</span>
+        <span class="k">if</span> <span class="n">b</span> <span class="o">&gt;</span> <span class="n">c</span><span class="p">:</span>
+            <span class="n">b</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">c</span><span class="p">,</span> <span class="n">b</span>
+        <span class="n">u_min</span> <span class="o">=</span> <span class="n">a</span>
+        <span class="n">u_lo</span> <span class="o">=</span> <span class="n">b</span>
+        <span class="n">u_hi</span> <span class="o">=</span> <span class="n">c</span>
+        <span class="n">u_max</span> <span class="o">=</span> <span class="n">d</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">mag_c</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">/</span> <span class="n">U_c</span>
+        <span class="n">v_proj_c</span> <span class="o">=</span> <span class="n">z_c</span> <span class="o">*</span> <span class="n">mag_c</span>
+        <span class="n">v_arg</span> <span class="o">=</span> <span class="n">v_proj_c</span> <span class="o">/</span> <span class="n">sdd_v</span>
+        <span class="n">v_chord</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">v_arg</span> <span class="o">*</span> <span class="n">v_arg</span><span class="p">)</span>
+        <span class="n">v_bot</span> <span class="o">=</span> <span class="n">z_m</span> <span class="o">*</span> <span class="n">mag_c</span>
+        <span class="n">v_top</span> <span class="o">=</span> <span class="n">z_p</span> <span class="o">*</span> <span class="n">mag_c</span>
+        <span class="k">if</span> <span class="n">v_bot</span> <span class="o">&gt;</span> <span class="n">v_top</span><span class="p">:</span>
+            <span class="n">v_bot</span><span class="p">,</span> <span class="n">v_top</span> <span class="o">=</span> <span class="n">v_top</span><span class="p">,</span> <span class="n">v_bot</span>
+        <span class="n">v_span</span> <span class="o">=</span> <span class="n">v_top</span> <span class="o">-</span> <span class="n">v_bot</span>
+        <span class="k">if</span> <span class="n">v_span</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">plateau</span> <span class="o">=</span> <span class="n">u_hi</span> <span class="o">-</span> <span class="n">u_lo</span>
+        <span class="n">rise_w</span> <span class="o">=</span> <span class="n">u_lo</span> <span class="o">-</span> <span class="n">u_min</span>
+        <span class="n">fall_w</span> <span class="o">=</span> <span class="n">u_max</span> <span class="o">-</span> <span class="n">u_hi</span>
+        <span class="c1"># Chord-weighted LEAP form (no footprint-area division, no</span>
+        <span class="c1"># ``(sid/U)^2`` per-voxel FDK weight). The Python wrapper</span>
+        <span class="c1"># rescales the final volume by ``sid / (2*pi*sdd)`` instead</span>
+        <span class="c1"># of ``sdd / (2*pi*sid)`` to absorb the ``mag^2`` difference.</span>
+        <span class="n">weight</span> <span class="o">=</span> <span class="n">chord_u</span> <span class="o">*</span> <span class="n">v_chord</span> <span class="o">/</span> <span class="p">(</span><span class="n">du_v</span> <span class="o">*</span> <span class="n">dv_v</span><span class="p">)</span>
+
+        <span class="n">k_u_lo</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">((</span><span class="n">u_min</span> <span class="o">-</span> <span class="n">det_offset_u</span><span class="p">)</span> <span class="o">/</span> <span class="n">du_v</span> <span class="o">+</span> <span class="n">u_half</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="n">k_u_hi</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">det_offset_u</span><span class="p">)</span> <span class="o">/</span> <span class="n">du_v</span> <span class="o">+</span> <span class="n">u_half</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">k_u_lo</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">k_u_lo</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">k_u_hi</span> <span class="o">&gt;</span> <span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">k_u_hi</span> <span class="o">=</span> <span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="n">k_u_hi</span> <span class="o">&lt;</span> <span class="n">k_u_lo</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">k_v_lo</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">((</span><span class="n">v_bot</span> <span class="o">-</span> <span class="n">det_offset_v</span><span class="p">)</span> <span class="o">/</span> <span class="n">dv_v</span> <span class="o">+</span> <span class="n">v_half</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="n">k_v_hi</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">v_top</span> <span class="o">-</span> <span class="n">det_offset_v</span><span class="p">)</span> <span class="o">/</span> <span class="n">dv_v</span> <span class="o">+</span> <span class="n">v_half</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">k_v_lo</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">k_v_lo</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">k_v_hi</span> <span class="o">&gt;</span> <span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">k_v_hi</span> <span class="o">=</span> <span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="n">k_v_hi</span> <span class="o">&lt;</span> <span class="n">k_v_lo</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="k">for</span> <span class="n">ku</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k_u_lo</span><span class="p">,</span> <span class="n">k_u_hi</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="n">u_k</span> <span class="o">=</span> <span class="p">(</span><span class="n">ku</span> <span class="o">-</span> <span class="n">u_half</span><span class="p">)</span> <span class="o">*</span> <span class="n">du_v</span> <span class="o">+</span> <span class="n">det_offset_u</span>
+            <span class="n">u_L</span> <span class="o">=</span> <span class="n">u_k</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">du_v</span>
+            <span class="n">u_R</span> <span class="o">=</span> <span class="n">u_k</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">du_v</span>
+
+            <span class="n">aL</span> <span class="o">=</span> <span class="n">u_L</span> <span class="k">if</span> <span class="n">u_L</span> <span class="o">&gt;</span> <span class="n">u_min</span> <span class="k">else</span> <span class="n">u_min</span>
+            <span class="n">aR</span> <span class="o">=</span> <span class="n">u_R</span> <span class="k">if</span> <span class="n">u_R</span> <span class="o">&lt;</span> <span class="n">u_max</span> <span class="k">else</span> <span class="n">u_max</span>
+            <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;=</span> <span class="n">aR</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">raw_u</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="k">if</span> <span class="n">rise_w</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">r_lo_</span> <span class="o">=</span> <span class="n">aL</span> <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;</span> <span class="n">u_min</span> <span class="k">else</span> <span class="n">u_min</span>
+                <span class="n">r_hi_</span> <span class="o">=</span> <span class="n">aR</span> <span class="k">if</span> <span class="n">aR</span> <span class="o">&lt;</span> <span class="n">u_lo</span> <span class="k">else</span> <span class="n">u_lo</span>
+                <span class="k">if</span> <span class="n">r_hi_</span> <span class="o">&gt;</span> <span class="n">r_lo_</span><span class="p">:</span>
+                    <span class="n">raw_u</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">r_hi_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_hi_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">-</span>
+                                    <span class="p">(</span><span class="n">r_lo_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_lo_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">))</span> <span class="o">/</span> <span class="n">rise_w</span>
+            <span class="k">if</span> <span class="n">plateau</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">p_lo_</span> <span class="o">=</span> <span class="n">aL</span> <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;</span> <span class="n">u_lo</span> <span class="k">else</span> <span class="n">u_lo</span>
+                <span class="n">p_hi_</span> <span class="o">=</span> <span class="n">aR</span> <span class="k">if</span> <span class="n">aR</span> <span class="o">&lt;</span> <span class="n">u_hi</span> <span class="k">else</span> <span class="n">u_hi</span>
+                <span class="k">if</span> <span class="n">p_hi_</span> <span class="o">&gt;</span> <span class="n">p_lo_</span><span class="p">:</span>
+                    <span class="n">raw_u</span> <span class="o">+=</span> <span class="n">p_hi_</span> <span class="o">-</span> <span class="n">p_lo_</span>
+            <span class="k">if</span> <span class="n">fall_w</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">f_lo_</span> <span class="o">=</span> <span class="n">aL</span> <span class="k">if</span> <span class="n">aL</span> <span class="o">&gt;</span> <span class="n">u_hi</span> <span class="k">else</span> <span class="n">u_hi</span>
+                <span class="n">f_hi_</span> <span class="o">=</span> <span class="n">aR</span> <span class="k">if</span> <span class="n">aR</span> <span class="o">&lt;</span> <span class="n">u_max</span> <span class="k">else</span> <span class="n">u_max</span>
+                <span class="k">if</span> <span class="n">f_hi_</span> <span class="o">&gt;</span> <span class="n">f_lo_</span><span class="p">:</span>
+                    <span class="n">raw_u</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_lo_</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_lo_</span><span class="p">)</span> <span class="o">-</span>
+                                    <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_hi_</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_hi_</span><span class="p">))</span> <span class="o">/</span> <span class="n">fall_w</span>
+            <span class="k">if</span> <span class="n">raw_u</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="k">for</span> <span class="n">kv</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k_v_lo</span><span class="p">,</span> <span class="n">k_v_hi</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+                <span class="n">v_k</span> <span class="o">=</span> <span class="p">(</span><span class="n">kv</span> <span class="o">-</span> <span class="n">v_half</span><span class="p">)</span> <span class="o">*</span> <span class="n">dv_v</span> <span class="o">+</span> <span class="n">det_offset_v</span>
+                <span class="n">v_L</span> <span class="o">=</span> <span class="n">v_k</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dv_v</span>
+                <span class="n">v_R</span> <span class="o">=</span> <span class="n">v_k</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dv_v</span>
+
+                <span class="n">aLv</span> <span class="o">=</span> <span class="n">v_L</span> <span class="k">if</span> <span class="n">v_L</span> <span class="o">&gt;</span> <span class="n">v_bot</span> <span class="k">else</span> <span class="n">v_bot</span>
+                <span class="n">aRv</span> <span class="o">=</span> <span class="n">v_R</span> <span class="k">if</span> <span class="n">v_R</span> <span class="o">&lt;</span> <span class="n">v_top</span> <span class="k">else</span> <span class="n">v_top</span>
+                <span class="k">if</span> <span class="n">aLv</span> <span class="o">&gt;=</span> <span class="n">aRv</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">raw_v</span> <span class="o">=</span> <span class="n">aRv</span> <span class="o">-</span> <span class="n">aLv</span>
+
+                <span class="n">accum</span> <span class="o">+=</span> <span class="n">weight</span> <span class="o">*</span> <span class="n">raw_u</span> <span class="o">*</span> <span class="n">raw_v</span> <span class="o">*</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">ku</span><span class="p">,</span> <span class="n">kv</span><span class="p">]</span>
+
+    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">iz</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
+
+
+<span class="nd">@_FDK_ACCURACY_DECORATOR</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_cone_3d_sf_tt_fdk_backproject_kernel</span><span class="p">(</span>
+    <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
+    <span class="n">d_vol</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span> <span class="n">Nz</span><span class="p">,</span>
+    <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">d_cos</span><span class="p">,</span> <span class="n">d_sin</span><span class="p">,</span>
+    <span class="n">sdd</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span>
+    <span class="n">det_offset_u</span><span class="p">,</span> <span class="n">det_offset_v</span><span class="p">,</span>
+    <span class="n">center_offset_x</span><span class="p">,</span> <span class="n">center_offset_y</span><span class="p">,</span> <span class="n">center_offset_z</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Voxel-driven cone-beam FDK SF-TT backprojection gather, chord-weighted.</span>
+
+<span class="sd">    Matched-adjoint formulation inspired by LEAP&#39;s cone SF. Four-corner</span>
+<span class="sd">    transaxial trapezoid and four-corner axial trapezoid footprint math</span>
+<span class="sd">    as before, but the per-view weight is the in-plane chord through the</span>
+<span class="sd">    unit voxel (from the per-voxel ray direction, matching the SF</span>
+<span class="sd">    forward kernel) times ``sqrt(1+(v_proj/sdd)^2)``. No footprint-area</span>
+<span class="sd">    division and no ``(sid/U)^2`` FDK weight; the Python-wrapper scale</span>
+<span class="sd">    constant absorbs the magnification difference.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">iz</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span> <span class="ow">or</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span> <span class="ow">or</span> <span class="n">iz</span> <span class="o">&gt;=</span> <span class="n">Nz</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">sid_v</span> <span class="o">=</span> <span class="n">sid</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">sdd_v</span> <span class="o">=</span> <span class="n">sdd</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">du_v</span> <span class="o">=</span> <span class="n">du</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">dv_v</span> <span class="o">=</span> <span class="n">dv</span> <span class="o">/</span> <span class="n">voxel_spacing</span>
+    <span class="n">u_half</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">v_half</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">x_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_x</span>
+    <span class="n">y_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_y</span>
+    <span class="n">z_c</span> <span class="o">=</span> <span class="p">(</span><span class="n">iz</span> <span class="o">-</span> <span class="n">cz</span><span class="p">)</span> <span class="o">-</span> <span class="n">center_offset_z</span>
+    <span class="n">x_m</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">x_p</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="n">y_m</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">y_p</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="n">z_m</span> <span class="o">=</span> <span class="n">z_c</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">z_p</span> <span class="o">=</span> <span class="n">z_c</span> <span class="o">+</span> <span class="mf">0.5</span>
+
+    <span class="n">accum</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">for</span> <span class="n">iview</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_views</span><span class="p">):</span>
+        <span class="n">cos_a</span> <span class="o">=</span> <span class="n">d_cos</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>
+        <span class="n">sin_a</span> <span class="o">=</span> <span class="n">d_sin</span><span class="p">[</span><span class="n">iview</span><span class="p">]</span>
+
+        <span class="n">U_c</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_c</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_c</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">U_c</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">rx</span> <span class="o">=</span> <span class="n">x_c</span> <span class="o">+</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">sin_a</span>
+        <span class="n">ry</span> <span class="o">=</span> <span class="n">y_c</span> <span class="o">-</span> <span class="n">sid_v</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">r_len2</span> <span class="o">=</span> <span class="n">rx</span> <span class="o">*</span> <span class="n">rx</span> <span class="o">+</span> <span class="n">ry</span> <span class="o">*</span> <span class="n">ry</span>
+        <span class="k">if</span> <span class="n">r_len2</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">r_len</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">r_len2</span><span class="p">)</span>
+        <span class="n">rx</span> <span class="o">/=</span> <span class="n">r_len</span>
+        <span class="n">ry</span> <span class="o">/=</span> <span class="n">r_len</span>
+        <span class="n">max_dir</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">rx</span><span class="p">)</span>
+        <span class="n">ar_dir</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">ry</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ar_dir</span> <span class="o">&gt;</span> <span class="n">max_dir</span><span class="p">:</span>
+            <span class="n">max_dir</span> <span class="o">=</span> <span class="n">ar_dir</span>
+        <span class="k">if</span> <span class="n">max_dir</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">chord_u</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">max_dir</span>
+
+        <span class="n">d1</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_m</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d2</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_p</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d3</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_p</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="n">d4</span> <span class="o">=</span> <span class="n">sid_v</span> <span class="o">+</span> <span class="n">x_m</span> <span class="o">*</span> <span class="n">sin_a</span> <span class="o">-</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">cos_a</span>
+        <span class="k">if</span> <span class="n">d1</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d2</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d3</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span> <span class="ow">or</span> <span class="n">d4</span> <span class="o">&lt;=</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">u1</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_m</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d1</span>
+        <span class="n">u2</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_p</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_m</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d2</span>
+        <span class="n">u3</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_p</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d3</span>
+        <span class="n">u4</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">*</span> <span class="p">(</span><span class="n">x_m</span> <span class="o">*</span> <span class="n">cos_a</span> <span class="o">+</span> <span class="n">y_p</span> <span class="o">*</span> <span class="n">sin_a</span><span class="p">)</span> <span class="o">/</span> <span class="n">d4</span>
+
+        <span class="n">a</span> <span class="o">=</span> <span class="n">u1</span>
+        <span class="n">b</span> <span class="o">=</span> <span class="n">u2</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">u3</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">u4</span>
+        <span class="k">if</span> <span class="n">a</span> <span class="o">&gt;</span> <span class="n">b</span><span class="p">:</span>
+            <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span>
+        <span class="k">if</span> <span class="n">c</span> <span class="o">&gt;</span> <span class="n">d</span><span class="p">:</span>
+            <span class="n">c</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">d</span><span class="p">,</span> <span class="n">c</span>
+        <span class="k">if</span> <span class="n">a</span> <span class="o">&gt;</span> <span class="n">c</span><span class="p">:</span>
+            <span class="n">a</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">c</span><span class="p">,</span> <span class="n">a</span>
+        <span class="k">if</span> <span class="n">b</span> <span class="o">&gt;</span> <span class="n">d</span><span class="p">:</span>
+            <span class="n">b</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">d</span><span class="p">,</span> <span class="n">b</span>
+        <span class="k">if</span> <span class="n">b</span> <span class="o">&gt;</span> <span class="n">c</span><span class="p">:</span>
+            <span class="n">b</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">c</span><span class="p">,</span> <span class="n">b</span>
+        <span class="n">u_min</span> <span class="o">=</span> <span class="n">a</span>
+        <span class="n">u_lo</span> <span class="o">=</span> <span class="n">b</span>
+        <span class="n">u_hi</span> <span class="o">=</span> <span class="n">c</span>
+        <span class="n">u_max</span> <span class="o">=</span> <span class="n">d</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">U_near</span> <span class="o">=</span> <span class="n">d1</span>
+        <span class="k">if</span> <span class="n">d2</span> <span class="o">&lt;</span> <span class="n">U_near</span><span class="p">:</span>
+            <span class="n">U_near</span> <span class="o">=</span> <span class="n">d2</span>
+        <span class="k">if</span> <span class="n">d3</span> <span class="o">&lt;</span> <span class="n">U_near</span><span class="p">:</span>
+            <span class="n">U_near</span> <span class="o">=</span> <span class="n">d3</span>
+        <span class="k">if</span> <span class="n">d4</span> <span class="o">&lt;</span> <span class="n">U_near</span><span class="p">:</span>
+            <span class="n">U_near</span> <span class="o">=</span> <span class="n">d4</span>
+        <span class="n">U_far</span> <span class="o">=</span> <span class="n">d1</span>
+        <span class="k">if</span> <span class="n">d2</span> <span class="o">&gt;</span> <span class="n">U_far</span><span class="p">:</span>
+            <span class="n">U_far</span> <span class="o">=</span> <span class="n">d2</span>
+        <span class="k">if</span> <span class="n">d3</span> <span class="o">&gt;</span> <span class="n">U_far</span><span class="p">:</span>
+            <span class="n">U_far</span> <span class="o">=</span> <span class="n">d3</span>
+        <span class="k">if</span> <span class="n">d4</span> <span class="o">&gt;</span> <span class="n">U_far</span><span class="p">:</span>
+            <span class="n">U_far</span> <span class="o">=</span> <span class="n">d4</span>
+        <span class="n">mag_near</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">/</span> <span class="n">U_near</span>
+        <span class="n">mag_far</span> <span class="o">=</span> <span class="n">sdd_v</span> <span class="o">/</span> <span class="n">U_far</span>
+
+        <span class="n">v_bot_near</span> <span class="o">=</span> <span class="n">z_m</span> <span class="o">*</span> <span class="n">mag_near</span>
+        <span class="n">v_bot_far</span> <span class="o">=</span> <span class="n">z_m</span> <span class="o">*</span> <span class="n">mag_far</span>
+        <span class="n">v_top_near</span> <span class="o">=</span> <span class="n">z_p</span> <span class="o">*</span> <span class="n">mag_near</span>
+        <span class="n">v_top_far</span> <span class="o">=</span> <span class="n">z_p</span> <span class="o">*</span> <span class="n">mag_far</span>
+
+        <span class="n">av</span> <span class="o">=</span> <span class="n">v_bot_near</span>
+        <span class="n">bv</span> <span class="o">=</span> <span class="n">v_bot_far</span>
+        <span class="n">cv</span> <span class="o">=</span> <span class="n">v_top_near</span>
+        <span class="n">dv_sv</span> <span class="o">=</span> <span class="n">v_top_far</span>
+        <span class="k">if</span> <span class="n">av</span> <span class="o">&gt;</span> <span class="n">bv</span><span class="p">:</span>
+            <span class="n">av</span><span class="p">,</span> <span class="n">bv</span> <span class="o">=</span> <span class="n">bv</span><span class="p">,</span> <span class="n">av</span>
+        <span class="k">if</span> <span class="n">cv</span> <span class="o">&gt;</span> <span class="n">dv_sv</span><span class="p">:</span>
+            <span class="n">cv</span><span class="p">,</span> <span class="n">dv_sv</span> <span class="o">=</span> <span class="n">dv_sv</span><span class="p">,</span> <span class="n">cv</span>
+        <span class="k">if</span> <span class="n">av</span> <span class="o">&gt;</span> <span class="n">cv</span><span class="p">:</span>
+            <span class="n">av</span><span class="p">,</span> <span class="n">cv</span> <span class="o">=</span> <span class="n">cv</span><span class="p">,</span> <span class="n">av</span>
+        <span class="k">if</span> <span class="n">bv</span> <span class="o">&gt;</span> <span class="n">dv_sv</span><span class="p">:</span>
+            <span class="n">bv</span><span class="p">,</span> <span class="n">dv_sv</span> <span class="o">=</span> <span class="n">dv_sv</span><span class="p">,</span> <span class="n">bv</span>
+        <span class="k">if</span> <span class="n">bv</span> <span class="o">&gt;</span> <span class="n">cv</span><span class="p">:</span>
+            <span class="n">bv</span><span class="p">,</span> <span class="n">cv</span> <span class="o">=</span> <span class="n">cv</span><span class="p">,</span> <span class="n">bv</span>
+        <span class="n">v_min</span> <span class="o">=</span> <span class="n">av</span>
+        <span class="n">v_lo</span> <span class="o">=</span> <span class="n">bv</span>
+        <span class="n">v_hi</span> <span class="o">=</span> <span class="n">cv</span>
+        <span class="n">v_max</span> <span class="o">=</span> <span class="n">dv_sv</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">v_max</span> <span class="o">-</span> <span class="n">v_min</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">plateau_u</span> <span class="o">=</span> <span class="n">u_hi</span> <span class="o">-</span> <span class="n">u_lo</span>
+        <span class="n">rise_u</span> <span class="o">=</span> <span class="n">u_lo</span> <span class="o">-</span> <span class="n">u_min</span>
+        <span class="n">fall_u</span> <span class="o">=</span> <span class="n">u_max</span> <span class="o">-</span> <span class="n">u_hi</span>
+        <span class="n">plateau_v</span> <span class="o">=</span> <span class="n">v_hi</span> <span class="o">-</span> <span class="n">v_lo</span>
+        <span class="n">rise_v</span> <span class="o">=</span> <span class="n">v_lo</span> <span class="o">-</span> <span class="n">v_min</span>
+        <span class="n">fall_v</span> <span class="o">=</span> <span class="n">v_max</span> <span class="o">-</span> <span class="n">v_hi</span>
+        <span class="c1"># Chord-weighted LEAP form. ``v_chord = sqrt(1+(v/sdd)^2)`` is</span>
+        <span class="c1"># evaluated at the voxel&#39;s projected v centre (mean of the 4</span>
+        <span class="c1"># z-corner projections) to match LEAP&#39;s convention.</span>
+        <span class="n">v_proj_c</span> <span class="o">=</span> <span class="mf">0.25</span> <span class="o">*</span> <span class="p">(</span><span class="n">v_min</span> <span class="o">+</span> <span class="n">v_lo</span> <span class="o">+</span> <span class="n">v_hi</span> <span class="o">+</span> <span class="n">v_max</span><span class="p">)</span>
+        <span class="n">v_arg_tt</span> <span class="o">=</span> <span class="n">v_proj_c</span> <span class="o">/</span> <span class="n">sdd_v</span>
+        <span class="n">v_chord</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">v_arg_tt</span> <span class="o">*</span> <span class="n">v_arg_tt</span><span class="p">)</span>
+        <span class="n">u_span</span> <span class="o">=</span> <span class="n">u_max</span> <span class="o">-</span> <span class="n">u_min</span>
+        <span class="n">v_span</span> <span class="o">=</span> <span class="n">v_max</span> <span class="o">-</span> <span class="n">v_min</span>
+        <span class="n">weight</span> <span class="o">=</span> <span class="n">chord_u</span> <span class="o">*</span> <span class="n">v_chord</span> <span class="o">/</span> <span class="p">(</span><span class="n">du_v</span> <span class="o">*</span> <span class="n">dv_v</span><span class="p">)</span>
+
+        <span class="n">k_u_lo</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">((</span><span class="n">u_min</span> <span class="o">-</span> <span class="n">det_offset_u</span><span class="p">)</span> <span class="o">/</span> <span class="n">du_v</span> <span class="o">+</span> <span class="n">u_half</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="n">k_u_hi</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">det_offset_u</span><span class="p">)</span> <span class="o">/</span> <span class="n">du_v</span> <span class="o">+</span> <span class="n">u_half</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">k_u_lo</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">k_u_lo</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">k_u_hi</span> <span class="o">&gt;</span> <span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">k_u_hi</span> <span class="o">=</span> <span class="n">n_u</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="n">k_u_hi</span> <span class="o">&lt;</span> <span class="n">k_u_lo</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">k_v_lo</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">((</span><span class="n">v_min</span> <span class="o">-</span> <span class="n">det_offset_v</span><span class="p">)</span> <span class="o">/</span> <span class="n">dv_v</span> <span class="o">+</span> <span class="n">v_half</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="n">k_v_hi</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">v_max</span> <span class="o">-</span> <span class="n">det_offset_v</span><span class="p">)</span> <span class="o">/</span> <span class="n">dv_v</span> <span class="o">+</span> <span class="n">v_half</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">k_v_lo</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">k_v_lo</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">k_v_hi</span> <span class="o">&gt;</span> <span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">k_v_hi</span> <span class="o">=</span> <span class="n">n_v</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="n">k_v_hi</span> <span class="o">&lt;</span> <span class="n">k_v_lo</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="k">for</span> <span class="n">ku</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k_u_lo</span><span class="p">,</span> <span class="n">k_u_hi</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="n">u_k</span> <span class="o">=</span> <span class="p">(</span><span class="n">ku</span> <span class="o">-</span> <span class="n">u_half</span><span class="p">)</span> <span class="o">*</span> <span class="n">du_v</span> <span class="o">+</span> <span class="n">det_offset_u</span>
+            <span class="n">u_L</span> <span class="o">=</span> <span class="n">u_k</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">du_v</span>
+            <span class="n">u_R</span> <span class="o">=</span> <span class="n">u_k</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">du_v</span>
+
+            <span class="n">aLu</span> <span class="o">=</span> <span class="n">u_L</span> <span class="k">if</span> <span class="n">u_L</span> <span class="o">&gt;</span> <span class="n">u_min</span> <span class="k">else</span> <span class="n">u_min</span>
+            <span class="n">aRu</span> <span class="o">=</span> <span class="n">u_R</span> <span class="k">if</span> <span class="n">u_R</span> <span class="o">&lt;</span> <span class="n">u_max</span> <span class="k">else</span> <span class="n">u_max</span>
+            <span class="k">if</span> <span class="n">aLu</span> <span class="o">&gt;=</span> <span class="n">aRu</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">raw_u</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="k">if</span> <span class="n">rise_u</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">r_lo_</span> <span class="o">=</span> <span class="n">aLu</span> <span class="k">if</span> <span class="n">aLu</span> <span class="o">&gt;</span> <span class="n">u_min</span> <span class="k">else</span> <span class="n">u_min</span>
+                <span class="n">r_hi_</span> <span class="o">=</span> <span class="n">aRu</span> <span class="k">if</span> <span class="n">aRu</span> <span class="o">&lt;</span> <span class="n">u_lo</span> <span class="k">else</span> <span class="n">u_lo</span>
+                <span class="k">if</span> <span class="n">r_hi_</span> <span class="o">&gt;</span> <span class="n">r_lo_</span><span class="p">:</span>
+                    <span class="n">raw_u</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">r_hi_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_hi_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">-</span>
+                                    <span class="p">(</span><span class="n">r_lo_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_lo_</span> <span class="o">-</span> <span class="n">u_min</span><span class="p">))</span> <span class="o">/</span> <span class="n">rise_u</span>
+            <span class="k">if</span> <span class="n">plateau_u</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">p_lo_</span> <span class="o">=</span> <span class="n">aLu</span> <span class="k">if</span> <span class="n">aLu</span> <span class="o">&gt;</span> <span class="n">u_lo</span> <span class="k">else</span> <span class="n">u_lo</span>
+                <span class="n">p_hi_</span> <span class="o">=</span> <span class="n">aRu</span> <span class="k">if</span> <span class="n">aRu</span> <span class="o">&lt;</span> <span class="n">u_hi</span> <span class="k">else</span> <span class="n">u_hi</span>
+                <span class="k">if</span> <span class="n">p_hi_</span> <span class="o">&gt;</span> <span class="n">p_lo_</span><span class="p">:</span>
+                    <span class="n">raw_u</span> <span class="o">+=</span> <span class="n">p_hi_</span> <span class="o">-</span> <span class="n">p_lo_</span>
+            <span class="k">if</span> <span class="n">fall_u</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                <span class="n">f_lo_</span> <span class="o">=</span> <span class="n">aLu</span> <span class="k">if</span> <span class="n">aLu</span> <span class="o">&gt;</span> <span class="n">u_hi</span> <span class="k">else</span> <span class="n">u_hi</span>
+                <span class="n">f_hi_</span> <span class="o">=</span> <span class="n">aRu</span> <span class="k">if</span> <span class="n">aRu</span> <span class="o">&lt;</span> <span class="n">u_max</span> <span class="k">else</span> <span class="n">u_max</span>
+                <span class="k">if</span> <span class="n">f_hi_</span> <span class="o">&gt;</span> <span class="n">f_lo_</span><span class="p">:</span>
+                    <span class="n">raw_u</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_lo_</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_lo_</span><span class="p">)</span> <span class="o">-</span>
+                                    <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_hi_</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">u_max</span> <span class="o">-</span> <span class="n">f_hi_</span><span class="p">))</span> <span class="o">/</span> <span class="n">fall_u</span>
+            <span class="k">if</span> <span class="n">raw_u</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="k">for</span> <span class="n">kv</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k_v_lo</span><span class="p">,</span> <span class="n">k_v_hi</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+                <span class="n">v_k</span> <span class="o">=</span> <span class="p">(</span><span class="n">kv</span> <span class="o">-</span> <span class="n">v_half</span><span class="p">)</span> <span class="o">*</span> <span class="n">dv_v</span> <span class="o">+</span> <span class="n">det_offset_v</span>
+                <span class="n">v_L</span> <span class="o">=</span> <span class="n">v_k</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dv_v</span>
+                <span class="n">v_R</span> <span class="o">=</span> <span class="n">v_k</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dv_v</span>
+
+                <span class="n">aLv</span> <span class="o">=</span> <span class="n">v_L</span> <span class="k">if</span> <span class="n">v_L</span> <span class="o">&gt;</span> <span class="n">v_min</span> <span class="k">else</span> <span class="n">v_min</span>
+                <span class="n">aRv</span> <span class="o">=</span> <span class="n">v_R</span> <span class="k">if</span> <span class="n">v_R</span> <span class="o">&lt;</span> <span class="n">v_max</span> <span class="k">else</span> <span class="n">v_max</span>
+                <span class="k">if</span> <span class="n">aLv</span> <span class="o">&gt;=</span> <span class="n">aRv</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="n">raw_v</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">if</span> <span class="n">rise_v</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                    <span class="n">r_lo_v</span> <span class="o">=</span> <span class="n">aLv</span> <span class="k">if</span> <span class="n">aLv</span> <span class="o">&gt;</span> <span class="n">v_min</span> <span class="k">else</span> <span class="n">v_min</span>
+                    <span class="n">r_hi_v</span> <span class="o">=</span> <span class="n">aRv</span> <span class="k">if</span> <span class="n">aRv</span> <span class="o">&lt;</span> <span class="n">v_lo</span> <span class="k">else</span> <span class="n">v_lo</span>
+                    <span class="k">if</span> <span class="n">r_hi_v</span> <span class="o">&gt;</span> <span class="n">r_lo_v</span><span class="p">:</span>
+                        <span class="n">raw_v</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">r_hi_v</span> <span class="o">-</span> <span class="n">v_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_hi_v</span> <span class="o">-</span> <span class="n">v_min</span><span class="p">)</span> <span class="o">-</span>
+                                        <span class="p">(</span><span class="n">r_lo_v</span> <span class="o">-</span> <span class="n">v_min</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">r_lo_v</span> <span class="o">-</span> <span class="n">v_min</span><span class="p">))</span> <span class="o">/</span> <span class="n">rise_v</span>
+                <span class="k">if</span> <span class="n">plateau_v</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                    <span class="n">p_lo_v</span> <span class="o">=</span> <span class="n">aLv</span> <span class="k">if</span> <span class="n">aLv</span> <span class="o">&gt;</span> <span class="n">v_lo</span> <span class="k">else</span> <span class="n">v_lo</span>
+                    <span class="n">p_hi_v</span> <span class="o">=</span> <span class="n">aRv</span> <span class="k">if</span> <span class="n">aRv</span> <span class="o">&lt;</span> <span class="n">v_hi</span> <span class="k">else</span> <span class="n">v_hi</span>
+                    <span class="k">if</span> <span class="n">p_hi_v</span> <span class="o">&gt;</span> <span class="n">p_lo_v</span><span class="p">:</span>
+                        <span class="n">raw_v</span> <span class="o">+=</span> <span class="n">p_hi_v</span> <span class="o">-</span> <span class="n">p_lo_v</span>
+                <span class="k">if</span> <span class="n">fall_v</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
+                    <span class="n">f_lo_v</span> <span class="o">=</span> <span class="n">aLv</span> <span class="k">if</span> <span class="n">aLv</span> <span class="o">&gt;</span> <span class="n">v_hi</span> <span class="k">else</span> <span class="n">v_hi</span>
+                    <span class="n">f_hi_v</span> <span class="o">=</span> <span class="n">aRv</span> <span class="k">if</span> <span class="n">aRv</span> <span class="o">&lt;</span> <span class="n">v_max</span> <span class="k">else</span> <span class="n">v_max</span>
+                    <span class="k">if</span> <span class="n">f_hi_v</span> <span class="o">&gt;</span> <span class="n">f_lo_v</span><span class="p">:</span>
+                        <span class="n">raw_v</span> <span class="o">+=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">((</span><span class="n">v_max</span> <span class="o">-</span> <span class="n">f_lo_v</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">v_max</span> <span class="o">-</span> <span class="n">f_lo_v</span><span class="p">)</span> <span class="o">-</span>
+                                        <span class="p">(</span><span class="n">v_max</span> <span class="o">-</span> <span class="n">f_hi_v</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">v_max</span> <span class="o">-</span> <span class="n">f_hi_v</span><span class="p">))</span> <span class="o">/</span> <span class="n">fall_v</span>
+                <span class="k">if</span> <span class="n">raw_v</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="n">accum</span> <span class="o">+=</span> <span class="n">weight</span> <span class="o">*</span> <span class="n">raw_u</span> <span class="o">*</span> <span class="n">raw_v</span> <span class="o">*</span> <span class="n">d_sino</span><span class="p">[</span><span class="n">iview</span><span class="p">,</span> <span class="n">ku</span><span class="p">,</span> <span class="n">kv</span><span class="p">]</span>
+
+    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">iz</span><span class="p">]</span> <span class="o">=</span> <span class="n">accum</span>
+
+
 <span class="c1"># ############################################################################</span>
 <span class="c1"># DIFFERENTIABLE TORCH FUNCTIONS</span>
 <span class="c1"># ############################################################################</span>
@@ -4639,18 +5270,36 @@
     <span class="n">detector_offset</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
     <span class="n">center_offset_x</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
     <span class="n">center_offset_y</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;siddon&quot;</span><span class="p">,</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Fan-beam weighted backprojection for analytical FBP pipelines.</span>
 
-<span class="sd">    Dispatches to the dedicated fan FBP voxel-driven gather kernel</span>
-<span class="sd">    (``_fan_2d_fbp_backproject_kernel``). The shared Siddon-based fan</span>
-<span class="sd">    backward kernel continues to serve the autograd adjoint path used by</span>
-<span class="sd">    ``FanProjectorFunction`` / ``FanBackprojectorFunction``; this function</span>
-<span class="sd">    is only the analytical FBP path. Uses ``(SID/U)^2`` distance</span>
-<span class="sd">    weighting with linear detector-gather and applies the same</span>
-<span class="sd">    ``sdd/(2*pi*sid)`` analytical FBP constant that the cone FDK path</span>
-<span class="sd">    uses, so a unit-density disk reconstructs to amplitude 1.</span>
+<span class="sd">    Dispatches to one of two gather kernels based on ``backend``:</span>
+
+<span class="sd">    - ``&quot;siddon&quot;`` (default): the bilinear voxel-driven fan FBP gather</span>
+<span class="sd">      ``_fan_2d_fbp_backproject_kernel`` — fastest, bilinearly samples</span>
+<span class="sd">      the filtered sinogram at each pixel&#39;s projected u-coordinate.</span>
+<span class="sd">    - ``&quot;sf&quot;``: the separable-footprint fan FBP gather</span>
+<span class="sd">      ``_fan_2d_sf_fbp_backproject_kernel`` — integrates the filtered</span>
+<span class="sd">      sinogram over each pixel&#39;s trapezoidal footprint. At nominal</span>
+<span class="sd">      voxel size (``detector_spacing * sid / sdd``) this gives nearly</span>
+<span class="sd">      the same MTF as the bilinear gather; at sub-nominal voxel sizes</span>
+<span class="sd">      it gives measurably higher spatial resolution, and at supra-</span>
+<span class="sd">      nominal it gives higher SNR (see LEAP&#39;s SF vs VD analysis).</span>
+
+<span class="sd">    Both paths apply the ``(SID / U)^2`` FBP weight per view inside</span>
+<span class="sd">    the kernel and the ``sdd / (2 * pi * sid)`` analytical FBP scale</span>
+<span class="sd">    in Python, so amplitude calibration is preserved across backends.</span>
+<span class="sd">    The Siddon-based fan autograd adjoint</span>
+<span class="sd">    (``_fan_2d_backward_kernel``) and the SF-matched adjoint</span>
+<span class="sd">    (``_fan_2d_sf_backward_kernel``) stay unchanged — they continue</span>
+<span class="sd">    to serve ``FanProjectorFunction`` / ``FanBackprojectorFunction``</span>
+<span class="sd">    and are not touched by this analytical wrapper.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">backend</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;siddon&quot;</span><span class="p">,</span> <span class="s2">&quot;sf&quot;</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;backend must be &#39;siddon&#39; or &#39;sf&#39;, got </span><span class="si">{</span><span class="n">backend</span><span class="si">!r}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;sinogram must be on CUDA device&quot;</span><span class="p">)</span>
     <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">device</span>
@@ -4675,17 +5324,35 @@
 
     <span class="n">pt_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">current_stream</span><span class="p">()</span>
     <span class="n">numba_stream</span> <span class="o">=</span> <span class="n">_get_numba_external_stream_for</span><span class="p">(</span><span class="n">pt_stream</span><span class="p">)</span>
-    <span class="n">_fan_2d_fbp_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
-        <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
-        <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-        <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
-        <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
-    <span class="p">)</span>
-    <span class="c1"># Same analytical scale as the cone FDK path. See the comment on</span>
-    <span class="c1"># ``cone_weighted_backproject`` for the derivation; both 2D fan FBP</span>
-    <span class="c1"># and 3D cone FDK share this constant because the ramp filter is</span>
-    <span class="c1"># applied on the physical detector plane in both cases.</span>
-    <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">sdd</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sid</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;siddon&quot;</span><span class="p">:</span>
+        <span class="n">_fan_2d_fbp_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+            <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
+            <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="c1"># Classical FBP constant ``sdd / (2*pi*sid)`` for the VD</span>
+        <span class="c1"># gather (which applies ``(sid/U)^2`` per voxel per view).</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">sdd</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sid</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>  <span class="c1"># backend == &quot;sf&quot;</span>
+        <span class="n">_fan_2d_sf_fbp_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+            <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
+            <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="c1"># LEAP chord-weighted form: the kernel produces</span>
+        <span class="c1"># ``bp_weight * chord * raw_in_voxel_len`` which carries an</span>
+        <span class="c1"># implicit ``1/det_spacing_v`` factor (since ``raw`` is a</span>
+        <span class="c1"># closed-form trapezoid integral in voxel-index length). At</span>
+        <span class="c1"># nominal voxel size (``det_spacing_v = 1``) the classical</span>
+        <span class="c1"># factor ``sdd/(2*pi*sid)`` divided by the magnification</span>
+        <span class="c1"># ``sdd/sid`` reduces to ``1/(2*pi)``; for general voxel /</span>
+        <span class="c1"># detector ratios the scale is</span>
+        <span class="c1"># ``det_spacing_v / (2*pi) = (det_spacing/voxel_spacing)/(2*pi)``</span>
+        <span class="c1"># so sub- and supra-nominal voxel grids still reconstruct to</span>
+        <span class="c1"># unit density without manual re-scaling.</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span> <span class="o">*</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
     <span class="n">reco</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">scale</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">reco</span></div>
 
@@ -4709,17 +5376,44 @@
     <span class="n">center_offset_x</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
     <span class="n">center_offset_y</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
     <span class="n">center_offset_z</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;siddon&quot;</span><span class="p">,</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Cone-beam weighted backprojection for analytical FDK pipelines.</span>
 
-<span class="sd">    Dispatches to the dedicated FDK voxel-driven gather kernel</span>
-<span class="sd">    (``_cone_3d_fdk_backproject_kernel``). The shared Siddon-based cone</span>
-<span class="sd">    backward kernel continues to serve the autograd adjoint path used by</span>
-<span class="sd">    ``ConeProjectorFunction`` / ``ConeBackprojectorFunction``; this function</span>
-<span class="sd">    is only the analytical FDK path, and it uses a ``(SID/U)^2`` weight with</span>
-<span class="sd">    a bilinear detector gather to stay consistent with the classical FDK</span>
-<span class="sd">    formulation.</span>
+<span class="sd">    Dispatches to one of three gather kernels based on ``backend``:</span>
+
+<span class="sd">    - ``&quot;siddon&quot;`` (default): the bilinear voxel-driven FDK gather</span>
+<span class="sd">      ``_cone_3d_fdk_backproject_kernel`` — fastest, bilinearly samples</span>
+<span class="sd">      the filtered sinogram at each voxel&#39;s projected ``(u, v)``.</span>
+<span class="sd">    - ``&quot;sf_tr&quot;``: the separable-footprint FDK gather</span>
+<span class="sd">      ``_cone_3d_sf_tr_fdk_backproject_kernel`` — integrates the filtered</span>
+<span class="sd">      sinogram over each voxel&#39;s transaxial trapezoidal footprint and</span>
+<span class="sd">      axial rectangular footprint at the voxel-centre magnification.</span>
+<span class="sd">    - ``&quot;sf_tt&quot;``: the separable-footprint FDK gather</span>
+<span class="sd">      ``_cone_3d_sf_tt_fdk_backproject_kernel`` — same transaxial</span>
+<span class="sd">      trapezoid as ``&quot;sf_tr&quot;`` but the axial footprint is also a</span>
+<span class="sd">      trapezoid built from four z-corner projections, which more</span>
+<span class="sd">      faithfully captures the axial magnification variation inside</span>
+<span class="sd">      one voxel at large cone angles.</span>
+
+<span class="sd">    At nominal voxel size (``du * sid / sdd``) the three backends give</span>
+<span class="sd">    nearly identical MTFs; at sub-nominal voxels the SF variants give</span>
+<span class="sd">    measurably higher spatial resolution, and at supra-nominal voxels</span>
+<span class="sd">    they give higher SNR (see LEAP&#39;s SF vs VD analysis). All three</span>
+<span class="sd">    paths apply the ``(SID / U)^2`` FDK weight per view inside the</span>
+<span class="sd">    kernel and the ``sdd / (2 * pi * sid)`` analytical FDK scale in</span>
+<span class="sd">    Python, so amplitude calibration is preserved across backends.</span>
+<span class="sd">    The Siddon-based cone autograd adjoint</span>
+<span class="sd">    (``_cone_3d_backward_kernel``) and the SF-matched adjoints</span>
+<span class="sd">    (``_cone_3d_sf_tr_backward_kernel`` /</span>
+<span class="sd">    ``_cone_3d_sf_tt_backward_kernel``) stay unchanged — they</span>
+<span class="sd">    continue to serve ``ConeProjectorFunction`` /</span>
+<span class="sd">    ``ConeBackprojectorFunction`` and are not touched by this wrapper.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">backend</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;siddon&quot;</span><span class="p">,</span> <span class="s2">&quot;sf_tr&quot;</span><span class="p">,</span> <span class="s2">&quot;sf_tt&quot;</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;backend must be &#39;siddon&#39;, &#39;sf_tr&#39;, or &#39;sf_tt&#39;, got </span><span class="si">{</span><span class="n">backend</span><span class="si">!r}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;sinogram must be on CUDA device&quot;</span><span class="p">)</span>
     <span class="n">device</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">device</span>
@@ -4744,8 +5438,12 @@
     <span class="c1"># (the warp-adjacent axis), so by putting D first we make ``iz``</span>
     <span class="c1"># warp-adjacent, which matches the innermost stride-1 axis of the WHD</span>
     <span class="c1"># output buffer - coalesced writes. See the memory-access note in the</span>
-    <span class="c1"># kernel docstring.</span>
-    <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">)</span>
+    <span class="c1"># kernel docstring. The SF variants are register-heavier so they</span>
+    <span class="c1"># use the smaller ``_TPB_SF_3D`` block shape.</span>
+    <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;siddon&quot;</span><span class="p">:</span>
+        <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">tpb</span><span class="o">=</span><span class="n">_TPB_SF_3D</span><span class="p">)</span>
     <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">W</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">H</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">D</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">)</span>
     <span class="n">det_offset_u_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset_u</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
     <span class="n">det_offset_v_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_offset_v</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
@@ -4755,26 +5453,51 @@
 
     <span class="n">pt_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">current_stream</span><span class="p">()</span>
     <span class="n">numba_stream</span> <span class="o">=</span> <span class="n">_get_numba_external_stream_for</span><span class="p">(</span><span class="n">pt_stream</span><span class="p">)</span>
-    <span class="n">_cone_3d_fdk_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
-        <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
-        <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
-        <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
-        <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
-        <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
-    <span class="p">)</span>
-    <span class="c1"># Final analytical FDK scale factor. Two pieces:</span>
-    <span class="c1"># - 1/(2*pi): the repo&#39;s ramp_filter_1d computes</span>
-    <span class="c1">#     IFFT(|2*pi*fftfreq|*FFT[.])</span>
-    <span class="c1">#   which implements the ``|omega|`` ramp in the radian-frequency</span>
-    <span class="c1">#   convention. The classical FBP / FDK formula carries an explicit</span>
-    <span class="c1">#   1/(2*pi) from the inverse Fourier integral that this discretization</span>
-    <span class="c1">#   does not absorb, so it must be applied on the spatial side.</span>
-    <span class="c1"># - sdd/sid: the ramp filter runs on the physical detector grid</span>
-    <span class="c1">#   (spacing du), but the FDK inversion is written in the virtual</span>
-    <span class="c1">#   isocenter-plane detector (spacing du*sid/sdd). Rescaling one-</span>
-    <span class="c1">#   dimensional convolution between those two scales leaves an</span>
-    <span class="c1">#   ``sdd/sid`` magnification factor on the filtered sinogram.</span>
-    <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">sdd</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sid</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;siddon&quot;</span><span class="p">:</span>
+        <span class="n">_cone_3d_fdk_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+            <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
+            <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
+            <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">elif</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;sf_tr&quot;</span><span class="p">:</span>
+        <span class="n">_cone_3d_sf_tr_fdk_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+            <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
+            <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
+            <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>  <span class="c1"># backend == &quot;sf_tt&quot;</span>
+        <span class="n">_cone_3d_sf_tt_fdk_backproject_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
+            <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
+            <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sdd</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">sid</span><span class="p">),</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">cz</span><span class="p">,</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">),</span>
+            <span class="n">det_offset_u_v</span><span class="p">,</span> <span class="n">det_offset_v_v</span><span class="p">,</span>
+            <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span> <span class="n">center_offset_z_v</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="c1"># Final analytical FDK scale factor.</span>
+    <span class="c1"># - VD (siddon) path: classical ``sdd / (2*pi*sid)``. The kernel</span>
+    <span class="c1">#   applies ``(sid/U)^2`` per voxel and 1/(2*pi) comes from the</span>
+    <span class="c1">#   ramp-filter radian-frequency convention.</span>
+    <span class="c1"># - SF (sf_tr / sf_tt) path: the LEAP chord-weighted form replaces</span>
+    <span class="c1">#   ``(sid/U)^2`` with ``chord_u * sqrt(1+(v/sdd)^2)``. The kernel</span>
+    <span class="c1">#   output carries an implicit ``1/(du_v*dv_v)`` factor from the</span>
+    <span class="c1">#   voxel-index-length ``raw`` integrals, and at the isocenter the</span>
+    <span class="c1">#   chord formula differs from classical FDK by an ``mag^2``</span>
+    <span class="c1">#   factor. Combining everything:</span>
+    <span class="c1">#       scale = (du*dv*sid) / (2*pi*sdd*voxel^2)</span>
+    <span class="c1">#   which reduces to ``sid/(2*pi*sdd)`` at nominal (du=dv=voxel)</span>
+    <span class="c1">#   and automatically renormalises sub- and supra-nominal voxel</span>
+    <span class="c1">#   grids so they reconstruct to unit density.</span>
+    <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;siddon&quot;</span><span class="p">:</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">sdd</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sid</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">v_sq</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">)</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">du</span><span class="p">)</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">dv</span><span class="p">)</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sid</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span>
+            <span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">sdd</span><span class="p">)</span> <span class="o">*</span> <span class="n">v_sq</span>
+        <span class="p">)</span>
     <span class="n">vol</span> <span class="o">=</span> <span class="n">vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
     <span class="n">vol</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">scale</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">vol</span></div>
