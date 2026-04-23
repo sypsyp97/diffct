@@ -1,11 +1,18 @@
 import math
+import sys
+from pathlib import Path
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
-from diffct.differentiable import FanProjectorFunction
-from diffct.geometry import circular_trajectory_2d_fan
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from diffct import FanProjectorFunction, circular_trajectory_2d_fan
 
 
 def shepp_logan_2d(Nx, Ny):

@@ -18,6 +18,18 @@ _DTYPE = np.float32
 _INF = _DTYPE(np.inf)
 """Floating-point infinity in default data type."""
 
+_NEG_INF = _DTYPE(-np.inf)
+"""Negative floating-point infinity in default data type."""
+
+_ZERO = _DTYPE(0.0)
+"""Floating-point zero in default data type."""
+
+_ONE = _DTYPE(1.0)
+"""Floating-point one in default data type."""
+
+_HALF = _DTYPE(0.5)
+"""Floating-point one half in default data type."""
+
 _EPSILON = _DTYPE(1e-6)
 """Small epsilon value for numerical comparisons to avoid division by zero."""
 

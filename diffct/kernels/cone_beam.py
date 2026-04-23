@@ -6,9 +6,19 @@ voxel-driven FDK gather kernel for analytical reconstruction pipelines.
 """
 
 import math
+import numpy as np
 from numba import cuda
 
-from ..constants import _FASTMATH_DECORATOR, _FDK_ACCURACY_DECORATOR, _INF, _EPSILON
+from ..constants import (
+    _FASTMATH_DECORATOR,
+    _FDK_ACCURACY_DECORATOR,
+    _INF,
+    _NEG_INF,
+    _ZERO,
+    _ONE,
+    _HALF,
+    _EPSILON,
+)
 
 
 # ============================================================================
@@ -73,7 +83,7 @@ def _cone_3d_forward_kernel(
     detector center, and detector orientation vectors for each view.
     Uses trilinear interpolation for accurate volumetric sampling.
     """
-    iview, iu, iv = cuda.grid(3)
+    iv, iu, iview = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
         return
 
@@ -97,8 +107,8 @@ def _cone_3d_forward_kernel(
     v_vec_z = d_det_v_vec[iview, 2]
 
     # Calculate detector element offset from center
-    u_offset = (iu - n_u * 0.5) * du / voxel_spacing
-    v_offset = (iv - n_v * 0.5) * dv / voxel_spacing
+    u_offset = (np.float32(iu) - np.float32(n_u) * _HALF) * du / voxel_spacing
+    v_offset = (np.float32(iv) - np.float32(n_v) * _HALF) * dv / voxel_spacing
 
     # Calculate 3D detector element position using center + u*u_vec + v*v_vec
     det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
@@ -110,42 +120,42 @@ def _cone_3d_forward_kernel(
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
     if length < _EPSILON:  # Degenerate ray case
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
     
     # Normalize 3D ray direction vector for parametric traversal
-    inv_len = 1.0 / length
+    inv_len = _ONE / length
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with 3D volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     
     # X-direction boundary intersections
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx:  # Source outside x-bounds
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
     
     # Y-direction boundary intersections
     if abs(dir_y) > _EPSILON:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy:  # Source outside y-bounds
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
     
     # Z-direction boundary intersections (extends 2D algorithm to 3D)
     if abs(dir_z) > _EPSILON:
         tz1, tz2 = (-cz - src_z) / dir_z, (cz - src_z) / dir_z
         t_min, t_max = max(t_min, min(tz1, tz2)), min(t_max, max(tz1, tz2))
     elif src_z < -cz or src_z > cz:  # Source outside z-bounds
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
 
     if t_min >= t_max:  # No valid 3D intersection
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
-    accum = 0.0  # Accumulated projection value
+    accum = _ZERO  # Accumulated projection value
     t = t_min    # Current ray parameter
     
     # Convert 3D ray entry point to voxel indices
@@ -155,17 +165,20 @@ def _cone_3d_forward_kernel(
 
     # 3D traversal parameters (extends 2D algorithm)
     step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
-    inv_dir_z = (1.0 / dir_z) if abs(dir_z) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
+    inv_dir_z = (_ONE / dir_z) if abs(dir_z) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
     dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
 
     # Calculate parameter values for next 3D voxel boundary crossings
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = ((iz + (step_z > 0)) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    next_iz = iz + (1 if step_z > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D TRAVERSAL LOOP WITH TRILINEAR INTERPOLATION ===
     while t < t_max:
@@ -178,14 +191,16 @@ def _cone_3d_forward_kernel(
                 # === TRILINEAR INTERPOLATION SAMPLING ===
                 # Sample 3D volume at ray segment midpoint for accurate integration
                 # Mathematical basis: Midpoint rule for numerical integration along 3D ray segments
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx  # Midpoint x-coordinate in volume space
                 mid_y = src_y + t_mid * dir_y + cy  # Midpoint y-coordinate in volume space
                 mid_z = src_z + t_mid * dir_z + cz  # Midpoint z-coordinate in volume space
 
                 # Convert continuous 3D coordinates to discrete voxel indices and fractional weights
                 ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
+                dz = mid_z - np.float32(iz0)
 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -193,9 +208,9 @@ def _cone_3d_forward_kernel(
                 iz0 = max(0, min(iz0, Nz - 2))
 
                 # Precompute complements
-                omdx = 1.0 - dx
-                omdy = 1.0 - dy
-                omdz = 1.0 - dz
+                omdx = _ONE - dx
+                omdy = _ONE - dy
+                omdz = _ONE - dz
 
                 # === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===
                 val = (
@@ -293,7 +308,7 @@ def _cone_3d_backward_kernel(
     atomic operations for thread-safe accumulation.
     Supports arbitrary cone-beam geometries.
     """
-    iview, iu, iv = cuda.grid(3)
+    iv, iu, iview = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
         return
 
@@ -319,8 +334,8 @@ def _cone_3d_backward_kernel(
     v_vec_z = d_det_v_vec[iview, 2]
 
     # Calculate detector element offset from center
-    u_offset = (iu - n_u * 0.5) * du / voxel_spacing
-    v_offset = (iv - n_v * 0.5) * dv / voxel_spacing
+    u_offset = (np.float32(iu) - np.float32(n_u) * _HALF) * du / voxel_spacing
+    v_offset = (np.float32(iv) - np.float32(n_v) * _HALF) * dv / voxel_spacing
 
     # Calculate 3D detector element position using center + u*u_vec + v*v_vec
     det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
@@ -332,12 +347,12 @@ def _cone_3d_backward_kernel(
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
     if length < _EPSILON: return  # Skip degenerate rays
-    inv_len = 1.0 / length        # Normalization factor for ray direction
+    inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len  # Normalized 3D ray direction vector
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with 3D volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     
     # X-direction boundary intersections
     if abs(dir_x) > _EPSILON:
@@ -367,17 +382,20 @@ def _cone_3d_backward_kernel(
 
     # 3D traversal parameters (extends 2D algorithm)
     step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
-    inv_dir_z = (1.0 / dir_z) if abs(dir_z) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
+    inv_dir_z = (_ONE / dir_z) if abs(dir_z) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
     dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
 
     # Calculate parameter values for next 3D voxel boundary crossings
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = ((iz + (step_z > 0)) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    next_iz = iz + (1 if step_z > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along divergent 3D ray path using trilinear interpolation
@@ -390,14 +408,16 @@ def _cone_3d_backward_kernel(
             if seg_len > _EPSILON:
                 # === TRILINEAR INTERPOLATION SAMPLING ===
                 # Sample 3D volume at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx
                 mid_y = src_y + t_mid * dir_y + cy
                 mid_z = src_z + t_mid * dir_z + cz
 
                 # Convert continuous 3D coordinates to voxel indices and interpolation weights
                 ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
+                dz = mid_z - np.float32(iz0)
 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -405,9 +425,9 @@ def _cone_3d_backward_kernel(
                 iz0 = max(0, min(iz0, Nz - 2))
 
                 # Precompute complements and contribution
-                omdx = 1.0 - dx
-                omdy = 1.0 - dy
-                omdz = 1.0 - dz
+                omdx = _ONE - dx
+                omdy = _ONE - dy
+                omdz = _ONE - dz
                 cval = g * seg_len
 
                 # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
@@ -480,17 +500,17 @@ def _cone_3d_fdk_backproject_kernel(
         return
 
     # Voxel position in voxel-unit, origin-centred coordinates.
-    x_v = (ix - cx)
-    y_v = (iy - cy)
-    z_v = (iz - cz)
+    x_v = np.float32(ix) - cx
+    y_v = np.float32(iy) - cy
+    z_v = np.float32(iz) - cz
 
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
 
-    half_u = n_u * 0.5
-    half_v = n_v * 0.5
+    half_u = np.float32(n_u) * _HALF
+    half_v = np.float32(n_v) * _HALF
 
-    accum = 0.0
+    accum = _ZERO
     for iview in range(n_views):
         # Source position in voxel units.
         sx = d_src_pos[iview, 0] / voxel_spacing
@@ -529,7 +549,7 @@ def _cone_3d_fdk_backproject_kernel(
         # a zero reconstruction. The circular_trajectory_3d helper already
         # produces the right-handed convention so this is a no-op there.
         align = (dcx - sx) * nx + (dcy - sy) * ny + (dcz - sz) * nz
-        if align < 0.0:
+        if align < _ZERO:
             nx = -nx
             ny = -ny
             nz = -nz
@@ -579,7 +599,7 @@ def _cone_3d_fdk_backproject_kernel(
         fu = u_det / du_v + half_u
         fv = v_det / dv_v + half_v
 
-        if fu < 0.0 or fu > (n_u - 1) or fv < 0.0 or fv > (n_v - 1):
+        if fu < _ZERO or fu > (np.float32(n_u) - _ONE) or fv < _ZERO or fv > (np.float32(n_v) - _ONE):
             continue
 
         iu0 = int(math.floor(fu))
@@ -592,24 +612,24 @@ def _cone_3d_fdk_backproject_kernel(
             iu0 = 0
         if iv0 < 0:
             iv0 = 0
-        tu = fu - iu0
-        tv = fv - iv0
-        if tu < 0.0:
-            tu = 0.0
-        elif tu > 1.0:
-            tu = 1.0
-        if tv < 0.0:
-            tv = 0.0
-        elif tv > 1.0:
-            tv = 1.0
+        tu = fu - np.float32(iu0)
+        tv = fv - np.float32(iv0)
+        if tu < _ZERO:
+            tu = _ZERO
+        elif tu > _ONE:
+            tu = _ONE
+        if tv < _ZERO:
+            tv = _ZERO
+        elif tv > _ONE:
+            tv = _ONE
 
         s00 = d_sino[iview, iu0,     iv0    ]
         s10 = d_sino[iview, iu0 + 1, iv0    ]
         s01 = d_sino[iview, iu0,     iv0 + 1]
         s11 = d_sino[iview, iu0 + 1, iv0 + 1]
 
-        omtu = 1.0 - tu
-        omtv = 1.0 - tv
+        omtu = _ONE - tu
+        omtv = _ONE - tv
         sample = (
             s00 * omtu * omtv +
             s10 * tu   * omtv +

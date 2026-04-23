@@ -1,11 +1,19 @@
 import math
+import sys
+from pathlib import Path
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
-from diffct.differentiable import ParallelProjectorFunction
-from diffct.geometry import (sinusoidal_trajectory_2d_parallel, custom_trajectory_2d_parallel)
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from diffct import sinusoidal_trajectory_2d_parallel, custom_trajectory_2d_parallel
+from diffct import ParallelProjectorFunction
 
 
 def custom_wobble_trajectory_rays(angles):

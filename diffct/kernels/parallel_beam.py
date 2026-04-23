@@ -7,9 +7,19 @@ pipelines.
 """
 
 import math
+import numpy as np
 from numba import cuda
 
-from ..constants import _FASTMATH_DECORATOR, _FDK_ACCURACY_DECORATOR, _INF, _EPSILON
+from ..constants import (
+    _FASTMATH_DECORATOR,
+    _FDK_ACCURACY_DECORATOR,
+    _INF,
+    _NEG_INF,
+    _ZERO,
+    _ONE,
+    _HALF,
+    _EPSILON,
+)
 
 
 # ============================================================================
@@ -80,7 +90,7 @@ def _parallel_2d_forward_kernel(
     u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from origin
-    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Ray starting point: detector origin + offset along u-direction
     pnt_x = det_ox + u_offset * u_vec_x
@@ -90,7 +100,7 @@ def _parallel_2d_forward_kernel(
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
     # Volume extends from [-cx, cx] x [-cy, cy] in voxel coordinate system
     # Mathematical basis: For ray r(t) = origin + t*direction, solve r(t) = boundary for parameter t
-    t_min, t_max = -_INF, _INF  # Initialize ray parameter range to unbounded
+    t_min, t_max = _NEG_INF, _INF  # Initialize ray parameter range to unbounded
     
     # X-direction boundary intersections
     # Handle non-parallel rays: compute intersection parameters with left (-cx) and right (+cx) boundaries
@@ -101,7 +111,7 @@ def _parallel_2d_forward_kernel(
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))  # Update valid parameter range
     elif pnt_x < -cx or pnt_x > cx:  # Ray parallel to x-axis but outside volume bounds
         # Edge case: ray never intersects volume if parallel and outside boundaries
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # Y-direction boundary intersections (identical logic to x-direction)
     # Handle non-parallel rays: compute intersection parameters with bottom (-cy) and top (+cy) boundaries
@@ -111,15 +121,15 @@ def _parallel_2d_forward_kernel(
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))  # Intersect with x-range
     elif pnt_y < -cy or pnt_y > cy:  # Ray parallel to y-axis but outside volume bounds
         # Edge case: ray never intersects volume if parallel and outside boundaries
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # Boundary intersection validation: check if ray actually intersects the volume
     # If t_min >= t_max, the ray misses the volume entirely (no valid intersection interval)
     if t_min >= t_max:
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # === SIDDON METHOD VOXEL TRAVERSAL INITIALIZATION ===
-    accum = 0.0  # Accumulated projection value along ray
+    accum = _ZERO  # Accumulated projection value along ray
     t = t_min    # Current ray parameter (distance from ray start)
     
     # Convert ray entry point to voxel indices (image coordinate system)
@@ -129,14 +139,16 @@ def _parallel_2d_forward_kernel(
     # Determine traversal direction and step sizes for each axis
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)  # Voxel stepping direction
     # Hoist inverse directions to reduce divisions and branches
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
 
     # Calculate parameter values for next voxel boundary crossings using inv_dir_*
-    tx = ((ix + (step_x > 0)) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === MAIN RAY TRAVERSAL LOOP ===
     # Step through voxels along ray path, accumulating weighted contributions
@@ -151,14 +163,15 @@ def _parallel_2d_forward_kernel(
                 # === BILINEAR INTERPOLATION SAMPLING ===
                 # Sample volume at ray segment midpoint for accurate integration
                 # Mathematical basis: Midpoint rule for numerical integration along ray segments
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = pnt_x + t_mid * dir_x + cx  # Midpoint x-coordinate in image space
                 mid_y = pnt_y + t_mid * dir_y + cy  # Midpoint y-coordinate in image space
 
                 # Convert continuous coordinates to discrete voxel indices and fractional weights
                 # Floor operation gives base voxel index, fractional part gives interpolation weights
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))  # Base voxel indices (bottom-left corner)
-                dx, dy = mid_x - ix0, mid_y - iy0  # Fractional parts: distance from base voxel center [0,1]
+                dx = mid_x - np.float32(ix0)  # Fractional parts: distance from base voxel center [0,1]
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -168,8 +181,8 @@ def _parallel_2d_forward_kernel(
                 # Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)
                 # where wi(x,y) are the bilinear basis functions for each corner voxel
                 # Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 v00 = d_image[iy0, ix0]
                 v10 = d_image[iy0, ix0 + 1]
                 v01 = d_image[iy0 + 1, ix0]
@@ -266,14 +279,14 @@ def _parallel_2d_backward_kernel(
     u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from origin
-    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Ray starting point: detector origin + offset along u-direction
     pnt_x = det_ox + u_offset * u_vec_x
     pnt_y = det_oy + u_offset * u_vec_y
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - pnt_x) / dir_x, (cx - pnt_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
@@ -292,12 +305,14 @@ def _parallel_2d_backward_kernel(
     iy = int(math.floor(pnt_y + t * dir_y + cy))
 
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along ray path using bilinear interpolation
@@ -307,11 +322,12 @@ def _parallel_2d_backward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at ray segment midpoint (same as forward projection)
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = pnt_x + t_mid * dir_x + cx
                 mid_y = pnt_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx, dy = mid_x - ix0, mid_y - iy0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -325,8 +341,8 @@ def _parallel_2d_backward_kernel(
                 # Performance impact: Atomic operations are slower than regular writes but necessary for correctness
                 # Memory access pattern: Global memory atomics with potential bank conflicts, but unavoidable
                 cval = val * seg_len  # Contribution value for this ray segment
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
@@ -370,17 +386,17 @@ def _parallel_2d_fbp_backproject_kernel(
     detector coordinate is ``u = (P - det_origin) . det_u_vec`` (no
     magnification because the rays are parallel).
     """
-    iy, ix = cuda.grid(2)
+    ix, iy = cuda.grid(2)
     if ix >= Nx or iy >= Ny:
         return
 
-    x_v = (ix - cx)
-    y_v = (iy - cy)
+    x_v = np.float32(ix) - cx
+    y_v = np.float32(iy) - cy
 
     det_spacing_v = det_spacing / voxel_spacing
-    half_u = n_det * 0.5
+    half_u = np.float32(n_det) * _HALF
 
-    accum = 0.0
+    accum = _ZERO
     for iview in range(n_views):
         dox = d_det_origin[iview, 0] / voxel_spacing
         doy = d_det_origin[iview, 1] / voxel_spacing
@@ -394,7 +410,7 @@ def _parallel_2d_fbp_backproject_kernel(
         u_det = rx * ux + ry * uy
 
         fu = u_det / det_spacing_v + half_u
-        if fu < 0.0 or fu > (n_det - 1):
+        if fu < _ZERO or fu > (np.float32(n_det) - _ONE):
             continue
 
         iu0 = int(math.floor(fu))
@@ -402,15 +418,15 @@ def _parallel_2d_fbp_backproject_kernel(
             iu0 = n_det - 2
         if iu0 < 0:
             iu0 = 0
-        tu = fu - iu0
-        if tu < 0.0:
-            tu = 0.0
-        elif tu > 1.0:
-            tu = 1.0
+        tu = fu - np.float32(iu0)
+        if tu < _ZERO:
+            tu = _ZERO
+        elif tu > _ONE:
+            tu = _ONE
 
         s0 = d_sino[iview, iu0]
         s1 = d_sino[iview, iu0 + 1]
-        sample = s0 * (1.0 - tu) + s1 * tu
+        sample = s0 * (_ONE - tu) + s1 * tu
 
         accum += sample
 

@@ -15,11 +15,17 @@ analytical ``1/(2*pi)`` Fourier-convention constant is applied inside
 """
 
 import math
+import sys
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from diffct import (
     ParallelProjectorFunction,

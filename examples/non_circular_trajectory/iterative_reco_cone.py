@@ -1,12 +1,20 @@
 import math
+import sys
+from pathlib import Path
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
-from diffct.differentiable import ConeProjectorFunction
-from diffct.geometry import (spiral_trajectory_3d, sinusoidal_trajectory_3d,
-                             saddle_trajectory_3d, custom_trajectory_3d)
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from diffct import ConeProjectorFunction
+from diffct import (spiral_trajectory_3d, sinusoidal_trajectory_3d,
+                    saddle_trajectory_3d, custom_trajectory_3d)
 
 def custom_figure8_trajectory(angles, sid):
     """Custom trajectory: Figure-8 pattern in 3D space."""

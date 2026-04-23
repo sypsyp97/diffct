@@ -377,7 +377,7 @@ def parallel_weighted_backproject(sinogram, ray_dir, det_origin, det_u_vec,
     d_det_u_vec = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
     cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-    grid, tpb = _grid_2d(Ny, Nx)
+    grid, tpb = _grid_2d(Nx, Ny)
 
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
@@ -437,7 +437,7 @@ def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
     d_det_u_vec = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
 
     cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-    grid, tpb = _grid_2d(Ny, Nx)
+    grid, tpb = _grid_2d(Nx, Ny)
 
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)

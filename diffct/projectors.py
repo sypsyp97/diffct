@@ -726,7 +726,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
         d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
-        grid, tpb = _grid_3d(n_views, det_u, det_v)
+        grid, tpb = _grid_3d(det_v, det_u, n_views)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -769,7 +769,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
         d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
-        grid, tpb = _grid_3d(n_views, det_u, det_v)
+        grid, tpb = _grid_3d(det_v, det_u, n_views)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -896,7 +896,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
         d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
-        grid, tpb = _grid_3d(n_views, n_u, n_v)
+        grid, tpb = _grid_3d(n_v, n_u, n_views)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()
@@ -941,7 +941,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
         d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
 
-        grid, tpb = _grid_3d(n_views, n_u, n_v)
+        grid, tpb = _grid_3d(n_v, n_u, n_views)
         cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
 
         pt_stream = torch.cuda.current_stream()

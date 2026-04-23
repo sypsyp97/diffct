@@ -6,9 +6,19 @@ voxel-driven FBP gather kernel for analytical reconstruction pipelines.
 """
 
 import math
+import numpy as np
 from numba import cuda
 
-from ..constants import _FASTMATH_DECORATOR, _FDK_ACCURACY_DECORATOR, _INF, _EPSILON
+from ..constants import (
+    _FASTMATH_DECORATOR,
+    _FDK_ACCURACY_DECORATOR,
+    _INF,
+    _NEG_INF,
+    _ZERO,
+    _ONE,
+    _HALF,
+    _EPSILON,
+)
 
 
 # ============================================================================
@@ -80,7 +90,7 @@ def _fan_2d_forward_kernel(
     u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from center
-    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Calculate 2D detector element position using center + u*u_vec
     det_x = det_cx + u_offset * u_vec_x
@@ -91,32 +101,32 @@ def _fan_2d_forward_kernel(
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
     if length < _EPSILON:  # Degenerate ray case
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
     
     # Normalize ray direction vector for parametric traversal
-    inv_len = 1.0 / length
+    inv_len = _ONE / length
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x  # Volume boundary intersections
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx:  # Source outside volume bounds
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     if abs(dir_y) > _EPSILON:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy:
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     if t_min >= t_max:  # No valid intersection
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # === SIDDON METHOD TRAVERSAL (same algorithm as parallel beam) ===
-    accum = 0.0  # Accumulated projection value
+    accum = _ZERO  # Accumulated projection value
     t = t_min    # Current ray parameter
     
     # Convert ray entry point to voxel indices (using source as ray origin)
@@ -125,12 +135,14 @@ def _fan_2d_forward_kernel(
 
     # Traversal parameters (identical to parallel beam implementation)
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # Main traversal loop with bilinear interpolation (identical to parallel beam)
     while t < t_max:
@@ -139,19 +151,20 @@ def _fan_2d_forward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at midpoint using source as ray origin
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx
                 mid_y = src_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx, dy = mid_x - ix0, mid_y - iy0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
                 iy0 = max(0, min(iy0, Ny - 2))
                 
                 # Bilinear interpolation (identical to parallel beam)
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 v00 = d_image[iy0, ix0]
                 v10 = d_image[iy0, ix0 + 1]
                 v01 = d_image[iy0 + 1, ix0]
@@ -246,7 +259,7 @@ def _fan_2d_backward_kernel(
     u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from center
-    u_offset = (idet - n_det * 0.5) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Calculate 2D detector element position using center + u*u_vec
     det_x = det_cx + u_offset * u_vec_x
@@ -257,12 +270,12 @@ def _fan_2d_backward_kernel(
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
     if length < _EPSILON: return  # Skip degenerate rays
-    inv_len = 1.0 / length        # Normalization factor for ray direction
+    inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len  # Normalized ray direction vector
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
@@ -281,12 +294,14 @@ def _fan_2d_backward_kernel(
     iy = int(math.floor(src_y + t * dir_y + cy))
 
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along divergent ray path using bilinear interpolation
@@ -296,11 +311,12 @@ def _fan_2d_backward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx
                 mid_y = src_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx, dy = mid_x - ix0, mid_y - iy0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -313,8 +329,8 @@ def _fan_2d_backward_kernel(
                 # Atomic operations prevent race conditions when multiple divergent rays write to same voxel
                 # Performance consideration: Fan beam geometry may have more atomic contention than parallel beam
                 cval = val * seg_len  # Contribution value for this ray segment
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
@@ -356,17 +372,17 @@ def _fan_2d_fbp_backproject_kernel(
     where ``U_n`` is the signed distance from the source ``S_v`` to the
     pixel along the detector normal.
     """
-    iy, ix = cuda.grid(2)
+    ix, iy = cuda.grid(2)
     if ix >= Nx or iy >= Ny:
         return
 
-    x_v = (ix - cx)
-    y_v = (iy - cy)
+    x_v = np.float32(ix) - cx
+    y_v = np.float32(iy) - cy
 
     det_spacing_v = det_spacing / voxel_spacing
-    half_u = n_det * 0.5
+    half_u = np.float32(n_det) * _HALF
 
-    accum = 0.0
+    accum = _ZERO
     for iview in range(n_views):
         sx = d_src_pos[iview, 0] / voxel_spacing
         sy = d_src_pos[iview, 1] / voxel_spacing
@@ -384,7 +400,7 @@ def _fan_2d_fbp_backproject_kernel(
         ny = ux
         # Align normal so that (det_center - src) . n > 0.
         align = (dcx - sx) * nx + (dcy - sy) * ny
-        if align < 0.0:
+        if align < _ZERO:
             nx = -nx
             ny = -ny
 
@@ -415,7 +431,7 @@ def _fan_2d_fbp_backproject_kernel(
         u_det = rx * ux + ry * uy
 
         fu = u_det / det_spacing_v + half_u
-        if fu < 0.0 or fu > (n_det - 1):
+        if fu < _ZERO or fu > (np.float32(n_det) - _ONE):
             continue
 
         iu0 = int(math.floor(fu))
@@ -423,15 +439,15 @@ def _fan_2d_fbp_backproject_kernel(
             iu0 = n_det - 2
         if iu0 < 0:
             iu0 = 0
-        tu = fu - iu0
-        if tu < 0.0:
-            tu = 0.0
-        elif tu > 1.0:
-            tu = 1.0
+        tu = fu - np.float32(iu0)
+        if tu < _ZERO:
+            tu = _ZERO
+        elif tu > _ONE:
+            tu = _ONE
 
         s0 = d_sino[iview, iu0]
         s1 = d_sino[iview, iu0 + 1]
-        sample = s0 * (1.0 - tu) + s1 * tu
+        sample = s0 * (_ONE - tu) + s1 * tu
 
         w_ratio = sid_n / U_n
         w = w_ratio * w_ratio
