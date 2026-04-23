@@ -712,7 +712,7 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam forward projection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    This CUDA kernel implements cell-constant Siddon ray tracing for</span>
 <span class="sd">    2D parallel beam forward projection.</span>
 
 <span class="sd">    Parameters</span>
@@ -744,11 +744,10 @@
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    The Siddon method with interpolation provides accurate ray-volume intersection by:</span>
+<span class="sd">    The cell-constant Siddon method provides accurate ray-volume intersection by:</span>
 <span class="sd">      - Calculating ray-volume boundary intersections to define traversal limits.</span>
 <span class="sd">      - Iterating through voxels along the ray path via parametric equations.</span>
-<span class="sd">      - Determining bilinear interpolation weights for sub-voxel sampling.</span>
-<span class="sd">      - Aggregating weighted voxel values based on ray segment lengths.</span>
+<span class="sd">      - Aggregating each traversed pixel value based on ray segment lengths.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># CUDA THREAD ORGANIZATION: 2D grid maps directly to ray geometry</span>
     <span class="c1"># Each thread processes one ray defined by (projection_angle, detector_element) pair</span>
@@ -826,48 +825,14 @@
     <span class="n">ty</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_iy</span><span class="p">)</span> <span class="o">-</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">pnt_y</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_y</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_y</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
 
     <span class="c1"># === MAIN RAY TRAVERSAL LOOP ===</span>
-    <span class="c1"># Step through voxels along ray path, accumulating weighted contributions</span>
+    <span class="c1"># Step through voxels along ray path, accumulating cell-constant contributions.</span>
     <span class="k">while</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="n">t_max</span><span class="p">:</span>
-        <span class="c1"># Check if current voxel indices are within valid interpolation bounds</span>
         <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">ix</span> <span class="o">&lt;</span> <span class="n">Nx</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iy</span> <span class="o">&lt;</span> <span class="n">Ny</span><span class="p">:</span>
             <span class="c1"># Determine next voxel boundary crossing (minimum of x, y boundaries or ray exit)</span>
             <span class="n">t_next</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">tx</span><span class="p">,</span> <span class="n">ty</span><span class="p">,</span> <span class="n">t_max</span><span class="p">)</span>
             <span class="n">seg_len</span> <span class="o">=</span> <span class="n">t_next</span> <span class="o">-</span> <span class="n">t</span>  <span class="c1"># Length of ray segment within current voxel region</span>
-            
             <span class="k">if</span> <span class="n">seg_len</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>  <span class="c1"># Only process segments with meaningful length (avoid numerical noise)</span>
-                <span class="c1"># === BILINEAR INTERPOLATION SAMPLING ===</span>
-                <span class="c1"># Sample volume at ray segment midpoint for accurate integration</span>
-                <span class="c1"># Mathematical basis: Midpoint rule for numerical integration along ray segments</span>
-                <span class="n">t_mid</span> <span class="o">=</span> <span class="n">t</span> <span class="o">+</span> <span class="n">seg_len</span> <span class="o">*</span> <span class="n">_HALF</span>
-                <span class="n">mid_x</span> <span class="o">=</span> <span class="n">pnt_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span>  <span class="c1"># Midpoint x-coordinate in image space</span>
-                <span class="n">mid_y</span> <span class="o">=</span> <span class="n">pnt_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span>  <span class="c1"># Midpoint y-coordinate in image space</span>
-
-                <span class="c1"># Convert continuous coordinates to discrete voxel indices and fractional weights</span>
-                <span class="c1"># Floor operation gives base voxel index, fractional part gives interpolation weights</span>
-                <span class="n">ix0</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_x</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_y</span><span class="p">))</span>  <span class="c1"># Base voxel indices (bottom-left corner)</span>
-                <span class="n">dx</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">ix0</span><span class="p">)</span>  <span class="c1"># Fractional parts: distance from base voxel center [0,1]</span>
-                <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iy0</span><span class="p">)</span>
-                
-                <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                
-                <span class="c1"># === BILINEAR INTERPOLATION WEIGHT CALCULATION ===</span>
-                <span class="c1"># Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)</span>
-                <span class="c1"># where wi(x,y) are the bilinear basis functions for each corner voxel</span>
-                <span class="c1"># Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy</span>
-                <span class="n">one_minus_dx</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dx</span>
-                <span class="n">one_minus_dy</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dy</span>
-                <span class="n">v00</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span><span class="p">,</span> <span class="n">ix0</span><span class="p">]</span>
-                <span class="n">v10</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span><span class="p">,</span> <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
-                <span class="n">v01</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span><span class="p">]</span>
-                <span class="n">v11</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
-                <span class="n">row0</span> <span class="o">=</span> <span class="p">(</span><span class="n">v00</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">+</span> <span class="n">v10</span> <span class="o">*</span> <span class="n">dx</span><span class="p">)</span> <span class="o">*</span> <span class="n">one_minus_dy</span>
-                <span class="n">row1</span> <span class="o">=</span> <span class="p">(</span><span class="n">v01</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">+</span> <span class="n">v11</span> <span class="o">*</span> <span class="n">dx</span><span class="p">)</span> <span class="o">*</span> <span class="n">dy</span>
-                <span class="n">val</span> <span class="o">=</span> <span class="n">row0</span> <span class="o">+</span> <span class="n">row1</span>
-                <span class="c1"># Accumulate contribution weighted by ray segment length (discrete line integral approximation)</span>
-                <span class="c1"># This implements the Radon transform: integral of f(x,y) along the ray path</span>
-                <span class="n">accum</span> <span class="o">+=</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span>
+                <span class="n">accum</span> <span class="o">+=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">]</span> <span class="o">*</span> <span class="n">seg_len</span>
         
         <span class="c1"># === VOXEL BOUNDARY CROSSING LOGIC ===</span>
         <span class="c1"># Advance to next voxel based on which boundary is crossed first</span>
@@ -891,7 +856,7 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D parallel beam backprojection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    This CUDA kernel implements the adjoint of cell-constant Siddon ray tracing for</span>
 <span class="sd">    2D parallel beam backprojection.</span>
 
 <span class="sd">    Parameters</span>
@@ -973,38 +938,13 @@
     <span class="n">ty</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_iy</span><span class="p">)</span> <span class="o">-</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">pnt_y</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_y</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_y</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
 
     <span class="c1"># === BACKPROJECTION TRAVERSAL LOOP ===</span>
-    <span class="c1"># Distribute sinogram value along ray path using bilinear interpolation</span>
+    <span class="c1"># Adjoint of the cell-constant Siddon forward projection.</span>
     <span class="k">while</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="n">t_max</span><span class="p">:</span>
         <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">ix</span> <span class="o">&lt;</span> <span class="n">Nx</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iy</span> <span class="o">&lt;</span> <span class="n">Ny</span><span class="p">:</span>
             <span class="n">t_next</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">tx</span><span class="p">,</span> <span class="n">ty</span><span class="p">,</span> <span class="n">t_max</span><span class="p">)</span>
             <span class="n">seg_len</span> <span class="o">=</span> <span class="n">t_next</span> <span class="o">-</span> <span class="n">t</span>
             <span class="k">if</span> <span class="n">seg_len</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
-                <span class="c1"># Sample at ray segment midpoint (same as forward projection)</span>
-                <span class="n">t_mid</span> <span class="o">=</span> <span class="n">t</span> <span class="o">+</span> <span class="n">seg_len</span> <span class="o">*</span> <span class="n">_HALF</span>
-                <span class="n">mid_x</span> <span class="o">=</span> <span class="n">pnt_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span>
-                <span class="n">mid_y</span> <span class="o">=</span> <span class="n">pnt_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span>
-                <span class="n">ix0</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_x</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_y</span><span class="p">))</span>
-                <span class="n">dx</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">ix0</span><span class="p">)</span>
-                <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iy0</span><span class="p">)</span>
-                
-                <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                
-                <span class="c1"># === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===</span>
-                <span class="c1"># Distribute contribution weighted by segment length and interpolation weights</span>
-                <span class="c1"># CUDA ATOMIC OPERATIONS: Essential for thread safety in backprojection</span>
-                <span class="c1"># Multiple threads (rays) can write to the same voxel simultaneously, causing race conditions</span>
-                <span class="c1"># Atomic add operations serialize these writes, ensuring correct accumulation of contributions</span>
-                <span class="c1"># Performance impact: Atomic operations are slower than regular writes but necessary for correctness</span>
-                <span class="c1"># Memory access pattern: Global memory atomics with potential bank conflicts, but unavoidable</span>
-                <span class="n">cval</span> <span class="o">=</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span>  <span class="c1"># Contribution value for this ray segment</span>
-                <span class="n">one_minus_dx</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dx</span>
-                <span class="n">one_minus_dy</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dy</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span><span class="p">,</span>     <span class="n">ix0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">*</span> <span class="n">one_minus_dy</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span><span class="p">,</span>     <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>          <span class="o">*</span> <span class="n">one_minus_dy</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">*</span> <span class="n">dy</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>          <span class="o">*</span> <span class="n">dy</span><span class="p">)</span>
+                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">),</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span><span class="p">)</span>
 
         <span class="c1"># Advance to next voxel (identical logic to forward projection)</span>
         <span class="k">if</span> <span class="n">tx</span> <span class="o">&lt;=</span> <span class="n">ty</span><span class="p">:</span>
@@ -1030,7 +970,7 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 2D fan beam forward projection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    This CUDA kernel implements cell-constant Siddon ray tracing for</span>
 <span class="sd">    2D fan beam forward projection.</span>
 
 <span class="sd">    Parameters</span>
@@ -1140,35 +1080,13 @@
     <span class="n">tx</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_ix</span><span class="p">)</span> <span class="o">-</span> <span class="n">cx</span> <span class="o">-</span> <span class="n">src_x</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_x</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_x</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
     <span class="n">ty</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_iy</span><span class="p">)</span> <span class="o">-</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">src_y</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_y</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_y</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
 
-    <span class="c1"># Main traversal loop with bilinear interpolation (identical to parallel beam)</span>
+    <span class="c1"># Main traversal loop with cell-constant Siddon integration.</span>
     <span class="k">while</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="n">t_max</span><span class="p">:</span>
         <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">ix</span> <span class="o">&lt;</span> <span class="n">Nx</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iy</span> <span class="o">&lt;</span> <span class="n">Ny</span><span class="p">:</span>
             <span class="n">t_next</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">tx</span><span class="p">,</span> <span class="n">ty</span><span class="p">,</span> <span class="n">t_max</span><span class="p">)</span>
             <span class="n">seg_len</span> <span class="o">=</span> <span class="n">t_next</span> <span class="o">-</span> <span class="n">t</span>
             <span class="k">if</span> <span class="n">seg_len</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
-                <span class="c1"># Sample at midpoint using source as ray origin</span>
-                <span class="n">t_mid</span> <span class="o">=</span> <span class="n">t</span> <span class="o">+</span> <span class="n">seg_len</span> <span class="o">*</span> <span class="n">_HALF</span>
-                <span class="n">mid_x</span> <span class="o">=</span> <span class="n">src_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span>
-                <span class="n">mid_y</span> <span class="o">=</span> <span class="n">src_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span>
-                <span class="n">ix0</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_x</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_y</span><span class="p">))</span>
-                <span class="n">dx</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">ix0</span><span class="p">)</span>
-                <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iy0</span><span class="p">)</span>
-                
-                <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                
-                <span class="c1"># Bilinear interpolation (identical to parallel beam)</span>
-                <span class="n">one_minus_dx</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dx</span>
-                <span class="n">one_minus_dy</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dy</span>
-                <span class="n">v00</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span><span class="p">,</span> <span class="n">ix0</span><span class="p">]</span>
-                <span class="n">v10</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span><span class="p">,</span> <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
-                <span class="n">v01</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span><span class="p">]</span>
-                <span class="n">v11</span> <span class="o">=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
-                <span class="n">row0</span> <span class="o">=</span> <span class="p">(</span><span class="n">v00</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">+</span> <span class="n">v10</span> <span class="o">*</span> <span class="n">dx</span><span class="p">)</span> <span class="o">*</span> <span class="n">one_minus_dy</span>
-                <span class="n">row1</span> <span class="o">=</span> <span class="p">(</span><span class="n">v01</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">+</span> <span class="n">v11</span> <span class="o">*</span> <span class="n">dx</span><span class="p">)</span> <span class="o">*</span> <span class="n">dy</span>
-                <span class="n">val</span> <span class="o">=</span> <span class="n">row0</span> <span class="o">+</span> <span class="n">row1</span>
-                <span class="n">accum</span> <span class="o">+=</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span>
+                <span class="n">accum</span> <span class="o">+=</span> <span class="n">d_image</span><span class="p">[</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">]</span> <span class="o">*</span> <span class="n">seg_len</span>
         
         <span class="c1"># Voxel boundary crossing logic (identical to parallel beam)</span>
         <span class="k">if</span> <span class="n">tx</span> <span class="o">&lt;=</span> <span class="n">ty</span><span class="p">:</span>
@@ -1192,7 +1110,7 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Pure adjoint ``P^T`` of the fan-beam forward projector.</span>
 
-<span class="sd">    Siddon ray-driven scatter with bilinear interpolation weights and no</span>
+<span class="sd">    Cell-constant Siddon ray-driven scatter with no</span>
 <span class="sd">    distance weighting. Used by ``FanProjectorFunction.backward`` and</span>
 <span class="sd">    ``FanBackprojectorFunction.forward``. The analytical FBP path lives</span>
 <span class="sd">    in ``_fan_2d_fbp_backproject_kernel`` / ``fan_weighted_backproject``</span>
@@ -1260,36 +1178,13 @@
     <span class="n">ty</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_iy</span><span class="p">)</span> <span class="o">-</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">src_y</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_y</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_y</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
 
     <span class="c1"># === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===</span>
-    <span class="c1"># Distribute sinogram value along divergent ray path using bilinear interpolation</span>
+    <span class="c1"># Adjoint of the cell-constant Siddon forward projection.</span>
     <span class="k">while</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="n">t_max</span><span class="p">:</span>
         <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">ix</span> <span class="o">&lt;</span> <span class="n">Nx</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iy</span> <span class="o">&lt;</span> <span class="n">Ny</span><span class="p">:</span>
             <span class="n">t_next</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">tx</span><span class="p">,</span> <span class="n">ty</span><span class="p">,</span> <span class="n">t_max</span><span class="p">)</span>
             <span class="n">seg_len</span> <span class="o">=</span> <span class="n">t_next</span> <span class="o">-</span> <span class="n">t</span>
             <span class="k">if</span> <span class="n">seg_len</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
-                <span class="c1"># Sample at ray segment midpoint using source as ray origin</span>
-                <span class="n">t_mid</span> <span class="o">=</span> <span class="n">t</span> <span class="o">+</span> <span class="n">seg_len</span> <span class="o">*</span> <span class="n">_HALF</span>
-                <span class="n">mid_x</span> <span class="o">=</span> <span class="n">src_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span>
-                <span class="n">mid_y</span> <span class="o">=</span> <span class="n">src_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span>
-                <span class="n">ix0</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_x</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_y</span><span class="p">))</span>
-                <span class="n">dx</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">ix0</span><span class="p">)</span>
-                <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iy0</span><span class="p">)</span>
-                
-                <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                
-                <span class="c1"># === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===</span>
-                <span class="c1"># Pure adjoint scatter: contribution is just val * seg_len,</span>
-                <span class="c1"># distributed onto the four nearest pixels with bilinear</span>
-                <span class="c1"># weights. No distance weighting - that belongs to the</span>
-                <span class="c1"># analytical FBP kernel, not this adjoint.</span>
-                <span class="n">cval</span> <span class="o">=</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span>
-                <span class="n">one_minus_dx</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dx</span>
-                <span class="n">one_minus_dy</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dy</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span><span class="p">,</span>     <span class="n">ix0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">*</span> <span class="n">one_minus_dy</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span><span class="p">,</span>     <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>          <span class="o">*</span> <span class="n">one_minus_dy</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">one_minus_dx</span> <span class="o">*</span> <span class="n">dy</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>          <span class="o">*</span> <span class="n">dy</span><span class="p">)</span>
+                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_image</span><span class="p">,</span> <span class="p">(</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">),</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span><span class="p">)</span>
 
         <span class="c1"># === VOXEL BOUNDARY CROSSING LOGIC ===</span>
         <span class="c1"># Advance to next voxel based on which boundary is crossed first</span>
@@ -1627,7 +1522,7 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the 3D cone-beam forward projection.</span>
 
-<span class="sd">    This CUDA kernel implements the Siddon ray-tracing method with interpolation for</span>
+<span class="sd">    This CUDA kernel implements cell-constant Siddon ray tracing for</span>
 <span class="sd">    3D cone-beam forward projection.</span>
 
 <span class="sd">    Parameters</span>
@@ -1672,8 +1567,8 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Cone-beam geometry extends the fan-beam configuration to 3D by employing</span>
-<span class="sd">    a 2D detector array and trilinear interpolation for accurate volumetric</span>
-<span class="sd">    sampling.</span>
+<span class="sd">    a 2D detector array and integrating each ray through piecewise-constant</span>
+<span class="sd">    voxel cells.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># Put detector-v on threadIdx.x; d_sino[view, u, v] is row-major with v</span>
     <span class="c1"># as the stride-1 axis, and adjacent v rays also tend to walk nearby z cells.</span>
@@ -1767,52 +1662,14 @@
     <span class="n">ty</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_iy</span><span class="p">)</span> <span class="o">-</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">src_y</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_y</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_y</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
     <span class="n">tz</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_iz</span><span class="p">)</span> <span class="o">-</span> <span class="n">cz</span> <span class="o">-</span> <span class="n">src_z</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_z</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_z</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
 
-    <span class="c1"># === 3D TRAVERSAL LOOP WITH TRILINEAR INTERPOLATION ===</span>
+    <span class="c1"># === 3D TRAVERSAL LOOP WITH CELL-CONSTANT SIDDON INTEGRATION ===</span>
     <span class="k">while</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="n">t_max</span><span class="p">:</span>
-        <span class="c1"># Check if current 3D voxel indices are within valid interpolation bounds</span>
         <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">ix</span> <span class="o">&lt;</span> <span class="n">Nx</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iy</span> <span class="o">&lt;</span> <span class="n">Ny</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iz</span> <span class="o">&lt;</span> <span class="n">Nz</span><span class="p">:</span>
             <span class="c1"># Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)</span>
             <span class="n">t_next</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">tx</span><span class="p">,</span> <span class="n">ty</span><span class="p">,</span> <span class="n">tz</span><span class="p">,</span> <span class="n">t_max</span><span class="p">)</span>
             <span class="n">seg_len</span> <span class="o">=</span> <span class="n">t_next</span> <span class="o">-</span> <span class="n">t</span>
             <span class="k">if</span> <span class="n">seg_len</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
-                <span class="c1"># === TRILINEAR INTERPOLATION SAMPLING ===</span>
-                <span class="c1"># Sample 3D volume at ray segment midpoint for accurate integration</span>
-                <span class="c1"># Mathematical basis: Midpoint rule for numerical integration along 3D ray segments</span>
-                <span class="n">t_mid</span> <span class="o">=</span> <span class="n">t</span> <span class="o">+</span> <span class="n">seg_len</span> <span class="o">*</span> <span class="n">_HALF</span>
-                <span class="n">mid_x</span> <span class="o">=</span> <span class="n">src_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span>  <span class="c1"># Midpoint x-coordinate in volume space</span>
-                <span class="n">mid_y</span> <span class="o">=</span> <span class="n">src_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span>  <span class="c1"># Midpoint y-coordinate in volume space</span>
-                <span class="n">mid_z</span> <span class="o">=</span> <span class="n">src_z</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_z</span> <span class="o">+</span> <span class="n">cz</span>  <span class="c1"># Midpoint z-coordinate in volume space</span>
-
-                <span class="c1"># Convert continuous 3D coordinates to discrete voxel indices and fractional weights</span>
-                <span class="n">ix0</span><span class="p">,</span> <span class="n">iy0</span><span class="p">,</span> <span class="n">iz0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_x</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_y</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_z</span><span class="p">))</span>
-                <span class="n">dx</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">ix0</span><span class="p">)</span>
-                <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iy0</span><span class="p">)</span>
-                <span class="n">dz</span> <span class="o">=</span> <span class="n">mid_z</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iz0</span><span class="p">)</span>
-
-                <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iz0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iz0</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-
-                <span class="c1"># Precompute complements</span>
-                <span class="n">omdx</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dx</span>
-                <span class="n">omdy</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dy</span>
-                <span class="n">omdz</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dz</span>
-
-                <span class="c1"># === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===</span>
-                <span class="n">val</span> <span class="o">=</span> <span class="p">(</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span><span class="p">]</span>     <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">omdz</span> <span class="o">+</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span><span class="p">]</span>     <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">omdz</span> <span class="o">+</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span><span class="p">]</span>     <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">omdz</span> <span class="o">+</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">dz</span>   <span class="o">+</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span><span class="p">]</span>     <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">omdz</span> <span class="o">+</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">dz</span>   <span class="o">+</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">dz</span>   <span class="o">+</span>
-                    <span class="n">d_vol</span><span class="p">[</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">dz</span>
-                <span class="p">)</span>
-                <span class="c1"># Accumulate contribution weighted by 3D ray segment length (discrete line integral approximation)</span>
-                <span class="c1"># This implements the 3D Radon transform: integral of f(x,y,z) along the ray path</span>
-                <span class="n">accum</span> <span class="o">+=</span> <span class="n">val</span> <span class="o">*</span> <span class="n">seg_len</span>
+                <span class="n">accum</span> <span class="o">+=</span> <span class="n">d_vol</span><span class="p">[</span><span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">iz</span><span class="p">]</span> <span class="o">*</span> <span class="n">seg_len</span>
 
         <span class="c1"># === 3D VOXEL BOUNDARY CROSSING LOGIC ===</span>
         <span class="c1"># Advance to next voxel based on which boundary is crossed first in 3D</span>
@@ -1842,7 +1699,7 @@
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Pure adjoint ``P^T`` of the cone-beam forward projector.</span>
 
-<span class="sd">    Siddon ray-driven scatter with trilinear interpolation weights and no</span>
+<span class="sd">    Cell-constant Siddon ray-driven scatter with no</span>
 <span class="sd">    distance weighting. Used by ``ConeProjectorFunction.backward`` and</span>
 <span class="sd">    ``ConeBackprojectorFunction.forward``. The analytical FDK path lives</span>
 <span class="sd">    in ``_cone_3d_fdk_backproject_kernel`` / ``cone_weighted_backproject``</span>
@@ -1931,50 +1788,14 @@
     <span class="n">tz</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">next_iz</span><span class="p">)</span> <span class="o">-</span> <span class="n">cz</span> <span class="o">-</span> <span class="n">src_z</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_dir_z</span> <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dir_z</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span> <span class="k">else</span> <span class="n">_INF</span>
 
     <span class="c1"># === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===</span>
-    <span class="c1"># Distribute sinogram value along divergent 3D ray path using trilinear interpolation</span>
+    <span class="c1"># Adjoint of the cell-constant Siddon forward projection.</span>
     <span class="k">while</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="n">t_max</span><span class="p">:</span>
-        <span class="c1"># Check if current 3D voxel indices are within valid interpolation bounds</span>
         <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">ix</span> <span class="o">&lt;</span> <span class="n">Nx</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iy</span> <span class="o">&lt;</span> <span class="n">Ny</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">iz</span> <span class="o">&lt;</span> <span class="n">Nz</span><span class="p">:</span>
             <span class="c1"># Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)</span>
             <span class="n">t_next</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">tx</span><span class="p">,</span> <span class="n">ty</span><span class="p">,</span> <span class="n">tz</span><span class="p">,</span> <span class="n">t_max</span><span class="p">)</span>
             <span class="n">seg_len</span> <span class="o">=</span> <span class="n">t_next</span> <span class="o">-</span> <span class="n">t</span>
             <span class="k">if</span> <span class="n">seg_len</span> <span class="o">&gt;</span> <span class="n">_EPSILON</span><span class="p">:</span>
-                <span class="c1"># === TRILINEAR INTERPOLATION SAMPLING ===</span>
-                <span class="c1"># Sample 3D volume at ray segment midpoint using source as ray origin</span>
-                <span class="n">t_mid</span> <span class="o">=</span> <span class="n">t</span> <span class="o">+</span> <span class="n">seg_len</span> <span class="o">*</span> <span class="n">_HALF</span>
-                <span class="n">mid_x</span> <span class="o">=</span> <span class="n">src_x</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_x</span> <span class="o">+</span> <span class="n">cx</span>
-                <span class="n">mid_y</span> <span class="o">=</span> <span class="n">src_y</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_y</span> <span class="o">+</span> <span class="n">cy</span>
-                <span class="n">mid_z</span> <span class="o">=</span> <span class="n">src_z</span> <span class="o">+</span> <span class="n">t_mid</span> <span class="o">*</span> <span class="n">dir_z</span> <span class="o">+</span> <span class="n">cz</span>
-
-                <span class="c1"># Convert continuous 3D coordinates to voxel indices and interpolation weights</span>
-                <span class="n">ix0</span><span class="p">,</span> <span class="n">iy0</span><span class="p">,</span> <span class="n">iz0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_x</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_y</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">mid_z</span><span class="p">))</span>
-                <span class="n">dx</span> <span class="o">=</span> <span class="n">mid_x</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">ix0</span><span class="p">)</span>
-                <span class="n">dy</span> <span class="o">=</span> <span class="n">mid_y</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iy0</span><span class="p">)</span>
-                <span class="n">dz</span> <span class="o">=</span> <span class="n">mid_z</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">iz0</span><span class="p">)</span>
-
-                <span class="c1"># Clamp indices to stay in-bounds during interpolation</span>
-                <span class="n">ix0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">ix0</span><span class="p">,</span> <span class="n">Nx</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iy0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iy0</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-                <span class="n">iz0</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">iz0</span><span class="p">,</span> <span class="n">Nz</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
-
-                <span class="c1"># Precompute complements and contribution. Pure adjoint:</span>
-                <span class="c1"># cval = g * seg_len, distributed onto the eight nearest</span>
-                <span class="c1"># voxels with trilinear weights. Distance weighting lives</span>
-                <span class="c1"># in the analytical FDK kernel, not here.</span>
-                <span class="n">omdx</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dx</span>
-                <span class="n">omdy</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dy</span>
-                <span class="n">omdz</span> <span class="o">=</span> <span class="n">_ONE</span> <span class="o">-</span> <span class="n">dz</span>
-                <span class="n">cval</span> <span class="o">=</span> <span class="n">g</span> <span class="o">*</span> <span class="n">seg_len</span>
-
-                <span class="c1"># === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">omdz</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">omdz</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">omdz</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">dz</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span><span class="p">),</span>     <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">omdz</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span><span class="p">,</span>     <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">omdy</span><span class="o">*</span><span class="n">dz</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span><span class="p">,</span>     <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">omdx</span><span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">dz</span><span class="p">)</span>
-                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iy0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iz0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">cval</span> <span class="o">*</span> <span class="n">dx</span>  <span class="o">*</span><span class="n">dy</span>  <span class="o">*</span><span class="n">dz</span><span class="p">)</span>
+                <span class="n">cuda</span><span class="o">.</span><span class="n">atomic</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">d_vol</span><span class="p">,</span> <span class="p">(</span><span class="n">ix</span><span class="p">,</span> <span class="n">iy</span><span class="p">,</span> <span class="n">iz</span><span class="p">),</span> <span class="n">g</span> <span class="o">*</span> <span class="n">seg_len</span><span class="p">)</span>
 
         <span class="c1"># === 3D VOXEL BOUNDARY CROSSING LOGIC ===</span>
         <span class="c1"># Advance to next voxel based on which boundary is crossed first in 3D</span>
@@ -3804,7 +3625,7 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
-<span class="sd">    method with interpolation for parallel beam CT geometry. The forward pass computes</span>
+<span class="sd">    method with a cell-constant image basis for parallel beam CT geometry. The forward pass computes</span>
 <span class="sd">    the sinogram from a 2D image using parallel beam geometry. The backward pass</span>
 <span class="sd">    computes gradients using the adjoint backprojection operation. Requires</span>
 <span class="sd">    CUDA-capable hardware and a properly configured CUDA environment; all input</span>
@@ -3868,7 +3689,7 @@
 <span class="sd">        -----</span>
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
-<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses cell-constant Siddon ray tracing.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -3993,7 +3814,7 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
-<span class="sd">    method with interpolation for parallel beam backprojection. The forward pass computes a 2D</span>
+<span class="sd">    method with a cell-constant image basis for parallel beam backprojection. The forward pass computes a 2D</span>
 <span class="sd">    reconstruction from sinogram data using parallel beam backprojection, and the</span>
 <span class="sd">    backward pass computes gradients via forward projection as the adjoint operation.</span>
 <span class="sd">    Requires CUDA-capable hardware and consistent device placements.</span>
@@ -4053,7 +3874,7 @@
 <span class="sd">        -----</span>
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
-<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses the adjoint of cell-constant Siddon ray tracing.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -4184,7 +4005,7 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
-<span class="sd">    method with interpolation for fan beam geometry, where rays diverge from a point</span>
+<span class="sd">    method with a cell-constant image basis for fan beam geometry, where rays diverge from a point</span>
 <span class="sd">    X-ray source to a linear detector array. The forward pass computes sinograms</span>
 <span class="sd">    using divergent beam geometry. The backward pass returns the **pure adjoint**</span>
 <span class="sd">    ``P^T`` (Siddon scatter, no distance weighting) so that it is the correct</span>
@@ -4228,8 +4049,7 @@
 <span class="sd">        ----------</span>
 <span class="sd">        backend : str, optional</span>
 <span class="sd">            Forward projector backend. ``&quot;siddon&quot;`` (default) is the existing</span>
-<span class="sd">            ray-driven Siddon kernel with bilinear interpolation at segment</span>
-<span class="sd">            midpoints. ``&quot;sf&quot;`` is a prototype separable-footprint (SF-TR)</span>
+<span class="sd">            ray-driven cell-constant Siddon kernel. ``&quot;sf&quot;`` is a prototype separable-footprint (SF-TR)</span>
 <span class="sd">            voxel-driven projector that projects each voxel&#39;s footprint as a</span>
 <span class="sd">            trapezoid on the detector and integrates it closed-form over each</span>
 <span class="sd">            detector cell; it is mass-conserving and closer to the physical</span>
@@ -4265,7 +4085,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Fan beam geometry uses divergent rays from a point source to the detector.</span>
-<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses cell-constant Siddon ray tracing.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -4424,9 +4244,9 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
-<span class="sd">    method with interpolation for fan beam backprojection. The forward pass runs</span>
+<span class="sd">    method with a cell-constant image basis for fan beam backprojection. The forward pass runs</span>
 <span class="sd">    the **pure adjoint** ``P^T`` of the fan forward projector (Siddon scatter</span>
-<span class="sd">    with bilinear interpolation, no distance weighting), and the backward pass</span>
+<span class="sd">    with no distance weighting), and the backward pass</span>
 <span class="sd">    computes gradients via forward projection. The forward/backward pair is</span>
 <span class="sd">    therefore a self-consistent autograd adjoint pair. Analytical FBP distance</span>
 <span class="sd">    weighting lives in ``fan_weighted_backproject`` and is *not* applied here.</span>
@@ -4503,7 +4323,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Fan beam geometry uses divergent rays from a point source to the detector.</span>
-<span class="sd">        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.</span>
+<span class="sd">        - Uses the adjoint of cell-constant Siddon ray tracing.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -4662,11 +4482,11 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
-<span class="sd">    method with interpolation for 3D cone beam geometry. Rays emanate from a point</span>
+<span class="sd">    method with a cell-constant voxel basis for 3D cone beam geometry. Rays emanate from a point</span>
 <span class="sd">    X-ray source to a 2D detector array capturing volumetric projection data.</span>
 <span class="sd">    The forward pass computes 3D projections. The backward pass returns the</span>
 <span class="sd">    **pure adjoint** ``P^T`` of the forward projector - a Siddon ray-driven</span>
-<span class="sd">    scatter with trilinear interpolation weights and no distance weighting -</span>
+<span class="sd">    scatter with no distance weighting -</span>
 <span class="sd">    so that ``P^T`` is the mathematically correct gradient of ``y = P(x)``</span>
 <span class="sd">    with respect to ``x``. Analytical FDK distance weighting is handled</span>
 <span class="sd">    separately in ``cone_weighted_backproject``, not here.</span>
@@ -4755,7 +4575,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Cone beam geometry uses a point source and a 2D detector array.</span>
-<span class="sd">        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.</span>
+<span class="sd">        - Uses cell-constant Siddon ray tracing.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
@@ -4955,9 +4775,9 @@
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
 <span class="sd">    Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing</span>
-<span class="sd">    method with interpolation for 3D cone beam backprojection. The forward pass</span>
+<span class="sd">    method with a cell-constant voxel basis for 3D cone beam backprojection. The forward pass</span>
 <span class="sd">    runs the **pure adjoint** ``P^T`` of the cone forward projector: a Siddon</span>
-<span class="sd">    ray-driven scatter with trilinear interpolation weights and no distance</span>
+<span class="sd">    ray-driven scatter with no distance</span>
 <span class="sd">    weighting. The backward pass computes gradients via 3D cone beam forward</span>
 <span class="sd">    projection, which is exactly the adjoint of this pure ``P^T`` - so the</span>
 <span class="sd">    forward/backward pair is self-consistent for autograd. Analytical FDK</span>
@@ -5053,7 +4873,7 @@
 <span class="sd">        - All input tensors must be on the same CUDA device.</span>
 <span class="sd">        - The operation is fully differentiable and supports autograd.</span>
 <span class="sd">        - Cone beam geometry uses a point source and a 2D detector array.</span>
-<span class="sd">        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.</span>
+<span class="sd">        - Uses the adjoint of cell-constant Siddon ray tracing.</span>
 
 <span class="sd">        Examples</span>
 <span class="sd">        --------</span>
