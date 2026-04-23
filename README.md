@@ -62,7 +62,7 @@ PyPI. If you find any bugs please
   ``diffct.geometry``, ``diffct.analytical``, ``diffct.kernels``,
   ``diffct.utils``, ``diffct.constants``. ``diffct.differentiable``
   is retained as a deprecated backward-compatibility shim.
-- **Tested:** 58 pytest tests covering adjoint identity, gradcheck,
+- **Tested:** 62 pytest tests covering adjoint identity, gradcheck,
   smoke, accuracy, offset handling, and 29 ramp-filter window cases.
   Opt-in 27-case ``pytest-benchmark`` perf suite under
   ``tests/benchmarks/``.

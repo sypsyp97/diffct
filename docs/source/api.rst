@@ -185,7 +185,7 @@ Utilities
 .. autoclass:: TorchCUDABridge
    :members:
 
-Additional helper functions (prefixed with an underscore) remain available for advanced integrations that require direct control over CUDA streams or interpolation buffers.
+Additional helper functions (prefixed with an underscore) remain available for advanced integrations that require direct control over CUDA streams.
 
 Constants
 ---------
