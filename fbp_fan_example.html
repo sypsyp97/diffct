@@ -381,210 +381,212 @@ formula is dropped, so the example passes
 <span class="linenos">150</span>    <span class="c1"># with a matched scatter/gather pair so autograd and the standalone</span>
 <span class="linenos">151</span>    <span class="c1"># Backprojector Function work unchanged.</span>
 <span class="linenos">152</span>    <span class="c1">#</span>
-<span class="linenos">153</span>    <span class="c1">#   &quot;siddon&quot; (default) - Ray-driven Siddon traversal with bilinear</span>
-<span class="linenos">154</span>    <span class="c1">#                        interpolation on the image. One thread per</span>
-<span class="linenos">155</span>    <span class="c1">#                        (view, detector bin). Fastest forward. Pick</span>
-<span class="linenos">156</span>    <span class="c1">#                        this when you only need a forward projection</span>
-<span class="linenos">157</span>    <span class="c1">#                        and not a matched cell-integrated model.</span>
-<span class="linenos">158</span>    <span class="c1">#</span>
-<span class="linenos">159</span>    <span class="c1">#   &quot;sf&quot;               - Voxel-driven separable-footprint projector</span>
-<span class="linenos">160</span>    <span class="c1">#                        (SF-TR of Long-Fessler-Balter, IEEE TMI 2010).</span>
-<span class="linenos">161</span>    <span class="c1">#                        Each voxel&#39;s projection footprint is a</span>
-<span class="linenos">162</span>    <span class="c1">#                        trapezoid built from the four projected</span>
-<span class="linenos">163</span>    <span class="c1">#                        corners and closed-form integrated over each</span>
-<span class="linenos">164</span>    <span class="c1">#                        detector cell, so **mass is conserved per</span>
-<span class="linenos">165</span>    <span class="c1">#                        voxel**. About 3x slower forward than</span>
-<span class="linenos">166</span>    <span class="c1">#                        &quot;siddon&quot;. On analytical FBP reconstructions</span>
-<span class="linenos">167</span>    <span class="c1">#                        with the matched SF gather backprojector</span>
-<span class="linenos">168</span>    <span class="c1">#                        (``fan_weighted_backproject(backend=&quot;sf&quot;)``),</span>
-<span class="linenos">169</span>    <span class="c1">#                        SF and VD produce visually identical edge</span>
-<span class="linenos">170</span>    <span class="c1">#                        profiles on Shepp-Logan at typical CBCT</span>
-<span class="linenos">171</span>    <span class="c1">#                        magnifications - the &quot;SF is sharper&quot;</span>
-<span class="linenos">172</span>    <span class="c1">#                        advantage that shows up in the SF / LEAP</span>
-<span class="linenos">173</span>    <span class="c1">#                        literature only manifests at extreme</span>
-<span class="linenos">174</span>    <span class="c1">#                        sub-nominal voxel sizes that are not hit</span>
-<span class="linenos">175</span>    <span class="c1">#                        in standard examples. The real reason to</span>
-<span class="linenos">176</span>    <span class="c1">#                        pick &quot;sf&quot; is the **forward** side: if you</span>
-<span class="linenos">177</span>    <span class="c1">#                        plan to use this projector inside an</span>
-<span class="linenos">178</span>    <span class="c1">#                        iterative reco, a learned prior, or any</span>
-<span class="linenos">179</span>    <span class="c1">#                        loss that compares sinograms directly,</span>
-<span class="linenos">180</span>    <span class="c1">#                        a cell-integrated mass-conserving forward</span>
-<span class="linenos">181</span>    <span class="c1">#                        is the right model.</span>
-<span class="linenos">182</span>    <span class="c1">#</span>
-<span class="linenos">183</span>    <span class="c1"># The default is kept at &quot;sf&quot; so the reader can see the SF path run</span>
-<span class="linenos">184</span>    <span class="c1"># end-to-end; switching it to &quot;siddon&quot; gives a visually equivalent</span>
-<span class="linenos">185</span>    <span class="c1"># reconstruction at this geometry.</span>
-<span class="linenos">186</span>    <span class="n">projector_backend</span> <span class="o">=</span> <span class="s2">&quot;sf&quot;</span>
-<span class="linenos">187</span>
-<span class="linenos">188</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">189</span>    <span class="c1"># 5. Forward projection: image -&gt; fan sinogram</span>
+<span class="linenos">153</span>    <span class="c1">#   &quot;siddon&quot; (default) - Ray-driven cell-constant Siddon traversal:</span>
+<span class="linenos">154</span>    <span class="c1">#                        each traversed pixel contributes its value</span>
+<span class="linenos">155</span>    <span class="c1">#                        weighted by the exact chord length, no sub-</span>
+<span class="linenos">156</span>    <span class="c1">#                        pixel interpolation. One thread per (view,</span>
+<span class="linenos">157</span>    <span class="c1">#                        detector bin). Fastest forward. Pick this</span>
+<span class="linenos">158</span>    <span class="c1">#                        when you only need a forward projection and</span>
+<span class="linenos">159</span>    <span class="c1">#                        not a matched cell-integrated model.</span>
+<span class="linenos">160</span>    <span class="c1">#</span>
+<span class="linenos">161</span>    <span class="c1">#   &quot;sf&quot;               - Voxel-driven separable-footprint projector</span>
+<span class="linenos">162</span>    <span class="c1">#                        (SF-TR of Long-Fessler-Balter, IEEE TMI 2010).</span>
+<span class="linenos">163</span>    <span class="c1">#                        Each voxel&#39;s projection footprint is a</span>
+<span class="linenos">164</span>    <span class="c1">#                        trapezoid built from the four projected</span>
+<span class="linenos">165</span>    <span class="c1">#                        corners and closed-form integrated over each</span>
+<span class="linenos">166</span>    <span class="c1">#                        detector cell, so **mass is conserved per</span>
+<span class="linenos">167</span>    <span class="c1">#                        voxel**. About 3x slower forward than</span>
+<span class="linenos">168</span>    <span class="c1">#                        &quot;siddon&quot;. On analytical FBP reconstructions</span>
+<span class="linenos">169</span>    <span class="c1">#                        with the matched SF gather backprojector</span>
+<span class="linenos">170</span>    <span class="c1">#                        (``fan_weighted_backproject(backend=&quot;sf&quot;)``),</span>
+<span class="linenos">171</span>    <span class="c1">#                        SF and VD produce visually identical edge</span>
+<span class="linenos">172</span>    <span class="c1">#                        profiles on Shepp-Logan at typical CBCT</span>
+<span class="linenos">173</span>    <span class="c1">#                        magnifications - the &quot;SF is sharper&quot;</span>
+<span class="linenos">174</span>    <span class="c1">#                        advantage that shows up in the SF / LEAP</span>
+<span class="linenos">175</span>    <span class="c1">#                        literature only manifests at extreme</span>
+<span class="linenos">176</span>    <span class="c1">#                        sub-nominal voxel sizes that are not hit</span>
+<span class="linenos">177</span>    <span class="c1">#                        in standard examples. The real reason to</span>
+<span class="linenos">178</span>    <span class="c1">#                        pick &quot;sf&quot; is the **forward** side: if you</span>
+<span class="linenos">179</span>    <span class="c1">#                        plan to use this projector inside an</span>
+<span class="linenos">180</span>    <span class="c1">#                        iterative reco, a learned prior, or any</span>
+<span class="linenos">181</span>    <span class="c1">#                        loss that compares sinograms directly,</span>
+<span class="linenos">182</span>    <span class="c1">#                        a cell-integrated mass-conserving forward</span>
+<span class="linenos">183</span>    <span class="c1">#                        is the right model.</span>
+<span class="linenos">184</span>    <span class="c1">#</span>
+<span class="linenos">185</span>    <span class="c1"># The default is kept at &quot;sf&quot; so the reader can see the SF path run</span>
+<span class="linenos">186</span>    <span class="c1"># end-to-end; switching it to &quot;siddon&quot; gives a visually equivalent</span>
+<span class="linenos">187</span>    <span class="c1"># reconstruction at this geometry.</span>
+<span class="linenos">188</span>    <span class="n">projector_backend</span> <span class="o">=</span> <span class="s2">&quot;sf&quot;</span>
+<span class="linenos">189</span>
 <span class="linenos">190</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">191</span>    <span class="c1"># ``FanProjectorFunction`` is the differentiable fan-beam forward</span>
-<span class="linenos">192</span>    <span class="c1"># projector. It returns a (num_angles, num_detectors) sinogram. The</span>
-<span class="linenos">193</span>    <span class="c1"># call is autograd-aware so the same function can be used inside an</span>
-<span class="linenos">194</span>    <span class="c1"># iterative reconstruction loop (see ``iterative_reco_fan.py``).</span>
-<span class="linenos">195</span>    <span class="c1"># ``backend`` selects the CUDA kernel family used for both the forward</span>
-<span class="linenos">196</span>    <span class="c1"># and its adjoint - see step 4.5 above for the trade-offs.</span>
-<span class="linenos">197</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
-<span class="linenos">198</span>        <span class="n">image_torch</span><span class="p">,</span>
-<span class="linenos">199</span>        <span class="n">angles_torch</span><span class="p">,</span>
-<span class="linenos">200</span>        <span class="n">num_detectors</span><span class="p">,</span>
-<span class="linenos">201</span>        <span class="n">detector_spacing</span><span class="p">,</span>
-<span class="linenos">202</span>        <span class="n">sdd</span><span class="p">,</span>
-<span class="linenos">203</span>        <span class="n">sid</span><span class="p">,</span>
-<span class="linenos">204</span>        <span class="n">voxel_spacing</span><span class="p">,</span>
-<span class="linenos">205</span>        <span class="n">detector_offset</span><span class="p">,</span>
-<span class="linenos">206</span>        <span class="mf">0.0</span><span class="p">,</span>                <span class="c1"># center_offset_x</span>
-<span class="linenos">207</span>        <span class="mf">0.0</span><span class="p">,</span>                <span class="c1"># center_offset_y</span>
-<span class="linenos">208</span>        <span class="n">projector_backend</span><span class="p">,</span>
-<span class="linenos">209</span>    <span class="p">)</span>
-<span class="linenos">210</span>
-<span class="linenos">211</span>    <span class="c1"># ==================================================================</span>
-<span class="linenos">212</span>    <span class="c1"># 6. FBP analytical reconstruction</span>
+<span class="linenos">191</span>    <span class="c1"># 5. Forward projection: image -&gt; fan sinogram</span>
+<span class="linenos">192</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">193</span>    <span class="c1"># ``FanProjectorFunction`` is the differentiable fan-beam forward</span>
+<span class="linenos">194</span>    <span class="c1"># projector. It returns a (num_angles, num_detectors) sinogram. The</span>
+<span class="linenos">195</span>    <span class="c1"># call is autograd-aware so the same function can be used inside an</span>
+<span class="linenos">196</span>    <span class="c1"># iterative reconstruction loop (see ``iterative_reco_fan.py``).</span>
+<span class="linenos">197</span>    <span class="c1"># ``backend`` selects the CUDA kernel family used for both the forward</span>
+<span class="linenos">198</span>    <span class="c1"># and its adjoint - see step 4.5 above for the trade-offs.</span>
+<span class="linenos">199</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">FanProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+<span class="linenos">200</span>        <span class="n">image_torch</span><span class="p">,</span>
+<span class="linenos">201</span>        <span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos">202</span>        <span class="n">num_detectors</span><span class="p">,</span>
+<span class="linenos">203</span>        <span class="n">detector_spacing</span><span class="p">,</span>
+<span class="linenos">204</span>        <span class="n">sdd</span><span class="p">,</span>
+<span class="linenos">205</span>        <span class="n">sid</span><span class="p">,</span>
+<span class="linenos">206</span>        <span class="n">voxel_spacing</span><span class="p">,</span>
+<span class="linenos">207</span>        <span class="n">detector_offset</span><span class="p">,</span>
+<span class="linenos">208</span>        <span class="mf">0.0</span><span class="p">,</span>                <span class="c1"># center_offset_x</span>
+<span class="linenos">209</span>        <span class="mf">0.0</span><span class="p">,</span>                <span class="c1"># center_offset_y</span>
+<span class="linenos">210</span>        <span class="n">projector_backend</span><span class="p">,</span>
+<span class="linenos">211</span>    <span class="p">)</span>
+<span class="linenos">212</span>
 <span class="linenos">213</span>    <span class="c1"># ==================================================================</span>
-<span class="linenos">214</span>
-<span class="linenos">215</span>    <span class="c1"># --- 6.1  Optional Parker redundancy weighting -------------------</span>
-<span class="linenos">216</span>    <span class="c1"># For short-scan trajectories, ``parker_weights`` returns a</span>
-<span class="linenos">217</span>    <span class="c1"># ``(num_angles, num_detectors)`` weight that smoothly tapers views</span>
-<span class="linenos">218</span>    <span class="c1"># near the two ends of the angular range so each ray contributes</span>
-<span class="linenos">219</span>    <span class="c1"># exactly once. For a full 2*pi scan this helper returns all-ones</span>
-<span class="linenos">220</span>    <span class="c1"># and is a no-op, so the ``if`` is really only for short scans.</span>
-<span class="linenos">221</span>    <span class="k">if</span> <span class="n">apply_parker</span><span class="p">:</span>
-<span class="linenos">222</span>        <span class="n">parker</span> <span class="o">=</span> <span class="n">parker_weights</span><span class="p">(</span>
-<span class="linenos">223</span>            <span class="n">angles_torch</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">detector_offset</span>
-<span class="linenos">224</span>        <span class="p">)</span>
-<span class="linenos">225</span>        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">parker</span>
-<span class="linenos">226</span>
-<span class="linenos">227</span>    <span class="c1"># --- 6.2  Fan-beam cosine pre-weighting --------------------------</span>
-<span class="linenos">228</span>    <span class="c1"># Multiplies each detector cell by ``cos(gamma) = sdd / sqrt(sdd^2</span>
-<span class="linenos">229</span>    <span class="c1"># + u^2)``, i.e. the cosine of the fan angle. This compensates for</span>
-<span class="linenos">230</span>    <span class="c1"># the extra path length that off-center rays traverse relative to</span>
-<span class="linenos">231</span>    <span class="c1"># the principal ray.</span>
-<span class="linenos">232</span>    <span class="n">weights</span> <span class="o">=</span> <span class="n">fan_cosine_weights</span><span class="p">(</span>
-<span class="linenos">233</span>        <span class="n">num_detectors</span><span class="p">,</span>
-<span class="linenos">234</span>        <span class="n">detector_spacing</span><span class="p">,</span>
-<span class="linenos">235</span>        <span class="n">sdd</span><span class="p">,</span>
-<span class="linenos">236</span>        <span class="n">detector_offset</span><span class="o">=</span><span class="n">detector_offset</span><span class="p">,</span>
-<span class="linenos">237</span>        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-<span class="linenos">238</span>        <span class="n">dtype</span><span class="o">=</span><span class="n">image_torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
-<span class="linenos">239</span>    <span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-<span class="linenos">240</span>    <span class="n">sino_weighted</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">weights</span>
-<span class="linenos">241</span>
-<span class="linenos">242</span>    <span class="c1"># --- 6.3  1D ramp filter along the detector axis -----------------</span>
-<span class="linenos">243</span>    <span class="c1"># See the fdk_cone.py example for the full list of options - the</span>
-<span class="linenos">244</span>    <span class="c1"># same ramp filter is used here. For fan FBP the recommended call</span>
-<span class="linenos">245</span>    <span class="c1"># is ``sample_spacing=detector_spacing``, ``pad_factor=2``,</span>
-<span class="linenos">246</span>    <span class="c1"># ``window=&quot;hann&quot;``.</span>
-<span class="linenos">247</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">ramp_filter_1d</span><span class="p">(</span>
-<span class="linenos">248</span>        <span class="n">sino_weighted</span><span class="p">,</span>
-<span class="linenos">249</span>        <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-<span class="linenos">250</span>        <span class="n">sample_spacing</span><span class="o">=</span><span class="n">detector_spacing</span><span class="p">,</span>
-<span class="linenos">251</span>        <span class="n">pad_factor</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-<span class="linenos">252</span>        <span class="n">window</span><span class="o">=</span><span class="s2">&quot;hann&quot;</span><span class="p">,</span>
-<span class="linenos">253</span>    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
-<span class="linenos">254</span>
-<span class="linenos">255</span>    <span class="c1"># --- 6.4  Per-view angular integration weights -------------------</span>
-<span class="linenos">256</span>    <span class="c1"># For a full 2*pi scan uniformly sampled, each view contributes</span>
-<span class="linenos">257</span>    <span class="c1"># ``pi / num_angles`` to the FBP integral (the ``1/2`` redundancy</span>
-<span class="linenos">258</span>    <span class="c1"># factor of the full-scan formula is absorbed inside</span>
-<span class="linenos">259</span>    <span class="c1"># ``redundant_full_scan=True``). For a short scan with Parker</span>
-<span class="linenos">260</span>    <span class="c1"># weights we already handle redundancy there, so pass</span>
-<span class="linenos">261</span>    <span class="c1"># ``redundant_full_scan=False``.</span>
-<span class="linenos">262</span>    <span class="n">d_beta</span> <span class="o">=</span> <span class="n">angular_integration_weights</span><span class="p">(</span>
-<span class="linenos">263</span>        <span class="n">angles_torch</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="p">(</span><span class="ow">not</span> <span class="n">apply_parker</span><span class="p">)</span>
-<span class="linenos">264</span>    <span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-<span class="linenos">265</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">sinogram_filt</span> <span class="o">*</span> <span class="n">d_beta</span>
-<span class="linenos">266</span>
-<span class="linenos">267</span>    <span class="c1"># --- 6.5  Voxel-driven FBP backprojection ------------------------</span>
-<span class="linenos">268</span>    <span class="c1"># ``fan_weighted_backproject`` dispatches to one of two fan FBP</span>
-<span class="linenos">269</span>    <span class="c1"># gather kernels based on ``backend``:</span>
-<span class="linenos">270</span>    <span class="c1">#</span>
-<span class="linenos">271</span>    <span class="c1">#   &quot;siddon&quot; (default) - bilinear voxel-driven gather: linearly</span>
-<span class="linenos">272</span>    <span class="c1">#                        sample the filtered sinogram at each</span>
-<span class="linenos">273</span>    <span class="c1">#                        pixel&#39;s projected u-coordinate, multiply</span>
-<span class="linenos">274</span>    <span class="c1">#                        by ``(sid/U)^2`` and accumulate.</span>
-<span class="linenos">275</span>    <span class="c1">#   &quot;sf&quot;               - LEAP-style chord-weighted separable-</span>
-<span class="linenos">276</span>    <span class="c1">#                        footprint gather: integrate the filtered</span>
-<span class="linenos">277</span>    <span class="c1">#                        sinogram over each pixel&#39;s trapezoidal</span>
-<span class="linenos">278</span>    <span class="c1">#                        footprint and weight by the in-plane</span>
-<span class="linenos">279</span>    <span class="c1">#                        chord through the voxel plus the fan</span>
-<span class="linenos">280</span>    <span class="c1">#                        ``sid/U`` first-power weight (matches the</span>
-<span class="linenos">281</span>    <span class="c1">#                        matched-adjoint form in LEAP&#39;s</span>
-<span class="linenos">282</span>    <span class="c1">#                        ``projectors_SF.cu``). Amplitude-calibrated</span>
-<span class="linenos">283</span>    <span class="c1">#                        against the Siddon path on Shepp-Logan;</span>
-<span class="linenos">284</span>    <span class="c1">#                        edge profiles at typical CBCT geometries</span>
-<span class="linenos">285</span>    <span class="c1">#                        are visually indistinguishable from the</span>
-<span class="linenos">286</span>    <span class="c1">#                        Siddon path. Pick this when you want a</span>
-<span class="linenos">287</span>    <span class="c1">#                        cell-integrated forward / backward model</span>
-<span class="linenos">288</span>    <span class="c1">#                        matched to the SF forward projector.</span>
-<span class="linenos">289</span>    <span class="c1">#</span>
-<span class="linenos">290</span>    <span class="c1"># Here we pass the same ``projector_backend`` we picked at step</span>
-<span class="linenos">291</span>    <span class="c1"># 4.5 so forward and backward stay consistent. Amplitude is</span>
-<span class="linenos">292</span>    <span class="c1"># calibrated by the wrapper so the returned image is ready to</span>
-<span class="linenos">293</span>    <span class="c1"># compare against ``image_torch`` directly.</span>
-<span class="linenos">294</span>    <span class="n">reconstruction_raw</span> <span class="o">=</span> <span class="n">fan_weighted_backproject</span><span class="p">(</span>
-<span class="linenos">295</span>        <span class="n">sinogram_filt</span><span class="p">,</span>
-<span class="linenos">296</span>        <span class="n">angles_torch</span><span class="p">,</span>
-<span class="linenos">297</span>        <span class="n">detector_spacing</span><span class="p">,</span>
-<span class="linenos">298</span>        <span class="n">Ny</span><span class="p">,</span>
-<span class="linenos">299</span>        <span class="n">Nx</span><span class="p">,</span>
-<span class="linenos">300</span>        <span class="n">sdd</span><span class="p">,</span>
-<span class="linenos">301</span>        <span class="n">sid</span><span class="p">,</span>
-<span class="linenos">302</span>        <span class="n">voxel_spacing</span><span class="o">=</span><span class="n">voxel_spacing</span><span class="p">,</span>
-<span class="linenos">303</span>        <span class="n">detector_offset</span><span class="o">=</span><span class="n">detector_offset</span><span class="p">,</span>
-<span class="linenos">304</span>        <span class="n">backend</span><span class="o">=</span><span class="n">projector_backend</span><span class="p">,</span>
-<span class="linenos">305</span>    <span class="p">)</span>
-<span class="linenos">306</span>    <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">reconstruction_raw</span><span class="p">)</span>
-<span class="linenos">307</span>
-<span class="linenos">308</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">309</span>    <span class="c1"># 7. Quantitative summary</span>
+<span class="linenos">214</span>    <span class="c1"># 6. FBP analytical reconstruction</span>
+<span class="linenos">215</span>    <span class="c1"># ==================================================================</span>
+<span class="linenos">216</span>
+<span class="linenos">217</span>    <span class="c1"># --- 6.1  Optional Parker redundancy weighting -------------------</span>
+<span class="linenos">218</span>    <span class="c1"># For short-scan trajectories, ``parker_weights`` returns a</span>
+<span class="linenos">219</span>    <span class="c1"># ``(num_angles, num_detectors)`` weight that smoothly tapers views</span>
+<span class="linenos">220</span>    <span class="c1"># near the two ends of the angular range so each ray contributes</span>
+<span class="linenos">221</span>    <span class="c1"># exactly once. For a full 2*pi scan this helper returns all-ones</span>
+<span class="linenos">222</span>    <span class="c1"># and is a no-op, so the ``if`` is really only for short scans.</span>
+<span class="linenos">223</span>    <span class="k">if</span> <span class="n">apply_parker</span><span class="p">:</span>
+<span class="linenos">224</span>        <span class="n">parker</span> <span class="o">=</span> <span class="n">parker_weights</span><span class="p">(</span>
+<span class="linenos">225</span>            <span class="n">angles_torch</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">detector_offset</span>
+<span class="linenos">226</span>        <span class="p">)</span>
+<span class="linenos">227</span>        <span class="n">sinogram</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">parker</span>
+<span class="linenos">228</span>
+<span class="linenos">229</span>    <span class="c1"># --- 6.2  Fan-beam cosine pre-weighting --------------------------</span>
+<span class="linenos">230</span>    <span class="c1"># Multiplies each detector cell by ``cos(gamma) = sdd / sqrt(sdd^2</span>
+<span class="linenos">231</span>    <span class="c1"># + u^2)``, i.e. the cosine of the fan angle. This compensates for</span>
+<span class="linenos">232</span>    <span class="c1"># the extra path length that off-center rays traverse relative to</span>
+<span class="linenos">233</span>    <span class="c1"># the principal ray.</span>
+<span class="linenos">234</span>    <span class="n">weights</span> <span class="o">=</span> <span class="n">fan_cosine_weights</span><span class="p">(</span>
+<span class="linenos">235</span>        <span class="n">num_detectors</span><span class="p">,</span>
+<span class="linenos">236</span>        <span class="n">detector_spacing</span><span class="p">,</span>
+<span class="linenos">237</span>        <span class="n">sdd</span><span class="p">,</span>
+<span class="linenos">238</span>        <span class="n">detector_offset</span><span class="o">=</span><span class="n">detector_offset</span><span class="p">,</span>
+<span class="linenos">239</span>        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+<span class="linenos">240</span>        <span class="n">dtype</span><span class="o">=</span><span class="n">image_torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+<span class="linenos">241</span>    <span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="linenos">242</span>    <span class="n">sino_weighted</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">weights</span>
+<span class="linenos">243</span>
+<span class="linenos">244</span>    <span class="c1"># --- 6.3  1D ramp filter along the detector axis -----------------</span>
+<span class="linenos">245</span>    <span class="c1"># See the fdk_cone.py example for the full list of options - the</span>
+<span class="linenos">246</span>    <span class="c1"># same ramp filter is used here. For fan FBP the recommended call</span>
+<span class="linenos">247</span>    <span class="c1"># is ``sample_spacing=detector_spacing``, ``pad_factor=2``,</span>
+<span class="linenos">248</span>    <span class="c1"># ``window=&quot;hann&quot;``.</span>
+<span class="linenos">249</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">ramp_filter_1d</span><span class="p">(</span>
+<span class="linenos">250</span>        <span class="n">sino_weighted</span><span class="p">,</span>
+<span class="linenos">251</span>        <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<span class="linenos">252</span>        <span class="n">sample_spacing</span><span class="o">=</span><span class="n">detector_spacing</span><span class="p">,</span>
+<span class="linenos">253</span>        <span class="n">pad_factor</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<span class="linenos">254</span>        <span class="n">window</span><span class="o">=</span><span class="s2">&quot;hann&quot;</span><span class="p">,</span>
+<span class="linenos">255</span>    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+<span class="linenos">256</span>
+<span class="linenos">257</span>    <span class="c1"># --- 6.4  Per-view angular integration weights -------------------</span>
+<span class="linenos">258</span>    <span class="c1"># For a full 2*pi scan uniformly sampled, each view contributes</span>
+<span class="linenos">259</span>    <span class="c1"># ``pi / num_angles`` to the FBP integral (the ``1/2`` redundancy</span>
+<span class="linenos">260</span>    <span class="c1"># factor of the full-scan formula is absorbed inside</span>
+<span class="linenos">261</span>    <span class="c1"># ``redundant_full_scan=True``). For a short scan with Parker</span>
+<span class="linenos">262</span>    <span class="c1"># weights we already handle redundancy there, so pass</span>
+<span class="linenos">263</span>    <span class="c1"># ``redundant_full_scan=False``.</span>
+<span class="linenos">264</span>    <span class="n">d_beta</span> <span class="o">=</span> <span class="n">angular_integration_weights</span><span class="p">(</span>
+<span class="linenos">265</span>        <span class="n">angles_torch</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="p">(</span><span class="ow">not</span> <span class="n">apply_parker</span><span class="p">)</span>
+<span class="linenos">266</span>    <span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="linenos">267</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">sinogram_filt</span> <span class="o">*</span> <span class="n">d_beta</span>
+<span class="linenos">268</span>
+<span class="linenos">269</span>    <span class="c1"># --- 6.5  Voxel-driven FBP backprojection ------------------------</span>
+<span class="linenos">270</span>    <span class="c1"># ``fan_weighted_backproject`` dispatches to one of two fan FBP</span>
+<span class="linenos">271</span>    <span class="c1"># gather kernels based on ``backend``:</span>
+<span class="linenos">272</span>    <span class="c1">#</span>
+<span class="linenos">273</span>    <span class="c1">#   &quot;siddon&quot; (default) - bilinear voxel-driven gather: linearly</span>
+<span class="linenos">274</span>    <span class="c1">#                        sample the filtered sinogram at each</span>
+<span class="linenos">275</span>    <span class="c1">#                        pixel&#39;s projected u-coordinate, multiply</span>
+<span class="linenos">276</span>    <span class="c1">#                        by ``(sid/U)^2`` and accumulate.</span>
+<span class="linenos">277</span>    <span class="c1">#   &quot;sf&quot;               - LEAP-style chord-weighted separable-</span>
+<span class="linenos">278</span>    <span class="c1">#                        footprint gather: integrate the filtered</span>
+<span class="linenos">279</span>    <span class="c1">#                        sinogram over each pixel&#39;s trapezoidal</span>
+<span class="linenos">280</span>    <span class="c1">#                        footprint and weight by the in-plane</span>
+<span class="linenos">281</span>    <span class="c1">#                        chord through the voxel plus the fan</span>
+<span class="linenos">282</span>    <span class="c1">#                        ``sid/U`` first-power weight (matches the</span>
+<span class="linenos">283</span>    <span class="c1">#                        matched-adjoint form in LEAP&#39;s</span>
+<span class="linenos">284</span>    <span class="c1">#                        ``projectors_SF.cu``). Amplitude-calibrated</span>
+<span class="linenos">285</span>    <span class="c1">#                        against the Siddon path on Shepp-Logan;</span>
+<span class="linenos">286</span>    <span class="c1">#                        edge profiles at typical CBCT geometries</span>
+<span class="linenos">287</span>    <span class="c1">#                        are visually indistinguishable from the</span>
+<span class="linenos">288</span>    <span class="c1">#                        Siddon path. Pick this when you want a</span>
+<span class="linenos">289</span>    <span class="c1">#                        cell-integrated forward / backward model</span>
+<span class="linenos">290</span>    <span class="c1">#                        matched to the SF forward projector.</span>
+<span class="linenos">291</span>    <span class="c1">#</span>
+<span class="linenos">292</span>    <span class="c1"># Here we pass the same ``projector_backend`` we picked at step</span>
+<span class="linenos">293</span>    <span class="c1"># 4.5 so forward and backward stay consistent. Amplitude is</span>
+<span class="linenos">294</span>    <span class="c1"># calibrated by the wrapper so the returned image is ready to</span>
+<span class="linenos">295</span>    <span class="c1"># compare against ``image_torch`` directly.</span>
+<span class="linenos">296</span>    <span class="n">reconstruction_raw</span> <span class="o">=</span> <span class="n">fan_weighted_backproject</span><span class="p">(</span>
+<span class="linenos">297</span>        <span class="n">sinogram_filt</span><span class="p">,</span>
+<span class="linenos">298</span>        <span class="n">angles_torch</span><span class="p">,</span>
+<span class="linenos">299</span>        <span class="n">detector_spacing</span><span class="p">,</span>
+<span class="linenos">300</span>        <span class="n">Ny</span><span class="p">,</span>
+<span class="linenos">301</span>        <span class="n">Nx</span><span class="p">,</span>
+<span class="linenos">302</span>        <span class="n">sdd</span><span class="p">,</span>
+<span class="linenos">303</span>        <span class="n">sid</span><span class="p">,</span>
+<span class="linenos">304</span>        <span class="n">voxel_spacing</span><span class="o">=</span><span class="n">voxel_spacing</span><span class="p">,</span>
+<span class="linenos">305</span>        <span class="n">detector_offset</span><span class="o">=</span><span class="n">detector_offset</span><span class="p">,</span>
+<span class="linenos">306</span>        <span class="n">backend</span><span class="o">=</span><span class="n">projector_backend</span><span class="p">,</span>
+<span class="linenos">307</span>    <span class="p">)</span>
+<span class="linenos">308</span>    <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">reconstruction_raw</span><span class="p">)</span>
+<span class="linenos">309</span>
 <span class="linenos">310</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">311</span>    <span class="n">raw_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction_raw</span> <span class="o">-</span> <span class="n">image_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">312</span>    <span class="n">clamped_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction</span> <span class="o">-</span> <span class="n">image_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">313</span>
-<span class="linenos">314</span>    <span class="n">scan_label</span> <span class="o">=</span> <span class="s2">&quot;Parker short scan&quot;</span> <span class="k">if</span> <span class="n">apply_parker</span> <span class="k">else</span> <span class="s2">&quot;full 2*pi scan&quot;</span>
-<span class="linenos">315</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Fan Beam FBP example (</span><span class="si">{</span><span class="n">scan_label</span><span class="si">}</span><span class="s2">):&quot;</span><span class="p">)</span>
-<span class="linenos">316</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Raw MSE:              </span><span class="si">{</span><span class="n">raw_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">317</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Clamped MSE:          </span><span class="si">{</span><span class="n">clamped_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">318</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Reconstruction shape: </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">319</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">320</span>        <span class="s2">&quot;  Raw reco data range:  &quot;</span>
-<span class="linenos">321</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">322</span>    <span class="p">)</span>
-<span class="linenos">323</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">324</span>        <span class="s2">&quot;  Clamped reco range:   &quot;</span>
-<span class="linenos">325</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">326</span>    <span class="p">)</span>
-<span class="linenos">327</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">328</span>        <span class="s2">&quot;  Phantom data range:   &quot;</span>
-<span class="linenos">329</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom</span><span class="o">.</span><span class="n">min</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">330</span>    <span class="p">)</span>
-<span class="linenos">331</span>
-<span class="linenos">332</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">333</span>    <span class="c1"># 8. Visualization</span>
+<span class="linenos">311</span>    <span class="c1"># 7. Quantitative summary</span>
+<span class="linenos">312</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">313</span>    <span class="n">raw_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction_raw</span> <span class="o">-</span> <span class="n">image_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos">314</span>    <span class="n">clamped_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction</span> <span class="o">-</span> <span class="n">image_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos">315</span>
+<span class="linenos">316</span>    <span class="n">scan_label</span> <span class="o">=</span> <span class="s2">&quot;Parker short scan&quot;</span> <span class="k">if</span> <span class="n">apply_parker</span> <span class="k">else</span> <span class="s2">&quot;full 2*pi scan&quot;</span>
+<span class="linenos">317</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Fan Beam FBP example (</span><span class="si">{</span><span class="n">scan_label</span><span class="si">}</span><span class="s2">):&quot;</span><span class="p">)</span>
+<span class="linenos">318</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Raw MSE:              </span><span class="si">{</span><span class="n">raw_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="linenos">319</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Clamped MSE:          </span><span class="si">{</span><span class="n">clamped_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="linenos">320</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Reconstruction shape: </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="linenos">321</span>    <span class="nb">print</span><span class="p">(</span>
+<span class="linenos">322</span>        <span class="s2">&quot;  Raw reco data range:  &quot;</span>
+<span class="linenos">323</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="linenos">324</span>    <span class="p">)</span>
+<span class="linenos">325</span>    <span class="nb">print</span><span class="p">(</span>
+<span class="linenos">326</span>        <span class="s2">&quot;  Clamped reco range:   &quot;</span>
+<span class="linenos">327</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="linenos">328</span>    <span class="p">)</span>
+<span class="linenos">329</span>    <span class="nb">print</span><span class="p">(</span>
+<span class="linenos">330</span>        <span class="s2">&quot;  Phantom data range:   &quot;</span>
+<span class="linenos">331</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom</span><span class="o">.</span><span class="n">min</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="linenos">332</span>    <span class="p">)</span>
+<span class="linenos">333</span>
 <span class="linenos">334</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">335</span>    <span class="n">sinogram_cpu</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-<span class="linenos">336</span>    <span class="n">reco_cpu</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-<span class="linenos">337</span>
-<span class="linenos">338</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
-<span class="linenos">339</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-<span class="linenos">340</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
-<span class="linenos">341</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Phantom&quot;</span><span class="p">)</span>
-<span class="linenos">342</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">343</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">344</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">sinogram_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">,</span> <span class="n">aspect</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>
-<span class="linenos">345</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Fan Sinogram&quot;</span><span class="p">)</span>
-<span class="linenos">346</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">347</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-<span class="linenos">348</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">reco_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
-<span class="linenos">349</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Fan Reconstruction&quot;</span><span class="p">)</span>
-<span class="linenos">350</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">351</span>    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
-<span class="linenos">352</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="linenos">353</span>
-<span class="linenos">354</span>
-<span class="linenos">355</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-<span class="linenos">356</span>    <span class="n">main</span><span class="p">()</span>
+<span class="linenos">335</span>    <span class="c1"># 8. Visualization</span>
+<span class="linenos">336</span>    <span class="c1"># ------------------------------------------------------------------</span>
+<span class="linenos">337</span>    <span class="n">sinogram_cpu</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="linenos">338</span>    <span class="n">reco_cpu</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="linenos">339</span>
+<span class="linenos">340</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="linenos">341</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="linenos">342</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
+<span class="linenos">343</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Phantom&quot;</span><span class="p">)</span>
+<span class="linenos">344</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">345</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+<span class="linenos">346</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">sinogram_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">,</span> <span class="n">aspect</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>
+<span class="linenos">347</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Fan Sinogram&quot;</span><span class="p">)</span>
+<span class="linenos">348</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">349</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+<span class="linenos">350</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">reco_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
+<span class="linenos">351</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Fan Reconstruction&quot;</span><span class="p">)</span>
+<span class="linenos">352</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+<span class="linenos">353</span>    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="linenos">354</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="linenos">355</span>
+<span class="linenos">356</span>
+<span class="linenos">357</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<span class="linenos">358</span>    <span class="n">main</span><span class="p">()</span>
 </pre></div>
 </div>
 </div>
