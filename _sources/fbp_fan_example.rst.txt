@@ -57,7 +57,9 @@ position :math:`u` is
 
 where :math:`\vec{d}` is the unit ray direction from source to the
 detector cell. ``FanProjectorFunction`` implements this integral via a
-Siddon ray-march with bilinear interpolation.
+cell-constant Siddon ray-march (each ray accumulates each traversed
+pixel weighted by its exact intersection length, no sub-pixel
+interpolation).
 
 **FBP algorithm**
 

@@ -144,7 +144,9 @@ position <span class="math notranslate nohighlight">\(u\)</span> is</p>
     f\!\left(\vec{r}_s(\beta) + t \cdot \vec{d}(\beta, u)\right) \, dt\]</div>
 <p>where <span class="math notranslate nohighlight">\(\vec{d}\)</span> is the unit ray direction from source to the
 detector cell. <code class="docutils literal notranslate"><span class="pre">FanProjectorFunction</span></code> implements this integral via a
-Siddon ray-march with bilinear interpolation.</p>
+cell-constant Siddon ray-march (each ray accumulates each traversed
+pixel weighted by its exact intersection length, no sub-pixel
+interpolation).</p>
 <p><strong>FBP algorithm</strong></p>
 <ol class="arabic">
 <li><p><strong>Cosine pre-weighting</strong> of the raw projection:</p>

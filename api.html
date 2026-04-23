@@ -553,8 +553,8 @@ source to the center of rotation (isocenter).</p></li>
 <h2>Cone Beam Operators<a class="headerlink" href="#cone-beam-operators" title="Link to this heading"></a></h2>
 <p>Cone beam geometry extends fan beam to 3D with a cone-shaped X-ray beam
 and a 2D detector. <code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code> and
-<code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code> are exact adjoints of each other (Siddon
-traversal with trilinear interpolation) and drive the iterative cone
+<code class="docutils literal notranslate"><span class="pre">ConeBackprojectorFunction</span></code> are exact adjoints of each other
+(cell-constant Siddon traversal) and drive the iterative cone
 example. For analytical FDK, use <code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code> — it
 dispatches to a dedicated voxel-driven gather kernel with the classical
 <code class="docutils literal notranslate"><span class="pre">(sid/U)^2</span></code> distance weighting.</p>
@@ -563,10 +563,10 @@ dispatches to a dedicated voxel-driven gather kernel with the classical
 <p>Both the fan and cone Projector / Backprojector Function pairs accept a
 <code class="docutils literal notranslate"><span class="pre">backend</span></code> keyword that selects the underlying CUDA kernel family:</p>
 <dl class="simple">
-<dt><code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> (default)</dt><dd><p>Ray-driven Siddon traversal with bilinear (2D) / trilinear (3D)
-interpolation. Fastest, byte-for-byte unchanged from 1.2.11 and
-earlier, and is the right default for the overwhelming majority of
-use cases.</p>
+<dt><code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> (default)</dt><dd><p>Ray-driven cell-constant Siddon traversal: each ray accumulates
+the traversed pixel (2D) or voxel (3D) value weighted by its exact
+intersection length, no sub-cell interpolation. Fastest, and is
+the right default for the overwhelming majority of use cases.</p>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">&quot;sf&quot;</span></code> (fan only)</dt><dd><p>Voxel-driven separable-footprint projector (Long-Fessler-Balter,
 IEEE TMI 2010). Each voxel’s footprint is a trapezoid built from
@@ -588,40 +588,30 @@ voxel at large cone angles. Strictly more expressive than SF-TR but
 <p>All three SF backends go through matched scatter/gather kernel pairs
 with byte-accurate adjoints (verified by <code class="docutils literal notranslate"><span class="pre">test_adjoint_inner_product</span></code>
 and <code class="docutils literal notranslate"><span class="pre">test_gradcheck</span></code>).</p>
-<p><strong>Which backend to pick.</strong> At the thin-ray sampling level, measured
-against the analytical ellipse / ellipsoid Radon transform, Siddon is
-slightly more accurate than SF (~3 % better RMSE, ~15 % better max
-error) because diffct’s Siddon uses smooth interpolation rather than
-nearest-neighbour sampling. However, in a <strong>complete analytical
-reconstruction pipeline</strong> (forward projection -&gt; ramp filter -&gt;
-<cite>fan_weighted_backproject</cite> / <cite>cone_weighted_backproject</cite>) SF
-measurably improves the reconstruction MSE: on the standard 256²
-<code class="docutils literal notranslate"><span class="pre">examples/fbp_fan.py</span></code> phantom the raw MSE drops from <code class="docutils literal notranslate"><span class="pre">0.00216</span></code>
-(Siddon) to <code class="docutils literal notranslate"><span class="pre">0.00178</span></code> (SF), a ~17 % improvement; on the 128³
-<code class="docutils literal notranslate"><span class="pre">examples/fdk_cone.py</span></code> phantom it drops from <code class="docutils literal notranslate"><span class="pre">0.00325</span></code> (Siddon)
-to <code class="docutils literal notranslate"><span class="pre">0.00271</span></code> (SF-TR), again ~17 %. The mechanism is that SF’s
-mass-conserving cell-integrated sinogram pairs more naturally with
-the voxel-driven FBP / FDK gather backprojector than Siddon’s
-thin-ray sampling, which feeds extra high-frequency ringing into
-the ramp filter.</p>
+<p><strong>Which backend to pick.</strong> Siddon is the fastest per-step forward
+model and is the right default when you only need a forward
+projection. For a <strong>complete analytical reconstruction pipeline</strong>
+(forward projection -&gt; ramp filter -&gt; <cite>fan_weighted_backproject</cite> /
+<cite>cone_weighted_backproject</cite>) the SF backends tend to produce lower
+reconstruction MSE: SF’s mass-conserving cell-integrated sinogram
+pairs more naturally with the voxel-driven FBP / FDK gather
+backprojector than Siddon’s thin-ray sampling, which feeds extra
+high-frequency ringing into the ramp filter.</p>
 <p>So:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> — default for backward compatibility and raw forward
-speed. Best choice when you only need a forward projection and not
-a reconstruction.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;siddon&quot;</span></code> — default for raw forward speed. Best choice when you
+only need a forward projection and not a reconstruction.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;sf&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;sf_tr&quot;</span></code> — recommended for analytical FBP / FDK
 reconstruction when reconstruction quality matters more than
-forward-projection runtime. ~2–3× slower forward, ~17 % lower
-reconstruction MSE on standard CT phantoms.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;sf_tt&quot;</span></code> — strictly more expressive than SF-TR but its
-axial-trapezoid refinement improves RMSE by only ~0.001 at the cost
-of another ~40 % forward runtime; use for extreme cone angles or
-algorithm research only.</p></li>
+forward-projection runtime. ~2–3× slower forward than Siddon.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;sf_tt&quot;</span></code> — strictly more expressive than SF-TR; its axial-
+trapezoid refinement costs another ~40 % forward runtime on top of
+SF-TR, so use for extreme cone angles or algorithm research only.</p></li>
 </ul>
 <p>For <strong>iterative reconstruction with autograd</strong>, any backend is valid;
 SF has the theoretical advantage of exact voxel-scale mass
-conservation on both forward and adjoint, but in practice Siddon’s
-smoothing helps optimizer convergence.</p>
+conservation on both forward and adjoint, while Siddon gives the
+fastest per-iteration step.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.differentiable.ConeProjectorFunction">
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.differentiable.</span></span><span class="sig-name descname"><span class="pre">ConeProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/differentiable.html#ConeProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.differentiable.ConeProjectorFunction" title="Link to this definition"></a></dt>

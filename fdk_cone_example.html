@@ -143,7 +143,9 @@ position <span class="math notranslate nohighlight">\((u, v)\)</span> is</p>
     f\!\left(\vec{r}_s(\phi) + t \cdot \vec{d}(\phi, u, v)\right) \, dt\]</div>
 <p>where <span class="math notranslate nohighlight">\(\vec{d}\)</span> is the unit ray direction from source to
 detector cell. <code class="docutils literal notranslate"><span class="pre">ConeProjectorFunction</span></code> implements this integral via
-a Siddon ray-march with trilinear interpolation.</p>
+a cell-constant Siddon ray-march (each ray accumulates each traversed
+voxel weighted by its exact intersection length, no sub-voxel
+interpolation).</p>
 <p><strong>FDK Algorithm</strong></p>
 <p>The Feldkamp-Davis-Kress formula reconstructs an approximation of the
 3D volume in three steps:</p>
