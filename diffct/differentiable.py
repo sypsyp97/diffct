@@ -30,6 +30,11 @@ _FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=True)
 _FDK_ACCURACY_DECORATOR = cuda.jit(cache=True, fastmath=False)
 
 _INF                = _DTYPE(np.inf)
+_NEG_INF            = _DTYPE(-np.inf)
+_ZERO               = _DTYPE(0.0)
+_ONE                = _DTYPE(1.0)
+_HALF               = _DTYPE(0.5)
+_QUARTER            = _DTYPE(0.25)
 _EPSILON            = _DTYPE(1e-6)
 # === Device Management Utilities ===
 class DeviceManager:
@@ -663,7 +668,7 @@ def _parallel_2d_forward_kernel(
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
+    u = (np.float32(idet) - (np.float32(n_det) - _ONE) * _HALF) * det_spacing / voxel_spacing + det_offset
 
     # Define ray direction and starting point for parallel beam geometry
     # Ray direction is perpendicular to detector array (cos_a, sin_a)
@@ -676,7 +681,7 @@ def _parallel_2d_forward_kernel(
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
     # Volume extends from [-cx, cx] x [-cy, cy] in voxel coordinate system
     # Mathematical basis: For ray r(t) = origin + t*direction, solve r(t) = boundary for parameter t
-    t_min, t_max = -_INF, _INF  # Initialize ray parameter range to unbounded
+    t_min, t_max = _NEG_INF, _INF  # Initialize ray parameter range to unbounded
     
     # X-direction boundary intersections
     # Handle non-parallel rays: compute intersection parameters with left (-cx) and right (+cx) boundaries
@@ -687,7 +692,7 @@ def _parallel_2d_forward_kernel(
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))  # Update valid parameter range
     elif pnt_x < -cx or pnt_x > cx:  # Ray parallel to x-axis but outside volume bounds
         # Edge case: ray never intersects volume if parallel and outside boundaries
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # Y-direction boundary intersections (identical logic to x-direction)
     # Handle non-parallel rays: compute intersection parameters with bottom (-cy) and top (+cy) boundaries
@@ -697,15 +702,15 @@ def _parallel_2d_forward_kernel(
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))  # Intersect with x-range
     elif pnt_y < -cy or pnt_y > cy:  # Ray parallel to y-axis but outside volume bounds
         # Edge case: ray never intersects volume if parallel and outside boundaries
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # Boundary intersection validation: check if ray actually intersects the volume
     # If t_min >= t_max, the ray misses the volume entirely (no valid intersection interval)
     if t_min >= t_max:
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # === SIDDON METHOD VOXEL TRAVERSAL INITIALIZATION ===
-    accum = 0.0  # Accumulated projection value along ray
+    accum = _ZERO  # Accumulated projection value along ray
     t = t_min    # Current ray parameter (distance from ray start)
     
     # Convert ray entry point to voxel indices (image coordinate system)
@@ -715,14 +720,16 @@ def _parallel_2d_forward_kernel(
     # Determine traversal direction and step sizes for each axis
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)  # Voxel stepping direction
     # Hoist inverse directions to reduce divisions and branches
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
 
     # Calculate parameter values for next voxel boundary crossings using inv_dir_*
-    tx = ((ix + (step_x > 0)) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === MAIN RAY TRAVERSAL LOOP ===
     # Step through voxels along ray path, accumulating weighted contributions
@@ -737,14 +744,15 @@ def _parallel_2d_forward_kernel(
                 # === BILINEAR INTERPOLATION SAMPLING ===
                 # Sample volume at ray segment midpoint for accurate integration
                 # Mathematical basis: Midpoint rule for numerical integration along ray segments
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = pnt_x + t_mid * dir_x + cx  # Midpoint x-coordinate in image space
                 mid_y = pnt_y + t_mid * dir_y + cy  # Midpoint y-coordinate in image space
 
                 # Convert continuous coordinates to discrete voxel indices and fractional weights
                 # Floor operation gives base voxel index, fractional part gives interpolation weights
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))  # Base voxel indices (bottom-left corner)
-                dx, dy = mid_x - ix0, mid_y - iy0  # Fractional parts: distance from base voxel center [0,1]
+                dx = mid_x - np.float32(ix0)  # Fractional parts: distance from base voxel center [0,1]
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -754,8 +762,8 @@ def _parallel_2d_forward_kernel(
                 # Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)
                 # where wi(x,y) are the bilinear basis functions for each corner voxel
                 # Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 v00 = d_image[iy0, ix0]
                 v10 = d_image[iy0, ix0 + 1]
                 v01 = d_image[iy0 + 1, ix0]
@@ -834,7 +842,7 @@ def _parallel_2d_backward_kernel(
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
+    u = (np.float32(idet) - (np.float32(n_det) - _ONE) * _HALF) * det_spacing / voxel_spacing + det_offset
 
     # Define ray direction and starting point for parallel beam geometry
     dir_x, dir_y = cos_a, sin_a
@@ -842,7 +850,7 @@ def _parallel_2d_backward_kernel(
     pnt_y = u * cos_a + center_offset_y
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - pnt_x) / dir_x, (cx - pnt_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
@@ -861,12 +869,14 @@ def _parallel_2d_backward_kernel(
     iy = int(math.floor(pnt_y + t * dir_y + cy))
 
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along ray path using bilinear interpolation
@@ -876,11 +886,12 @@ def _parallel_2d_backward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at ray segment midpoint (same as forward projection)
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = pnt_x + t_mid * dir_x + cx
                 mid_y = pnt_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx, dy = mid_x - ix0, mid_y - iy0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -894,8 +905,8 @@ def _parallel_2d_backward_kernel(
                 # Performance impact: Atomic operations are slower than regular writes but necessary for correctness
                 # Memory access pattern: Global memory atomics with potential bank conflicts, but unavoidable
                 cval = val * seg_len  # Contribution value for this ray segment
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
@@ -973,7 +984,7 @@ def _fan_2d_forward_kernel(
     cos_a = d_cos[iang]  # Precomputed cosine of projection angle
     sin_a = d_sin[iang]  # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
+    u = (np.float32(idet) - (np.float32(n_det) - _ONE) * _HALF) * det_spacing / voxel_spacing + det_offset
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
@@ -992,32 +1003,32 @@ def _fan_2d_forward_kernel(
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
     if length < _EPSILON:  # Degenerate ray case
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
     
     # Normalize ray direction vector for parametric traversal
-    inv_len = 1.0 / length
+    inv_len = _ONE / length
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x  # Volume boundary intersections
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx:  # Source outside volume bounds
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     if abs(dir_y) > _EPSILON:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy:
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     if t_min >= t_max:  # No valid intersection
-        d_sino[iang, idet] = 0.0; return
+        d_sino[iang, idet] = _ZERO; return
 
     # === SIDDON METHOD TRAVERSAL (same algorithm as parallel beam) ===
-    accum = 0.0  # Accumulated projection value
+    accum = _ZERO  # Accumulated projection value
     t = t_min    # Current ray parameter
     
     # Convert ray entry point to voxel indices (using source as ray origin)
@@ -1026,12 +1037,14 @@ def _fan_2d_forward_kernel(
 
     # Traversal parameters (identical to parallel beam implementation)
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # Main traversal loop with bilinear interpolation (identical to parallel beam)
     while t < t_max:
@@ -1040,19 +1053,20 @@ def _fan_2d_forward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at midpoint using source as ray origin
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx
                 mid_y = src_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx, dy = mid_x - ix0, mid_y - iy0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
                 iy0 = max(0, min(iy0, Ny - 2))
                 
                 # Bilinear interpolation (identical to parallel beam)
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 v00 = d_image[iy0, ix0]
                 v10 = d_image[iy0, ix0 + 1]
                 v01 = d_image[iy0 + 1, ix0]
@@ -1099,7 +1113,7 @@ def _fan_2d_backward_kernel(
     cos_a = d_cos[iang]         # Precomputed cosine of projection angle
     sin_a = d_sin[iang]         # Precomputed sine of projection angle
     # Normalize all physical distances to voxel units
-    u = (idet - (n_det - 1) * 0.5) * det_spacing / voxel_spacing + det_offset
+    u = (np.float32(idet) - (np.float32(n_det) - _ONE) * _HALF) * det_spacing / voxel_spacing + det_offset
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
@@ -1118,12 +1132,12 @@ def _fan_2d_backward_kernel(
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
     if length < _EPSILON: return  # Skip degenerate rays
-    inv_len = 1.0 / length        # Normalization factor for ray direction
+    inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len  # Normalized ray direction vector
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
@@ -1142,12 +1156,14 @@ def _fan_2d_backward_kernel(
     iy = int(math.floor(src_y + t * dir_y + cy))
 
     step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along divergent ray path using bilinear interpolation
@@ -1157,11 +1173,12 @@ def _fan_2d_backward_kernel(
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 # Sample at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx
                 mid_y = src_y + t_mid * dir_y + cy
                 ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx, dy = mid_x - ix0, mid_y - iy0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
                 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -1173,8 +1190,8 @@ def _fan_2d_backward_kernel(
                 # weights. No distance weighting - that belongs to the
                 # analytical FBP kernel, not this adjoint.
                 cval = val * seg_len
-                one_minus_dx = 1.0 - dx
-                one_minus_dy = 1.0 - dy
+                one_minus_dx = _ONE - dx
+                one_minus_dy = _ONE - dy
                 cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
                 cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
@@ -1216,7 +1233,7 @@ def _fan_2d_sf_forward_kernel(
         return
 
     val = d_image[iy, ix]
-    if val == 0.0:
+    if val == _ZERO:
         return
 
     cos_a = d_cos[iang]
@@ -1229,15 +1246,15 @@ def _fan_2d_sf_forward_kernel(
     # convention where d_vol[ix, iy] is a sample AT world (ix - cx, iy - cy)
     # and bilinear interpolation linearly connects neighbouring samples. The
     # SF "box" around each sample has unit side length, extending +-0.5.
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
 
     # Project the four corners to the flat detector.
     # u(x, y) = sdd_v * (x*cos + y*sin) / (sid_v + x*sin - y*cos)
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
 
     d1 = sid_v + x_m * sin_a - y_m * cos_a
     d2 = sid_v + x_p * sin_a - y_m * cos_a
@@ -1290,7 +1307,7 @@ def _fan_2d_sf_forward_kernel(
         m = ar
     if m < _EPSILON:
         return
-    chord = 1.0 / m
+    chord = _ONE / m
 
     # Footprint is a trapezoid in detector u with peak = chord (= line integral
     # along the central ray). Each sinogram bin stores the cell-averaged line
@@ -1301,9 +1318,9 @@ def _fan_2d_sf_forward_kernel(
 
     # Detector bin range overlapping [u_min, u_max].
     # idet = (u - det_offset) / det_spacing_v + 0.5*(n_det - 1)
-    half = 0.5 * (n_det - 1)
-    k_lo_f = (u_min - det_offset) / det_spacing_v + half - 0.5
-    k_hi_f = (u_max - det_offset) / det_spacing_v + half + 0.5
+    half = (np.float32(n_det) - _ONE) * _HALF
+    k_lo_f = (u_min - det_offset) / det_spacing_v + half - _HALF
+    k_hi_f = (u_max - det_offset) / det_spacing_v + half + _HALF
     k_lo = int(math.floor(k_lo_f))
     k_hi = int(math.ceil(k_hi_f))
     if k_lo < 0:
@@ -1317,23 +1334,23 @@ def _fan_2d_sf_forward_kernel(
     fall_w = u_max - u_hi
 
     for k in range(k_lo, k_hi + 1):
-        u_k = (k - half) * det_spacing_v + det_offset
-        u_L = u_k - 0.5 * det_spacing_v
-        u_R = u_k + 0.5 * det_spacing_v
+        u_k = (np.float32(k) - half) * det_spacing_v + det_offset
+        u_L = u_k - _HALF * det_spacing_v
+        u_R = u_k + _HALF * det_spacing_v
 
         aL = u_L if u_L > u_min else u_min
         aR = u_R if u_R < u_max else u_max
         if aL >= aR:
             continue
 
-        raw = 0.0  # unnormalized trapezoid integral over [aL, aR] with peak = 1
+        raw = _ZERO  # unnormalized trapezoid integral over [aL, aR] with peak = 1
 
         # Rising segment [u_min, u_lo], height (u - u_min)/rise_w.
         if rise_w > _EPSILON:
             r_lo = aL if aL > u_min else u_min
             r_hi = aR if aR < u_lo else u_lo
             if r_hi > r_lo:
-                raw += 0.5 * ((r_hi - u_min) * (r_hi - u_min) -
+                raw += _HALF * ((r_hi - u_min) * (r_hi - u_min) -
                               (r_lo - u_min) * (r_lo - u_min)) / rise_w
 
         # Plateau [u_lo, u_hi], height = 1.
@@ -1348,10 +1365,10 @@ def _fan_2d_sf_forward_kernel(
             f_lo = aL if aL > u_hi else u_hi
             f_hi = aR if aR < u_max else u_max
             if f_hi > f_lo:
-                raw += 0.5 * ((u_max - f_lo) * (u_max - f_lo) -
+                raw += _HALF * ((u_max - f_lo) * (u_max - f_lo) -
                               (u_max - f_hi) * (u_max - f_hi)) / fall_w
 
-        if raw > 0.0:
+        if raw > _ZERO:
             cuda.atomic.add(d_sino, (iang, k), weight * raw)
 
 
@@ -1381,17 +1398,17 @@ def _fan_2d_sf_backward_kernel(
     sid_v = sid / voxel_spacing
     sdd_v = sdd / voxel_spacing
     det_spacing_v = det_spacing / voxel_spacing
-    half = 0.5 * (n_det - 1)
+    half = (np.float32(n_det) - _ONE) * _HALF
 
     # Grid-point convention (see _fan_2d_sf_forward_kernel for details).
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
 
-    grad_val = 0.0
+    grad_val = _ZERO
 
     for iang in range(n_ang):
         cos_a = d_cos[iang]
@@ -1445,13 +1462,13 @@ def _fan_2d_sf_backward_kernel(
             m = ar
         if m < _EPSILON:
             continue
-        chord = 1.0 / m
+        chord = _ONE / m
 
         plateau = u_hi - u_lo
         weight = chord / det_spacing_v
 
-        k_lo_f = (u_min - det_offset) / det_spacing_v + half - 0.5
-        k_hi_f = (u_max - det_offset) / det_spacing_v + half + 0.5
+        k_lo_f = (u_min - det_offset) / det_spacing_v + half - _HALF
+        k_hi_f = (u_max - det_offset) / det_spacing_v + half + _HALF
         k_lo = int(math.floor(k_lo_f))
         k_hi = int(math.ceil(k_hi_f))
         if k_lo < 0:
@@ -1465,21 +1482,21 @@ def _fan_2d_sf_backward_kernel(
         fall_w = u_max - u_hi
 
         for k in range(k_lo, k_hi + 1):
-            u_k = (k - half) * det_spacing_v + det_offset
-            u_L = u_k - 0.5 * det_spacing_v
-            u_R = u_k + 0.5 * det_spacing_v
+            u_k = (np.float32(k) - half) * det_spacing_v + det_offset
+            u_L = u_k - _HALF * det_spacing_v
+            u_R = u_k + _HALF * det_spacing_v
 
             aL = u_L if u_L > u_min else u_min
             aR = u_R if u_R < u_max else u_max
             if aL >= aR:
                 continue
 
-            raw = 0.0
+            raw = _ZERO
             if rise_w > _EPSILON:
                 r_lo_ = aL if aL > u_min else u_min
                 r_hi_ = aR if aR < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                   (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
 
             if plateau > _EPSILON:
@@ -1492,10 +1509,10 @@ def _fan_2d_sf_backward_kernel(
                 f_lo_ = aL if aL > u_hi else u_hi
                 f_hi_ = aR if aR < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                   (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
 
-            if raw > 0.0:
+            if raw > _ZERO:
                 grad_val += weight * raw * d_grad_sino[iang, k]
 
     d_grad_img[iy, ix] = grad_val
@@ -1573,8 +1590,8 @@ def _cone_3d_forward_kernel(
     # === 3D CONE BEAM GEOMETRY SETUP ===
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
     # Normalize all physical distances to voxel units
-    u = (iu - (n_u - 1) * 0.5) * du / voxel_spacing + det_offset_u
-    v = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing + det_offset_v
+    u = (np.float32(iu) - (np.float32(n_u) - _ONE) * _HALF) * du / voxel_spacing + det_offset_u
+    v = (np.float32(iv) - (np.float32(n_v) - _ONE) * _HALF) * dv / voxel_spacing + det_offset_v
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
@@ -1596,42 +1613,42 @@ def _cone_3d_forward_kernel(
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
     if length < _EPSILON:  # Degenerate ray case
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
     
     # Normalize 3D ray direction vector for parametric traversal
-    inv_len = 1.0 / length
+    inv_len = _ONE / length
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with 3D volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     
     # X-direction boundary intersections
     if abs(dir_x) > _EPSILON:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx:  # Source outside x-bounds
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
     
     # Y-direction boundary intersections
     if abs(dir_y) > _EPSILON:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy:  # Source outside y-bounds
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
     
     # Z-direction boundary intersections (extends 2D algorithm to 3D)
     if abs(dir_z) > _EPSILON:
         tz1, tz2 = (-cz - src_z) / dir_z, (cz - src_z) / dir_z
         t_min, t_max = max(t_min, min(tz1, tz2)), min(t_max, max(tz1, tz2))
     elif src_z < -cz or src_z > cz:  # Source outside z-bounds
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
 
     if t_min >= t_max:  # No valid 3D intersection
-        d_sino[iview, iu, iv] = 0.0; return
+        d_sino[iview, iu, iv] = _ZERO; return
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
-    accum = 0.0  # Accumulated projection value
+    accum = _ZERO  # Accumulated projection value
     t = t_min    # Current ray parameter
     
     # Convert 3D ray entry point to voxel indices
@@ -1641,17 +1658,20 @@ def _cone_3d_forward_kernel(
 
     # 3D traversal parameters (extends 2D algorithm)
     step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
-    inv_dir_z = (1.0 / dir_z) if abs(dir_z) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
+    inv_dir_z = (_ONE / dir_z) if abs(dir_z) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
     dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
 
     # Calculate parameter values for next 3D voxel boundary crossings
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = ((iz + (step_z > 0)) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    next_iz = iz + (1 if step_z > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D TRAVERSAL LOOP WITH TRILINEAR INTERPOLATION ===
     while t < t_max:
@@ -1664,14 +1684,16 @@ def _cone_3d_forward_kernel(
                 # === TRILINEAR INTERPOLATION SAMPLING ===
                 # Sample 3D volume at ray segment midpoint for accurate integration
                 # Mathematical basis: Midpoint rule for numerical integration along 3D ray segments
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx  # Midpoint x-coordinate in volume space
                 mid_y = src_y + t_mid * dir_y + cy  # Midpoint y-coordinate in volume space
                 mid_z = src_z + t_mid * dir_z + cz  # Midpoint z-coordinate in volume space
 
                 # Convert continuous 3D coordinates to discrete voxel indices and fractional weights
                 ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
+                dz = mid_z - np.float32(iz0)
 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -1679,9 +1701,9 @@ def _cone_3d_forward_kernel(
                 iz0 = max(0, min(iz0, Nz - 2))
 
                 # Precompute complements
-                omdx = 1.0 - dx
-                omdy = 1.0 - dy
-                omdz = 1.0 - dz
+                omdx = _ONE - dx
+                omdy = _ONE - dy
+                omdz = _ONE - dz
 
                 # === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===
                 val = (
@@ -1741,8 +1763,8 @@ def _cone_3d_backward_kernel(
     g = d_sino[iview, iu, iv]  # Sinogram value to backproject along this ray
     cos_a, sin_a = d_cos[iview], d_sin[iview]  # Projection angle trigonometry
     # Normalize all physical distances to voxel units
-    u = (iu - (n_u - 1) * 0.5) * du / voxel_spacing + det_offset_u
-    v = (iv - (n_v - 1) * 0.5) * dv / voxel_spacing + det_offset_v
+    u = (np.float32(iu) - (np.float32(n_u) - _ONE) * _HALF) * du / voxel_spacing + det_offset_u
+    v = (np.float32(iv) - (np.float32(n_v) - _ONE) * _HALF) * dv / voxel_spacing + det_offset_v
     sid_v = sid / voxel_spacing  # Source-to-isocenter distance in voxel units
     sdd_v = sdd / voxel_spacing  # Source-to-detector distance in voxel units
 
@@ -1764,12 +1786,12 @@ def _cone_3d_backward_kernel(
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
     if length < _EPSILON: return  # Skip degenerate rays
-    inv_len = 1.0 / length        # Normalization factor for ray direction
+    inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len  # Normalized 3D ray direction vector
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with 3D volume boundaries using source position as ray origin
-    t_min, t_max = -_INF, _INF
+    t_min, t_max = _NEG_INF, _INF
     
     # X-direction boundary intersections
     if abs(dir_x) > _EPSILON:
@@ -1799,17 +1821,20 @@ def _cone_3d_backward_kernel(
 
     # 3D traversal parameters (extends 2D algorithm)
     step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    inv_dir_x = (1.0 / dir_x) if abs(dir_x) > _EPSILON else 0.0
-    inv_dir_y = (1.0 / dir_y) if abs(dir_y) > _EPSILON else 0.0
-    inv_dir_z = (1.0 / dir_z) if abs(dir_z) > _EPSILON else 0.0
+    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
+    inv_dir_z = (_ONE / dir_z) if abs(dir_z) > _EPSILON else _ZERO
     dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
     dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
     dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
 
     # Calculate parameter values for next 3D voxel boundary crossings
-    tx = ((ix + (step_x > 0)) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = ((iy + (step_y > 0)) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = ((iz + (step_z > 0)) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    next_iz = iz + (1 if step_z > 0 else 0)
+    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Distribute sinogram value along divergent 3D ray path using trilinear interpolation
@@ -1822,14 +1847,16 @@ def _cone_3d_backward_kernel(
             if seg_len > _EPSILON:
                 # === TRILINEAR INTERPOLATION SAMPLING ===
                 # Sample 3D volume at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * 0.5
+                t_mid = t + seg_len * _HALF
                 mid_x = src_x + t_mid * dir_x + cx
                 mid_y = src_y + t_mid * dir_y + cy
                 mid_z = src_z + t_mid * dir_z + cz
 
                 # Convert continuous 3D coordinates to voxel indices and interpolation weights
                 ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx, dy, dz = mid_x - ix0, mid_y - iy0, mid_z - iz0
+                dx = mid_x - np.float32(ix0)
+                dy = mid_y - np.float32(iy0)
+                dz = mid_z - np.float32(iz0)
 
                 # Clamp indices to stay in-bounds during interpolation
                 ix0 = max(0, min(ix0, Nx - 2))
@@ -1840,9 +1867,9 @@ def _cone_3d_backward_kernel(
                 # cval = g * seg_len, distributed onto the eight nearest
                 # voxels with trilinear weights. Distance weighting lives
                 # in the analytical FDK kernel, not here.
-                omdx = 1.0 - dx
-                omdy = 1.0 - dy
-                omdz = 1.0 - dz
+                omdx = _ONE - dx
+                omdy = _ONE - dy
+                omdz = _ONE - dz
                 cval = g * seg_len
 
                 # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
@@ -1907,26 +1934,26 @@ def _cone_3d_sf_tr_forward_kernel(
         return
 
     val = d_vol[ix, iy, iz]
-    if val == 0.0:
+    if val == _ZERO:
         return
 
     sid_v = sid / voxel_spacing
     sdd_v = sdd / voxel_spacing
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
-    u_half = 0.5 * (n_u - 1)
-    v_half = 0.5 * (n_v - 1)
+    u_half = (np.float32(n_u) - _ONE) * _HALF
+    v_half = (np.float32(n_v) - _ONE) * _HALF
 
     # Grid-point convention: voxel[ix,iy,iz] sits at world (ix-cx, iy-cy, iz-cz).
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    z_c = (iz - cz) - center_offset_z
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
-    z_m = z_c - 0.5
-    z_p = z_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    z_c = (np.float32(iz) - cz) - center_offset_z
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
+    z_m = z_c - _HALF
+    z_p = z_c + _HALF
 
     for iview in range(n_views):
         cos_a = d_cos[iview]
@@ -1998,15 +2025,15 @@ def _cone_3d_sf_tr_forward_kernel(
             m = az
         if m < _EPSILON:
             continue
-        chord = 1.0 / m
+        chord = _ONE / m
 
         plateau = u_hi - u_lo
         rise_w = u_lo - u_min
         fall_w = u_max - u_hi
         weight = val * chord / (du_v * dv_v)
 
-        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
-        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - _HALF))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + _HALF))
         if k_u_lo < 0:
             k_u_lo = 0
         if k_u_hi > n_u - 1:
@@ -2014,8 +2041,8 @@ def _cone_3d_sf_tr_forward_kernel(
         if k_u_hi < k_u_lo:
             continue
 
-        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - 0.5))
-        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + 0.5))
+        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - _HALF))
+        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + _HALF))
         if k_v_lo < 0:
             k_v_lo = 0
         if k_v_hi > n_v - 1:
@@ -2024,21 +2051,21 @@ def _cone_3d_sf_tr_forward_kernel(
             continue
 
         for ku in range(k_u_lo, k_u_hi + 1):
-            u_k = (ku - u_half) * du_v + det_offset_u
-            u_L = u_k - 0.5 * du_v
-            u_R = u_k + 0.5 * du_v
+            u_k = (np.float32(ku) - u_half) * du_v + det_offset_u
+            u_L = u_k - _HALF * du_v
+            u_R = u_k + _HALF * du_v
 
             aL = u_L if u_L > u_min else u_min
             aR = u_R if u_R < u_max else u_max
             if aL >= aR:
                 continue
 
-            raw_u = 0.0
+            raw_u = _ZERO
             if rise_w > _EPSILON:
                 r_lo_ = aL if aL > u_min else u_min
                 r_hi_ = aR if aR < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw_u += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                     (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
             if plateau > _EPSILON:
                 p_lo_ = aL if aL > u_lo else u_lo
@@ -2049,15 +2076,15 @@ def _cone_3d_sf_tr_forward_kernel(
                 f_lo_ = aL if aL > u_hi else u_hi
                 f_hi_ = aR if aR < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw_u += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                     (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
-            if raw_u <= 0.0:
+            if raw_u <= _ZERO:
                 continue
 
             for kv in range(k_v_lo, k_v_hi + 1):
-                v_k = (kv - v_half) * dv_v + det_offset_v
-                v_L = v_k - 0.5 * dv_v
-                v_R = v_k + 0.5 * dv_v
+                v_k = (np.float32(kv) - v_half) * dv_v + det_offset_v
+                v_L = v_k - _HALF * dv_v
+                v_R = v_k + _HALF * dv_v
 
                 aLv = v_L if v_L > v_bot else v_bot
                 aRv = v_R if v_R < v_top else v_top
@@ -2091,20 +2118,20 @@ def _cone_3d_sf_tr_backward_kernel(
     sdd_v = sdd / voxel_spacing
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
-    u_half = 0.5 * (n_u - 1)
-    v_half = 0.5 * (n_v - 1)
+    u_half = (np.float32(n_u) - _ONE) * _HALF
+    v_half = (np.float32(n_v) - _ONE) * _HALF
 
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    z_c = (iz - cz) - center_offset_z
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
-    z_m = z_c - 0.5
-    z_p = z_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    z_c = (np.float32(iz) - cz) - center_offset_z
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
+    z_m = z_c - _HALF
+    z_p = z_c + _HALF
 
-    grad_val = 0.0
+    grad_val = _ZERO
 
     for iview in range(n_views):
         cos_a = d_cos[iview]
@@ -2173,15 +2200,15 @@ def _cone_3d_sf_tr_backward_kernel(
             m = az
         if m < _EPSILON:
             continue
-        chord = 1.0 / m
+        chord = _ONE / m
 
         plateau = u_hi - u_lo
         rise_w = u_lo - u_min
         fall_w = u_max - u_hi
         weight = chord / (du_v * dv_v)
 
-        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
-        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - _HALF))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + _HALF))
         if k_u_lo < 0:
             k_u_lo = 0
         if k_u_hi > n_u - 1:
@@ -2189,8 +2216,8 @@ def _cone_3d_sf_tr_backward_kernel(
         if k_u_hi < k_u_lo:
             continue
 
-        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - 0.5))
-        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + 0.5))
+        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - _HALF))
+        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + _HALF))
         if k_v_lo < 0:
             k_v_lo = 0
         if k_v_hi > n_v - 1:
@@ -2199,21 +2226,21 @@ def _cone_3d_sf_tr_backward_kernel(
             continue
 
         for ku in range(k_u_lo, k_u_hi + 1):
-            u_k = (ku - u_half) * du_v + det_offset_u
-            u_L = u_k - 0.5 * du_v
-            u_R = u_k + 0.5 * du_v
+            u_k = (np.float32(ku) - u_half) * du_v + det_offset_u
+            u_L = u_k - _HALF * du_v
+            u_R = u_k + _HALF * du_v
 
             aL = u_L if u_L > u_min else u_min
             aR = u_R if u_R < u_max else u_max
             if aL >= aR:
                 continue
 
-            raw_u = 0.0
+            raw_u = _ZERO
             if rise_w > _EPSILON:
                 r_lo_ = aL if aL > u_min else u_min
                 r_hi_ = aR if aR < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw_u += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                     (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
             if plateau > _EPSILON:
                 p_lo_ = aL if aL > u_lo else u_lo
@@ -2224,15 +2251,15 @@ def _cone_3d_sf_tr_backward_kernel(
                 f_lo_ = aL if aL > u_hi else u_hi
                 f_hi_ = aR if aR < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw_u += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                     (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
-            if raw_u <= 0.0:
+            if raw_u <= _ZERO:
                 continue
 
             for kv in range(k_v_lo, k_v_hi + 1):
-                v_k = (kv - v_half) * dv_v + det_offset_v
-                v_L = v_k - 0.5 * dv_v
-                v_R = v_k + 0.5 * dv_v
+                v_k = (np.float32(kv) - v_half) * dv_v + det_offset_v
+                v_L = v_k - _HALF * dv_v
+                v_R = v_k + _HALF * dv_v
 
                 aLv = v_L if v_L > v_bot else v_bot
                 aRv = v_R if v_R < v_top else v_top
@@ -2268,25 +2295,25 @@ def _cone_3d_sf_tt_forward_kernel(
         return
 
     val = d_vol[ix, iy, iz]
-    if val == 0.0:
+    if val == _ZERO:
         return
 
     sid_v = sid / voxel_spacing
     sdd_v = sdd / voxel_spacing
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
-    u_half = 0.5 * (n_u - 1)
-    v_half = 0.5 * (n_v - 1)
+    u_half = (np.float32(n_u) - _ONE) * _HALF
+    v_half = (np.float32(n_v) - _ONE) * _HALF
 
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    z_c = (iz - cz) - center_offset_z
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
-    z_m = z_c - 0.5
-    z_p = z_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    z_c = (np.float32(iz) - cz) - center_offset_z
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
+    z_m = z_c - _HALF
+    z_p = z_c + _HALF
 
     for iview in range(n_views):
         cos_a = d_cos[iview]
@@ -2391,7 +2418,7 @@ def _cone_3d_sf_tt_forward_kernel(
             m = az
         if m < _EPSILON:
             continue
-        chord = 1.0 / m
+        chord = _ONE / m
 
         plateau_u = u_hi - u_lo
         rise_u = u_lo - u_min
@@ -2403,8 +2430,8 @@ def _cone_3d_sf_tt_forward_kernel(
 
         weight = val * chord / (du_v * dv_v)
 
-        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
-        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - _HALF))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + _HALF))
         if k_u_lo < 0:
             k_u_lo = 0
         if k_u_hi > n_u - 1:
@@ -2412,8 +2439,8 @@ def _cone_3d_sf_tt_forward_kernel(
         if k_u_hi < k_u_lo:
             continue
 
-        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - 0.5))
-        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + 0.5))
+        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - _HALF))
+        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + _HALF))
         if k_v_lo < 0:
             k_v_lo = 0
         if k_v_hi > n_v - 1:
@@ -2422,21 +2449,21 @@ def _cone_3d_sf_tt_forward_kernel(
             continue
 
         for ku in range(k_u_lo, k_u_hi + 1):
-            u_k = (ku - u_half) * du_v + det_offset_u
-            u_L = u_k - 0.5 * du_v
-            u_R = u_k + 0.5 * du_v
+            u_k = (np.float32(ku) - u_half) * du_v + det_offset_u
+            u_L = u_k - _HALF * du_v
+            u_R = u_k + _HALF * du_v
 
             aLu = u_L if u_L > u_min else u_min
             aRu = u_R if u_R < u_max else u_max
             if aLu >= aRu:
                 continue
 
-            raw_u = 0.0
+            raw_u = _ZERO
             if rise_u > _EPSILON:
                 r_lo_ = aLu if aLu > u_min else u_min
                 r_hi_ = aRu if aRu < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw_u += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                     (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_u
             if plateau_u > _EPSILON:
                 p_lo_ = aLu if aLu > u_lo else u_lo
@@ -2447,27 +2474,27 @@ def _cone_3d_sf_tt_forward_kernel(
                 f_lo_ = aLu if aLu > u_hi else u_hi
                 f_hi_ = aRu if aRu < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw_u += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                     (u_max - f_hi_) * (u_max - f_hi_)) / fall_u
-            if raw_u <= 0.0:
+            if raw_u <= _ZERO:
                 continue
 
             for kv in range(k_v_lo, k_v_hi + 1):
-                v_k = (kv - v_half) * dv_v + det_offset_v
-                v_L = v_k - 0.5 * dv_v
-                v_R = v_k + 0.5 * dv_v
+                v_k = (np.float32(kv) - v_half) * dv_v + det_offset_v
+                v_L = v_k - _HALF * dv_v
+                v_R = v_k + _HALF * dv_v
 
                 aLv = v_L if v_L > v_min else v_min
                 aRv = v_R if v_R < v_max else v_max
                 if aLv >= aRv:
                     continue
 
-                raw_v = 0.0
+                raw_v = _ZERO
                 if rise_v > _EPSILON:
                     r_lo_v = aLv if aLv > v_min else v_min
                     r_hi_v = aRv if aRv < v_lo else v_lo
                     if r_hi_v > r_lo_v:
-                        raw_v += 0.5 * ((r_hi_v - v_min) * (r_hi_v - v_min) -
+                        raw_v += _HALF * ((r_hi_v - v_min) * (r_hi_v - v_min) -
                                         (r_lo_v - v_min) * (r_lo_v - v_min)) / rise_v
                 if plateau_v > _EPSILON:
                     p_lo_v = aLv if aLv > v_lo else v_lo
@@ -2478,9 +2505,9 @@ def _cone_3d_sf_tt_forward_kernel(
                     f_lo_v = aLv if aLv > v_hi else v_hi
                     f_hi_v = aRv if aRv < v_max else v_max
                     if f_hi_v > f_lo_v:
-                        raw_v += 0.5 * ((v_max - f_lo_v) * (v_max - f_lo_v) -
+                        raw_v += _HALF * ((v_max - f_lo_v) * (v_max - f_lo_v) -
                                         (v_max - f_hi_v) * (v_max - f_hi_v)) / fall_v
-                if raw_v <= 0.0:
+                if raw_v <= _ZERO:
                     continue
 
                 cuda.atomic.add(d_sino, (iview, ku, kv), weight * raw_u * raw_v)
@@ -2508,20 +2535,20 @@ def _cone_3d_sf_tt_backward_kernel(
     sdd_v = sdd / voxel_spacing
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
-    u_half = 0.5 * (n_u - 1)
-    v_half = 0.5 * (n_v - 1)
+    u_half = (np.float32(n_u) - _ONE) * _HALF
+    v_half = (np.float32(n_v) - _ONE) * _HALF
 
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    z_c = (iz - cz) - center_offset_z
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
-    z_m = z_c - 0.5
-    z_p = z_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    z_c = (np.float32(iz) - cz) - center_offset_z
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
+    z_m = z_c - _HALF
+    z_p = z_c + _HALF
 
-    grad_val = 0.0
+    grad_val = _ZERO
 
     for iview in range(n_views):
         cos_a = d_cos[iview]
@@ -2621,7 +2648,7 @@ def _cone_3d_sf_tt_backward_kernel(
             m = az
         if m < _EPSILON:
             continue
-        chord = 1.0 / m
+        chord = _ONE / m
 
         plateau_u = u_hi - u_lo
         rise_u = u_lo - u_min
@@ -2631,8 +2658,8 @@ def _cone_3d_sf_tt_backward_kernel(
         fall_v = v_max - v_hi
         weight = chord / (du_v * dv_v)
 
-        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
-        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - _HALF))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + _HALF))
         if k_u_lo < 0:
             k_u_lo = 0
         if k_u_hi > n_u - 1:
@@ -2640,8 +2667,8 @@ def _cone_3d_sf_tt_backward_kernel(
         if k_u_hi < k_u_lo:
             continue
 
-        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - 0.5))
-        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + 0.5))
+        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - _HALF))
+        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + _HALF))
         if k_v_lo < 0:
             k_v_lo = 0
         if k_v_hi > n_v - 1:
@@ -2650,21 +2677,21 @@ def _cone_3d_sf_tt_backward_kernel(
             continue
 
         for ku in range(k_u_lo, k_u_hi + 1):
-            u_k = (ku - u_half) * du_v + det_offset_u
-            u_L = u_k - 0.5 * du_v
-            u_R = u_k + 0.5 * du_v
+            u_k = (np.float32(ku) - u_half) * du_v + det_offset_u
+            u_L = u_k - _HALF * du_v
+            u_R = u_k + _HALF * du_v
 
             aLu = u_L if u_L > u_min else u_min
             aRu = u_R if u_R < u_max else u_max
             if aLu >= aRu:
                 continue
 
-            raw_u = 0.0
+            raw_u = _ZERO
             if rise_u > _EPSILON:
                 r_lo_ = aLu if aLu > u_min else u_min
                 r_hi_ = aRu if aRu < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw_u += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                     (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_u
             if plateau_u > _EPSILON:
                 p_lo_ = aLu if aLu > u_lo else u_lo
@@ -2675,27 +2702,27 @@ def _cone_3d_sf_tt_backward_kernel(
                 f_lo_ = aLu if aLu > u_hi else u_hi
                 f_hi_ = aRu if aRu < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw_u += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                     (u_max - f_hi_) * (u_max - f_hi_)) / fall_u
-            if raw_u <= 0.0:
+            if raw_u <= _ZERO:
                 continue
 
             for kv in range(k_v_lo, k_v_hi + 1):
-                v_k = (kv - v_half) * dv_v + det_offset_v
-                v_L = v_k - 0.5 * dv_v
-                v_R = v_k + 0.5 * dv_v
+                v_k = (np.float32(kv) - v_half) * dv_v + det_offset_v
+                v_L = v_k - _HALF * dv_v
+                v_R = v_k + _HALF * dv_v
 
                 aLv = v_L if v_L > v_min else v_min
                 aRv = v_R if v_R < v_max else v_max
                 if aLv >= aRv:
                     continue
 
-                raw_v = 0.0
+                raw_v = _ZERO
                 if rise_v > _EPSILON:
                     r_lo_v = aLv if aLv > v_min else v_min
                     r_hi_v = aRv if aRv < v_lo else v_lo
                     if r_hi_v > r_lo_v:
-                        raw_v += 0.5 * ((r_hi_v - v_min) * (r_hi_v - v_min) -
+                        raw_v += _HALF * ((r_hi_v - v_min) * (r_hi_v - v_min) -
                                         (r_lo_v - v_min) * (r_lo_v - v_min)) / rise_v
                 if plateau_v > _EPSILON:
                     p_lo_v = aLv if aLv > v_lo else v_lo
@@ -2706,9 +2733,9 @@ def _cone_3d_sf_tt_backward_kernel(
                     f_lo_v = aLv if aLv > v_hi else v_hi
                     f_hi_v = aRv if aRv < v_max else v_max
                     if f_hi_v > f_lo_v:
-                        raw_v += 0.5 * ((v_max - f_lo_v) * (v_max - f_lo_v) -
+                        raw_v += _HALF * ((v_max - f_lo_v) * (v_max - f_lo_v) -
                                         (v_max - f_hi_v) * (v_max - f_hi_v)) / fall_v
-                if raw_v <= 0.0:
+                if raw_v <= _ZERO:
                     continue
 
                 grad_val += weight * raw_u * raw_v * d_grad_sino[iview, ku, kv]
@@ -2787,19 +2814,19 @@ def _cone_3d_fdk_backproject_kernel(
 
     # Voxel position in the "voxel-units, isocenter-centered" frame used by
     # the shared kernels. Matches the inverse of ``mid = src + t*dir + cx``.
-    x_v = (ix - cx) - center_offset_x
-    y_v = (iy - cy) - center_offset_y
-    z_v = (iz - cz) - center_offset_z
+    x_v = (np.float32(ix) - cx) - center_offset_x
+    y_v = (np.float32(iy) - cy) - center_offset_y
+    z_v = (np.float32(iz) - cz) - center_offset_z
 
     sid_v = sid / voxel_spacing
     sdd_v = sdd / voxel_spacing
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
 
-    u_half = (n_u - 1) * 0.5
-    v_half = (n_v - 1) * 0.5
+    u_half = (np.float32(n_u) - _ONE) * _HALF
+    v_half = (np.float32(n_v) - _ONE) * _HALF
 
-    accum = 0.0
+    accum = _ZERO
     for iview in range(n_views):
         cos_a = d_cos[iview]
         sin_a = d_sin[iview]
@@ -2819,7 +2846,7 @@ def _cone_3d_fdk_backproject_kernel(
         fu = (u_det - det_offset_u) / du_v + u_half
         fv = (v_det - det_offset_v) / dv_v + v_half
 
-        if fu < 0.0 or fu > (n_u - 1) or fv < 0.0 or fv > (n_v - 1):
+        if fu < _ZERO or fu > (np.float32(n_u) - _ONE) or fv < _ZERO or fv > (np.float32(n_v) - _ONE):
             continue
 
         iu0 = int(math.floor(fu))
@@ -2832,24 +2859,24 @@ def _cone_3d_fdk_backproject_kernel(
             iu0 = 0
         if iv0 < 0:
             iv0 = 0
-        tu = fu - iu0
-        tv = fv - iv0
-        if tu < 0.0:
-            tu = 0.0
-        elif tu > 1.0:
-            tu = 1.0
-        if tv < 0.0:
-            tv = 0.0
-        elif tv > 1.0:
-            tv = 1.0
+        tu = fu - np.float32(iu0)
+        tv = fv - np.float32(iv0)
+        if tu < _ZERO:
+            tu = _ZERO
+        elif tu > _ONE:
+            tu = _ONE
+        if tv < _ZERO:
+            tv = _ZERO
+        elif tv > _ONE:
+            tv = _ONE
 
         s00 = d_sino[iview, iu0,     iv0    ]
         s10 = d_sino[iview, iu0 + 1, iv0    ]
         s01 = d_sino[iview, iu0,     iv0 + 1]
         s11 = d_sino[iview, iu0 + 1, iv0 + 1]
 
-        omtu = 1.0 - tu
-        omtv = 1.0 - tv
+        omtu = _ONE - tu
+        omtv = _ONE - tv
         sample = (
             s00 * omtu * omtv
             + s10 * tu   * omtv
@@ -2907,13 +2934,13 @@ def _parallel_2d_fbp_backproject_kernel(
     if ix >= Nx or iy >= Ny:
         return
 
-    x_v = (ix - cx) - center_offset_x
-    y_v = (iy - cy) - center_offset_y
+    x_v = (np.float32(ix) - cx) - center_offset_x
+    y_v = (np.float32(iy) - cy) - center_offset_y
 
     det_v = det_spacing / voxel_spacing
-    u_half = (n_det - 1) * 0.5
+    u_half = (np.float32(n_det) - _ONE) * _HALF
 
-    accum = 0.0
+    accum = _ZERO
     for iang in range(n_ang):
         cos_a = d_cos[iang]
         sin_a = d_sin[iang]
@@ -2923,7 +2950,7 @@ def _parallel_2d_fbp_backproject_kernel(
 
         # Inverse of the forward kernel's u index formula.
         fu = (u_pix - det_offset) / det_v + u_half
-        if fu < 0.0 or fu > (n_det - 1):
+        if fu < _ZERO or fu > (np.float32(n_det) - _ONE):
             continue
 
         idet0 = int(math.floor(fu))
@@ -2931,15 +2958,15 @@ def _parallel_2d_fbp_backproject_kernel(
             idet0 = n_det - 2
         if idet0 < 0:
             idet0 = 0
-        tu = fu - idet0
-        if tu < 0.0:
-            tu = 0.0
-        elif tu > 1.0:
-            tu = 1.0
+        tu = fu - np.float32(idet0)
+        if tu < _ZERO:
+            tu = _ZERO
+        elif tu > _ONE:
+            tu = _ONE
 
         s0 = d_sino[iang, idet0]
         s1 = d_sino[iang, idet0 + 1]
-        accum += s0 * (1.0 - tu) + s1 * tu
+        accum += s0 * (_ONE - tu) + s1 * tu
 
     d_image[iy, ix] = accum
 
@@ -2990,15 +3017,15 @@ def _fan_2d_fbp_backproject_kernel(
     # Pixel position in the "voxel-units, isocenter-centered" frame used
     # by the Siddon forward kernel. Matches the inverse of
     # ``mid = src + t*dir + cx`` in the forward kernel.
-    x_v = (ix - cx) - center_offset_x
-    y_v = (iy - cy) - center_offset_y
+    x_v = (np.float32(ix) - cx) - center_offset_x
+    y_v = (np.float32(iy) - cy) - center_offset_y
 
     sid_v = sid / voxel_spacing
     sdd_v = sdd / voxel_spacing
     det_v = det_spacing / voxel_spacing
-    u_half = (n_det - 1) * 0.5
+    u_half = (np.float32(n_det) - _ONE) * _HALF
 
-    accum = 0.0
+    accum = _ZERO
     for iang in range(n_ang):
         cos_a = d_cos[iang]
         sin_a = d_sin[iang]
@@ -3013,7 +3040,7 @@ def _fan_2d_fbp_backproject_kernel(
 
         # Inverse of the forward kernel's u index formula.
         fu = (u_det - det_offset) / det_v + u_half
-        if fu < 0.0 or fu > (n_det - 1):
+        if fu < _ZERO or fu > (np.float32(n_det) - _ONE):
             continue
 
         idet0 = int(math.floor(fu))
@@ -3021,15 +3048,15 @@ def _fan_2d_fbp_backproject_kernel(
             idet0 = n_det - 2
         if idet0 < 0:
             idet0 = 0
-        tu = fu - idet0
-        if tu < 0.0:
-            tu = 0.0
-        elif tu > 1.0:
-            tu = 1.0
+        tu = fu - np.float32(idet0)
+        if tu < _ZERO:
+            tu = _ZERO
+        elif tu > _ONE:
+            tu = _ONE
 
         s0 = d_sino[iang, idet0]
         s1 = d_sino[iang, idet0 + 1]
-        sample = s0 * (1.0 - tu) + s1 * tu
+        sample = s0 * (_ONE - tu) + s1 * tu
 
         w = sid_v / U
         accum += (w * w) * sample
@@ -3100,16 +3127,16 @@ def _fan_2d_sf_fbp_backproject_kernel(
     sid_v = sid / voxel_spacing
     sdd_v = sdd / voxel_spacing
     det_spacing_v = det_spacing / voxel_spacing
-    half = 0.5 * (n_det - 1)
+    half = (np.float32(n_det) - _ONE) * _HALF
 
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
 
-    accum = 0.0
+    accum = _ZERO
 
     for iang in range(n_ang):
         cos_a = d_cos[iang]
@@ -3137,7 +3164,7 @@ def _fan_2d_sf_fbp_backproject_kernel(
             max_dir = ar_dir
         if max_dir < _EPSILON:
             continue
-        chord = 1.0 / max_dir
+        chord = _ONE / max_dir
 
         d1 = sid_v + x_m * sin_a - y_m * cos_a
         d2 = sid_v + x_p * sin_a - y_m * cos_a
@@ -3182,8 +3209,8 @@ def _fan_2d_sf_fbp_backproject_kernel(
         # ``sdd / (2*pi*sid)`` to absorb the resulting magnification.
         weight = bp_weight * chord / det_spacing_v
 
-        k_lo_f = (u_min - det_offset) / det_spacing_v + half - 0.5
-        k_hi_f = (u_max - det_offset) / det_spacing_v + half + 0.5
+        k_lo_f = (u_min - det_offset) / det_spacing_v + half - _HALF
+        k_hi_f = (u_max - det_offset) / det_spacing_v + half + _HALF
         k_lo = int(math.floor(k_lo_f))
         k_hi = int(math.ceil(k_hi_f))
         if k_lo < 0:
@@ -3197,21 +3224,21 @@ def _fan_2d_sf_fbp_backproject_kernel(
         fall_w = u_max - u_hi
 
         for k in range(k_lo, k_hi + 1):
-            u_k = (k - half) * det_spacing_v + det_offset
-            u_L = u_k - 0.5 * det_spacing_v
-            u_R = u_k + 0.5 * det_spacing_v
+            u_k = (np.float32(k) - half) * det_spacing_v + det_offset
+            u_L = u_k - _HALF * det_spacing_v
+            u_R = u_k + _HALF * det_spacing_v
 
             aL = u_L if u_L > u_min else u_min
             aR = u_R if u_R < u_max else u_max
             if aL >= aR:
                 continue
 
-            raw = 0.0
+            raw = _ZERO
             if rise_w > _EPSILON:
                 r_lo_ = aL if aL > u_min else u_min
                 r_hi_ = aR if aR < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                   (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
 
             if plateau > _EPSILON:
@@ -3224,10 +3251,10 @@ def _fan_2d_sf_fbp_backproject_kernel(
                 f_lo_ = aL if aL > u_hi else u_hi
                 f_hi_ = aR if aR < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                   (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
 
-            if raw > 0.0:
+            if raw > _ZERO:
                 accum += weight * raw * d_sino[iang, k]
 
     d_image[iy, ix] = accum
@@ -3262,20 +3289,20 @@ def _cone_3d_sf_tr_fdk_backproject_kernel(
     sdd_v = sdd / voxel_spacing
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
-    u_half = 0.5 * (n_u - 1)
-    v_half = 0.5 * (n_v - 1)
+    u_half = (np.float32(n_u) - _ONE) * _HALF
+    v_half = (np.float32(n_v) - _ONE) * _HALF
 
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    z_c = (iz - cz) - center_offset_z
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
-    z_m = z_c - 0.5
-    z_p = z_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    z_c = (np.float32(iz) - cz) - center_offset_z
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
+    z_m = z_c - _HALF
+    z_p = z_c + _HALF
 
-    accum = 0.0
+    accum = _ZERO
 
     for iview in range(n_views):
         cos_a = d_cos[iview]
@@ -3304,7 +3331,7 @@ def _cone_3d_sf_tr_fdk_backproject_kernel(
             max_dir = ar_dir
         if max_dir < _EPSILON:
             continue
-        chord_u = 1.0 / max_dir
+        chord_u = _ONE / max_dir
 
         d1 = sid_v + x_m * sin_a - y_m * cos_a
         d2 = sid_v + x_p * sin_a - y_m * cos_a
@@ -3342,7 +3369,7 @@ def _cone_3d_sf_tr_fdk_backproject_kernel(
         mag_c = sdd_v / U_c
         v_proj_c = z_c * mag_c
         v_arg = v_proj_c / sdd_v
-        v_chord = math.sqrt(1.0 + v_arg * v_arg)
+        v_chord = math.sqrt(_ONE + v_arg * v_arg)
         v_bot = z_m * mag_c
         v_top = z_p * mag_c
         if v_bot > v_top:
@@ -3360,8 +3387,8 @@ def _cone_3d_sf_tr_fdk_backproject_kernel(
         # of ``sdd / (2*pi*sid)`` to absorb the ``mag^2`` difference.
         weight = chord_u * v_chord / (du_v * dv_v)
 
-        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
-        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - _HALF))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + _HALF))
         if k_u_lo < 0:
             k_u_lo = 0
         if k_u_hi > n_u - 1:
@@ -3369,8 +3396,8 @@ def _cone_3d_sf_tr_fdk_backproject_kernel(
         if k_u_hi < k_u_lo:
             continue
 
-        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - 0.5))
-        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + 0.5))
+        k_v_lo = int(math.floor((v_bot - det_offset_v) / dv_v + v_half - _HALF))
+        k_v_hi = int(math.ceil((v_top - det_offset_v) / dv_v + v_half + _HALF))
         if k_v_lo < 0:
             k_v_lo = 0
         if k_v_hi > n_v - 1:
@@ -3379,21 +3406,21 @@ def _cone_3d_sf_tr_fdk_backproject_kernel(
             continue
 
         for ku in range(k_u_lo, k_u_hi + 1):
-            u_k = (ku - u_half) * du_v + det_offset_u
-            u_L = u_k - 0.5 * du_v
-            u_R = u_k + 0.5 * du_v
+            u_k = (np.float32(ku) - u_half) * du_v + det_offset_u
+            u_L = u_k - _HALF * du_v
+            u_R = u_k + _HALF * du_v
 
             aL = u_L if u_L > u_min else u_min
             aR = u_R if u_R < u_max else u_max
             if aL >= aR:
                 continue
 
-            raw_u = 0.0
+            raw_u = _ZERO
             if rise_w > _EPSILON:
                 r_lo_ = aL if aL > u_min else u_min
                 r_hi_ = aR if aR < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw_u += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                     (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_w
             if plateau > _EPSILON:
                 p_lo_ = aL if aL > u_lo else u_lo
@@ -3404,15 +3431,15 @@ def _cone_3d_sf_tr_fdk_backproject_kernel(
                 f_lo_ = aL if aL > u_hi else u_hi
                 f_hi_ = aR if aR < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw_u += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                     (u_max - f_hi_) * (u_max - f_hi_)) / fall_w
-            if raw_u <= 0.0:
+            if raw_u <= _ZERO:
                 continue
 
             for kv in range(k_v_lo, k_v_hi + 1):
-                v_k = (kv - v_half) * dv_v + det_offset_v
-                v_L = v_k - 0.5 * dv_v
-                v_R = v_k + 0.5 * dv_v
+                v_k = (np.float32(kv) - v_half) * dv_v + det_offset_v
+                v_L = v_k - _HALF * dv_v
+                v_R = v_k + _HALF * dv_v
 
                 aLv = v_L if v_L > v_bot else v_bot
                 aRv = v_R if v_R < v_top else v_top
@@ -3452,20 +3479,20 @@ def _cone_3d_sf_tt_fdk_backproject_kernel(
     sdd_v = sdd / voxel_spacing
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
-    u_half = 0.5 * (n_u - 1)
-    v_half = 0.5 * (n_v - 1)
+    u_half = (np.float32(n_u) - _ONE) * _HALF
+    v_half = (np.float32(n_v) - _ONE) * _HALF
 
-    x_c = (ix - cx) - center_offset_x
-    y_c = (iy - cy) - center_offset_y
-    z_c = (iz - cz) - center_offset_z
-    x_m = x_c - 0.5
-    x_p = x_c + 0.5
-    y_m = y_c - 0.5
-    y_p = y_c + 0.5
-    z_m = z_c - 0.5
-    z_p = z_c + 0.5
+    x_c = (np.float32(ix) - cx) - center_offset_x
+    y_c = (np.float32(iy) - cy) - center_offset_y
+    z_c = (np.float32(iz) - cz) - center_offset_z
+    x_m = x_c - _HALF
+    x_p = x_c + _HALF
+    y_m = y_c - _HALF
+    y_p = y_c + _HALF
+    z_m = z_c - _HALF
+    z_p = z_c + _HALF
 
-    accum = 0.0
+    accum = _ZERO
 
     for iview in range(n_views):
         cos_a = d_cos[iview]
@@ -3489,7 +3516,7 @@ def _cone_3d_sf_tt_fdk_backproject_kernel(
             max_dir = ar_dir
         if max_dir < _EPSILON:
             continue
-        chord_u = 1.0 / max_dir
+        chord_u = _ONE / max_dir
 
         d1 = sid_v + x_m * sin_a - y_m * cos_a
         d2 = sid_v + x_p * sin_a - y_m * cos_a
@@ -3576,15 +3603,15 @@ def _cone_3d_sf_tt_fdk_backproject_kernel(
         # Chord-weighted LEAP form. ``v_chord = sqrt(1+(v/sdd)^2)`` is
         # evaluated at the voxel's projected v centre (mean of the 4
         # z-corner projections) to match LEAP's convention.
-        v_proj_c = 0.25 * (v_min + v_lo + v_hi + v_max)
+        v_proj_c = _QUARTER * (v_min + v_lo + v_hi + v_max)
         v_arg_tt = v_proj_c / sdd_v
-        v_chord = math.sqrt(1.0 + v_arg_tt * v_arg_tt)
+        v_chord = math.sqrt(_ONE + v_arg_tt * v_arg_tt)
         u_span = u_max - u_min
         v_span = v_max - v_min
         weight = chord_u * v_chord / (du_v * dv_v)
 
-        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - 0.5))
-        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + 0.5))
+        k_u_lo = int(math.floor((u_min - det_offset_u) / du_v + u_half - _HALF))
+        k_u_hi = int(math.ceil((u_max - det_offset_u) / du_v + u_half + _HALF))
         if k_u_lo < 0:
             k_u_lo = 0
         if k_u_hi > n_u - 1:
@@ -3592,8 +3619,8 @@ def _cone_3d_sf_tt_fdk_backproject_kernel(
         if k_u_hi < k_u_lo:
             continue
 
-        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - 0.5))
-        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + 0.5))
+        k_v_lo = int(math.floor((v_min - det_offset_v) / dv_v + v_half - _HALF))
+        k_v_hi = int(math.ceil((v_max - det_offset_v) / dv_v + v_half + _HALF))
         if k_v_lo < 0:
             k_v_lo = 0
         if k_v_hi > n_v - 1:
@@ -3602,21 +3629,21 @@ def _cone_3d_sf_tt_fdk_backproject_kernel(
             continue
 
         for ku in range(k_u_lo, k_u_hi + 1):
-            u_k = (ku - u_half) * du_v + det_offset_u
-            u_L = u_k - 0.5 * du_v
-            u_R = u_k + 0.5 * du_v
+            u_k = (np.float32(ku) - u_half) * du_v + det_offset_u
+            u_L = u_k - _HALF * du_v
+            u_R = u_k + _HALF * du_v
 
             aLu = u_L if u_L > u_min else u_min
             aRu = u_R if u_R < u_max else u_max
             if aLu >= aRu:
                 continue
 
-            raw_u = 0.0
+            raw_u = _ZERO
             if rise_u > _EPSILON:
                 r_lo_ = aLu if aLu > u_min else u_min
                 r_hi_ = aRu if aRu < u_lo else u_lo
                 if r_hi_ > r_lo_:
-                    raw_u += 0.5 * ((r_hi_ - u_min) * (r_hi_ - u_min) -
+                    raw_u += _HALF * ((r_hi_ - u_min) * (r_hi_ - u_min) -
                                     (r_lo_ - u_min) * (r_lo_ - u_min)) / rise_u
             if plateau_u > _EPSILON:
                 p_lo_ = aLu if aLu > u_lo else u_lo
@@ -3627,27 +3654,27 @@ def _cone_3d_sf_tt_fdk_backproject_kernel(
                 f_lo_ = aLu if aLu > u_hi else u_hi
                 f_hi_ = aRu if aRu < u_max else u_max
                 if f_hi_ > f_lo_:
-                    raw_u += 0.5 * ((u_max - f_lo_) * (u_max - f_lo_) -
+                    raw_u += _HALF * ((u_max - f_lo_) * (u_max - f_lo_) -
                                     (u_max - f_hi_) * (u_max - f_hi_)) / fall_u
-            if raw_u <= 0.0:
+            if raw_u <= _ZERO:
                 continue
 
             for kv in range(k_v_lo, k_v_hi + 1):
-                v_k = (kv - v_half) * dv_v + det_offset_v
-                v_L = v_k - 0.5 * dv_v
-                v_R = v_k + 0.5 * dv_v
+                v_k = (np.float32(kv) - v_half) * dv_v + det_offset_v
+                v_L = v_k - _HALF * dv_v
+                v_R = v_k + _HALF * dv_v
 
                 aLv = v_L if v_L > v_min else v_min
                 aRv = v_R if v_R < v_max else v_max
                 if aLv >= aRv:
                     continue
 
-                raw_v = 0.0
+                raw_v = _ZERO
                 if rise_v > _EPSILON:
                     r_lo_v = aLv if aLv > v_min else v_min
                     r_hi_v = aRv if aRv < v_lo else v_lo
                     if r_hi_v > r_lo_v:
-                        raw_v += 0.5 * ((r_hi_v - v_min) * (r_hi_v - v_min) -
+                        raw_v += _HALF * ((r_hi_v - v_min) * (r_hi_v - v_min) -
                                         (r_lo_v - v_min) * (r_lo_v - v_min)) / rise_v
                 if plateau_v > _EPSILON:
                     p_lo_v = aLv if aLv > v_lo else v_lo
@@ -3658,9 +3685,9 @@ def _cone_3d_sf_tt_fdk_backproject_kernel(
                     f_lo_v = aLv if aLv > v_hi else v_hi
                     f_hi_v = aRv if aRv < v_max else v_max
                     if f_hi_v > f_lo_v:
-                        raw_v += 0.5 * ((v_max - f_lo_v) * (v_max - f_lo_v) -
+                        raw_v += _HALF * ((v_max - f_lo_v) * (v_max - f_lo_v) -
                                         (v_max - f_hi_v) * (v_max - f_hi_v)) / fall_v
-                if raw_v <= 0.0:
+                if raw_v <= _ZERO:
                     continue
 
                 accum += weight * raw_u * raw_v * d_sino[iview, ku, kv]
@@ -4090,8 +4117,8 @@ class FanProjectorFunction(torch.autograd.Function):
             voxel-driven projector that projects each voxel's footprint as a
             trapezoid on the detector and integrates it closed-form over each
             detector cell; it is mass-conserving and closer to the physical
-            finite-width-cell integral, at the cost of being forward-only
-            (no autograd backward yet).
+            finite-width-cell integral, with a matched voxel-driven gather
+            adjoint for autograd.
 
         Parameters
         ----------
@@ -5268,9 +5295,11 @@ def cone_weighted_backproject(
     nearly identical MTFs; at sub-nominal voxels the SF variants give
     measurably higher spatial resolution, and at supra-nominal voxels
     they give higher SNR (see LEAP's SF vs VD analysis). All three
-    paths apply the ``(SID / U)^2`` FDK weight per view inside the
-    kernel and the ``sdd / (2 * pi * sid)`` analytical FDK scale in
-    Python, so amplitude calibration is preserved across backends.
+    VD applies the classical ``(SID / U)^2`` FDK weight per view inside
+    the kernel and the ``sdd / (2 * pi * sid)`` analytical FDK scale in
+    Python. The SF paths use the LEAP chord-weighted form inside the
+    kernels plus the matching SF scale below, so amplitude calibration is
+    preserved across backends.
     The Siddon-based cone autograd adjoint
     (``_cone_3d_backward_kernel``) and the SF-matched adjoints
     (``_cone_3d_sf_tr_backward_kernel`` /
