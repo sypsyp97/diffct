@@ -5,9 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.3] - 2026-04-23
 
 ### Fixed
+- **Kernel numerical consistency and speed.** The CUDA kernels in
+  `diffct/differentiable.py` are now consistently `float32` end to end —
+  literal constants (`0.0`, `0.5`, `1.0`, `-inf`, ...) and integer-to-float
+  casts inside the Siddon and SF kernels are routed through typed `_DTYPE`
+  helpers so numba no longer implicitly promotes intermediates to `float64`.
+  This removes a silent precision mismatch that was slowing down every
+  projector/backprojector kernel; the library runs substantially faster
+  with no change in public-API behavior.
+- **Thread indexing and grid configuration** in the 3D cone Siddon
+  forward / backward kernels and the 2D fan SF backward kernel. The
+  `cuda.grid(...)` unpack order and the matching `_grid_2d` / `_grid_3d`
+  launch arguments are aligned so the warp-adjacent axis matches the
+  stride-1 axis of the output buffer: `(iv, iu, iview)` for 3D cone
+  (`d_sino[view, u, v]` / `d_vol[ix, iy, iz]`) and `(ix, iy)` for 2D fan
+  SF. Fixes mismatched launches between `ConeProjectorFunction`,
+  `ConeBackprojectorFunction`, `FanProjectorFunction`, and
+  `FanBackprojectorFunction` and their kernels.
 - **Walnut rotation-axis correction** in the shipped preprocessing and
   sample data. `examples/data/preprocess_walnut.py` now applies the
   Zenodo record's recommended 5-raw-pixel left shift before binning and
@@ -16,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regenerated accordingly. `examples/realdata_walnut_fdk.py` and
   `examples/data/NOTICE` are updated to surface the correction and the
   richer walnut metadata.
+
+### Changed
+- **Examples now require CUDA explicitly.** `examples/fbp_parallel.py`,
+  `fbp_fan.py`, `fdk_cone.py`, `iterative_reco_*.py`, `realdata_fbp_*.py`,
+  `realdata_fdk_cone.py`, and `realdata_walnut_fdk.py` assert
+  `torch.cuda.is_available()` and initialize the CUDA device up front
+  instead of silently falling back to CPU (which the numba-cuda kernels
+  never supported anyway).
 
 ## [1.3.2] - 2026-04-23
 
@@ -398,7 +423,9 @@ Releases 1.2.0 through 1.2.6 and the 1.1.x / 1.0.x lines are tracked on
 was introduced in 1.2.10 and does not back-fill detailed notes for earlier
 versions beyond pointers to the GitHub release pages.
 
-[Unreleased]: https://github.com/sypsyp97/diffct/compare/v1.3.0...HEAD
+[1.3.3]: https://github.com/sypsyp97/diffct/releases/tag/v1.3.3
+[1.3.2]: https://github.com/sypsyp97/diffct/releases/tag/v1.3.2
+[1.3.1]: https://github.com/sypsyp97/diffct/releases/tag/v1.3.1
 [1.3.0]: https://github.com/sypsyp97/diffct/releases/tag/v1.3.0
 [1.2.11]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.11
 [1.2.10]: https://github.com/sypsyp97/diffct/releases/tag/v1.2.10
