@@ -34,7 +34,7 @@ def _parallel_2d_forward_kernel(
 ):
     """Compute the 2D parallel beam forward projection with arbitrary ray trajectories.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements cell-constant Siddon ray tracing for
     2D parallel beam forward projection. Supports arbitrary ray directions and detector
     positions for each view, enabling non-circular trajectories.
 
@@ -71,7 +71,7 @@ def _parallel_2d_forward_kernel(
     -----
     Supports arbitrary parallel beam geometries by specifying ray direction,
     detector origin, and detector orientation vectors for each view.
-    Uses bilinear interpolation for accurate volumetric sampling.
+    Integrates each ray through piecewise-constant pixel cells.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -151,48 +151,14 @@ def _parallel_2d_forward_kernel(
     ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === MAIN RAY TRAVERSAL LOOP ===
-    # Step through voxels along ray path, accumulating weighted contributions
+    # Step through voxels along ray path, accumulating cell-constant contributions.
     while t < t_max:
-        # Check if current voxel indices are within valid interpolation bounds
         if 0 <= ix < Nx and 0 <= iy < Ny:
             # Determine next voxel boundary crossing (minimum of x, y boundaries or ray exit)
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t  # Length of ray segment within current voxel region
-            
             if seg_len > _EPSILON:  # Only process segments with meaningful length (avoid numerical noise)
-                # === BILINEAR INTERPOLATION SAMPLING ===
-                # Sample volume at ray segment midpoint for accurate integration
-                # Mathematical basis: Midpoint rule for numerical integration along ray segments
-                t_mid = t + seg_len * _HALF
-                mid_x = pnt_x + t_mid * dir_x + cx  # Midpoint x-coordinate in image space
-                mid_y = pnt_y + t_mid * dir_y + cy  # Midpoint y-coordinate in image space
-
-                # Convert continuous coordinates to discrete voxel indices and fractional weights
-                # Floor operation gives base voxel index, fractional part gives interpolation weights
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))  # Base voxel indices (bottom-left corner)
-                dx = mid_x - np.float32(ix0)  # Fractional parts: distance from base voxel center [0,1]
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # === BILINEAR INTERPOLATION WEIGHT CALCULATION ===
-                # Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)
-                # where wi(x,y) are the bilinear basis functions for each corner voxel
-                # Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                v00 = d_image[iy0, ix0]
-                v10 = d_image[iy0, ix0 + 1]
-                v01 = d_image[iy0 + 1, ix0]
-                v11 = d_image[iy0 + 1, ix0 + 1]
-                row0 = (v00 * one_minus_dx + v10 * dx) * one_minus_dy
-                row1 = (v01 * one_minus_dx + v11 * dx) * dy
-                val = row0 + row1
-                # Accumulate contribution weighted by ray segment length (discrete line integral approximation)
-                # This implements the Radon transform: integral of f(x,y) along the ray path
-                accum += val * seg_len
+                accum += d_image[iy, ix] * seg_len
         
         # === VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first
@@ -220,7 +186,7 @@ def _parallel_2d_backward_kernel(
 ):
     """Compute the 2D parallel beam backprojection with arbitrary ray trajectories.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements the adjoint of cell-constant Siddon ray tracing for
     2D parallel beam backprojection. Supports arbitrary ray directions and detector
     positions for each view, enabling non-circular trajectories.
 
@@ -315,38 +281,13 @@ def _parallel_2d_backward_kernel(
     ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === BACKPROJECTION TRAVERSAL LOOP ===
-    # Distribute sinogram value along ray path using bilinear interpolation
+    # Adjoint of the cell-constant Siddon forward projection.
     while t < t_max:
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # Sample at ray segment midpoint (same as forward projection)
-                t_mid = t + seg_len * _HALF
-                mid_x = pnt_x + t_mid * dir_x + cx
-                mid_y = pnt_y + t_mid * dir_y + cy
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
-                # Distribute contribution weighted by segment length and interpolation weights
-                # CUDA ATOMIC OPERATIONS: Essential for thread safety in backprojection
-                # Multiple threads (rays) can write to the same voxel simultaneously, causing race conditions
-                # Atomic add operations serialize these writes, ensuring correct accumulation of contributions
-                # Performance impact: Atomic operations are slower than regular writes but necessary for correctness
-                # Memory access pattern: Global memory atomics with potential bank conflicts, but unavoidable
-                cval = val * seg_len  # Contribution value for this ray segment
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx          * dy)
+                cuda.atomic.add(d_image, (iy, ix), val * seg_len)
 
         # Advance to next voxel (identical logic to forward projection)
         if tx <= ty:

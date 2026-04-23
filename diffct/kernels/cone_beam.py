@@ -34,7 +34,7 @@ def _cone_3d_forward_kernel(
 ):
     """Compute the 3D cone-beam forward projection with arbitrary source-detector trajectories.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements cell-constant Siddon ray tracing for
     3D cone-beam forward projection. Supports arbitrary source and detector positions
     for each view, enabling non-circular trajectories.
 
@@ -81,7 +81,7 @@ def _cone_3d_forward_kernel(
     -----
     Supports arbitrary cone-beam geometries by specifying source position,
     detector center, and detector orientation vectors for each view.
-    Uses trilinear interpolation for accurate volumetric sampling.
+    Integrates each ray through piecewise-constant voxel cells.
     """
     iv, iu, iview = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
@@ -180,52 +180,14 @@ def _cone_3d_forward_kernel(
     ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
     tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
-    # === 3D TRAVERSAL LOOP WITH TRILINEAR INTERPOLATION ===
+    # === 3D TRAVERSAL LOOP WITH CELL-CONSTANT SIDDON INTEGRATION ===
     while t < t_max:
-        # Check if current 3D voxel indices are within valid interpolation bounds
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # === TRILINEAR INTERPOLATION SAMPLING ===
-                # Sample 3D volume at ray segment midpoint for accurate integration
-                # Mathematical basis: Midpoint rule for numerical integration along 3D ray segments
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx  # Midpoint x-coordinate in volume space
-                mid_y = src_y + t_mid * dir_y + cy  # Midpoint y-coordinate in volume space
-                mid_z = src_z + t_mid * dir_z + cz  # Midpoint z-coordinate in volume space
-
-                # Convert continuous 3D coordinates to discrete voxel indices and fractional weights
-                ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                dz = mid_z - np.float32(iz0)
-
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                iz0 = max(0, min(iz0, Nz - 2))
-
-                # Precompute complements
-                omdx = _ONE - dx
-                omdy = _ONE - dy
-                omdz = _ONE - dz
-
-                # === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===
-                val = (
-                    d_vol[ix0,     iy0,     iz0]     * omdx*omdy*omdz +
-                    d_vol[ix0 + 1, iy0,     iz0]     * dx  *omdy*omdz +
-                    d_vol[ix0,     iy0 + 1, iz0]     * omdx*dy  *omdz +
-                    d_vol[ix0,     iy0,     iz0 + 1] * omdx*omdy*dz   +
-                    d_vol[ix0 + 1, iy0 + 1, iz0]     * dx  *dy  *omdz +
-                    d_vol[ix0 + 1, iy0,     iz0 + 1] * dx  *omdy*dz   +
-                    d_vol[ix0,     iy0 + 1, iz0 + 1] * omdx*dy  *dz   +
-                    d_vol[ix0 + 1, iy0 + 1, iz0 + 1] * dx  *dy  *dz
-                )
-                # Accumulate contribution weighted by 3D ray segment length (discrete line integral approximation)
-                # This implements the 3D Radon transform: integral of f(x,y,z) along the ray path
-                accum += val * seg_len
+                accum += d_vol[ix, iy, iz] * seg_len
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first in 3D
@@ -258,7 +220,7 @@ def _cone_3d_backward_kernel(
 ):
     """Compute the 3D cone-beam backprojection with arbitrary source-detector trajectories.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements the adjoint of cell-constant Siddon ray tracing for
     3D cone-beam backprojection. Supports arbitrary source and detector positions
     for each view, enabling non-circular trajectories.
 
@@ -398,47 +360,14 @@ def _cone_3d_backward_kernel(
     tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===
-    # Distribute sinogram value along divergent 3D ray path using trilinear interpolation
+    # Adjoint of the cell-constant Siddon forward projection.
     while t < t_max:
-        # Check if current 3D voxel indices are within valid interpolation bounds
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # === TRILINEAR INTERPOLATION SAMPLING ===
-                # Sample 3D volume at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx
-                mid_y = src_y + t_mid * dir_y + cy
-                mid_z = src_z + t_mid * dir_z + cz
-
-                # Convert continuous 3D coordinates to voxel indices and interpolation weights
-                ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                dz = mid_z - np.float32(iz0)
-
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                iz0 = max(0, min(iz0, Nz - 2))
-
-                # Precompute complements and contribution
-                omdx = _ONE - dx
-                omdy = _ONE - dy
-                omdz = _ONE - dz
-                cval = g * seg_len
-
-                # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
-                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0),     cval * omdx*omdy*omdz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0),     cval * dx  *omdy*omdz)
-                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0),     cval * omdx*dy  *omdz)
-                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0 + 1), cval * omdx*omdy*dz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0),     cval * dx  *dy  *omdz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0 + 1), cval * dx  *omdy*dz)
-                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0 + 1), cval * omdx*dy  *dz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx  *dy  *dz)
+                cuda.atomic.add(d_vol, (ix, iy, iz), g * seg_len)
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first in 3D

@@ -40,7 +40,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for parallel beam CT geometry. The forward pass computes
+    method with a cell-constant image basis for parallel beam CT geometry. The forward pass computes
     the sinogram from a 2D image using parallel beam geometry. The backward pass
     computes gradients using the adjoint backprojection operation. Requires
     CUDA-capable hardware and a properly configured CUDA environment; all input
@@ -96,7 +96,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Supports arbitrary parallel beam geometries.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -192,7 +192,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for parallel beam backprojection. The forward pass computes a 2D
+    method with a cell-constant image basis for parallel beam backprojection. The forward pass computes a 2D
     reconstruction from sinogram data using parallel beam backprojection, and the
     backward pass computes gradients via forward projection as the adjoint operation.
     Requires CUDA-capable hardware and consistent device placements.
@@ -243,7 +243,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Supports arbitrary parallel beam geometries.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses the adjoint of cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -341,7 +341,7 @@ class FanProjectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for fan beam geometry, where rays diverge from a point
+    method with a cell-constant image basis for fan beam geometry, where rays diverge from a point
     X-ray source to a linear detector array. The forward pass computes sinograms
     using divergent beam geometry, and the backward pass computes gradients via
     adjoint backprojection.
@@ -390,7 +390,7 @@ class FanProjectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Supports arbitrary fan beam geometries.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -484,7 +484,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for fan beam backprojection. Implements the adjoint
+    method with a cell-constant image basis for fan beam backprojection. Implements the adjoint
     of the fan beam projection operator, distributing sinogram values back into
     the reconstruction volume along divergent ray paths. The forward pass
     computes reconstruction from sinogram data, and the backward pass computes
@@ -536,7 +536,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Supports arbitrary fan beam geometries.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses the adjoint of cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -631,7 +631,7 @@ class ConeProjectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for 3D cone beam geometry. Rays emanate from a point
+    method with a cell-constant voxel basis for 3D cone beam geometry. Rays emanate from a point
     X-ray source to a 2D detector array capturing volumetric projection data.
     The forward pass computes 3D projections, and the backward pass computes
     gradients via adjoint 3D backprojection. Requires significant GPU memory.
@@ -686,7 +686,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Supports arbitrary source and detector trajectories, not limited to circular orbits.
-        - Uses the Siddon method with trilinear interpolation for accurate 3D ray tracing.
+        - Uses cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -793,7 +793,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for 3D cone beam backprojection. The forward pass
+    method with a cell-constant voxel basis for 3D cone beam backprojection. The forward pass
     computes a 3D reconstruction from cone beam projection data using
     backprojection as the adjoint operation. The backward pass computes gradients
     via 3D cone beam forward projection. Requires CUDA-capable hardware and
@@ -859,7 +859,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Supports arbitrary source and detector trajectories.
-        - Uses the Siddon method with trilinear interpolation for accurate 3D ray tracing.
+        - Uses the adjoint of cell-constant Siddon ray tracing.
 
         Examples
         --------

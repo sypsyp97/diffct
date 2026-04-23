@@ -34,7 +34,7 @@ def _fan_2d_forward_kernel(
 ):
     """Compute the 2D fan beam forward projection with arbitrary source-detector trajectories.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements cell-constant Siddon ray tracing for
     2D fan beam forward projection. Supports arbitrary source and detector positions
     for each view, enabling non-circular trajectories.
 
@@ -71,7 +71,7 @@ def _fan_2d_forward_kernel(
     -----
     Supports arbitrary fan beam geometries by specifying source position,
     detector center, and detector orientation vectors for each view.
-    Uses bilinear interpolation for accurate volumetric sampling.
+    Integrates each ray through piecewise-constant pixel cells.
     """
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
@@ -144,35 +144,13 @@ def _fan_2d_forward_kernel(
     tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
     ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
-    # Main traversal loop with bilinear interpolation (identical to parallel beam)
+    # Main traversal loop with cell-constant Siddon integration.
     while t < t_max:
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # Sample at midpoint using source as ray origin
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx
-                mid_y = src_y + t_mid * dir_y + cy
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # Bilinear interpolation (identical to parallel beam)
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                v00 = d_image[iy0, ix0]
-                v10 = d_image[iy0, ix0 + 1]
-                v01 = d_image[iy0 + 1, ix0]
-                v11 = d_image[iy0 + 1, ix0 + 1]
-                row0 = (v00 * one_minus_dx + v10 * dx) * one_minus_dy
-                row1 = (v01 * one_minus_dx + v11 * dx) * dy
-                val = row0 + row1
-                accum += val * seg_len
+                accum += d_image[iy, ix] * seg_len
         
         # Voxel boundary crossing logic (identical to parallel beam)
         if tx <= ty:
@@ -200,7 +178,7 @@ def _fan_2d_backward_kernel(
 ):
     """Compute the 2D fan beam backprojection with arbitrary source-detector trajectories.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements the adjoint of cell-constant Siddon ray tracing for
     2D fan beam backprojection. Supports arbitrary source and detector positions
     for each view, enabling non-circular trajectories.
 
@@ -304,37 +282,13 @@ def _fan_2d_backward_kernel(
     ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
-    # Distribute sinogram value along divergent ray path using bilinear interpolation
+    # Adjoint of the cell-constant Siddon forward projection.
     while t < t_max:
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # Sample at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx
-                mid_y = src_y + t_mid * dir_y + cy
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
-                # Distribute contribution weighted by segment length and interpolation weights
-                # CUDA ATOMIC OPERATIONS: Critical for fan beam backprojection thread safety
-                # Fan beam rays converge at source, creating higher probability of voxel write conflicts
-                # Atomic operations prevent race conditions when multiple divergent rays write to same voxel
-                # Performance consideration: Fan beam geometry may have more atomic contention than parallel beam
-                cval = val * seg_len  # Contribution value for this ray segment
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx          * dy)
+                cuda.atomic.add(d_image, (iy, ix), val * seg_len)
 
         # === VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first
