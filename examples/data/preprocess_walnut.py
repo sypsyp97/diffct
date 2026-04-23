@@ -10,7 +10,9 @@ the Zenodo record, produce a single ``walnut_cone.npz`` that contains
     already flat-field normalised and ``-log``'d),
   - per-view angles in radians,
   - the scan geometry (sdd, sid, detector pixel pitch at the binning
-    level chosen below). Angles are stored in diffct's cone-geometry
+    level chosen below). The shipped preprocessing also applies the
+    Zenodo record's recommended 5-pixel left shift that corrects the
+    rotation-axis offset. Angles are stored in diffct's cone-geometry
     handedness, which is the negative of the scanner's reported
     positive-angle convention for this dataset,
   - a short "source" string for attribution.
@@ -43,6 +45,10 @@ ANGLE_INTERVAL_DEG = 0.5
 # The scanner reports increasing angles in the opposite handedness to
 # diffct's cone geometry convention. Store angles in diffct coordinates.
 ANGLE_DIRECTION = -1.0
+# Zenodo notes that the center of rotation is offset and recommends
+# circularly shifting every raw projection 5 detector pixels left before
+# any other processing.
+ROTATION_AXIS_SHIFT_RAW_PIXELS = -5
 
 # ----- Default preprocessing knobs -----
 # Binning 8x on a 2368x2240 detector gives 296x280; center-cropping
@@ -116,6 +122,12 @@ def _parse_args():
         choices=("-1", "1"),
         default=str(int(ANGLE_DIRECTION)),
         help="Scanner-to-diffct angular handedness. The Helsinki walnut scan uses -1.",
+    )
+    parser.add_argument(
+        "--rotation-axis-shift-raw-pixels",
+        type=int,
+        default=ROTATION_AXIS_SHIFT_RAW_PIXELS,
+        help="Circular raw-detector column shift applied before binning/cropping. The Helsinki walnut scan uses -5.",
     )
     parser.add_argument(
         "--flat-percentile",
@@ -192,6 +204,8 @@ def main():
             kept_i = idx // args.view_stride
             if kept_i >= num_kept:
                 continue
+            if args.rotation_axis_shift_raw_pixels:
+                raw = np.roll(raw, shift=args.rotation_axis_shift_raw_pixels, axis=1)
             # Per-projection flat field: use a high percentile of the
             # *raw* detector values, which approximates the unattenuated
             # air reading for this exact projection.  Using a percentile
@@ -245,6 +259,11 @@ def main():
 
     print(f'Binned pixel: {du} mm  det=({cropW} x {cropH})')
     print(f'Angles: {angles.shape}  [{angles[0]:.3f}, {angles[-1]:.3f}] rad')
+    print(
+        'Rotation-axis correction: '
+        f'{args.rotation_axis_shift_raw_pixels:+d} raw px '
+        f'({args.rotation_axis_shift_raw_pixels / args.bin:+.3f} binned u px)'
+    )
 
     # Store the sinogram as float16: the -log values live in
     # [0, ~2] so float16 precision (~1e-4) is more than enough for FDK
@@ -266,6 +285,12 @@ def main():
         crop_h=np.int32(cropH),
         crop_w=np.int32(cropW),
         storage_dtype=args.storage_dtype,
+        angle_direction=np.float32(angle_direction),
+        angle_first_deg=np.float32(ANGLE_FIRST_DEG),
+        angle_interval_deg=np.float32(ANGLE_INTERVAL_DEG),
+        rotation_axis_shift_raw_pixels=np.int32(args.rotation_axis_shift_raw_pixels),
+        rotation_axis_shift_mm=np.float32(args.rotation_axis_shift_raw_pixels * DET_PIXEL_FULL),
+        rotation_axis_shift_u=np.float32(args.rotation_axis_shift_raw_pixels / args.bin),
         i0_mean=np.float32(i0_per.mean()),
         source='Meaney 2022, Zenodo 6986012, CC-BY 4.0',
     )

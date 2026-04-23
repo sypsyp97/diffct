@@ -22,6 +22,9 @@ source-to-origin distance of 210.66 mm, with a 0.050 mm detector pixel
 pitch and 0.5 degree angular step.  The derivative included here has
 been:
 
+  - circularly shifted 5 raw detector pixels left before binning /
+    cropping, following the correction note in the Zenodo record for
+    the scan's offset rotation axis,
   - spatially binned 8x (2368x2240 -> 296x280 detector pixels),
   - cropped to the central 256x256 detector region,
   - angularly subsampled every 3rd view (721 -> 241 projections),
@@ -31,7 +34,9 @@ been:
     dark field) and converted to line integrals via ``-log(I / I0)``,
   - stored as float16 in a compressed .npz together with the
     physical geometry (sdd, sid, binned pixel pitch, angles in
-    radians). Total file size on disk: ~20 MB.
+    radians in diffct handedness) plus regeneration metadata such
+    as the kept view indices, detector bin/crop, and the applied
+    rotation-axis correction. Total file size on disk: ~20 MB.
 
 The preprocessing script used to build this file is shipped alongside
 it at ``examples/data/preprocess_walnut.py``. To regenerate the .npz

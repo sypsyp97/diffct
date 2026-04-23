@@ -138,6 +138,11 @@ def main():
     sid = float(data["sid"])
     du = float(data["du"])
     dv = float(data["dv"])
+    rotation_axis_shift_raw_pixels = (
+        int(data["rotation_axis_shift_raw_pixels"])
+        if "rotation_axis_shift_raw_pixels" in data
+        else None
+    )
 
     # The preprocessing stored ``(views, H, W)`` matching the raw TIFF
     # axis order (H = vertical ~= axial v, W = horizontal ~= in-plane u).
@@ -155,6 +160,11 @@ def main():
         f"  sdd={sdd:.2f} mm, sid={sid:.2f} mm, mag={sdd / sid:.2f}x"
     )
     print(f"  binned detector pitch: du={du} mm, dv={dv} mm")
+    if rotation_axis_shift_raw_pixels is not None:
+        print(
+            "  rotation-axis correction: "
+            f"{rotation_axis_shift_raw_pixels:+d} raw px"
+        )
 
     # ------------------------------------------------------------------
     # 2. Volume geometry
@@ -302,13 +312,14 @@ def main():
     mid_view = num_views // 2
 
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
-    # Top row: sinogram views at 0 / 90 / 270 degrees.
-    for ax, (deg, idx) in zip(
-        axes[0],
-        [(0, 0), (90, num_views // 4), (270, 3 * num_views // 4)],
-    ):
+    # Top row: projections nearest 0 / 90 / 270 degrees in the stored angle convention.
+    angles_deg = np.mod(np.rad2deg(angles_np), 360.0)
+    for ax, target_deg in zip(axes[0], (0.0, 90.0, 270.0)):
+        delta = np.abs(angles_deg - target_deg)
+        idx = int(np.argmin(np.minimum(delta, 360.0 - delta)))
+        deg = angles_deg[idx]
         ax.imshow(sino_cpu[idx].T, cmap="gray", origin="lower")
-        ax.set_title(f"Projection ~{deg} deg")
+        ax.set_title(f"Projection {deg:.1f} deg")
         ax.axis("off")
     # Bottom row: three orthogonal reconstruction slices.
     axes[1, 0].imshow(reco_cpu[Nz // 2, :, :], cmap="gray")
