@@ -57,7 +57,9 @@ position :math:`(u, v)` is
 
 where :math:`\vec{d}` is the unit ray direction from source to
 detector cell. ``ConeProjectorFunction`` implements this integral via
-a Siddon ray-march with trilinear interpolation.
+a cell-constant Siddon ray-march (each ray accumulates each traversed
+voxel weighted by its exact intersection length, no sub-voxel
+interpolation).
 
 **FDK Algorithm**
 

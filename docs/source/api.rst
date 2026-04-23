@@ -65,8 +65,8 @@ Cone Beam Operators
 
 Cone beam geometry extends fan beam to 3D with a cone-shaped X-ray beam
 and a 2D detector. ``ConeProjectorFunction`` and
-``ConeBackprojectorFunction`` are exact adjoints of each other (Siddon
-traversal with trilinear interpolation) and drive the iterative cone
+``ConeBackprojectorFunction`` are exact adjoints of each other
+(cell-constant Siddon traversal) and drive the iterative cone
 example. For analytical FDK, use ``cone_weighted_backproject`` — it
 dispatches to a dedicated voxel-driven gather kernel with the classical
 ``(sid/U)^2`` distance weighting.
@@ -78,10 +78,10 @@ Both the fan and cone Projector / Backprojector Function pairs accept a
 ``backend`` keyword that selects the underlying CUDA kernel family:
 
 ``"siddon"`` (default)
-    Ray-driven Siddon traversal with bilinear (2D) / trilinear (3D)
-    interpolation. Fastest, byte-for-byte unchanged from 1.2.11 and
-    earlier, and is the right default for the overwhelming majority of
-    use cases.
+    Ray-driven cell-constant Siddon traversal: each ray accumulates
+    the traversed pixel (2D) or voxel (3D) value weighted by its exact
+    intersection length, no sub-cell interpolation. Fastest, and is
+    the right default for the overwhelming majority of use cases.
 
 ``"sf"`` (fan only)
     Voxel-driven separable-footprint projector (Long-Fessler-Balter,
@@ -106,41 +106,31 @@ All three SF backends go through matched scatter/gather kernel pairs
 with byte-accurate adjoints (verified by ``test_adjoint_inner_product``
 and ``test_gradcheck``).
 
-**Which backend to pick.** At the thin-ray sampling level, measured
-against the analytical ellipse / ellipsoid Radon transform, Siddon is
-slightly more accurate than SF (~3 % better RMSE, ~15 % better max
-error) because diffct's Siddon uses smooth interpolation rather than
-nearest-neighbour sampling. However, in a **complete analytical
-reconstruction pipeline** (forward projection -> ramp filter ->
-`fan_weighted_backproject` / `cone_weighted_backproject`) SF
-measurably improves the reconstruction MSE: on the standard 256²
-``examples/fbp_fan.py`` phantom the raw MSE drops from ``0.00216``
-(Siddon) to ``0.00178`` (SF), a ~17 % improvement; on the 128³
-``examples/fdk_cone.py`` phantom it drops from ``0.00325`` (Siddon)
-to ``0.00271`` (SF-TR), again ~17 %. The mechanism is that SF's
-mass-conserving cell-integrated sinogram pairs more naturally with
-the voxel-driven FBP / FDK gather backprojector than Siddon's
-thin-ray sampling, which feeds extra high-frequency ringing into
-the ramp filter.
+**Which backend to pick.** Siddon is the fastest per-step forward
+model and is the right default when you only need a forward
+projection. For a **complete analytical reconstruction pipeline**
+(forward projection -> ramp filter -> `fan_weighted_backproject` /
+`cone_weighted_backproject`) the SF backends tend to produce lower
+reconstruction MSE: SF's mass-conserving cell-integrated sinogram
+pairs more naturally with the voxel-driven FBP / FDK gather
+backprojector than Siddon's thin-ray sampling, which feeds extra
+high-frequency ringing into the ramp filter.
 
 So:
 
-* ``"siddon"`` — default for backward compatibility and raw forward
-  speed. Best choice when you only need a forward projection and not
-  a reconstruction.
+* ``"siddon"`` — default for raw forward speed. Best choice when you
+  only need a forward projection and not a reconstruction.
 * ``"sf"`` / ``"sf_tr"`` — recommended for analytical FBP / FDK
   reconstruction when reconstruction quality matters more than
-  forward-projection runtime. ~2–3× slower forward, ~17 % lower
-  reconstruction MSE on standard CT phantoms.
-* ``"sf_tt"`` — strictly more expressive than SF-TR but its
-  axial-trapezoid refinement improves RMSE by only ~0.001 at the cost
-  of another ~40 % forward runtime; use for extreme cone angles or
-  algorithm research only.
+  forward-projection runtime. ~2–3× slower forward than Siddon.
+* ``"sf_tt"`` — strictly more expressive than SF-TR; its axial-
+  trapezoid refinement costs another ~40 % forward runtime on top of
+  SF-TR, so use for extreme cone angles or algorithm research only.
 
 For **iterative reconstruction with autograd**, any backend is valid;
 SF has the theoretical advantage of exact voxel-scale mass
-conservation on both forward and adjoint, but in practice Siddon's
-smoothing helps optimizer convergence.
+conservation on both forward and adjoint, while Siddon gives the
+fastest per-iteration step.
 
 .. autoclass:: diffct.differentiable.ConeProjectorFunction
    :members:
