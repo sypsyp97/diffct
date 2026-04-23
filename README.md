@@ -17,7 +17,7 @@ deep-learning integration.
 
 ⭐ **Please star this project if you find it is useful!**
 
-**Maintenance:** DiffCT is now maintained by
+**Apple/MLX maintenance:** The former `apple` branch is maintained by
 [Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider) at
 [Linda-SophieSchneider/DiffCT-MLX](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
