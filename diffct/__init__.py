@@ -47,7 +47,7 @@ try:
 except ImportError:
     pass
 
-__version__ = '1.3.0.dev0'
+__version__ = '1.3.3.dev0'
 
 __all__ = [
     'ParallelProjectorFunction',

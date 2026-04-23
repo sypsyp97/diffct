@@ -92,15 +92,45 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     angles_sorted, sort_idx = torch.sort(angles)
     diffs = angles_sorted[1:] - angles_sorted[:-1]
 
-    w = torch.zeros(n, device=device, dtype=angles.dtype)
-    # Trapezoidal rule: each interior sample gets (prev + next) / 2,
-    # boundary samples get half the adjacent step.
-    w[0] = 0.5 * diffs[0]
-    w[-1] = 0.5 * diffs[-1]
-    if n > 2:
-        w[1:-1] = 0.5 * (diffs[:-1] + diffs[1:])
+    # Endpoint-excluded uniform circular scans are periodic quadrature
+    # problems, not open-interval trapezoids. Treat both parallel-beam
+    # half scans over pi and fan/cone full scans over 2*pi as periodic
+    # when the missing closure gap matches the interior angular step.
+    median_step = torch.median(diffs)
+    span = angles_sorted[-1] - angles_sorted[0]
+    period = None
+    for candidate in (math.pi, 2.0 * math.pi):
+        closure = angles.new_tensor(candidate) - span
+        tol = max(1e-4, 0.05 * float(abs(median_step).item()))
+        # Full circular acquisitions can be endpoint-excluded
+        # (closure ~= median_step), endpoint-included (closure ~= 0),
+        # or downsampled from a finer full scan (closure smaller than
+        # the kept-view step, as in the walnut fixture). Treat these as
+        # periodic when the missing closure is no larger than one normal
+        # kept-view interval.
+        if closure >= -tol and float(closure.item()) <= 1.5 * float(abs(median_step).item()) + tol:
+            period = candidate
+            break
 
-    if redundant_full_scan:
+    w = torch.zeros(n, device=device, dtype=angles.dtype)
+    if period is not None:
+        closure = torch.clamp(angles.new_tensor(period) - span, min=0.0)
+        w[0] = 0.5 * (closure + diffs[0])
+        w[-1] = 0.5 * (diffs[-1] + closure)
+        if n > 2:
+            w[1:-1] = 0.5 * (diffs[:-1] + diffs[1:])
+    else:
+        # Open-interval trapezoidal rule: each interior sample gets
+        # (prev + next) / 2, boundaries get half the adjacent step.
+        w[0] = 0.5 * diffs[0]
+        w[-1] = 0.5 * diffs[-1]
+        if n > 2:
+            w[1:-1] = 0.5 * (diffs[:-1] + diffs[1:])
+
+    full_scan_tol = max(1e-4, 0.05 * float(abs(median_step).item()))
+    is_periodic_full_scan = period is not None and abs(period - 2.0 * math.pi) <= full_scan_tol
+    is_open_full_scan = period is None and abs(float((span - 2.0 * math.pi).item())) <= full_scan_tol
+    if redundant_full_scan and (is_periodic_full_scan or is_open_full_scan):
         w = w * 0.5  # absorb the 1/2 FBP/FDK redundancy factor
 
     # Return weights in the input order so the caller can just multiply

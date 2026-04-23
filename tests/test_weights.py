@@ -35,18 +35,50 @@ def test_angular_integration_weights_full_scan_redundant():
     n = 360
     angles = torch.linspace(0.0, 2.0 * math.pi, n + 1)[:-1]
     w = angular_integration_weights(angles, redundant_full_scan=True)
-    # Trapezoidal rule over [0, 2*pi - step] with 1/2 redundancy factor.
-    # For large n this converges to pi.
-    assert abs(w.sum().item() - math.pi) < 1e-2
+    assert torch.allclose(w, torch.full_like(w, math.pi / n), atol=1e-6)
+    assert abs(w.sum().item() - math.pi) < 1e-6
 
 
 def test_angular_integration_weights_short_scan_not_redundant():
-    # Half scan [0, pi] with no redundancy factor
+    # Endpoint-excluded parallel half scan [0, pi) with no redundancy factor.
     n = 180
     angles = torch.linspace(0.0, math.pi, n + 1)[:-1]
     w = angular_integration_weights(angles, redundant_full_scan=False)
-    # Trapezoidal rule over [0, pi - step], for large n converges to pi.
-    assert abs(w.sum().item() - math.pi) < 1e-1
+    assert torch.allclose(w, torch.full_like(w, math.pi / n), atol=1e-6)
+    assert abs(w.sum().item() - math.pi) < 1e-6
+
+
+def test_angular_integration_weights_parallel_half_scan_ignores_redundancy_flag():
+    n = 180
+    angles = torch.linspace(0.0, math.pi, n + 1)[:-1]
+    w = angular_integration_weights(angles, redundant_full_scan=True)
+    assert torch.allclose(w, torch.full_like(w, math.pi / n), atol=1e-6)
+    assert abs(w.sum().item() - math.pi) < 1e-6
+
+
+def test_angular_integration_weights_downsampled_full_scan_is_periodic():
+    angles_all = torch.linspace(0.0, 2.0 * math.pi, 721 + 1)[:-1]
+    angles = angles_all[::3]
+    w = angular_integration_weights(angles, redundant_full_scan=True)
+    assert abs(w.sum().item() - math.pi) < 1e-6
+    assert w[0] < w[1]
+    assert w[-1] < w[1]
+
+
+def test_angular_integration_weights_endpoint_included_full_scan():
+    angles = torch.deg2rad(torch.arange(721, dtype=torch.float32) * 0.5)
+    w = angular_integration_weights(angles, redundant_full_scan=True)
+    assert abs(w.sum().item() - math.pi) < 1e-6
+    assert torch.isclose(w[0], w[1] * 0.5, atol=1e-6)
+    assert torch.isclose(w[-1], w[-2] * 0.5, atol=1e-6)
+
+
+def test_angular_integration_weights_open_short_scan_uses_trapezoid():
+    angles = torch.linspace(0.0, 0.75 * math.pi, 11)
+    w = angular_integration_weights(angles, redundant_full_scan=False)
+    assert torch.allclose(w[0], w[1] * 0.5)
+    assert torch.allclose(w[-1], w[-2] * 0.5)
+    assert abs(w.sum().item() - 0.75 * math.pi) < 1e-6
 
 
 def test_fan_cosine_weights_peak_at_origin():
