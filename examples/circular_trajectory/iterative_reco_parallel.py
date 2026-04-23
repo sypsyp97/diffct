@@ -53,13 +53,12 @@ class IterativeRecoModel(nn.Module):
         self.num_detectors = num_detectors
         self.detector_spacing = detector_spacing
         self.voxel_spacing = voxel_spacing
-        self.relu = nn.ReLU() # non negative constraint
 
     def forward(self, x):
         updated_reco = x + self.reco
         current_sino = ParallelProjectorFunction.apply(updated_reco, self.ray_dir, self.det_origin, self.det_u_vec,
                                                        self.num_detectors, self.detector_spacing, self.voxel_spacing)
-        return current_sino, self.relu(updated_reco)
+        return current_sino, updated_reco
 
 class Pipeline:
     def __init__(self, lr, volume_shape, ray_dir, det_origin, det_u_vec, num_detectors, detector_spacing,
@@ -80,6 +79,8 @@ class Pipeline:
             loss_value = self.loss(predictions, label)
             loss_value.backward()
             self.optimizer.step()
+            with torch.no_grad():
+                self.model.reco.clamp_(min=0.0)
             loss_values.append(loss_value.item())
 
             if epoch % 10 == 0:

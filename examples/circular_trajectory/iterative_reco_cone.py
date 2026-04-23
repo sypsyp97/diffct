@@ -79,7 +79,6 @@ class IterativeRecoModel(nn.Module):
         self.det_v = det_v
         self.du = du
         self.dv = dv
-        self.relu = nn.ReLU() # non negative constraint
         self.voxel_spacing = voxel_spacing
 
     def forward(self, x):
@@ -89,7 +88,7 @@ class IterativeRecoModel(nn.Module):
                                                    self.det_u_vec, self.det_v_vec,
                                                    self.det_u, self.det_v,
                                                    self.du, self.dv, self.voxel_spacing)
-        return current_sino, self.relu(updated_reco)
+        return current_sino, updated_reco
 
 class Pipeline:
     def __init__(self, lr, volume_shape, src_pos, det_center, det_u_vec, det_v_vec,
@@ -111,6 +110,8 @@ class Pipeline:
             loss_value = self.loss(predictions, label)
             loss_value.backward()
             self.optimizer.step()
+            with torch.no_grad():
+                self.model.reco.clamp_(min=0.0)
             loss_values.append(loss_value.item())
 
             if epoch % 10 == 0:
