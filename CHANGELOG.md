@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Walnut rotation-axis correction** in the shipped preprocessing and
+  sample data. `examples/data/preprocess_walnut.py` now applies the
+  Zenodo record's recommended 5-raw-pixel left shift before binning and
+  cropping, records the correction in the `.npz` metadata, and the
+  shipped `examples/data/walnut_cone.npz` / `walnut_reco.png` are
+  regenerated accordingly. `examples/realdata_walnut_fdk.py` and
+  `examples/data/NOTICE` are updated to surface the correction and the
+  richer walnut metadata.
+
+## [1.3.2] - 2026-04-23
+
+### Added
+- **Expanded angular-weight regression tests** in
+  `tests/test_weights.py`, covering periodic `pi` half scans,
+  downsampled full scans, endpoint-included 721-view full scans, and
+  open short scans.
+
+### Changed
+- **`angular_integration_weights` is now coverage-aware and order-stable.**
+  The helper sorts angles internally, detects `pi`- and `2*pi`-periodic
+  sampling more robustly, handles endpoint-included trajectories, and
+  maps the computed weights back to the caller's original angle order.
+- **Walnut tooling is now configurable from the command line.**
+  `examples/data/preprocess_walnut.py` gained CLI switches for binning,
+  cropping, view stride, angle handedness, storage dtype, and archive
+  discovery; `examples/realdata_walnut_fdk.py` gained CLI controls for
+  backend, output volume size, voxel scale, filter window, output file
+  writing, and display suppression.
+- **README polish for bilingual navigation and repo layout.**
+  `README.md` now exposes the Chinese README link near the top and
+  clarifies the file tree entries for `README.md` / `README.zh.md`.
+
+### Fixed
+- **Angular quadrature artifacts** in analytical reconstructions when
+  full scans were endpoint-included or angularly downsampled. These
+  trajectories now receive periodic integration weights instead of being
+  misclassified as open scans.
+- **Walnut example angle metadata and scan handedness.**
+  The walnut preprocessing and FDK example now use the dataset's
+  scanner-to-diffct angle convention explicitly and preserve the full
+  721-view `0 .. 360 deg` acquisition description in the stored
+  metadata.
+
 ## [1.3.1] - 2026-04-15
 
 ### Added
