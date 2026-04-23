@@ -88,7 +88,7 @@
 <span class="c1"># 2D blocks: 16x16 = 256 threads per block, optimal for 2D ray-tracing kernels</span>
 <span class="c1"># Balances occupancy with shared memory usage for parallel/fan beam projections</span>
 <span class="n">_TPB_2D</span>             <span class="o">=</span> <span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>
-<span class="c1"># 3D blocks: 8x8x8 = 512 threads per block, optimal for 3D cone beam kernels  </span>
+<span class="c1"># 3D blocks: 8x8x8 = 512 threads per block, optimal for 3D cone beam kernels</span>
 <span class="c1"># Smaller per-dimension size accommodates higher register usage in 3D algorithms</span>
 <span class="n">_TPB_3D</span>             <span class="o">=</span> <span class="p">(</span><span class="mi">8</span><span class="p">,</span>  <span class="mi">8</span><span class="p">,</span>  <span class="mi">8</span><span class="p">)</span>
 <span class="c1"># Smaller TPB for the 3-D SF kernels. SF-TT in particular spills past the</span>
@@ -748,7 +748,6 @@
     <span class="c1"># CUDA THREAD ORGANIZATION: 2D grid maps directly to ray geometry</span>
     <span class="c1"># Each thread processes one ray defined by (projection_angle, detector_element) pair</span>
     <span class="c1"># Thread indexing: iang = projection angle index, idet = detector element index</span>
-    <span class="c1"># Memory access pattern: Threads in same warp access consecutive detector elements (coalesced)</span>
     <span class="n">iang</span><span class="p">,</span> <span class="n">idet</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">iang</span> <span class="o">&gt;=</span> <span class="n">n_ang</span> <span class="ow">or</span> <span class="n">idet</span> <span class="o">&gt;=</span> <span class="n">n_det</span><span class="p">:</span>
         <span class="k">return</span>
@@ -1469,7 +1468,7 @@
 <span class="sd">    identical to the forward kernel, so the inner-product identity</span>
 <span class="sd">    ``&lt;A x, y&gt; = &lt;x, A^T y&gt;`` holds exactly up to float32 accumulation order.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">iy</span><span class="p">,</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span> <span class="ow">or</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span><span class="p">:</span>
         <span class="k">return</span>
 
@@ -1659,7 +1658,9 @@
 <span class="sd">    a 2D detector array and trilinear interpolation for accurate volumetric</span>
 <span class="sd">    sampling.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">iview</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iv</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="c1"># Put detector-v on threadIdx.x; d_sino[view, u, v] is row-major with v</span>
+    <span class="c1"># as the stride-1 axis, and adjacent v rays also tend to walk nearby z cells.</span>
+    <span class="n">iv</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iview</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">iview</span> <span class="o">&gt;=</span> <span class="n">n_views</span> <span class="ow">or</span> <span class="n">iu</span> <span class="o">&gt;=</span> <span class="n">n_u</span> <span class="ow">or</span> <span class="n">iv</span> <span class="o">&gt;=</span> <span class="n">n_v</span><span class="p">:</span>
         <span class="k">return</span>
 
@@ -1825,7 +1826,8 @@
 <span class="sd">    in ``_cone_3d_fdk_backproject_kernel`` / ``cone_weighted_backproject``</span>
 <span class="sd">    and does *not* go through this kernel.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">iview</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iv</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="c1"># Match the forward kernel&#39;s launch order: detector-v is warp-adjacent.</span>
+    <span class="n">iv</span><span class="p">,</span> <span class="n">iu</span><span class="p">,</span> <span class="n">iview</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">iview</span> <span class="o">&gt;=</span> <span class="n">n_views</span> <span class="ow">or</span> <span class="n">iu</span> <span class="o">&gt;=</span> <span class="n">n_u</span> <span class="ow">or</span> <span class="n">iv</span> <span class="o">&gt;=</span> <span class="n">n_v</span><span class="p">:</span>
         <span class="k">return</span>
 
@@ -3185,7 +3187,7 @@
 <span class="sd">    scan weights are expected to already be baked into ``d_sino`` before</span>
 <span class="sd">    this kernel runs.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">iy</span><span class="p">,</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">ix</span><span class="p">,</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">cuda</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">iy</span> <span class="o">&gt;=</span> <span class="n">Ny</span> <span class="ow">or</span> <span class="n">ix</span> <span class="o">&gt;=</span> <span class="n">Nx</span><span class="p">:</span>
         <span class="k">return</span>
 
@@ -4367,7 +4369,7 @@
             <span class="c1"># Pure adjoint of the SF-TR forward: voxel-driven gather that</span>
             <span class="c1"># rebuilds the same trapezoidal coefficients and accumulates</span>
             <span class="c1"># weight * raw * grad_sino into each image pixel.</span>
-            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">)</span>
+            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">)</span>
             <span class="n">_fan_2d_sf_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
                 <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_img_grad</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
                 <span class="n">_DTYPE</span><span class="p">(</span><span class="n">det_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
@@ -4521,7 +4523,7 @@
                 <span class="n">det_offset_v</span><span class="p">,</span> <span class="n">center_offset_x_v</span><span class="p">,</span> <span class="n">center_offset_y_v</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">elif</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;sf&quot;</span><span class="p">:</span>
-            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">)</span>
+            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">)</span>
             <span class="n">_fan_2d_sf_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
                 <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_ang</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">,</span>
                 <span class="n">_DTYPE</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
@@ -4769,7 +4771,7 @@
         <span class="n">center_offset_z_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_z</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;siddon&quot;</span><span class="p">:</span>
-            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">)</span>
+            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">det_v</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">n_views</span><span class="p">)</span>
             <span class="n">_cone_3d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
                 <span class="n">d_vol</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span>
                 <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
@@ -4878,7 +4880,7 @@
 
         <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;siddon&quot;</span><span class="p">:</span>
             <span class="c1"># Pure adjoint P^T of the Siddon forward projector.</span>
-            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">)</span>
+            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">det_v</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">n_views</span><span class="p">)</span>
             <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
                 <span class="n">d_grad_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">d_vol_grad</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
                 <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
@@ -5068,7 +5070,7 @@
             <span class="c1"># Pure adjoint of the Siddon forward projector. See the class</span>
             <span class="c1"># docstring for why this Function deliberately does *not*</span>
             <span class="c1"># apply FDK distance weighting.</span>
-            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">)</span>
+            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_v</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_views</span><span class="p">)</span>
             <span class="n">_cone_3d_backward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
                 <span class="n">d_sino</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">d_reco</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span>
                 <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
@@ -5175,7 +5177,7 @@
         <span class="n">center_offset_z_v</span> <span class="o">=</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">center_offset_z</span> <span class="o">/</span> <span class="n">voxel_spacing</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;siddon&quot;</span><span class="p">:</span>
-            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">)</span>
+            <span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span> <span class="o">=</span> <span class="n">_grid_3d</span><span class="p">(</span><span class="n">n_v</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_views</span><span class="p">)</span>
             <span class="n">_cone_3d_forward_kernel</span><span class="p">[</span><span class="n">grid</span><span class="p">,</span> <span class="n">tpb</span><span class="p">,</span> <span class="n">numba_stream</span><span class="p">](</span>
                 <span class="n">d_grad_out</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">d_sino_grad</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span>
                 <span class="n">_DTYPE</span><span class="p">(</span><span class="n">du</span><span class="p">),</span> <span class="n">_DTYPE</span><span class="p">(</span><span class="n">dv</span><span class="p">),</span> <span class="n">d_cos_arr</span><span class="p">,</span> <span class="n">d_sin_arr</span><span class="p">,</span>
