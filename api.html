@@ -410,8 +410,8 @@ midpoints. <code class="docutils literal notranslate"><span class="pre">&quot;sf
 voxel-driven projector that projects each voxel’s footprint as a
 trapezoid on the detector and integrates it closed-form over each
 detector cell; it is mass-conserving and closer to the physical
-finite-width-cell integral, at the cost of being forward-only
-(no autograd backward yet).</p></li>
+finite-width-cell integral, with a matched voxel-driven gather
+adjoint for autograd.</p></li>
 <li><p><strong>image</strong> (<em>torch.Tensor</em>) – 2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</p></li>
 <li><p><strong>angles</strong> (<em>torch.Tensor</em>) – 1D tensor of projection angles in radians, shape (num_angles,), must be on the same CUDA device as <cite>image</cite>.</p></li>
 <li><p><strong>num_detectors</strong> (<em>int</em>) – Number of detector elements in the sinogram (columns).</p></li>
@@ -992,9 +992,11 @@ one voxel at large cone angles.</p></li>
 nearly identical MTFs; at sub-nominal voxels the SF variants give
 measurably higher spatial resolution, and at supra-nominal voxels
 they give higher SNR (see LEAP’s SF vs VD analysis). All three
-paths apply the <code class="docutils literal notranslate"><span class="pre">(SID</span> <span class="pre">/</span> <span class="pre">U)^2</span></code> FDK weight per view inside the
-kernel and the <code class="docutils literal notranslate"><span class="pre">sdd</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid)</span></code> analytical FDK scale in
-Python, so amplitude calibration is preserved across backends.
+VD applies the classical <code class="docutils literal notranslate"><span class="pre">(SID</span> <span class="pre">/</span> <span class="pre">U)^2</span></code> FDK weight per view inside
+the kernel and the <code class="docutils literal notranslate"><span class="pre">sdd</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid)</span></code> analytical FDK scale in
+Python. The SF paths use the LEAP chord-weighted form inside the
+kernels plus the matching SF scale below, so amplitude calibration is
+preserved across backends.
 The Siddon-based cone autograd adjoint
 (<code class="docutils literal notranslate"><span class="pre">_cone_3d_backward_kernel</span></code>) and the SF-matched adjoints
 (<code class="docutils literal notranslate"><span class="pre">_cone_3d_sf_tr_backward_kernel</span></code> /
