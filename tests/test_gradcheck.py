@@ -28,7 +28,7 @@ from diffct.differentiable import (
 
 # Tolerances tuned for float32 + Siddon ray-march + atomic-add backward.
 # float32 finite differences saturate around 1e-3 relative accuracy, and
-# our bilinear/trilinear interpolation adds an extra factor-of-2 noise.
+# the per-segment chord-length accumulation adds an extra factor-of-2 noise.
 _GC_EPS = 1e-2
 _GC_ATOL = 5e-2
 _GC_RTOL = 5e-2

@@ -213,12 +213,13 @@ def main():
     # with a matched scatter/gather pair so autograd and the standalone
     # Backprojector Function work unchanged.
     #
-    #   "siddon"           - 3D ray-driven Siddon traversal with
-    #                        trilinear interpolation. One thread per
-    #                        (view, det_u, det_v). Fastest forward.
-    #                        Pick this when you only need a forward
-    #                        projection and don't need a matched cell-
-    #                        integrated model.
+    #   "siddon"           - 3D ray-driven cell-constant Siddon traversal:
+    #                        each traversed voxel contributes its value
+    #                        weighted by the exact chord length, no sub-
+    #                        voxel interpolation. One thread per (view,
+    #                        det_u, det_v). Fastest forward. Pick this
+    #                        when you only need a forward projection and
+    #                        don't need a matched cell-integrated model.
     #
     #   "sf_tr"            - 3D voxel-driven separable-footprint with a
     #                        trapezoidal transaxial (u) footprint and a

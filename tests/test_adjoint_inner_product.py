@@ -9,8 +9,9 @@ tests pick random ``x`` and ``y`` on CUDA, run both sides of the
 identity through the autograd ``forward`` of the projector and the
 autograd ``forward`` of the backprojector, and check that the two inner
 products agree to a few parts in a thousand (the tolerance budget is
-wide on purpose: atomic adds and trilinear interpolation introduce
-small rounding that differs between the two paths).
+wide on purpose: float32 atomic adds and the per-segment chord-length
+accumulation in the cell-constant Siddon kernels introduce small
+rounding that differs between the two paths).
 
 These tests protect against any regression that would make the
 autograd ``backward`` diverge from the true adjoint - for example a

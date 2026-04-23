@@ -74,9 +74,9 @@ published to PyPI. If you find any bugs please
   reaches Siddon-VD parity in both amplitude and MSE (within ~1 %).
   See the Core Algorithm section below for when SF is worth the
   extra ~2-3x forward cost.
-- **Tested:** 66 pytest tests covering adjoint identity, gradcheck,
+- **Tested:** 71 pytest tests covering adjoint identity, gradcheck,
   smoke, FBP / FDK accuracy per geometry, detector / center offsets,
-  and 29 ramp-filter window cases. Opt-in 27-case
+  and 27 ramp-filter window cases. Opt-in 27-case
   ``pytest-benchmark`` perf suite under ``tests/benchmarks/`` for
   before/after regression tracking.
 
@@ -94,34 +94,38 @@ At the heart of every `diffct` projector / backprojector pair is
 grid, stepping forward only at voxel boundaries and giving exact
 parametric intersection lengths in `O(N)` per ray.
 
-The classical Siddon samples the *cell value* at each step
-(nearest-neighbor). `diffct` instead uses **bilinear (2D) /
-trilinear (3D) interpolation** of the surrounding voxel corners at
-every sample point. The same interpolation appears twice in the
-analytical pipeline, both in the Siddon forward projector walking
-the image, and in the voxel-driven FBP / FDK gather backprojector
-(`*_weighted_backproject`) sampling the filtered sinogram at each
+`diffct`'s Siddon kernels implement **cell-constant segment
+integration**: each ray integral is approximated as
+`Σ Δt_m · f_{cell(m)}`, i.e. every traversed pixel (2D) or voxel
+(3D) contributes its value weighted by the exact chord length
+`Δt_m` that the ray spends inside that cell, with no sub-cell
+interpolation. The voxel-driven FBP / FDK gather backprojector
+(`*_weighted_backproject`) on the analytical side is a separate
+path and does still bilinearly sample the filtered sinogram at each
 voxel's projected detector footprint. The matched autograd adjoint
-uses exactly the same weights as a scatter-add, giving a byte-
+of the Siddon kernels scatters each ray-domain gradient back into
+the same traversed cell with the same `Δt_m`, giving a byte-
 accurate adjoint verified by `<Ax, y> ≈ <x, A^T y>` at float32
 precision (see `tests/test_adjoint_inner_product.py`).
 
-**Why this choice.** Interpolation weights are continuous in the
-voxel values, so `∂sinogram / ∂voxel` is well-defined everywhere
-and `torch.autograd` flows gradients back through the projector
-without surrogate tricks or straight-through estimators. Nearest-
-neighbor Siddon would give piecewise-constant outputs with zero
-gradient on the interior of each cell — fine for one-shot FBP /
-FDK, useless for iterative or learned reconstruction. A single
-integer-DDA kernel also keeps the forward and adjoint code
-structurally identical across parallel, fan, and cone, which is
-what makes the adjoint byte-accurate in the first place.
+**Why this works for autograd.** The ray integral
+`Σ Δt_m · f_{cell(m)}` is linear in the image voxel values `f`, so
+`∂sinogram / ∂voxel` is simply the sum of the `Δt_m` weights
+contributed by every ray-segment that traverses that voxel — well-
+defined, non-zero, and trivially matched by the adjoint scatter.
+`torch.autograd` flows gradients back through the projector without
+surrogate tricks or straight-through estimators. A single integer-
+DDA kernel also keeps the forward and adjoint code structurally
+identical across parallel, fan, and cone, which is what makes the
+adjoint byte-accurate in the first place.
 
-**The trade-off: slight blur.** Bi / trilinear interpolation behaves
-like a mild low-pass filter on top of the voxel grid, so the
-effective reconstruction MTF rolls off a bit earlier than a cell-
-integrated projector would give. To recover that resolution the
-sharpest knob is the ramp filter window:
+**Sharpness and the ramp filter window.** Cell-constant Siddon is a
+thin-ray point-like sampler in the image domain, so in a full
+analytical reconstruction (forward -> ramp filter -> voxel-driven
+gather) high-frequency content passes through the forward side
+essentially unfiltered and lands in the ramp filter. The sharpness
+/ ringing trade-off is therefore controlled at the ramp window
+stage:
 
 - **Ramp filter window**: `ramp_filter_1d(window=...)` picks the
   frequency-domain apodization applied on top of the ramp. In order
@@ -162,8 +166,8 @@ the actually interesting one:
   contribution is spread across the correct multi-bin footprint
   instead of concentrated at one bin, which matters for iterative
   reconstruction, learned priors, and any loss that compares
-  sinograms directly. Siddon-bilinear forward is a point sampler
-  and only conserves mass statistically.
+  sinograms directly. Cell-constant Siddon forward is a thin-ray
+  point sampler and only conserves mass statistically.
 - SF's matched adjoint is byte-accurate (verified by
   `tests/test_adjoint_inner_product.py`), so gradients flow
   correctly through the cell-integrated forward model.
@@ -326,7 +330,7 @@ pip install diffct
 ### Running the tests
 
 ```bash
-pytest tests/ -q                             # 66 tests, ~15 s
+pytest tests/ -q                             # 71 tests, ~15 s
 pytest tests/benchmarks/ --benchmark-only    # opt-in perf suite, requires pytest-benchmark
 ```
 

@@ -65,9 +65,9 @@ bug 请
   matched-adjoint 形式 (`projectors_SF.cu`),在 Shepp-Logan 上
   amplitude 和 MSE 都跟 Siddon VD 持平 (差异 <1 %)。何时真的值得
   用 SF 见下面的 Core Algorithm。forward 代价大约是 2-3 倍。
-- **测试齐全**: 66 个 pytest 用例覆盖 adjoint identity、gradcheck、
+- **测试齐全**: 71 个 pytest 用例覆盖 adjoint identity、gradcheck、
   smoke、每种几何的 FBP / FDK 精度、detector / center offsets、
-  以及 29 个 ramp filter window case。`tests/benchmarks/` 下有
+  以及 27 个 ramp filter window case。`tests/benchmarks/` 下有
   可选的 27 个 `pytest-benchmark` 性能用例用于前后对比。
 
 ## 📐 支持的几何
@@ -84,30 +84,32 @@ bug 请
 步进,对每条射线在 `O(N)` 步内给出精确的参数化 intersection
 长度,不会浪费时间走空 voxel。
 
-经典 Siddon 在每个步进点取 *单元值* (nearest-neighbor)。
-`diffct` 把这一步改成了 **bilinear (2D) / trilinear (3D) 插值** ——
-在每个采样点对周围 voxel 顶点做插值。同样的插值在整条解析重建
-链路上出现了两次: 一次是 Siddon forward projector 在图像上游走
-采样,一次是 voxel-driven 的 FBP / FDK gather backprojector
-(`*_weighted_backproject`) 在滤波后 sinogram 上按每个 voxel 投
-影到探测器的 footprint 采样。对应的 autograd adjoint 用完全相同
-的权重做 scatter,保证 `<Ax, y> ≈ <x, A^T y>` 在 float32 精度下
-byte-accurate(见 `tests/test_adjoint_inner_product.py`)。
+`diffct` 的 Siddon kernel 采用 **cell-constant 段积分**:每条
+射线的积分近似为 `Σ Δt_m · f_{cell(m)}`,也就是把射线穿过的每一
+个 pixel (2D) 或 voxel (3D) 按它在该 cell 里走过的精确弦长
+`Δt_m` 作加权累加,不在 cell 内部做任何插值。解析重建侧的
+voxel-driven FBP / FDK gather backprojector
+(`*_weighted_backproject`) 是独立的一条路径,仍然在滤波后的
+sinogram 上按每个 voxel 投影的探测器坐标做 bilinear 采样。
+Siddon kernel 对应的 autograd adjoint 把 ray-domain 梯度用同一
+个 `Δt_m` scatter 回同一个 cell,保证 `<Ax, y> ≈ <x, A^T y>`
+在 float32 精度下 byte-accurate(见
+`tests/test_adjoint_inner_product.py`)。
 
-**为什么这样设计**。插值权重对 voxel 值是连续的,所以
-`∂sinogram / ∂voxel` 处处良定义,`torch.autograd` 可以直接
-把梯度穿透 projector 回流,不需要任何 surrogate 或 straight-
-through estimator 的技巧。纯 nearest-neighbor Siddon 给的是
-piecewise-constant 输出,单元内部梯度恒为零 —— 对一次性的
-FBP / FDK 没关系,对 iterative reconstruction 和 learned
-reconstruction 就彻底不可用了。统一的 integer-DDA kernel 还让
-forward 和 adjoint 的代码结构在 parallel / fan / cone 三种
-几何里保持同构,这也是 adjoint 能做到 byte-accurate 的前提。
+**为什么这条路径能直接接 autograd**。射线积分
+`Σ Δt_m · f_{cell(m)}` 对 voxel 值 `f` 是线性的,所以
+`∂sinogram / ∂voxel` 就是穿过该 voxel 的所有射线段 `Δt_m` 之和
+—— 处处良定义、非零,且天然和 adjoint scatter 对称。
+`torch.autograd` 可以直接把梯度穿透 projector 回流,不需要任何
+surrogate 或 straight-through estimator 技巧。统一的 integer-DDA
+kernel 还让 forward / adjoint 代码结构在 parallel / fan / cone
+三种几何里保持同构,这也是 adjoint 能做到 byte-accurate 的前提。
 
-**代价: 图像会稍微变糊**。bi / trilinear 插值本质上是在 voxel
-网格之上再叠一个温和的低通滤波器,重建的有效 MTF 比单元积分
-projector 滚降得早一点。想把这部分分辨率找回来,最主要的旋钮
-是 ramp filter window:
+**锐度与 ramp filter window**。cell-constant Siddon 是一个沿射
+线的细线点采样,不做任何单元内低通,在一条完整的解析链路
+(forward → ramp filter → voxel-driven gather)里,高频内容基本
+不经 forward 衰减地进入 ramp filter。所以锐度 / ringing 的
+trade-off 主要在 ramp filter window 这一步控制:
 
 - **Ramp filter window**: `ramp_filter_1d(window=...)` 选择在 ramp
   上叠加的频域 apodization。锐度排序:`"ram-lak"` > `"hamming"` >
@@ -139,10 +141,10 @@ adjoint 形式(`projectors_SF.cu`)。我们在 Shepp-Logan 和真核桃
 那 SF 后端为什么还要保留?因为真正有价值的是 **forward** 这一侧:
 
 - SF forward 是 **mass-conserving** 的 —— 一个 voxel 的贡献会按
-  正确的 multi-bin footprint 摊到整条梯形上,而不是像 Siddon
-  bilinear 那样集中在一个 bin 的 point sample。iterative 重建、
-  learned prior、任何在 sinogram 上直接算 loss 的 pipeline 都
-  更愿意用这种 forward。
+  正确的 multi-bin footprint 摊到整条梯形上,而不是像
+  cell-constant Siddon 那样集中在一条细射线上的 point sample。
+  iterative 重建、learned prior、任何在 sinogram 上直接算 loss
+  的 pipeline 都更愿意用这种 forward。
 - SF 的 matched adjoint 是 byte-accurate 的(见
   `tests/test_adjoint_inner_product.py`),所以梯度可以正确地
   流过这个单元积分 forward model。

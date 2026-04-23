@@ -150,11 +150,13 @@ def main():
     # with a matched scatter/gather pair so autograd and the standalone
     # Backprojector Function work unchanged.
     #
-    #   "siddon" (default) - Ray-driven Siddon traversal with bilinear
-    #                        interpolation on the image. One thread per
-    #                        (view, detector bin). Fastest forward. Pick
-    #                        this when you only need a forward projection
-    #                        and not a matched cell-integrated model.
+    #   "siddon" (default) - Ray-driven cell-constant Siddon traversal:
+    #                        each traversed pixel contributes its value
+    #                        weighted by the exact chord length, no sub-
+    #                        pixel interpolation. One thread per (view,
+    #                        detector bin). Fastest forward. Pick this
+    #                        when you only need a forward projection and
+    #                        not a matched cell-integrated model.
     #
     #   "sf"               - Voxel-driven separable-footprint projector
     #                        (SF-TR of Long-Fessler-Balter, IEEE TMI 2010).

@@ -4398,7 +4398,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         ----------
         backend : str, optional
             Forward projector backend. ``"siddon"`` (default) is the existing
-            ray-driven trilinear Siddon kernel. ``"sf_tr"`` and ``"sf_tt"``
+            ray-driven cell-constant Siddon kernel. ``"sf_tr"`` and ``"sf_tt"``
             are separable-footprint voxel-driven projectors (Long et al.,
             IEEE TMI 2010). SF-TR uses a trapezoidal transaxial footprint
             and a rectangular axial footprint evaluated at voxel-centre
