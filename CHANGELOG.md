@@ -5,6 +5,37 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-04-23
+
+### Changed
+- **Siddon projectors switched to cell-constant integration.** The 2D
+  parallel, 2D fan, and 3D cone Siddon forward/backward kernels in
+  `diffct/differentiable.py` now integrate each ray by accumulating
+  `d_image[iy, ix] * seg_len` on the traversed pixel/voxel instead of
+  sampling the bi-/tri-linear interpolant at the segment midpoint.
+  This simplifies the inner loop, removes the interpolation weight
+  bookkeeping, and keeps the forward / adjoint pair matched by
+  construction (still verified by
+  `tests/test_adjoint_inner_product.py`). Kernel docstrings and the
+  `"siddon"` backend blurbs in `examples/iterative_reco_*.py` have
+  been updated to say *cell-constant Siddon*.
+- **Iterative examples clamp the reconstruction in-place** instead of
+  wrapping the forward pass in `nn.ReLU`. `examples/iterative_reco_parallel.py`,
+  `iterative_reco_fan.py`, and `iterative_reco_cone.py` now call
+  `self.model.reco.clamp_(min=0.0)` under `torch.no_grad()` after each
+  optimizer step, so gradients flow through the unclamped volume while
+  the stored state stays non-negative.
+- **`examples/iterative_reco_fan.py` default backend** is now
+  `"siddon"` (was `"sf"`), matching the parallel and cone iterative
+  examples.
+
+### Fixed
+- **FDK cone accuracy test tolerance.** `tests/test_fdk_cone_accuracy.py`
+  raises the maximum central z-profile error bound from `0.6` to `0.65`
+  to reflect the slightly sharper one-sample transition error at
+  ellipsoid boundaries under cell-constant forward projection; global
+  FDK RMSE is unchanged.
+
 ## [1.3.3] - 2026-04-23
 
 ### Fixed
