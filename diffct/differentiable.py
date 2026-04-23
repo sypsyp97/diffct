@@ -12,7 +12,7 @@ _DTYPE              = np.float32
 # 2D blocks: 16x16 = 256 threads per block, optimal for 2D ray-tracing kernels
 # Balances occupancy with shared memory usage for parallel/fan beam projections
 _TPB_2D             = (16, 16)
-# 3D blocks: 8x8x8 = 512 threads per block, optimal for 3D cone beam kernels  
+# 3D blocks: 8x8x8 = 512 threads per block, optimal for 3D cone beam kernels
 # Smaller per-dimension size accommodates higher register usage in 3D algorithms
 _TPB_3D             = (8,  8,  8)
 # Smaller TPB for the 3-D SF kernels. SF-TT in particular spills past the
@@ -654,7 +654,6 @@ def _parallel_2d_forward_kernel(
     # CUDA THREAD ORGANIZATION: 2D grid maps directly to ray geometry
     # Each thread processes one ray defined by (projection_angle, detector_element) pair
     # Thread indexing: iang = projection angle index, idet = detector element index
-    # Memory access pattern: Threads in same warp access consecutive detector elements (coalesced)
     iang, idet = cuda.grid(2)
     if iang >= n_ang or idet >= n_det:
         return
@@ -1375,7 +1374,7 @@ def _fan_2d_sf_backward_kernel(
     identical to the forward kernel, so the inner-product identity
     ``<A x, y> = <x, A^T y>`` holds exactly up to float32 accumulation order.
     """
-    iy, ix = cuda.grid(2)
+    ix, iy = cuda.grid(2)
     if iy >= Ny or ix >= Nx:
         return
 
@@ -1565,7 +1564,9 @@ def _cone_3d_forward_kernel(
     a 2D detector array and trilinear interpolation for accurate volumetric
     sampling.
     """
-    iview, iu, iv = cuda.grid(3)
+    # Put detector-v on threadIdx.x; d_sino[view, u, v] is row-major with v
+    # as the stride-1 axis, and adjacent v rays also tend to walk nearby z cells.
+    iv, iu, iview = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
         return
 
@@ -1731,7 +1732,8 @@ def _cone_3d_backward_kernel(
     in ``_cone_3d_fdk_backproject_kernel`` / ``cone_weighted_backproject``
     and does *not* go through this kernel.
     """
-    iview, iu, iv = cuda.grid(3)
+    # Match the forward kernel's launch order: detector-v is warp-adjacent.
+    iv, iu, iview = cuda.grid(3)
     if iview >= n_views or iu >= n_u or iv >= n_v:
         return
 
@@ -3091,7 +3093,7 @@ def _fan_2d_sf_fbp_backproject_kernel(
     scan weights are expected to already be baked into ``d_sino`` before
     this kernel runs.
     """
-    iy, ix = cuda.grid(2)
+    ix, iy = cuda.grid(2)
     if iy >= Ny or ix >= Nx:
         return
 
@@ -4248,7 +4250,7 @@ class FanProjectorFunction(torch.autograd.Function):
             # Pure adjoint of the SF-TR forward: voxel-driven gather that
             # rebuilds the same trapezoidal coefficients and accumulates
             # weight * raw * grad_sino into each image pixel.
-            grid, tpb = _grid_2d(Ny, Nx)
+            grid, tpb = _grid_2d(Nx, Ny)
             _fan_2d_sf_backward_kernel[grid, tpb, numba_stream](
                 d_grad_sino, n_ang, n_det, d_img_grad, Nx, Ny,
                 _DTYPE(det_spacing), d_cos_arr, d_sin_arr,
@@ -4396,7 +4398,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
                 det_offset_v, center_offset_x_v, center_offset_y_v,
             )
         elif backend == "sf":
-            grid, tpb = _grid_2d(Ny, Nx)
+            grid, tpb = _grid_2d(Nx, Ny)
             _fan_2d_sf_backward_kernel[grid, tpb, numba_stream](
                 d_sino, n_ang, n_det, d_reco, Nx, Ny,
                 _DTYPE(detector_spacing), d_cos_arr, d_sin_arr,
@@ -4635,7 +4637,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
         if backend == "siddon":
-            grid, tpb = _grid_3d(n_views, det_u, det_v)
+            grid, tpb = _grid_3d(det_v, det_u, n_views)
             _cone_3d_forward_kernel[grid, tpb, numba_stream](
                 d_vol, W, H, D, d_sino, n_views, det_u, det_v,
                 _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
@@ -4741,7 +4743,7 @@ class ConeProjectorFunction(torch.autograd.Function):
 
         if backend == "siddon":
             # Pure adjoint P^T of the Siddon forward projector.
-            grid, tpb = _grid_3d(n_views, det_u, det_v)
+            grid, tpb = _grid_3d(det_v, det_u, n_views)
             _cone_3d_backward_kernel[grid, tpb, numba_stream](
                 d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
                 _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
@@ -4925,7 +4927,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             # Pure adjoint of the Siddon forward projector. See the class
             # docstring for why this Function deliberately does *not*
             # apply FDK distance weighting.
-            grid, tpb = _grid_3d(n_views, n_u, n_v)
+            grid, tpb = _grid_3d(n_v, n_u, n_views)
             _cone_3d_backward_kernel[grid, tpb, numba_stream](
                 d_sino, n_views, n_u, n_v, d_reco, W, H, D,
                 _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
@@ -5029,7 +5031,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         center_offset_z_v = _DTYPE(center_offset_z / voxel_spacing)
 
         if backend == "siddon":
-            grid, tpb = _grid_3d(n_views, n_u, n_v)
+            grid, tpb = _grid_3d(n_v, n_u, n_views)
             _cone_3d_forward_kernel[grid, tpb, numba_stream](
                 d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
                 _DTYPE(du), _DTYPE(dv), d_cos_arr, d_sin_arr,
