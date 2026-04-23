@@ -140,7 +140,9 @@ def main():
     # ------------------------------------------------------------------
     # 4. Move everything to CUDA
     # ------------------------------------------------------------------
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise RuntimeError("This example requires CUDA.")
+    device = torch.device("cuda")
     phantom_torch = torch.tensor(
         phantom_cpu, device=device, dtype=torch.float32
     ).contiguous()
@@ -151,16 +153,16 @@ def main():
     # ------------------------------------------------------------------
     # ``ConeProjectorFunction`` accepts ``backend="siddon"`` (default),
     # ``"sf_tr"``, or ``"sf_tt"``. See ``fdk_cone.py`` for the full
-    # trade-off discussion. "siddon" is fastest, "sf_tr" and "sf_tt"
-    # give ~17 % lower reco MSE in this exact analytical pipeline at
-    # 2-3x forward cost. Here we default to siddon to keep the noise
-    # simulation snappy.
+    # trade-off discussion. We keep the default at ``"sf_tt"`` here so
+    # the example exercises the fully separable-footprint cone path
+    # end-to-end; switching to ``"siddon"`` gives a visually equivalent
+    # FDK reconstruction at lower runtime.
     projector_backend = "sf_tt"
 
     # ------------------------------------------------------------------
     # 5. Forward projection -> ground-truth line integrals
     # ------------------------------------------------------------------
-    # Siddon forward projection produces ``sum(phantom * dl)`` line
+    # The chosen forward projector produces ``sum(phantom * dl)`` line
     # integrals, in the same units as ``-log(I/I0)`` would give on real
     # data. In a real pipeline you would *skip this step* and load your
     # own intensity tensor directly in step 6.3.

@@ -71,7 +71,9 @@ class IterativeRecoModel(nn.Module):
         self.dv = dv
         self.sdd = sdd
         self.sid = sid
-        self.relu = nn.ReLU() # non negative constraint
+        # Output clamp for display; the projector uses the unconstrained
+        # volume so gradients keep flowing through negative updates.
+        self.relu = nn.ReLU()
         self.voxel_spacing = voxel_spacing
         self.backend = backend
 

@@ -43,7 +43,9 @@ class IterativeRecoModel(nn.Module):
         self.num_detectors = num_detectors
         self.detector_spacing = detector_spacing
         self.voxel_spacing = voxel_spacing
-        self.relu = nn.ReLU() # non negative constraint
+        # Output clamp for display; the projector uses the unconstrained
+        # image so gradients keep flowing through negative updates.
+        self.relu = nn.ReLU()
 
     def forward(self, x):
         updated_reco = x + self.reco

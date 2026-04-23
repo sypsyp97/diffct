@@ -102,7 +102,9 @@ def main():
     # ------------------------------------------------------------------
     # 4. Move everything to CUDA
     # ------------------------------------------------------------------
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise RuntimeError("This example requires CUDA.")
+    device = torch.device("cuda")
     image_torch = torch.tensor(
         phantom, device=device, dtype=torch.float32, requires_grad=True
     )

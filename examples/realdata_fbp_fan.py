@@ -115,7 +115,9 @@ def main():
     # ------------------------------------------------------------------
     # 4. Move everything to CUDA
     # ------------------------------------------------------------------
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise RuntimeError("This example requires CUDA.")
+    device = torch.device("cuda")
     image_torch = torch.tensor(phantom, device=device, dtype=torch.float32)
     angles_torch = torch.tensor(angles_np, device=device, dtype=torch.float32)
 
@@ -124,15 +126,16 @@ def main():
     # ------------------------------------------------------------------
     # ``FanProjectorFunction`` accepts ``backend="siddon"`` (default) or
     # ``backend="sf"`` for the separable-footprint projector. See
-    # ``fbp_fan.py`` for the full trade-off discussion. "siddon" is
-    # faster, "sf" gives ~17 % lower reco MSE in this exact analytical
-    # pipeline. Here we default to siddon to keep the example fast.
+    # ``fbp_fan.py`` for the full trade-off discussion. We keep the
+    # default at ``"sf"`` here so the example exercises the matched
+    # separable-footprint path end-to-end; switching to ``"siddon"``
+    # gives a visually equivalent FBP reconstruction at lower runtime.
     projector_backend = "sf"
 
     # ------------------------------------------------------------------
     # 5. Forward projection -> ground-truth line integrals
     # ------------------------------------------------------------------
-    # Siddon forward projection produces ``sum(phantom * dl)`` line
+    # The chosen forward projector produces ``sum(phantom * dl)`` line
     # integrals, in the same units as ``-log(I/I0)`` would give on real
     # data. In a real pipeline you would *skip this step* and load your
     # own intensity tensor directly in step 6.3.

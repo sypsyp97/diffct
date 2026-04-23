@@ -191,7 +191,9 @@ def main():
     # ------------------------------------------------------------------
     # 3. Move everything to CUDA
     # ------------------------------------------------------------------
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise RuntimeError("This example requires CUDA.")
+    device = torch.device("cuda")
     sinogram = torch.from_numpy(sinogram_np).to(device=device)
     angles = torch.from_numpy(angles_np).to(device=device)
 
