@@ -22,8 +22,49 @@ def test_angular_integration_weights_full_scan_redundant():
     n = 360
     angles = torch.linspace(0.0, 2.0 * math.pi, n + 1)[:-1]
     w = angular_integration_weights(angles, redundant_full_scan=True)
-    # Redundant full scan should integrate to pi.
+    assert torch.allclose(w, torch.full_like(w, math.pi / n), atol=1e-6)
     assert torch.isclose(w.sum(), torch.tensor(math.pi, dtype=w.dtype), atol=1e-4)
+
+
+def test_angular_integration_weights_parallel_half_scan_is_periodic():
+    n = 180
+    angles = torch.linspace(0.0, math.pi, n + 1)[:-1]
+    w = angular_integration_weights(angles, redundant_full_scan=False)
+    assert torch.allclose(w, torch.full_like(w, math.pi / n), atol=1e-6)
+    assert torch.isclose(w.sum(), torch.tensor(math.pi, dtype=w.dtype), atol=1e-4)
+
+
+def test_angular_integration_weights_parallel_half_scan_ignores_redundancy_flag():
+    n = 180
+    angles = torch.linspace(0.0, math.pi, n + 1)[:-1]
+    w = angular_integration_weights(angles, redundant_full_scan=True)
+    assert torch.allclose(w, torch.full_like(w, math.pi / n), atol=1e-6)
+    assert torch.isclose(w.sum(), torch.tensor(math.pi, dtype=w.dtype), atol=1e-4)
+
+
+def test_angular_integration_weights_downsampled_full_scan_is_periodic():
+    angles_all = torch.linspace(0.0, 2.0 * math.pi, 721 + 1)[:-1]
+    angles = angles_all[::3]
+    w = angular_integration_weights(angles, redundant_full_scan=True)
+    assert torch.isclose(w.sum(), torch.tensor(math.pi, dtype=w.dtype), atol=1e-4)
+    assert w[0] < w[1]
+    assert w[-1] < w[1]
+
+
+def test_angular_integration_weights_endpoint_included_full_scan():
+    angles = torch.deg2rad(torch.arange(721, dtype=torch.float32) * 0.5)
+    w = angular_integration_weights(angles, redundant_full_scan=True)
+    assert torch.isclose(w.sum(), torch.tensor(math.pi, dtype=w.dtype), atol=1e-4)
+    assert torch.isclose(w[0], w[1] * 0.5, atol=1e-6)
+    assert torch.isclose(w[-1], w[-2] * 0.5, atol=1e-6)
+
+
+def test_angular_integration_weights_open_short_scan_uses_trapezoid():
+    angles = torch.linspace(0.0, 0.75 * math.pi, 11)
+    w = angular_integration_weights(angles, redundant_full_scan=False)
+    assert torch.allclose(w[0], w[1] * 0.5)
+    assert torch.allclose(w[-1], w[-2] * 0.5)
+    assert torch.isclose(w.sum(), torch.tensor(0.75 * math.pi, dtype=w.dtype), atol=1e-6)
 
 
 def test_fan_cosine_weights_are_symmetric():

@@ -45,12 +45,17 @@ flat / dark field scans. See ``examples/data/preprocess_walnut.py``
 for the full procedure.
 """
 
+import argparse
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 from diffct.differentiable import (
     angular_integration_weights,
@@ -65,20 +70,66 @@ DATA_PATH = os.path.join(
 )
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run FDK reconstruction on a preprocessed walnut sinogram."
+    )
+    parser.add_argument(
+        "--data",
+        default=DATA_PATH,
+        help="Input walnut .npz produced by examples/data/preprocess_walnut.py.",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("siddon", "sf_tr", "sf_tt"),
+        default="sf_tr",
+        help="FDK backprojector backend.",
+    )
+    parser.add_argument(
+        "--volume-size",
+        type=int,
+        default=None,
+        help="Output D=H=W voxel count. Defaults to 2 * detector_u.",
+    )
+    parser.add_argument(
+        "--voxel-scale",
+        type=float,
+        default=0.5,
+        help="Voxel size as a multiple of nominal detector-at-isocenter pitch.",
+    )
+    parser.add_argument(
+        "--window",
+        default="hamming",
+        choices=("hamming", "hann", "cosine", "shepp-logan", "ramlak"),
+        help="Ramp filter window. Use ramlak for no apodization.",
+    )
+    parser.add_argument(
+        "--output-prefix",
+        default=None,
+        help="If set, write PNG and slice .npz outputs with this prefix.",
+    )
+    parser.add_argument(
+        "--no-show",
+        action="store_true",
+        help="Skip matplotlib interactive display.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = _parse_args()
     # ------------------------------------------------------------------
     # 1. Load the preprocessed walnut sinogram
     # ------------------------------------------------------------------
-    if not os.path.exists(DATA_PATH):
+    if not os.path.exists(args.data):
         raise FileNotFoundError(
-            f"Walnut sinogram not found at {DATA_PATH}. "
-            "The file should be shipped in the repo at "
-            "examples/data/walnut_cone.npz. If missing, regenerate it "
+            f"Walnut sinogram not found at {args.data}. "
+            "Regenerate it "
             "from the Zenodo source (https://doi.org/10.5281/zenodo.6986012) "
             "using the tooling described in examples/data/NOTICE."
         )
 
-    data = np.load(DATA_PATH)
+    data = np.load(args.data)
     # Stored as float16 to save space; promote to float32 for the
     # CUDA kernels.
     sinogram_np = data["sinogram"].astype(np.float32)
@@ -124,8 +175,8 @@ def main():
     # choice of SF vs VD gather. See the "Core Algorithm" section
     # of ``README.md`` for the honest SF-vs-VD discussion.
     voxel_nominal = du * sid / sdd
-    voxel_spacing = 0.5 * voxel_nominal          # 0.076 mm, sub-nominal
-    Nx = Ny = Nz = 2 * det_u                     # 512
+    voxel_spacing = args.voxel_scale * voxel_nominal
+    Nx = Ny = Nz = args.volume_size or (2 * det_u)
 
     # ------------------------------------------------------------------
     # 3. Move everything to CUDA
@@ -167,7 +218,7 @@ def main():
     # visually equivalent reconstruction at a fraction of the
     # runtime; pick SF when you want a matched cell-integrated
     # forward model (iterative reco / learned priors).
-    projector_backend = "sf_tr"
+    projector_backend = args.backend
 
     # ==================================================================
     # 4. FDK analytical reconstruction
@@ -183,7 +234,7 @@ def main():
         device=device,
         dtype=sinogram.dtype,
     ).unsqueeze(0)
-    sino_weighted = sinogram * weights
+    sinogram.mul_(weights)
 
     # --- 4.2  1D ramp filter along the detector-u direction ----------
     # Using a "hamming" window here instead of "hann": it has a
@@ -193,12 +244,13 @@ def main():
     # a good pairing with the SF backprojector; for the VD path,
     # "hann" is usually more forgiving.
     sinogram_filt = ramp_filter_1d(
-        sino_weighted,
+        sinogram,
         dim=1,
         sample_spacing=du,
         pad_factor=2,
-        window="hamming",
+        window=None if args.window == "ramlak" else args.window,
     ).contiguous()
+    del sinogram, weights
 
     # --- 4.3  Per-view angular integration weights -------------------
     # Full 2*pi scan -> use ``redundant_full_scan=True`` to absorb the
@@ -206,7 +258,8 @@ def main():
     d_beta = angular_integration_weights(
         angles, redundant_full_scan=True
     ).view(-1, 1, 1)
-    sinogram_filt = sinogram_filt * d_beta
+    print(f"  Angular weight sum: {d_beta.sum().item():.6f}")
+    sinogram_filt.mul_(d_beta)
 
     # --- 4.4  Voxel-driven FDK backprojection ------------------------
     reconstruction_raw = cone_weighted_backproject(
@@ -222,7 +275,7 @@ def main():
         voxel_spacing=voxel_spacing,
         backend=projector_backend,
     )
-    reconstruction = F.relu(reconstruction_raw)
+    reconstruction = reconstruction_raw.clamp_min_(0.0)
 
     # ------------------------------------------------------------------
     # 5. Quantitative summary
@@ -268,7 +321,29 @@ def main():
     axes[1, 2].set_title("Sagittal slice (x = mid)")
     axes[1, 2].axis("off")
     plt.tight_layout()
-    plt.show()
+    if args.output_prefix:
+        fig_path = f"{args.output_prefix}.png"
+        slices_path = f"{args.output_prefix}_slices.npz"
+        fig.savefig(fig_path, dpi=150)
+        np.savez_compressed(
+            slices_path,
+            axial=reco_cpu[Nz // 2, :, :],
+            coronal=reco_cpu[:, Ny // 2, :],
+            sagittal=reco_cpu[:, :, Nx // 2],
+            projection_0=sino_cpu[0],
+            projection_mid=sino_cpu[mid_view],
+            data_path=os.path.abspath(args.data),
+            backend=projector_backend,
+            volume_shape=np.array(reconstruction.shape, dtype=np.int32),
+            voxel_spacing=np.float32(voxel_spacing),
+            angular_weight_sum=np.float32(d_beta.sum().item()),
+        )
+        print(f"  Wrote figure:        {fig_path}")
+        print(f"  Wrote slices:        {slices_path}")
+    if args.no_show:
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":

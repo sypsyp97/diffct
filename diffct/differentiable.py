@@ -365,22 +365,44 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     if a.ndim != 1 or a.numel() < 2:
         raise ValueError("angles must be a 1D tensor with at least 2 elements")
 
-    coverage = torch.abs(a[-1] - a[0]) + torch.abs(a[1] - a[0])
+    a_sorted, sort_idx = torch.sort(a)
+    d = a_sorted[1:] - a_sorted[:-1]
+    median_step = torch.median(d)
+    span = a_sorted[-1] - a_sorted[0]
 
-    if coverage >= (2.0 * torch.pi - 1e-3):
-        # Periodic boundary integration weights for full circular sampling.
-        d = torch.diff(a, append=(a[:1] + 2.0 * torch.pi))
-        d = torch.abs(d)
-        w = 0.5 * (d + torch.roll(d, shifts=1, dims=0))
-        if redundant_full_scan:
-            w = 0.5 * w
+    period = None
+    for candidate in (math.pi, 2.0 * math.pi):
+        closure = a.new_tensor(candidate) - span
+        tol = max(1e-4, 0.05 * float(abs(median_step).item()))
+        if closure >= -tol and float(closure.item()) <= 1.5 * float(abs(median_step).item()) + tol:
+            period = candidate
+            break
+
+    if period is not None:
+        closure = torch.clamp(a.new_tensor(period) - span, min=0.0)
+        w_sorted = torch.empty_like(a_sorted)
+        w_sorted[0] = 0.5 * (closure + d[0])
+        w_sorted[-1] = 0.5 * (d[-1] + closure)
+        if a.numel() > 2:
+            w_sorted[1:-1] = 0.5 * (d[:-1] + d[1:])
+        if redundant_full_scan and abs(period - 2.0 * math.pi) <= max(1e-4, 0.05 * float(abs(median_step).item())):
+            w_sorted = 0.5 * w_sorted
     else:
         # Non-periodic trapezoidal weights for partial scans.
-        w = torch.empty_like(a)
-        w[1:-1] = 0.5 * (a[2:] - a[:-2])
-        w[0] = 0.5 * (a[1] - a[0])
-        w[-1] = 0.5 * (a[-1] - a[-2])
-        w = torch.abs(w)
+        w_sorted = torch.empty_like(a_sorted)
+        w_sorted[1:-1] = 0.5 * (a_sorted[2:] - a_sorted[:-2])
+        w_sorted[0] = 0.5 * (a_sorted[1] - a_sorted[0])
+        w_sorted[-1] = 0.5 * (a_sorted[-1] - a_sorted[-2])
+        w_sorted = torch.abs(w_sorted)
+
+    w = torch.empty_like(w_sorted)
+    w[sort_idx] = w_sorted
+    if (
+        redundant_full_scan
+        and period is None
+        and abs(float((span - 2.0 * math.pi).item())) <= max(1e-4, 0.05 * float(abs(median_step).item()))
+    ):
+        w = 0.5 * w
     return w
 
 
