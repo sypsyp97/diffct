@@ -618,7 +618,7 @@ def _parallel_2d_forward_kernel(
 ):
     """Compute the 2D parallel beam forward projection.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements cell-constant Siddon ray tracing for
     2D parallel beam forward projection.
 
     Parameters
@@ -650,11 +650,10 @@ def _parallel_2d_forward_kernel(
 
     Notes
     -----
-    The Siddon method with interpolation provides accurate ray-volume intersection by:
+    The cell-constant Siddon method provides accurate ray-volume intersection by:
       - Calculating ray-volume boundary intersections to define traversal limits.
       - Iterating through voxels along the ray path via parametric equations.
-      - Determining bilinear interpolation weights for sub-voxel sampling.
-      - Aggregating weighted voxel values based on ray segment lengths.
+      - Aggregating each traversed pixel value based on ray segment lengths.
     """
     # CUDA THREAD ORGANIZATION: 2D grid maps directly to ray geometry
     # Each thread processes one ray defined by (projection_angle, detector_element) pair
@@ -732,48 +731,14 @@ def _parallel_2d_forward_kernel(
     ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === MAIN RAY TRAVERSAL LOOP ===
-    # Step through voxels along ray path, accumulating weighted contributions
+    # Step through voxels along ray path, accumulating cell-constant contributions.
     while t < t_max:
-        # Check if current voxel indices are within valid interpolation bounds
         if 0 <= ix < Nx and 0 <= iy < Ny:
             # Determine next voxel boundary crossing (minimum of x, y boundaries or ray exit)
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t  # Length of ray segment within current voxel region
-            
             if seg_len > _EPSILON:  # Only process segments with meaningful length (avoid numerical noise)
-                # === BILINEAR INTERPOLATION SAMPLING ===
-                # Sample volume at ray segment midpoint for accurate integration
-                # Mathematical basis: Midpoint rule for numerical integration along ray segments
-                t_mid = t + seg_len * _HALF
-                mid_x = pnt_x + t_mid * dir_x + cx  # Midpoint x-coordinate in image space
-                mid_y = pnt_y + t_mid * dir_y + cy  # Midpoint y-coordinate in image space
-
-                # Convert continuous coordinates to discrete voxel indices and fractional weights
-                # Floor operation gives base voxel index, fractional part gives interpolation weights
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))  # Base voxel indices (bottom-left corner)
-                dx = mid_x - np.float32(ix0)  # Fractional parts: distance from base voxel center [0,1]
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # === BILINEAR INTERPOLATION WEIGHT CALCULATION ===
-                # Mathematical basis: Bilinear interpolation formula f(x,y) = Σ f(xi,yi) * wi(x,y)
-                # where wi(x,y) are the bilinear basis functions for each corner voxel
-                # Weights are products of 1D linear interpolation weights: (1-dx) or dx, (1-dy) or dy
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                v00 = d_image[iy0, ix0]
-                v10 = d_image[iy0, ix0 + 1]
-                v01 = d_image[iy0 + 1, ix0]
-                v11 = d_image[iy0 + 1, ix0 + 1]
-                row0 = (v00 * one_minus_dx + v10 * dx) * one_minus_dy
-                row1 = (v01 * one_minus_dx + v11 * dx) * dy
-                val = row0 + row1
-                # Accumulate contribution weighted by ray segment length (discrete line integral approximation)
-                # This implements the Radon transform: integral of f(x,y) along the ray path
-                accum += val * seg_len
+                accum += d_image[iy, ix] * seg_len
         
         # === VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first
@@ -797,7 +762,7 @@ def _parallel_2d_backward_kernel(
 ):
     """Compute the 2D parallel beam backprojection.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements the adjoint of cell-constant Siddon ray tracing for
     2D parallel beam backprojection.
 
     Parameters
@@ -879,38 +844,13 @@ def _parallel_2d_backward_kernel(
     ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === BACKPROJECTION TRAVERSAL LOOP ===
-    # Distribute sinogram value along ray path using bilinear interpolation
+    # Adjoint of the cell-constant Siddon forward projection.
     while t < t_max:
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # Sample at ray segment midpoint (same as forward projection)
-                t_mid = t + seg_len * _HALF
-                mid_x = pnt_x + t_mid * dir_x + cx
-                mid_y = pnt_y + t_mid * dir_y + cy
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
-                # Distribute contribution weighted by segment length and interpolation weights
-                # CUDA ATOMIC OPERATIONS: Essential for thread safety in backprojection
-                # Multiple threads (rays) can write to the same voxel simultaneously, causing race conditions
-                # Atomic add operations serialize these writes, ensuring correct accumulation of contributions
-                # Performance impact: Atomic operations are slower than regular writes but necessary for correctness
-                # Memory access pattern: Global memory atomics with potential bank conflicts, but unavoidable
-                cval = val * seg_len  # Contribution value for this ray segment
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx          * dy)
+                cuda.atomic.add(d_image, (iy, ix), val * seg_len)
 
         # Advance to next voxel (identical logic to forward projection)
         if tx <= ty:
@@ -936,7 +876,7 @@ def _fan_2d_forward_kernel(
 ):
     """Compute the 2D fan beam forward projection.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements cell-constant Siddon ray tracing for
     2D fan beam forward projection.
 
     Parameters
@@ -1046,35 +986,13 @@ def _fan_2d_forward_kernel(
     tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
     ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
-    # Main traversal loop with bilinear interpolation (identical to parallel beam)
+    # Main traversal loop with cell-constant Siddon integration.
     while t < t_max:
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # Sample at midpoint using source as ray origin
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx
-                mid_y = src_y + t_mid * dir_y + cy
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # Bilinear interpolation (identical to parallel beam)
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                v00 = d_image[iy0, ix0]
-                v10 = d_image[iy0, ix0 + 1]
-                v01 = d_image[iy0 + 1, ix0]
-                v11 = d_image[iy0 + 1, ix0 + 1]
-                row0 = (v00 * one_minus_dx + v10 * dx) * one_minus_dy
-                row1 = (v01 * one_minus_dx + v11 * dx) * dy
-                val = row0 + row1
-                accum += val * seg_len
+                accum += d_image[iy, ix] * seg_len
         
         # Voxel boundary crossing logic (identical to parallel beam)
         if tx <= ty:
@@ -1098,7 +1016,7 @@ def _fan_2d_backward_kernel(
 ):
     """Pure adjoint ``P^T`` of the fan-beam forward projector.
 
-    Siddon ray-driven scatter with bilinear interpolation weights and no
+    Cell-constant Siddon ray-driven scatter with no
     distance weighting. Used by ``FanProjectorFunction.backward`` and
     ``FanBackprojectorFunction.forward``. The analytical FBP path lives
     in ``_fan_2d_fbp_backproject_kernel`` / ``fan_weighted_backproject``
@@ -1166,36 +1084,13 @@ def _fan_2d_backward_kernel(
     ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
 
     # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
-    # Distribute sinogram value along divergent ray path using bilinear interpolation
+    # Adjoint of the cell-constant Siddon forward projection.
     while t < t_max:
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # Sample at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx
-                mid_y = src_y + t_mid * dir_y + cy
-                ix0, iy0 = int(math.floor(mid_x)), int(math.floor(mid_y))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                
-                # === ATOMIC BACKPROJECTION WITH BILINEAR WEIGHTS ===
-                # Pure adjoint scatter: contribution is just val * seg_len,
-                # distributed onto the four nearest pixels with bilinear
-                # weights. No distance weighting - that belongs to the
-                # analytical FBP kernel, not this adjoint.
-                cval = val * seg_len
-                one_minus_dx = _ONE - dx
-                one_minus_dy = _ONE - dy
-                cuda.atomic.add(d_image, (iy0,     ix0),     cval * one_minus_dx * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0,     ix0 + 1), cval * dx          * one_minus_dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0),     cval * one_minus_dx * dy)
-                cuda.atomic.add(d_image, (iy0 + 1, ix0 + 1), cval * dx          * dy)
+                cuda.atomic.add(d_image, (iy, ix), val * seg_len)
 
         # === VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first
@@ -1533,7 +1428,7 @@ def _cone_3d_forward_kernel(
 ):
     """Compute the 3D cone-beam forward projection.
 
-    This CUDA kernel implements the Siddon ray-tracing method with interpolation for
+    This CUDA kernel implements cell-constant Siddon ray tracing for
     3D cone-beam forward projection.
 
     Parameters
@@ -1578,8 +1473,8 @@ def _cone_3d_forward_kernel(
     Notes
     -----
     Cone-beam geometry extends the fan-beam configuration to 3D by employing
-    a 2D detector array and trilinear interpolation for accurate volumetric
-    sampling.
+    a 2D detector array and integrating each ray through piecewise-constant
+    voxel cells.
     """
     # Put detector-v on threadIdx.x; d_sino[view, u, v] is row-major with v
     # as the stride-1 axis, and adjacent v rays also tend to walk nearby z cells.
@@ -1673,52 +1568,14 @@ def _cone_3d_forward_kernel(
     ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
     tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
-    # === 3D TRAVERSAL LOOP WITH TRILINEAR INTERPOLATION ===
+    # === 3D TRAVERSAL LOOP WITH CELL-CONSTANT SIDDON INTEGRATION ===
     while t < t_max:
-        # Check if current 3D voxel indices are within valid interpolation bounds
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # === TRILINEAR INTERPOLATION SAMPLING ===
-                # Sample 3D volume at ray segment midpoint for accurate integration
-                # Mathematical basis: Midpoint rule for numerical integration along 3D ray segments
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx  # Midpoint x-coordinate in volume space
-                mid_y = src_y + t_mid * dir_y + cy  # Midpoint y-coordinate in volume space
-                mid_z = src_z + t_mid * dir_z + cz  # Midpoint z-coordinate in volume space
-
-                # Convert continuous 3D coordinates to discrete voxel indices and fractional weights
-                ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                dz = mid_z - np.float32(iz0)
-
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                iz0 = max(0, min(iz0, Nz - 2))
-
-                # Precompute complements
-                omdx = _ONE - dx
-                omdy = _ONE - dy
-                omdz = _ONE - dz
-
-                # === TRILINEAR INTERPOLATION WEIGHT CALCULATION ===
-                val = (
-                    d_vol[ix0,     iy0,     iz0]     * omdx*omdy*omdz +
-                    d_vol[ix0 + 1, iy0,     iz0]     * dx  *omdy*omdz +
-                    d_vol[ix0,     iy0 + 1, iz0]     * omdx*dy  *omdz +
-                    d_vol[ix0,     iy0,     iz0 + 1] * omdx*omdy*dz   +
-                    d_vol[ix0 + 1, iy0 + 1, iz0]     * dx  *dy  *omdz +
-                    d_vol[ix0 + 1, iy0,     iz0 + 1] * dx  *omdy*dz   +
-                    d_vol[ix0,     iy0 + 1, iz0 + 1] * omdx*dy  *dz   +
-                    d_vol[ix0 + 1, iy0 + 1, iz0 + 1] * dx  *dy  *dz
-                )
-                # Accumulate contribution weighted by 3D ray segment length (discrete line integral approximation)
-                # This implements the 3D Radon transform: integral of f(x,y,z) along the ray path
-                accum += val * seg_len
+                accum += d_vol[ix, iy, iz] * seg_len
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first in 3D
@@ -1748,7 +1605,7 @@ def _cone_3d_backward_kernel(
 ):
     """Pure adjoint ``P^T`` of the cone-beam forward projector.
 
-    Siddon ray-driven scatter with trilinear interpolation weights and no
+    Cell-constant Siddon ray-driven scatter with no
     distance weighting. Used by ``ConeProjectorFunction.backward`` and
     ``ConeBackprojectorFunction.forward``. The analytical FDK path lives
     in ``_cone_3d_fdk_backproject_kernel`` / ``cone_weighted_backproject``
@@ -1837,50 +1694,14 @@ def _cone_3d_backward_kernel(
     tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
 
     # === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===
-    # Distribute sinogram value along divergent 3D ray path using trilinear interpolation
+    # Adjoint of the cell-constant Siddon forward projection.
     while t < t_max:
-        # Check if current 3D voxel indices are within valid interpolation bounds
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_max)
             seg_len = t_next - t
             if seg_len > _EPSILON:
-                # === TRILINEAR INTERPOLATION SAMPLING ===
-                # Sample 3D volume at ray segment midpoint using source as ray origin
-                t_mid = t + seg_len * _HALF
-                mid_x = src_x + t_mid * dir_x + cx
-                mid_y = src_y + t_mid * dir_y + cy
-                mid_z = src_z + t_mid * dir_z + cz
-
-                # Convert continuous 3D coordinates to voxel indices and interpolation weights
-                ix0, iy0, iz0 = int(math.floor(mid_x)), int(math.floor(mid_y)), int(math.floor(mid_z))
-                dx = mid_x - np.float32(ix0)
-                dy = mid_y - np.float32(iy0)
-                dz = mid_z - np.float32(iz0)
-
-                # Clamp indices to stay in-bounds during interpolation
-                ix0 = max(0, min(ix0, Nx - 2))
-                iy0 = max(0, min(iy0, Ny - 2))
-                iz0 = max(0, min(iz0, Nz - 2))
-
-                # Precompute complements and contribution. Pure adjoint:
-                # cval = g * seg_len, distributed onto the eight nearest
-                # voxels with trilinear weights. Distance weighting lives
-                # in the analytical FDK kernel, not here.
-                omdx = _ONE - dx
-                omdy = _ONE - dy
-                omdz = _ONE - dz
-                cval = g * seg_len
-
-                # === ATOMIC BACKPROJECTION WITH TRILINEAR WEIGHTS ===
-                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0),     cval * omdx*omdy*omdz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0),     cval * dx  *omdy*omdz)
-                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0),     cval * omdx*dy  *omdz)
-                cuda.atomic.add(d_vol, (ix0,     iy0,     iz0 + 1), cval * omdx*omdy*dz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0),     cval * dx  *dy  *omdz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0,     iz0 + 1), cval * dx  *omdy*dz)
-                cuda.atomic.add(d_vol, (ix0,     iy0 + 1, iz0 + 1), cval * omdx*dy  *dz)
-                cuda.atomic.add(d_vol, (ix0 + 1, iy0 + 1, iz0 + 1), cval * dx  *dy  *dz)
+                cuda.atomic.add(d_vol, (ix, iy, iz), g * seg_len)
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
         # Advance to next voxel based on which boundary is crossed first in 3D
@@ -3708,7 +3529,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for parallel beam CT geometry. The forward pass computes
+    method with a cell-constant image basis for parallel beam CT geometry. The forward pass computes
     the sinogram from a 2D image using parallel beam geometry. The backward pass
     computes gradients using the adjoint backprojection operation. Requires
     CUDA-capable hardware and a properly configured CUDA environment; all input
@@ -3770,7 +3591,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -3888,7 +3709,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for parallel beam backprojection. The forward pass computes a 2D
+    method with a cell-constant image basis for parallel beam backprojection. The forward pass computes a 2D
     reconstruction from sinogram data using parallel beam backprojection, and the
     backward pass computes gradients via forward projection as the adjoint operation.
     Requires CUDA-capable hardware and consistent device placements.
@@ -3946,7 +3767,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         -----
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses the adjoint of cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -4070,7 +3891,7 @@ class FanProjectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for fan beam geometry, where rays diverge from a point
+    method with a cell-constant image basis for fan beam geometry, where rays diverge from a point
     X-ray source to a linear detector array. The forward pass computes sinograms
     using divergent beam geometry. The backward pass returns the **pure adjoint**
     ``P^T`` (Siddon scatter, no distance weighting) so that it is the correct
@@ -4112,8 +3933,7 @@ class FanProjectorFunction(torch.autograd.Function):
         ----------
         backend : str, optional
             Forward projector backend. ``"siddon"`` (default) is the existing
-            ray-driven Siddon kernel with bilinear interpolation at segment
-            midpoints. ``"sf"`` is a prototype separable-footprint (SF-TR)
+            ray-driven cell-constant Siddon kernel. ``"sf"`` is a prototype separable-footprint (SF-TR)
             voxel-driven projector that projects each voxel's footprint as a
             trapezoid on the detector and integrates it closed-form over each
             detector cell; it is mass-conserving and closer to the physical
@@ -4149,7 +3969,7 @@ class FanProjectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Fan beam geometry uses divergent rays from a point source to the detector.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -4301,9 +4121,9 @@ class FanBackprojectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for fan beam backprojection. The forward pass runs
+    method with a cell-constant image basis for fan beam backprojection. The forward pass runs
     the **pure adjoint** ``P^T`` of the fan forward projector (Siddon scatter
-    with bilinear interpolation, no distance weighting), and the backward pass
+    with no distance weighting), and the backward pass
     computes gradients via forward projection. The forward/backward pair is
     therefore a self-consistent autograd adjoint pair. Analytical FBP distance
     weighting lives in ``fan_weighted_backproject`` and is *not* applied here.
@@ -4378,7 +4198,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Fan beam geometry uses divergent rays from a point source to the detector.
-        - Uses the Siddon method with interpolation for accurate ray tracing and bilinear interpolation.
+        - Uses the adjoint of cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -4530,11 +4350,11 @@ class ConeProjectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for 3D cone beam geometry. Rays emanate from a point
+    method with a cell-constant voxel basis for 3D cone beam geometry. Rays emanate from a point
     X-ray source to a 2D detector array capturing volumetric projection data.
     The forward pass computes 3D projections. The backward pass returns the
     **pure adjoint** ``P^T`` of the forward projector - a Siddon ray-driven
-    scatter with trilinear interpolation weights and no distance weighting -
+    scatter with no distance weighting -
     so that ``P^T`` is the mathematically correct gradient of ``y = P(x)``
     with respect to ``x``. Analytical FDK distance weighting is handled
     separately in ``cone_weighted_backproject``, not here.
@@ -4621,7 +4441,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Cone beam geometry uses a point source and a 2D detector array.
-        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.
+        - Uses cell-constant Siddon ray tracing.
 
         Examples
         --------
@@ -4814,9 +4634,9 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     Notes
     -----
     Provides a differentiable interface to the CUDA-accelerated Siddon ray-tracing
-    method with interpolation for 3D cone beam backprojection. The forward pass
+    method with a cell-constant voxel basis for 3D cone beam backprojection. The forward pass
     runs the **pure adjoint** ``P^T`` of the cone forward projector: a Siddon
-    ray-driven scatter with trilinear interpolation weights and no distance
+    ray-driven scatter with no distance
     weighting. The backward pass computes gradients via 3D cone beam forward
     projection, which is exactly the adjoint of this pure ``P^T`` - so the
     forward/backward pair is self-consistent for autograd. Analytical FDK
@@ -4910,7 +4730,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         - All input tensors must be on the same CUDA device.
         - The operation is fully differentiable and supports autograd.
         - Cone beam geometry uses a point source and a 2D detector array.
-        - Uses the Siddon method with interpolation for accurate 3D ray tracing and trilinear interpolation.
+        - Uses the adjoint of cell-constant Siddon ray tracing.
 
         Examples
         --------

@@ -71,9 +71,6 @@ class IterativeRecoModel(nn.Module):
         self.dv = dv
         self.sdd = sdd
         self.sid = sid
-        # Output clamp for display; the projector uses the unconstrained
-        # volume so gradients keep flowing through negative updates.
-        self.relu = nn.ReLU()
         self.voxel_spacing = voxel_spacing
         self.backend = backend
 
@@ -94,7 +91,7 @@ class IterativeRecoModel(nn.Module):
             0.0, 0.0, 0.0,        # center_offset_x, y, z
             self.backend,
         )
-        return current_sino, self.relu(updated_reco)
+        return current_sino, updated_reco
 
 class Pipeline:
     def __init__(self, lr, volume_shape, angles,
@@ -118,6 +115,8 @@ class Pipeline:
             loss_value = self.loss(predictions, label)
             loss_value.backward()
             self.optimizer.step()
+            with torch.no_grad():
+                self.model.reco.clamp_(min=0.0)
             loss_values.append(loss_value.item())
 
             if epoch % 10 == 0:
@@ -145,10 +144,9 @@ def main():
     # byte-for-byte (matched scatter/gather kernel pair, verified by
     # tests/test_adjoint_inner_product.py). Options:
     #
-    #   "siddon"           - 3D ray-driven Siddon with trilinear
-    #                        interpolation. Fastest per-iteration step.
-    #                        Good default when iteration count is the
-    #                        bottleneck.
+    #   "siddon"           - 3D ray-driven cell-constant Siddon. Fastest
+    #                        per-iteration step. Good default when
+    #                        iteration count is the bottleneck.
     #   "sf_tr"            - 3D SF with trapezoidal transaxial and
     #                        rectangular axial footprint. Mass-
     #                        conserving per voxel, closed-form cell
