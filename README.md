@@ -14,6 +14,10 @@ custom). Built for optimization and deep-learning integration.
 
 ⭐ **Please star this project if you find it useful!**
 
+**Maintenance:** DiffCT is now maintained by
+[Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider) at
+[Linda-SophieSchneider/DiffCT-MLX](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
+
 ## 🔀 Branches
 
 ### `main` Branch (Stable, PyPI)
