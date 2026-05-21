@@ -44,10 +44,15 @@ User Guide
    api
    examples
 
+Technical Report
+----------------
+
+The technical report is available as a `Preprints manuscript <https://www.preprints.org/manuscript/202605.1446/v1>`_ and by `DOI <https://doi.org/10.20944/preprints202605.1446.v1>`_.
+
 Citation
 --------
 
-If you use this library in your research, please cite:
+If you use this library in your research, please cite the software and the technical report:
 
 .. code-block:: bibtex
 
@@ -59,6 +64,17 @@ If you use this library in your research, please cite:
      publisher    = {Zenodo},
      doi          = {10.5281/zenodo.14999333},
      url          = {https://doi.org/10.5281/zenodo.14999333}
+   }
+
+   @article{202605.1446,
+     doi       = {10.20944/preprints202605.1446.v1},
+     url       = {https://doi.org/10.20944/preprints202605.1446.v1},
+     year      = 2026,
+     month     = {May},
+     publisher = {Preprints},
+     author    = {Yipeng Sun and Linda-Sophie Schneider and Chengze ye and Andreas Maier},
+     title     = {diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories},
+     journal   = {Preprints}
    }
 
 License
