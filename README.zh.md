@@ -17,6 +17,8 @@ FDK pipeline,以及基于单元积分模型的可分离 footprint
 
 ⭐ **如果你觉得这个项目有用,请点个 star!**
 
+📄 **技术报告:** [Preprints manuscript](https://www.preprints.org/manuscript/202605.1446/v1) · [DOI](https://doi.org/10.20944/preprints202605.1446.v1)
+
 ## 🔀 分支说明
 
 ### Main 分支(稳定版,发布到 PyPI)
@@ -301,7 +303,7 @@ pytest tests/benchmarks/ --benchmark-only    # 可选的性能套件,需要 pyte
 
 ## 📝 引用
 
-如果你在研究中使用了本库,请引用:
+如果你在研究中使用了本库,请引用软件和技术报告:
 
 ```bibtex
 @software{diffct2025,
@@ -312,6 +314,17 @@ pytest tests/benchmarks/ --benchmark-only    # 可选的性能套件,需要 pyte
   publisher    = {Zenodo},
   doi          = {10.5281/zenodo.14999333},
   url          = {https://doi.org/10.5281/zenodo.14999333}
+}
+
+@article{202605.1446,
+  doi       = {10.20944/preprints202605.1446.v1},
+  url       = {https://doi.org/10.20944/preprints202605.1446.v1},
+  year      = 2026,
+  month     = {May},
+  publisher = {Preprints},
+  author    = {Yipeng Sun and Linda-Sophie Schneider and Chengze ye and Andreas Maier},
+  title     = {diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories},
+  journal   = {Preprints}
 }
 ```
 
