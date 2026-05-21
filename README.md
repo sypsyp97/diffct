@@ -17,6 +17,8 @@ deep-learning integration.
 
 ⭐ **Please star this project if you find it is useful!**
 
+📄 **Technical report:** [Preprints manuscript](https://www.preprints.org/manuscript/202605.1446/v1) · [DOI](https://doi.org/10.20944/preprints202605.1446.v1)
+
 **Apple/MLX maintenance:** The former `apple` branch is maintained by
 [Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider) at
 [Linda-SophieSchneider/DiffCT-MLX](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
@@ -340,7 +342,7 @@ pytest tests/benchmarks/ --benchmark-only    # opt-in perf suite, requires pytes
 
 ## 📝 Citation
 
-If you use this library in your research, please cite:
+If you use this library in your research, please cite the software and the technical report:
 
 ```bibtex
 @software{diffct2025,
@@ -351,6 +353,17 @@ If you use this library in your research, please cite:
   publisher    = {Zenodo},
   doi          = {10.5281/zenodo.14999333},
   url          = {https://doi.org/10.5281/zenodo.14999333}
+}
+
+@article{202605.1446,
+  doi       = {10.20944/preprints202605.1446.v1},
+  url       = {https://doi.org/10.20944/preprints202605.1446.v1},
+  year      = 2026,
+  month     = {May},
+  publisher = {Preprints},
+  author    = {Yipeng Sun and Linda-Sophie Schneider and Chengze ye and Andreas Maier},
+  title     = {diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories},
+  journal   = {Preprints}
 }
 ```
 
