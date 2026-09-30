@@ -21,11 +21,12 @@ Prerequisites
 Installation
 ------------
 
-Install `diffct` directly from PyPI:
+Install this local arbitrary-trajectory candidate from its checkout. The
+currently published PyPI release does not contain this candidate's high-level API:
 
 .. code-block:: bash
 
-   pip install diffct
+   pip install -e .
 
 **Verify Installation:**
 
@@ -46,11 +47,11 @@ Here's a minimal example that uses the new geometry helpers and projector API:
 .. code-block:: python
 
    import torch
-   from diffct import ParallelProjectorFunction, ParallelBackprojectorFunction
+   from diffct import Projector
    from diffct.geometry import circular_trajectory_2d_parallel
 
    # Set device
-   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+   device = torch.device('cuda')
 
    # Create a simple test image (128x128)
    image = torch.zeros((128, 128), device=device)
@@ -63,36 +64,27 @@ Here's a minimal example that uses the new geometry helpers and projector API:
    voxel_spacing = 1.0
 
    # Generate parallel-beam geometry
-   ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(
-       num_views, device=device
-   )
+   trajectory = circular_trajectory_2d_parallel(num_views, device='cpu')
+   operator = Projector(trajectory, image.shape, num_detectors,
+                        beam='parallel', detector_spacing=detector_spacing,
+                        voxel_spacing=voxel_spacing)
 
    # Forward projection
-   sinogram = ParallelProjectorFunction.apply(
-       image,
-       ray_dir,
-       det_origin,
-       det_u_vec,
-       num_detectors,
-       detector_spacing,
-       voxel_spacing,
-   )
+   sinogram = operator.project(image)
 
    # Backprojection
-   reconstruction = ParallelBackprojectorFunction.apply(
-       sinogram,
-       ray_dir,
-       det_origin,
-       det_u_vec,
-       detector_spacing,
-       image.shape[0],
-       image.shape[1],
-       voxel_spacing,
-   )
+   reconstruction = operator.backproject(sinogram)
 
    print(f"Original image shape: {image.shape}")
    print(f"Sinogram shape: {sinogram.shape}")
    print(f"Reconstruction shape: {reconstruction.shape}")
+
+``backproject`` is the matched adjoint, not an inverse reconstruction. Supply
+any valid per-view trajectory tuple to the same interface. For cone beam, use a
+``(depth, height, width)`` volume and a ``(detector_u, detector_v)`` detector.
+Add ``devices=['cuda:0', 'cuda:1']`` to share views between local GPUs, or initialize
+a process group and use ``distributed=True`` for view sharding across ranks.
+See ``docs/DISTRIBUTED.md`` for gradient conventions and launch instructions.
 
 Next Steps
 ----------

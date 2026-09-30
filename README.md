@@ -18,37 +18,72 @@ custom). Built for optimization and deep-learning integration.
 [Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider) at
 [Linda-SophieSchneider/DiffCT-MLX](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
-## 🔀 Branches
+## Candidate branch for `main`
 
-### `main` Branch (Stable, PyPI)
-The stable release branch supporting **circular-orbit** CT reconstruction.
-Every versioned release on [PyPI](https://pypi.org/project/diffct/) comes
-from `main`. Use this if you only need conventional circular fan / cone
-beam scans and want a pinned, tested release.
+This checkout builds on `dev`: arbitrary per-view trajectories are the
+default geometry model. It is a validation candidate on
+`codex/arbitrary-trajectory-multigpu`; GitHub's default
+branch and published PyPI releases have not changed. See
+[the migration notes](docs/MIGRATION.md) before moving from the circular-only API.
 
-### `dev` Branch (You are here — arbitrary trajectories)
-The `dev` branch is the arbitrary-trajectory evolution of the library.
-Kernels take per-view ``(src_pos, det_center, det_u_vec[, det_v_vec])``
-arrays instead of closed-form ``sdd / sid / beta`` scalars, so you can
-reconstruct along **spiral, saddle, sinusoidal, or any user-supplied
-trajectory** without touching the CUDA kernels. All of the analytical
-FBP / FDK helpers, adjoint guarantees, and gradcheck / benchmark
-coverage from `main` are kept in sync — see [CHANGELOG.md](CHANGELOG.md)
-for the detailed parity list. The only feature currently deferred from
-`main` is the 1.3.0 separable-footprint (SF) projector backends, which
-rely on closed-form circular geometry.
+## Quick start
 
-⚠️ **Note:** `dev` is under active development and is not published to
-PyPI. If you find any bugs please
-[raise an issue](https://github.com/sypsyp97/diffct/issues).
+Configure the acquisition once, then use `project()` and `backproject()`:
+
+```python
+import torch
+from diffct import Projector, spiral_trajectory_3d
+
+trajectory = spiral_trajectory_3d(
+    60, sid=100.0, sdd=160.0, z_range=12.0, n_turns=1.0, device="cpu"
+)
+operator = Projector(trajectory, volume_shape=(32, 32, 32),
+                     detector_shape=(48, 40), detector_spacing=(1.0, 1.0))
+volume = torch.ones(operator.volume_shape, device="cuda", requires_grad=True)
+sinogram = operator.project(volume)       # (views, detector_u, detector_v)
+adjoint = operator.backproject(sinogram)  # matched adjoint, not FDK
+sinogram.square().sum().backward()
+```
+
+For 2D use `beam="fan"` or `beam="parallel"`, a `(height, width)` volume
+shape, and an integer detector size. Supply the tuple returned by the geometry
+helpers, or your own calibrated per-view tensors. Detector axes are unit
+vectors; detector pitch is supplied separately. Volume spacing is isotropic.
+Geometry is fixed; gradients propagate through volumes and sinograms.
+
+For multiple GPUs in one process, add `devices=["cuda:0", "cuda:1"]`.
+Views are divided between devices; projections are concatenated in acquisition
+order and backprojections are summed. Outputs return to the input device.
+Each GPU stores the full volume and its own view shard.
+
+For multiple processes or nodes, initialize `torch.distributed` and add
+`distributed=True`. Each rank returns only its local views; `operator.view_slice`
+selects those views from a full measurement tensor. Backprojection and image
+gradients are summed across ranks. All ranks must execute matching calls,
+including backward calls. Use sums for rank-local projection losses; divide
+losses on replicated backprojection outputs by `operator.world_size`.
+Do not add DDP gradient reduction on top of this operator.
+
+```bash
+python -m torch.distributed.run --standalone --nproc-per-node=2 \
+    examples/distributed_reconstruction.py
+```
+
+For Slurm and multiple nodes, see [distributed execution](docs/DISTRIBUTED.md).
+The [local validation report](docs/VALIDATION.md) records numeric checks and
+measured two-A100 speedups, including the small workload that did not accelerate
+in the single-process multi-GPU mode. Multi-node GPU validation is pending
+allocation permission.
+Arbitrary trajectory support applies to the forward/adjoint model and iterative
+reconstruction. Analytical FBP/FDK still has acquisition-specific assumptions.
 
 ## ✨ Features
 
 - **Fast:** CUDA-accelerated forward and backward projectors (Numba
   CUDA kernels), coalesced memory access for the FDK gather.
 - **Differentiable:** End-to-end gradient propagation via
-  ``torch.autograd``; every projector / backprojector pair is
-  byte-accurate adjoints verified by ``tests/test_adjoint_inner_product.py``
+  ``torch.autograd``; projector / backprojector pairs have numerical
+  adjoint checks in ``tests/test_adjoint_inner_product.py``
   and ``tests/test_gradcheck.py``.
 - **Arbitrary trajectories:** Kernels consume per-view source /
   detector position arrays, so circular, spiral, saddle, sinusoidal
@@ -90,6 +125,7 @@ diffct/
 │   ├── constants.py           # dtype, TPB, JIT decorators
 │   ├── utils.py               # DeviceManager, TorchCUDABridge, grid helpers
 │   ├── geometry.py            # trajectory generators (circular, spiral, ...)
+│   ├── operators.py           # Projector API, device and process orchestration
 │   ├── projectors.py          # autograd Function classes
 │   ├── analytical.py          # ramp filter, cosine weights, Parker, FBP/FDK wrappers
 │   ├── kernels/
@@ -100,6 +136,7 @@ diffct/
 ├── examples/
 │   ├── circular_trajectory/   # canonical circular-orbit examples (fbp/fdk + iterative)
 │   ├── non_circular_trajectory/  # spiral / custom trajectory examples
+│   ├── distributed_reconstruction.py  # helical reconstruction with torchrun
 │   └── plot_trajectory.py     # visualise a trajectory generator
 ├── tests/
 │   ├── test_*.py              # adjoint / gradcheck / accuracy / weights / ramp-filter
@@ -122,15 +159,15 @@ diffct/
 
 ### Installation
 
-`dev` is not on PyPI — install it from source by cloning the
-repository and using an editable install.
+Install this candidate branch from its checkout with `pip install -e .`.
+The current PyPI package does not include this candidate's high-level API.
 
-**CUDA 12 (recommended):**
+**CUDA 12:**
 ```bash
-# Clone the repository and check out the dev branch
+# Clone the repository and check out the candidate branch
 git clone https://github.com/sypsyp97/diffct.git
 cd diffct
-git checkout dev
+git checkout codex/arbitrary-trajectory-multigpu
 
 # Create and activate conda environment
 conda create -n diffct python=3.12
@@ -142,7 +179,7 @@ conda install nvidia/label/cuda-12.8.1::cuda-toolkit
 # Install PyTorch, follow: https://pytorch.org/get-started/locally/
 
 # Install Numba with CUDA 12
-pip install numba-cuda[cu12]
+pip install "numpy<2.5" "numba-cuda[cu12]"
 
 # Install diffct (editable)
 pip install -e .
@@ -154,38 +191,27 @@ pip install -e .
 ```bash
 git clone https://github.com/sypsyp97/diffct.git
 cd diffct
-git checkout dev
+git checkout codex/arbitrary-trajectory-multigpu
 conda create -n diffct python=3.12
 conda activate diffct
-conda install nvidia/label/cuda-13.0.2::cuda-toolkit
 # Install PyTorch from https://pytorch.org/get-started/locally/
-pip install numba-cuda[cu13]
+pip install "numpy<2.5" "numba-cuda[cu13]" \
+    "cuda-toolkit[cccl,cudart,nvrtc,nvvm]==13.0.2" "nvidia-nvjitlink<13.1"
 pip install -e .
 ```
 
 </details>
 
-<details>
-<summary>CUDA 11 installation</summary>
-
-```bash
-git clone https://github.com/sypsyp97/diffct.git
-cd diffct
-git checkout dev
-conda create -n diffct python=3.12
-conda activate diffct
-conda install nvidia/label/cuda-11.8.0::cuda-toolkit
-# Install PyTorch from https://pytorch.org/get-started/locally/
-pip install numba-cuda[cu11]
-pip install -e .
-```
-
-</details>
+Numba CUDA currently imports `numpy.row_stack`, which NumPy 2.5 removed.
+The NumPy upper bound keeps the CUDA compiler import working. Keep NVVM and
+NVJitLink compatible with the CUDA libraries loaded by PyTorch; the CUDA 13.0
+recipe above was used for this candidate's checks. A newer NVVM with an older
+NVJitLink can fail at kernel compilation before any projection runs.
 
 ### Running the tests
 
 ```bash
-pytest tests/ -q                             # 58 tests, ~5 s
+python -m pytest tests/ -q
 pytest tests/benchmarks/ --benchmark-only    # opt-in perf suite
 ```
 

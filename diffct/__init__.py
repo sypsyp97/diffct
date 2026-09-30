@@ -14,6 +14,8 @@ from .projectors import (
     ConeBackprojectorFunction,
 )
 
+from .operators import Projector
+
 from .geometry import (
     circular_trajectory_3d,
     random_trajectory_3d,
@@ -50,6 +52,7 @@ except ImportError:
 __version__ = '1.3.3.dev0'
 
 __all__ = [
+    'Projector',
     'ParallelProjectorFunction',
     'ParallelBackprojectorFunction',
     'FanProjectorFunction',

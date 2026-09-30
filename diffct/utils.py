@@ -121,7 +121,7 @@ _cached_numba_stream = None
 def _get_numba_external_stream_for(pt_stream=None):
     """Return a cached numba.cuda.external_stream for the current PyTorch CUDA stream.
 
-    Caches by the underlying CUDA stream pointer to avoid repeated construction.
+    Caches by the CUDA device and stream pointer to avoid repeated construction.
 
     Parameters
     ----------
@@ -136,12 +136,16 @@ def _get_numba_external_stream_for(pt_stream=None):
     global _cached_stream_ptr, _cached_numba_stream
     if pt_stream is None:
         pt_stream = torch.cuda.current_stream()
-    # Torch exposes an underlying CUDA stream handle via .cuda_stream
+    # A stream pointer is only unique within one CUDA device.
     ptr = int(pt_stream.cuda_stream)
-    if _cached_stream_ptr == ptr and _cached_numba_stream is not None:
+    device_index = pt_stream.device.index
+    if device_index is None:
+        device_index = torch.cuda.current_device()
+    key = (device_index, ptr)
+    if _cached_stream_ptr == key and _cached_numba_stream is not None:
         return _cached_numba_stream
     numba_stream = cuda.external_stream(pt_stream.cuda_stream)
-    _cached_stream_ptr = ptr
+    _cached_stream_ptr = key
     _cached_numba_stream = numba_stream
     return numba_stream
 

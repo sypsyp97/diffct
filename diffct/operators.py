@@ -1,0 +1,371 @@
+"""High-level operators for arbitrary CT trajectories."""
+
+import math
+import numbers
+
+import torch
+from numba import cuda
+from torch.autograd.function import once_differentiable
+
+from .projectors import (
+    ConeBackprojectorFunction,
+    ConeProjectorFunction,
+    FanBackprojectorFunction,
+    FanProjectorFunction,
+    ParallelBackprojectorFunction,
+    ParallelProjectorFunction,
+)
+
+
+def _positive_int(value, name):
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise TypeError(f"{name} dimensions must be positive integers")
+    if value <= 0:
+        raise ValueError(f"{name} dimensions must be positive integers")
+    return int(value)
+
+
+def _shape(value, rank, name):
+    if not isinstance(value, (tuple, list)) or len(value) != rank:
+        raise TypeError(f"{name} must have {rank} dimensions")
+    return tuple(_positive_int(dim, name) for dim in value)
+
+
+def _positive_float(value, name):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise TypeError(f"{name} must be a positive finite scalar")
+    value = float(value)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite scalar")
+    return value
+
+
+def _detector_spacing(value, beam):
+    if beam != "cone":
+        if isinstance(value, (tuple, list)):
+            raise TypeError("2D detector_spacing must be a scalar")
+        return (_positive_float(value, "detector_spacing"),)
+    if isinstance(value, (tuple, list)):
+        if len(value) != 2:
+            raise TypeError("cone detector_spacing must be a scalar or pair")
+        return tuple(_positive_float(item, "detector_spacing") for item in value)
+    pitch = _positive_float(value, "detector_spacing")
+    return (pitch, pitch)
+
+
+def _validate_trajectory(trajectory, beam):
+    dimensions = 3 if beam == "cone" else 2
+    count = 4 if beam == "cone" else 3
+    if not isinstance(trajectory, (tuple, list)) or len(trajectory) != count:
+        raise TypeError(f"{beam} trajectory must contain {count} tensors")
+
+    geometry = []
+    n_views = None
+    for component in trajectory:
+        if not isinstance(component, torch.Tensor):
+            raise TypeError("trajectory components must be tensors")
+        if component.ndim != 2 or component.shape[1] != dimensions:
+            raise ValueError(f"trajectory tensors must have shape (views, {dimensions})")
+        if not torch.is_floating_point(component):
+            raise TypeError("trajectory tensors must have floating-point dtype")
+        if component.requires_grad:
+            raise ValueError("trajectory tensors must not require gradients")
+        if component.shape[0] == 0:
+            raise ValueError("trajectory must contain at least one view")
+        if n_views is not None and component.shape[0] != n_views:
+            raise ValueError("trajectory tensors must have the same number of views")
+        n_views = component.shape[0]
+        if not torch.isfinite(component).all().item():
+            raise ValueError("trajectory tensors must contain only finite values")
+        geometry.append(component.detach().clone())
+
+    axes = (geometry[0], geometry[2]) if beam == "parallel" else (
+        (geometry[2], geometry[3]) if beam == "cone" else (geometry[2],)
+    )
+    for axis in axes:
+        norms = torch.linalg.vector_norm(axis, dim=1)
+        if not torch.allclose(norms, torch.ones_like(norms), rtol=1e-4, atol=1e-4):
+            raise ValueError("trajectory direction axes must be unit vectors")
+    if beam in ("parallel", "cone"):
+        first, second = (geometry[0], geometry[2]) if beam == "parallel" else axes
+        dots = torch.sum(first * second.to(first.device), dim=1)
+        if torch.any(torch.abs(dots) > 1e-4).item():
+            raise ValueError("trajectory direction axes must be orthogonal")
+
+    return tuple(geometry), n_views
+
+
+def _normalize_devices(devices):
+    if devices is None:
+        return None
+    if not isinstance(devices, (tuple, list)) or not devices:
+        raise ValueError("devices must be a nonempty sequence of CUDA devices")
+
+    normalized = []
+    for value in devices:
+        if isinstance(value, bool):
+            raise TypeError("devices must contain CUDA devices")
+        if isinstance(value, int):
+            device = torch.device("cuda", value)
+        else:
+            try:
+                device = torch.device(value)
+            except (TypeError, RuntimeError) as error:
+                raise TypeError("devices must contain CUDA devices") from error
+        if device.type != "cuda":
+            raise TypeError("devices must contain CUDA devices")
+        if not torch.cuda.is_available():
+            raise ValueError("CUDA devices are unavailable")
+        index = torch.cuda.current_device() if device.index is None else device.index
+        if index < 0 or index >= torch.cuda.device_count():
+            raise ValueError(f"CUDA device index {index} is not available")
+        normalized.append(torch.device("cuda", index))
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("devices must be unique")
+    return tuple(normalized)
+
+
+def _balanced_slice(n_views, rank, world_size):
+    base, extra = divmod(n_views, world_size)
+    start = rank * base + min(rank, extra)
+    return slice(start, start + base + int(rank < extra))
+
+
+class _ProjectorAutograd(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, tensor, projector, is_project):
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError("input must be a torch.Tensor")
+        ctx.projector = projector
+        ctx.is_project = is_project
+        ctx.input_device = tensor.device
+        ctx.input_dtype = tensor.dtype
+        return projector._run(tensor, is_project)
+
+    @staticmethod
+    @once_differentiable
+    def backward(ctx, grad_output):
+        grad_input = ctx.projector._run(
+            grad_output,
+            is_project=not ctx.is_project,
+            reduce_cotangent=not ctx.is_project,
+        )
+        return grad_input.to(device=ctx.input_device, dtype=ctx.input_dtype), None, None
+
+
+class Projector:
+    """Project CUDA volumes along fixed parallel, fan, or cone trajectories.
+
+    A parallel trajectory is ``(ray_dir, det_origin, det_u)`` and a fan
+    trajectory is ``(src_pos, det_center, det_u)``; each component has shape
+    ``(views, 2)``. A cone trajectory is
+    ``(src_pos, det_center, det_u, det_v)`` with components shaped
+    ``(views, 3)``. Direction axes are unit vectors; parallel ``ray_dir`` and
+    ``det_u`` and cone ``det_u`` and ``det_v`` are orthogonal. Geometry is
+    fixed and cloned by the projector.
+
+    Volumes use ``(H, W)`` for parallel and fan beams and ``(D, H, W)`` for
+    cone beams. Sinograms use ``(views, detectors)`` or ``(views, U, V)``.
+    Results are float32 and returned to the input tensor's CUDA device. Local
+    devices split views in list order; distributed mode returns rank-local
+    projections and replicated backprojections. Distributed projection losses
+    use SUM across ranks; divide replicated backprojection losses by
+    ``world_size`` and do not add a second DDP reduction for image gradients.
+    """
+
+    def __init__(self, trajectory, volume_shape, detector_shape, *, beam="cone",
+                 detector_spacing=1.0, voxel_spacing=1.0, devices=None,
+                 distributed=False, process_group=None):
+        if beam not in ("parallel", "fan", "cone"):
+            raise ValueError("beam must be 'parallel', 'fan', or 'cone'")
+        self.beam = beam
+        rank = 3 if beam == "cone" else 2
+        self.volume_shape = _shape(volume_shape, rank, "volume_shape")
+        if beam == "cone":
+            self.detector_shape = _shape(detector_shape, 2, "detector_shape")
+        elif isinstance(detector_shape, (tuple, list)):
+            self.detector_shape = _shape(detector_shape, 1, "detector_shape")
+        else:
+            self.detector_shape = (_positive_int(detector_shape, "detector_shape"),)
+
+        self.detector_spacing = _detector_spacing(detector_spacing, beam)
+        self.voxel_spacing = _positive_float(voxel_spacing, "voxel_spacing")
+        self._trajectory, n_views = _validate_trajectory(trajectory, beam)
+        self._geometry_cache = {}
+        self._devices = _normalize_devices(devices)
+        if not isinstance(distributed, bool):
+            raise TypeError("distributed must be a bool")
+        self._distributed = distributed
+        if process_group is not None and not self._distributed:
+            raise ValueError("process_group requires distributed=True")
+        if self._distributed:
+            if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+                raise RuntimeError("distributed=True requires an initialized process group")
+            try:
+                self.rank = torch.distributed.get_rank(process_group)
+                self.world_size = torch.distributed.get_world_size(process_group)
+            except (RuntimeError, ValueError) as error:
+                raise ValueError("process_group must include the calling rank") from error
+            if self.rank < 0 or self.world_size <= 0 or self.rank >= self.world_size:
+                raise ValueError("process_group must include the calling rank")
+        else:
+            self.rank = 0
+            self.world_size = 1
+        self._process_group = process_group
+        self.view_slice = _balanced_slice(n_views, self.rank, self.world_size)
+        self.projection_shape = (
+            self.view_slice.stop - self.view_slice.start,
+            *self.detector_shape,
+        )
+
+    def _geometry_for(self, device, global_slice):
+        key = (device.index, global_slice.start, global_slice.stop)
+        stream = torch.cuda.current_stream(device)
+        cached = self._geometry_cache.get(key)
+        if cached is None:
+            geometry = tuple(
+                component[global_slice]
+                .to(device=device, dtype=torch.float32, non_blocking=True)
+                .contiguous()
+                for component in self._trajectory
+            )
+            ready = torch.cuda.Event()
+            ready.record(stream)
+            self._geometry_cache[key] = (geometry, ready)
+        else:
+            geometry, ready = cached
+            stream.wait_event(ready)
+        for component in geometry:
+            component.record_stream(stream)
+        return geometry
+
+    def _run(self, tensor, is_project, reduce_cotangent=False):
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError("input must be a torch.Tensor")
+        expected_shape = self.volume_shape if is_project else self.projection_shape
+        if tuple(tensor.shape) != expected_shape:
+            raise ValueError(f"input shape must be {expected_shape}")
+        if not tensor.is_cuda:
+            raise TypeError("input tensor must be on CUDA")
+        if not torch.is_floating_point(tensor):
+            raise TypeError("input tensor must have floating-point dtype")
+        input_device = tensor.device
+        if reduce_cotangent and self._distributed and self.world_size > 1:
+            tensor = tensor.detach().clone(memory_format=torch.contiguous_format)
+            with torch.cuda.device(input_device):
+                torch.distributed.all_reduce(
+                    tensor,
+                    op=torch.distributed.ReduceOp.SUM,
+                    group=self._process_group,
+                )
+
+        devices = self._devices or (input_device,)
+        local_views = self.projection_shape[0]
+
+        # Stage every input and geometry shard before launching any raw kernel.
+        staged = []
+        for device_rank, device in enumerate(devices):
+            local_slice = _balanced_slice(local_views, device_rank, len(devices))
+            if local_slice.start == local_slice.stop:
+                continue
+            global_slice = slice(
+                self.view_slice.start + local_slice.start,
+                self.view_slice.start + local_slice.stop,
+            )
+            source = tensor if is_project else tensor[local_slice]
+            with torch.cuda.device(device):
+                staged_input = source.to(
+                    device=device, dtype=torch.float32, non_blocking=True
+                ).contiguous()
+                staged_geometry = self._geometry_for(device, global_slice)
+            staged.append((device, staged_input, staged_geometry))
+
+        # Keep all outputs alive until every device has launched its shard.
+        outputs = []
+        for device, staged_input, geometry in staged:
+            with torch.cuda.device(device), cuda.gpus[device.index]:
+                output = (
+                    self._project_raw(staged_input, geometry)
+                    if is_project
+                    else self._backproject_raw(staged_input, geometry)
+                )
+            outputs.append((device, output))
+
+        with torch.cuda.device(input_device):
+            if is_project:
+                pieces = [
+                    output.to(device=input_device, non_blocking=True)
+                    for _, output in outputs
+                ]
+                if pieces:
+                    return torch.cat(pieces, dim=0)
+                return torch.empty(
+                    self.projection_shape, dtype=torch.float32, device=input_device
+                )
+
+            result = torch.zeros(
+                self.volume_shape, dtype=torch.float32, device=input_device
+            )
+            for _, output in outputs:
+                result.add_(output.to(device=input_device, non_blocking=True))
+            if self._distributed and self.world_size > 1:
+                torch.distributed.all_reduce(
+                    result,
+                    op=torch.distributed.ReduceOp.SUM,
+                    group=self._process_group,
+                )
+            return result
+
+    def _project_raw(self, volume, geometry):
+        if self.beam == "parallel":
+            return ParallelProjectorFunction.apply(
+                volume, *geometry, self.detector_shape[0],
+                self.detector_spacing[0], self.voxel_spacing,
+            )
+        if self.beam == "fan":
+            return FanProjectorFunction.apply(
+                volume, *geometry, self.detector_shape[0],
+                self.detector_spacing[0], self.voxel_spacing,
+            )
+        return ConeProjectorFunction.apply(
+            volume, *geometry, *self.detector_shape,
+            *self.detector_spacing, self.voxel_spacing,
+        )
+
+    def _backproject_raw(self, sinogram, geometry):
+        if self.beam == "parallel":
+            return ParallelBackprojectorFunction.apply(
+                sinogram, *geometry, self.detector_spacing[0],
+                *self.volume_shape, self.voxel_spacing,
+            )
+        if self.beam == "fan":
+            return FanBackprojectorFunction.apply(
+                sinogram, *geometry, self.detector_spacing[0],
+                *self.volume_shape, self.voxel_spacing,
+            )
+        return ConeBackprojectorFunction.apply(
+            sinogram, *geometry, *self.volume_shape,
+            *self.detector_spacing, self.voxel_spacing,
+        )
+
+    def project(self, volume):
+        """Project a ``(H, W)`` or ``(D, H, W)`` CUDA tensor to float32.
+
+        The output shape is ``projection_shape``; in distributed mode it holds
+        this rank's contiguous view slice. The result stays on ``volume.device``.
+        """
+        return _ProjectorAutograd.apply(volume, self, True)
+
+    def backproject(self, sinogram):
+        """Backproject a floating-point CUDA sinogram.
+
+        The input must have shape ``projection_shape`` and uses ``(views, U,
+        V)`` order for cone beams. The float32 volume is returned to
+        ``sinogram.device``; distributed mode SUM-reduces it to every rank, so
+        divide a replicated-output loss by ``world_size``.
+        """
+        return _ProjectorAutograd.apply(sinogram, self, False)
+
+    def __call__(self, volume):
+        """Alias for :meth:`project`."""
+        return self.project(volume)

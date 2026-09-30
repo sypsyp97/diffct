@@ -19,8 +19,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "numpy",
+    "numpy<2.5",
     "numba",
+    "numba-cuda",
     "torch",
 ]
 

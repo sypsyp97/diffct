@@ -11,6 +11,18 @@ The `diffct` package is organised into focused modules that can be combined to b
 - ``diffct.constants`` – low-level configuration values for advanced tuning
 - ``diffct.differentiable`` – deprecated compatibility shim that re-exports the public API
 
+High-level Projector
+--------------------
+
+.. currentmodule:: diffct
+
+.. autoclass:: Projector
+   :members:
+   :special-members: __call__
+
+See ``docs/DISTRIBUTED.md`` for local GPU view splitting and multi-node launch
+instructions. Geometry gradients are not supported by this operator.
+
 Core Projector Functions
 ------------------------
 
