@@ -78,7 +78,7 @@ Fan beam FBP reconstruction involves three sequential steps:
 - **Natural Magnification**: Improved spatial resolution
 - **Faster Acquisition**: Wider coverage per projection angle
 
-.. literalinclude:: ../../examples/circular_trajectory/fbp_fan.py
+.. literalinclude:: ../../examples/analytical_reconstruction.py
    :language: python
    :linenos:
-   :caption: 2D Fan Beam FBP Example
+   :caption: Analytical Reconstruction Example (parallel, fan and cone beam)

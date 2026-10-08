@@ -1,17 +1,36 @@
-# diffct: Differentiable CT Operators for Arbitrary Trajectories
+<h1 align="center">diffct</h1>
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square)](https://doi.org/10.5281/zenodo.14999333)
-[![PyPI version](https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/diffct/)
-[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat-square)](https://sypsyp97.github.io/diffct/)
-[![CI/CD](https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square)](https://github.com/sypsyp97/diffct/actions)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sypsyp97/diffct)
+<p align="center">
+  Differentiable CUDA projectors for CT: arbitrary trajectories, multi-GPU, multi-node, geometry gradients.
+</p>
 
-diffct gives CUDA forward projectors and matched backprojectors for parallel,
-fan and cone beam CT. Every view has its own source, detector position and
-detector axes, so circular, helical and calibrated trajectories use the same
-code. The operators are PyTorch autograd functions and run on one GPU, several
-GPUs or several nodes.
+<p align="center">
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License"></a>
+  <a href="https://doi.org/10.5281/zenodo.14999333"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square" alt="DOI"></a>
+  <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
+  <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat-square" alt="Documentation"></a>
+  <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
+  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
+</p>
+
+<p align="center">
+  <a href="docs/assets/diffct_intro.mp4">Intro video (MP4)</a> ·
+  <a href="https://www.preprints.org/manuscript/202605.1446/v1">Technical report</a> ·
+  <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#why-diffct">Features</a> ·
+  <a href="#performance">Performance</a> ·
+  <a href="#examples">Examples</a> ·
+  <a href="#citation">Citation</a>
+</p>
 
 > **Branch status.** This README describes the candidate branch
 > `codex/arbitrary-trajectory-multigpu`. The GitHub default branch and the PyPI
@@ -22,32 +41,37 @@ GPUs or several nodes.
 > [Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider) at
 > [DiffCT-MLX](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
-## Contents
+## Why diffct
 
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [Geometry and units](#geometry-and-units)
-- [Gradients](#gradients)
-- [Multiple GPUs and nodes](#multiple-gpus-and-nodes)
-- [Analytical FBP and FDK](#analytical-fbp-and-fdk)
-- [Validation](#validation)
-- [Repository layout](#repository-layout)
-- [Citation](#citation)
+- **Arbitrary trajectories.** Each view has its own source, detector centre and
+  detector axes. Circular, helical, saddle, sinusoidal, random and calibrated
+  scans use the same code.
+- **Matched operators.** `project()` and `backproject()` form an exact adjoint
+  pair. Both are PyTorch autograd functions, with gradients for volumes and
+  sinograms and second derivatives (Hessian-vector products).
+- **Geometry gradients.** Trajectory tensors with `requires_grad=True` receive
+  gradients for calibration and trajectory optimization.
+- **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or
+  one process per GPU with torchrun and NCCL. More GPUs make the operator
+  faster. They do not make a larger volume fit.
+- **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak,
+  shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP
+  and FDK backprojection.
+- **Validated.** FDK matches ASTRA 2.5.0 `FDK_CUDA` on the same projections:
+  PSNR within 0.3 dB, and a maximum pixel difference below 1% of the phantom
+  maximum. Geometry gradients match an independent float64 reference to about
+  1e-6. 229 pytest tests pass on A100.
 
-## Installation
+## Install
 
-You need a CUDA GPU, Python 3.10 or later, PyTorch, NumPy and Numba CUDA.
+You need a CUDA GPU and PyTorch. Install PyTorch for your CUDA version first.
 
 ```bash
 git clone https://github.com/sypsyp97/diffct.git
-cd diffct
-git checkout codex/arbitrary-trajectory-multigpu
-
-conda create -n diffct python=3.12
-conda activate diffct
-# Install PyTorch for your CUDA version: https://pytorch.org/get-started/locally/
-pip install "numpy<2.5" "numba-cuda[cu12]"   # use [cu13] for CUDA 13
+cd diffct && git checkout codex/arbitrary-trajectory-multigpu
+pip install "numpy<2.5" "numba-cuda[cu12]"   # [cu13] for CUDA 13; install PyTorch for your CUDA first
 pip install -e .
+python examples/quickstart.py               # smoke test: prints adjoint mismatch ~1e-8 for each beam
 ```
 
 <details>
@@ -64,29 +88,141 @@ pip install -e .
 
 </details>
 
-## Quick start
+## Quickstart
 
-Configure the acquisition once. Then call `project()` and `backproject()`.
+Create the acquisition once. Then call `project()` and `backproject()`.
 
 ```python
 import torch
 from diffct import Projector, spiral_trajectory_3d
 
-trajectory = spiral_trajectory_3d(
-    60, sid=100.0, sdd=160.0, z_range=12.0, n_turns=1.0, device="cpu"
-)
-operator = Projector(trajectory, volume_shape=(32, 32, 32),
-                     detector_shape=(48, 40), detector_spacing=(1.0, 1.0))
+trajectory = spiral_trajectory_3d(360, sid=320.0, sdd=512.0, z_range=40.0, n_turns=1.0, device="cpu")
+A = Projector(trajectory, volume_shape=(128, 128, 128), detector_shape=(384, 256), detector_spacing=0.8)
 
-volume = torch.ones(operator.volume_shape, device="cuda", requires_grad=True)
-sinogram = operator.project(volume)        # (views, detector_u, detector_v)
-adjoint = operator.backproject(sinogram)   # matched adjoint, not an FDK image
-sinogram.square().sum().backward()         # gradient with respect to volume
+volume = torch.rand(A.volume_shape, device="cuda")
+sinogram = A.project(volume)        # (360, 384, 256) line integrals
+adjoint = A.backproject(sinogram)   # matched adjoint A^T
+
+x = torch.zeros_like(volume, requires_grad=True)
+loss = 0.5 * (A.project(x) - sinogram).square().sum()
+loss.backward()                     # x.grad = A^T (A x - y)
 ```
 
-For 2D, set `beam="fan"` or `beam="parallel"`, use a `(height, width)` volume
-and an integer detector size. Iterative reconstruction examples are in
-[`examples/non_circular_trajectory/`](examples/non_circular_trajectory/).
+### Several GPUs and nodes
+
+Each GPU holds the full volume and a share of the views.
+
+**One process, several GPUs:**
+
+```python
+A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
+```
+
+**One process per GPU, one or more nodes:**
+
+```bash
+torchrun --nproc-per-node=4 examples/iterative_reconstruction.py --trajectory helical      # one node
+sbatch examples/slurm/multi_node.sbatch examples/iterative_reconstruction.py --trajectory helical   # several nodes
+```
+
+With `distributed=True`, every rank must make the same `project`, `backproject`
+and backward calls. Sum projection-domain losses over ranks. Do not add a DDP
+gradient reduction on top of the operator. Slurm details and the cross-node
+check are in [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md).
+
+### Geometry gradients
+
+Trajectory tensors with `requires_grad=True` get gradients for the source,
+detector centre and detector axes. The gradient is the exact derivative of the
+cell-constant model.
+
+```python
+source, det_center, det_u, det_v = (t.clone() for t in trajectory)
+source.requires_grad_()
+A = Projector((source, det_center, det_u, det_v), (128, 128, 128), (384, 256), detector_spacing=0.8)
+(A.project(volume) - sinogram).square().sum().backward()   # source.grad has shape (360, 3)
+```
+
+Second derivatives with respect to the geometry raise an error. Edge cases are
+listed in [Geometry and units](#geometry-and-units).
+
+## Performance
+
+Time per iteration on Leonardo Booster (NVIDIA A100 64 GB, PyTorch 2.10 cu126,
+numba-cuda 0.30.4). Scaling from one GPU to one node (4 GPUs) and two nodes
+(8 GPUs):
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png">
+    <img src="docs/assets/scaling_light.png" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 64^3 and 128^3">
+  </picture>
+</p>
+
+| 128³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
+|---|---:|---:|---:|
+| Forward projection | 8.46 ms | 2.67 ms (3.2×) | 1.69 ms (5.0×) |
+| Adjoint (backprojection) | 20.69 ms | 5.91 ms (3.5×) | 4.53 ms (4.6×) |
+| CGLS iteration | 30.07 ms | 8.09 ms (3.7×) | 5.54 ms (5.4×) |
+
+Circular trajectory, 360 views, detector (2n, 1.5n) cells, pitch 1.25.
+Small problems scale less. At 64³, one CGLS iteration takes 4.75 ms on 1 GPU,
+1.57 ms on 4 GPUs (3.0×) and 1.56 ms on 8 GPUs (3.0×). Transfers and kernel
+launches dominate at this size.
+
+Reproduce on one process with several GPUs:
+
+```bash
+python examples/benchmark_projector.py --devices 0 1
+```
+
+For torchrun launch modes, see [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md).
+
+## Gallery
+
+**Helical scan with 1% noise.** Shepp-Logan phantom, 128³. PSNR: FDK 31.2 dB,
+CGLS (30 iterations) 35.8 dB, SIRT (200 iterations) 32.7 dB, TV (200
+iterations) 47.5 dB.
+
+<p align="center">
+  <img src="docs/assets/iterative_helical_noise.png" width="100%" alt="Helical scan reconstructions with 1% noise">
+</p>
+
+```bash
+python examples/iterative_reconstruction.py --trajectory helical --noise 0.01 --figure out.png
+```
+
+**Analytical reconstruction.** Shepp-Logan window. PSNR: parallel FBP 38.1 dB,
+fan FBP 34.9 dB, cone FDK 34.1 dB.
+
+<p align="center">
+  <img src="docs/assets/analytical.png" width="100%" alt="Parallel FBP, fan FBP and cone FDK reconstructions">
+</p>
+
+```bash
+python examples/analytical_reconstruction.py --figure out.png
+```
+
+## Examples
+
+| file | what | launch modes |
+|---|---|---|
+| `quickstart.py` | Projector basics for parallel, fan, cone: project, backproject, adjoint check, image and geometry gradients | 1 GPU |
+| `analytical_reconstruction.py` | parallel FBP, fan FBP, cone FDK; `--window` | 1 GPU |
+| `iterative_reconstruction.py` | any trajectory (`--trajectory circular/helical/saddle/sinusoidal`); CGLS, SIRT, TV-regularized nonnegative least squares with Adam (autograd); FDK baseline; `--noise` | 1 GPU, `--devices 0 1 2 3`, torchrun, Slurm multi-node |
+| `geometry_calibration.py` | recover per-view angle errors and a detector shift from projections with geometry gradients | 1 GPU, `--devices`, torchrun, Slurm multi-node |
+| `benchmark_projector.py` | correctness and speed of one vs several GPUs | 1 process with `--devices`, torchrun |
+| `plot_trajectory.py` | plot a trajectory generator | CPU |
+| `slurm/multi_node.sbatch` | template: one torchrun launcher per node; set account/partition | Slurm |
+
+Launch modes, distributed-loss rules and all measured results are in [examples/README.md](examples/README.md). Shared helpers are in `examples/_common.py`. The example scan uses n³ unit
+voxels, a source 2.5 n from the isocentre, a detector 4 n from the source
+(magnification 1.6), (3n, 2n) detector cells, pitch 0.8 and 360 views.
+
+Geometry calibration (64³, 360 views, per-view angle error 0.54° RMS, detector
+shift (1.5, -1.0) voxels, Adam 300 steps) recovers the angle error to
+0.0001-0.0025° RMS and the detector shift to below 0.001 voxel in every launch
+mode.
 
 ## Geometry and units
 
@@ -97,134 +233,49 @@ and an integer detector size. Iterative reconstruction examples are in
 | `cone` | `(src_pos, det_center, det_u, det_v)`, each `(views, 3)` | `(D, H, W)` | `(views, U, V)` |
 
 - Use the helpers in `diffct.geometry` (`circular_*`, `spiral_*`,
-  `sinusoidal_*`, `saddle_*`, `random_*`, `custom_*`), or supply calibrated
+  `sinusoidal_*`, `saddle_*`, `random_*`, `custom_*`), or pass calibrated
   tensors.
 - Direction vectors have unit length. `ray_dir` is orthogonal to `det_u`, and
   `det_u` is orthogonal to `det_v`. Detector pitch is a separate argument.
 - The volume is centred on the origin. Voxel `i` of an axis with `N` voxels has
   its centre at `(i + 0.5 - N / 2) * voxel_spacing`. Voxel spacing is one
   isotropic value.
-- The detector array is centred: pixel `k` of `N_det` pixels lies at
-  `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`, as in `main`.
-- Projections are line integrals in the length unit of the geometry. Fan and
-  cone rays run from the source to the detector pixel.
-- `Projector` rejects views where the source equals the detector centre or the
-  detector is edge-on to the source.
+- The detector array is centred. Pixel `k` of `N_det` pixels lies at
+  `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`, the same
+  convention as `main`.
+- Projections are line integrals in the length unit of the geometry. `Projector`
+  rejects views where the source equals the detector centre, or the detector is
+  edge-on to the source.
 - The kernels work in float32. In fan and cone beams, the source or the
   detector centre must be within 1e6 voxels of the volume centre in each view.
   Ray positions are accurate to about 6e-8 times that nearer distance.
 
-## Gradients
+**Gradient edge cases:**
 
-- `project()` and `backproject()` are differentiable with respect to the volume
-  and the sinogram. Second derivatives, for example Hessian-vector products,
-  work for these inputs.
-- Set `requires_grad=True` on trajectory tensors to get geometry gradients, for
-  example for calibration or trajectory optimization. The projector then keeps
-  references to these tensors and reads their current values at every call.
-  The low-level Function classes also return geometry gradients.
-- The geometry gradient is the exact derivative of the cell-constant model.
-- On an exact voxel edge or corner, the derivative is not defined. The kernels
-  return the derivative of one adjacent side. Central finite differences
-  average both sides, so they can differ. This occurs in symmetric setups. One
-  example: a view whose principal ray is parallel to a volume axis, a source on
-  a voxel face plane, and equal detector pitches along `u` and `v`. For
-  finite-difference checks, rotate the trajectory slightly, for example with
+- On an exact voxel edge or corner, the kernels return the derivative of one
+  adjacent side. Central finite differences average both sides, so they can
+  differ. This occurs in symmetric setups, for example a principal ray parallel
+  to a volume axis, a source on a voxel face plane, and equal detector pitches.
+  For finite-difference checks, rotate the trajectory slightly, for example with
   `start_angle=0.1`.
-- Second derivatives with respect to the geometry raise an error.
-- The geometry checks run only at construction. Keep optimized geometry valid,
-  for example by optimizing angles and offsets instead of raw axis vectors.
+- Geometry checks run only at construction. Optimize angles and offsets, not raw
+  axis vectors, so the geometry stays valid.
 
-## Multiple GPUs and nodes
+## Documentation
 
-`Projector` splits views between GPUs. Each GPU holds the full volume, so more
-GPUs make the operator faster but do not let a larger volume fit.
+| Document | Contents |
+|---|---|
+| [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | Slurm launch commands and the numeric cross-node check |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | Test commands, validation details and the limits of each check |
+| [docs/MIGRATION.md](docs/MIGRATION.md) | Moving from the circular-only API |
+| [docs/video/README.md](docs/video/README.md) | How the intro video is rendered |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
-**One process, several GPUs.** Add `devices=["cuda:0", "cuda:1"]`. Projections
-come back in acquisition order. Backprojections are summed. Results return to
-the device of the input tensor.
-
-**One process per GPU, one or more nodes.** Initialize an NCCL process group and
-add `distributed=True`.
-
-- `project()` returns only the views of the local rank.
-  `operator.view_slice` selects the same views from a full measurement tensor.
-- `backproject()`, the image gradient and the geometry gradient are summed over
-  all ranks.
-- Sum projection-domain losses over ranks. Divide a loss on the replicated
-  backprojection by `operator.world_size`.
-- Do not add a DDP gradient reduction on top of the operator.
-- Every rank must make the same `project`, `backproject` and backward calls,
-  also a rank that has no views. Otherwise the other ranks block.
-
-```bash
-python -m torch.distributed.run --standalone --nproc-per-node=2 \
-    examples/distributed_reconstruction.py
-```
-
-Slurm launch commands and the numeric cross-node check are in
-[docs/DISTRIBUTED.md](docs/DISTRIBUTED.md).
-
-## Analytical FBP and FDK
-
-`diffct.analytical` gives the parts of an FBP or FDK pipeline: `ramp_filter_1d`,
-`fan_cosine_weights`, `cone_cosine_weights`, `parker_weights`,
-`angular_integration_weights`, and the voxel-driven gathers
-`parallel_weighted_backproject`, `fan_weighted_backproject` and
-`cone_weighted_backproject`. They accept the same trajectory tensors. FBP and
-FDK are exact only for the scan types that they assume. For other trajectories,
-use iterative reconstruction with `Projector`. Examples are in
-[`examples/circular_trajectory/`](examples/circular_trajectory/).
-
-## Validation
-
-Run the test suite on a CUDA host:
-
-```bash
-python -m pytest tests/ -q
-pytest tests/benchmarks/ --benchmark-only    # optional performance suite
-```
-
-The tests check the adjoint identity `<Ax, y> = <x, A^T y>`, autograd
-gradients, ray lengths against a float64 CPU reference, geometry gradients
-against a float64 reference model, second derivatives, FBP/FDK accuracy,
-geometry validation, and multi-GPU parity with one GPU.
-
-Measured speed on Leonardo Booster (A100-SXM-64GB, NCCL, one process per GPU):
-helical cone beam, 1024 views, one gradient iteration (projection and image
-gradient), median of 9 runs. Multi-GPU results match one GPU within
-`rtol=5e-4`.
-
-| GPUs | 128³ volume | 256³ volume |
-|---|---:|---:|
-| 1 | 68.1 ms | 526.7 ms |
-| 4, one node | 18.2 ms (3.74×) | 136.7 ms (3.85×) |
-| 8, two nodes | 10.9 ms (6.25×) | 81.0 ms (6.51×) |
-
-Small workloads accelerate less, because transfers and launches take a larger
-share. Measure your own volume, detector and view count with
-`examples/benchmark_projector.py`.
-
-Details, commands and the limits of each check are in
-[docs/VALIDATION.md](docs/VALIDATION.md).
-
-## Repository layout
-
-```text
-diffct/
-  operators.py     Projector: geometry checks, device and process orchestration
-  projectors.py    autograd Function classes for each beam
-  kernels/         Numba CUDA kernels: Siddon projector/backprojector, FBP/FDK gathers
-  geometry.py      trajectory generators
-  analytical.py    ramp filter, weights, FBP/FDK wrappers
-examples/          circular, non-circular and distributed examples
-tests/             pytest suite, distributed check, optional benchmarks
-docs/              Sphinx sources, distributed, validation and migration notes
-```
-
-`diffct.differentiable` is a deprecated alias for the Function classes.
+Run the test suite on a CUDA host with `python -m pytest tests/ -q`.
 
 ## Citation
+
+If you use this library in your research, please cite the software and the technical report:
 
 ```bibtex
 @software{diffct2025,
@@ -234,6 +285,17 @@ docs/              Sphinx sources, distributed, validation and migration notes
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.14999333},
   url       = {https://doi.org/10.5281/zenodo.14999333}
+}
+
+@article{202605.1446,
+  doi       = {10.20944/preprints202605.1446.v1},
+  url       = {https://doi.org/10.20944/preprints202605.1446.v1},
+  year      = 2026,
+  month     = {May},
+  publisher = {Preprints},
+  author    = {Yipeng Sun and Linda-Sophie Schneider and Chengze ye and Andreas Maier},
+  title     = {diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories},
+  journal   = {Preprints}
 }
 ```
 

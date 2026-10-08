@@ -1,7 +1,7 @@
 Fan Beam Iterative Reconstruction
 =================================
 
-This example demonstrates 2D fan beam iterative reconstruction using the differentiable `FanProjectorFunction` and `FanBackprojectorFunction` from `diffct`.
+This example demonstrates 2D fan beam iterative reconstruction using the differentiable `FanProjectorFunction` and `FanBackprojectorFunction` from `diffct`. The maintained iterative example is ``examples/iterative_reconstruction.py``, which reconstructs a 3D cone beam scan on any trajectory with CGLS, SIRT and TV; the 2D derivation on this page still applies to the 2D ``Projector`` beams.
 
 Overview
 --------
@@ -84,7 +84,7 @@ Fan beam reconstruction typically exhibits:
 - **Parameter Tuning**: Learning rate may need adjustment for optimal convergence
 - **Memory Usage**: Similar to parallel beam but with additional geometric computations
 
-.. literalinclude:: ../../examples/circular_trajectory/iterative_reco_fan.py
+.. literalinclude:: ../../examples/iterative_reconstruction.py
    :language: python
    :linenos:
-   :caption: 2D Fan Beam Iterative Example
+   :caption: Iterative Reconstruction Example (3D cone beam, any trajectory)

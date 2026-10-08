@@ -63,7 +63,7 @@ The phantom consists of 5 ellipses representing brain tissue structures:
 
 Each ellipse is defined by center position, semi-axes, rotation angle, and attenuation coefficient.
 
-.. literalinclude:: ../../examples/circular_trajectory/fbp_parallel.py
+.. literalinclude:: ../../examples/analytical_reconstruction.py
    :language: python
    :linenos:
-   :caption: 2D Parallel Beam FBP Example
+   :caption: Analytical Reconstruction Example (parallel, fan and cone beam)

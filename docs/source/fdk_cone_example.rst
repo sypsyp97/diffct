@@ -93,7 +93,7 @@ The FDK algorithm makes several approximations:
 
 These approximations introduce cone beam artifacts for large cone angles, but FDK remains widely used due to computational efficiency.
 
-.. literalinclude:: ../../examples/circular_trajectory/fdk_cone.py
+.. literalinclude:: ../../examples/analytical_reconstruction.py
    :language: python
    :linenos:
-   :caption: 3D Cone Beam FDK Example
+   :caption: Analytical Reconstruction Example (parallel, fan and cone beam)

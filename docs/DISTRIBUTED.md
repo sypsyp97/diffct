@@ -50,11 +50,11 @@ including ranks with zero views. An optional `process_group` restricts the
 operator to that initialized group. The caller owns group initialization and
 cleanup; the library does not silently open network connections.
 
-Run the included small iterative reconstruction:
+Run the included iterative reconstruction on one node:
 
 ```bash
 python -m torch.distributed.run --standalone --nproc-per-node=2 \
-    examples/distributed_reconstruction.py
+    examples/iterative_reconstruction.py
 ```
 
 ## Multiple nodes under Slurm
@@ -69,8 +69,18 @@ srun --nodes=2 --ntasks=2 --ntasks-per-node=1 --gpus-per-task=1 \
   python -m torch.distributed.run --nnodes=2 --nproc-per-node=1 \
   --rdzv-backend=c10d --rdzv-id="$SLURM_JOB_ID" \
   --rdzv-endpoint="$MASTER_ADDR:$MASTER_PORT" \
-  examples/distributed_reconstruction.py
+  examples/iterative_reconstruction.py
 ```
+
+For several nodes, submit the repository template instead. It runs the same
+launch for every node in the allocation:
+
+```bash
+sbatch examples/slurm/multi_node.sbatch examples/iterative_reconstruction.py --size 128
+```
+
+Set the account, partition and GPU request in `examples/slurm/multi_node.sbatch`
+for your cluster, and set `GPUS_PER_NODE` to the number of GPUs on each node.
 
 Alex requires explicit multi-node authorization and a matching `a100multi` or
 `a40multi` QoS. Its multi-node allocations reserve all eight GPUs on each node;
