@@ -18,9 +18,10 @@ remain available.
 - Volume axes are `(height, width)` or `(depth, height, width)`. Cone projections
   are `(views, detector_u, detector_v)`, matching `dev`'s existing kernels.
   Cone detector shapes and pitches follow `(u, v)` in that order.
-- The `dev` detector coordinate convention is `(index - size / 2) * pitch`.
-  Circular-only `main` used `(index - (size - 1) / 2) * pitch`. Check detector
-  calibration when migrating; these conventions differ by half a detector bin.
+- Detector cell `index` lies at `(index - (size - 1) / 2) * pitch` from the
+  detector centre, the same convention as circular-only `main`. Earlier `dev`
+  versions used `(index - size / 2) * pitch`; geometry calibrated for them is
+  half a detector bin off.
 - Voxel `index` along an axis of size `N` has its centre at
   `(index + 0.5 - N / 2) * voxel_spacing`; the volume is centred on the
   origin. The projector, the backprojector and the FBP/FDK helpers use this

@@ -27,6 +27,7 @@ GPUs or several nodes.
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Geometry and units](#geometry-and-units)
+- [Gradients](#gradients)
 - [Multiple GPUs and nodes](#multiple-gpus-and-nodes)
 - [Analytical FBP and FDK](#analytical-fbp-and-fdk)
 - [Validation](#validation)
@@ -103,9 +104,8 @@ and an integer detector size. Iterative reconstruction examples are in
 - The volume is centred on the origin. Voxel `i` of an axis with `N` voxels has
   its centre at `(i + 0.5 - N / 2) * voxel_spacing`. Voxel spacing is one
   isotropic value.
-- Detector pixel `k` lies at `(k - N_det / 2) * pitch` from `det_center` along
-  `det_u`. `main` used `(k - (N_det - 1) / 2) * pitch`; see the
-  [migration notes](docs/MIGRATION.md).
+- The detector array is centred: pixel `k` of `N_det` pixels lies at
+  `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`, as in `main`.
 - Projections are line integrals in the length unit of the geometry. Fan and
   cone rays run from the source to the detector pixel.
 - `Projector` rejects views where the source equals the detector centre or the
@@ -113,8 +113,21 @@ and an integer detector size. Iterative reconstruction examples are in
 - The kernels work in float32. In fan and cone beams, the source or the
   detector centre must be within 1e6 voxels of the volume centre in each view.
   Ray positions are accurate to about 6e-8 times that nearer distance.
-- Gradients flow to volumes and sinograms. The geometry is fixed and has no
-  gradient.
+
+## Gradients
+
+- `project()` and `backproject()` are differentiable with respect to the volume
+  and the sinogram. Second derivatives, for example Hessian-vector products,
+  work for these inputs.
+- Set `requires_grad=True` on trajectory tensors to get geometry gradients, for
+  example for calibration or trajectory optimization. The projector then keeps
+  references to these tensors and reads their current values at every call.
+  The low-level Function classes also return geometry gradients.
+- The geometry gradient is the exact derivative of the cell-constant model. It
+  is not defined where a ray passes exactly through a voxel edge or corner.
+- Second derivatives with respect to the geometry raise an error.
+- The geometry checks run only at construction. Keep optimized geometry valid,
+  for example by optimizing angles and offsets instead of raw axis vectors.
 
 ## Multiple GPUs and nodes
 
@@ -130,7 +143,8 @@ add `distributed=True`.
 
 - `project()` returns only the views of the local rank.
   `operator.view_slice` selects the same views from a full measurement tensor.
-- `backproject()` and the image gradient are summed over all ranks.
+- `backproject()`, the image gradient and the geometry gradient are summed over
+  all ranks.
 - Sum projection-domain losses over ranks. Divide a loss on the replicated
   backprojection by `operator.world_size`.
 - Do not add a DDP gradient reduction on top of the operator.
@@ -166,7 +180,8 @@ pytest tests/benchmarks/ --benchmark-only    # optional performance suite
 ```
 
 The tests check the adjoint identity `<Ax, y> = <x, A^T y>`, autograd
-gradients, ray lengths against a float64 CPU reference, FBP/FDK accuracy,
+gradients, ray lengths against a float64 CPU reference, geometry gradients
+against a float64 reference model, second derivatives, FBP/FDK accuracy,
 geometry validation, and multi-GPU parity with one GPU.
 
 Measured speed on Leonardo Booster (A100-SXM-64GB, NCCL, one process per GPU):
@@ -176,9 +191,9 @@ gradient), median of 9 runs. Multi-GPU results match one GPU within
 
 | GPUs | 128³ volume | 256³ volume |
 |---|---:|---:|
-| 1 | 68.0 ms | 526.0 ms |
+| 1 | 68.1 ms | 526.7 ms |
 | 4, one node | 18.2 ms (3.74×) | 136.7 ms (3.85×) |
-| 8, two nodes | 10.9 ms (6.23×) | 80.9 ms (6.50×) |
+| 8, two nodes | 10.9 ms (6.25×) | 81.0 ms (6.51×) |
 
 Small workloads accelerate less, because transfers and launches take a larger
 share. Measure your own volume, detector and view count with

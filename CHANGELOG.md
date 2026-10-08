@@ -9,8 +9,24 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Geometry gradients. Trajectory tensors may require gradients; ``Projector``
+  and the low-level Function classes return gradients for source, detector
+  centre and detector axes (parallel: ray direction, detector origin and
+  axis). CUDA kernels compute the exact derivative of the cell-constant
+  Siddon model from the face crossings of each ray. Distributed mode sums
+  the gradients over ranks.
+- Second derivatives for volumes and sinograms: backward passes are autograd
+  Functions themselves. Second derivatives with respect to the geometry
+  raise ``RuntimeError``.
+
 ### Changed
 
+- Detector arrays are centred: cell ``k`` lies at
+  ``(k - (N - 1) / 2) * pitch`` from ``det_center`` (or ``det_origin``), as in
+  ``main``. Earlier dev versions used ``(k - N / 2) * pitch``. The projector,
+  the FBP/FDK gathers and ``detector_coordinates_1d`` all changed.
 - Siddon projections are line integrals in physical length. Earlier
   versions returned voxel-length integrals, which differ by the factor
   ``voxel_spacing``. Backprojection scales the same way, so the pair stays
