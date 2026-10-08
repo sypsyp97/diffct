@@ -12,7 +12,8 @@ from numba import cuda
 from ..constants import (
     _FASTMATH_DECORATOR,
     _FDK_ACCURACY_DECORATOR,
-    _INF,
+    _BIG,
+    _TINY,
     _ZERO,
     _ONE,
     _HALF,
@@ -78,18 +79,18 @@ def _fan_2d_forward_kernel(
 
     # === 2D FAN BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Read source position from position matrix (in physical units)
-    src_x = np.float64(d_src_pos[iang, 0]) / voxel_spacing
-    src_y = np.float64(d_src_pos[iang, 1]) / voxel_spacing
+    src_x = d_src_pos[iang, 0] / voxel_spacing
+    src_y = d_src_pos[iang, 1] / voxel_spacing
 
     # Read detector center and orientation vector
-    det_cx = np.float64(d_det_center[iang, 0]) / voxel_spacing
-    det_cy = np.float64(d_det_center[iang, 1]) / voxel_spacing
+    det_cx = d_det_center[iang, 0] / voxel_spacing
+    det_cy = d_det_center[iang, 1] / voxel_spacing
 
-    u_vec_x = np.float64(d_det_u_vec[iang, 0])
-    u_vec_y = np.float64(d_det_u_vec[iang, 1])
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from center
-    u_offset = (np.float64(idet) - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Calculate 2D detector element position using center + u*u_vec
     det_x = det_cx + u_offset * u_vec_x
@@ -107,33 +108,39 @@ def _fan_2d_forward_kernel(
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
-    # Compute intersection with volume boundaries using source position as ray origin
-    # Integrate only the source-to-detector segment, not the whole line.
-    t_min, t_max = 0.0, length
-    if dir_x != 0.0:
-        tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x  # Volume boundary intersections
+    # Measure the ray parameter from the endpoint nearer the volume centre, so a
+    # distant source does not make the float32 parameters coarse. Only the
+    # source-to-detector segment is integrated.
+    if src_x * src_x + src_y * src_y <= det_x * det_x + det_y * det_y:
+        org_x = src_x
+        org_y = src_y
+        t_min, t_max = _ZERO, length
+    else:
+        org_x = det_x
+        org_y = det_y
+        t_min, t_max = -length, _ZERO
+    if abs(dir_x) > _TINY:
+        tx1, tx2 = (-cx - org_x) / dir_x, (cx - org_x) / dir_x  # Volume boundary intersections
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
-    elif src_x < -cx or src_x > cx:  # Source outside volume bounds
+    elif org_x < -cx or org_x > cx:  # Ray origin outside volume bounds
         d_sino[iang, idet] = _ZERO; return
 
-    if dir_y != 0.0:
-        ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
+    if abs(dir_y) > _TINY:
+        ty1, ty2 = (-cy - org_y) / dir_y, (cy - org_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
-    elif src_y < -cy or src_y > cy:
+    elif org_y < -cy or org_y > cy:
         d_sino[iang, idet] = _ZERO; return
 
     if t_min >= t_max:  # No valid intersection
         d_sino[iang, idet] = _ZERO; return
 
-    # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse, and only an exactly zero direction component
-    # is treated as axis-parallel there. The float32 traversal restarts at the
-    # entry point, so its parameters stay within the volume diameter.
-    ent_x = np.float32(src_x + t_min * dir_x)
-    ent_y = np.float32(src_y + t_min * dir_y)
-    ray_x = np.float32(dir_x)
-    ray_y = np.float32(dir_y)
-    t_end = np.float32(t_max - t_min)
+    # The traversal restarts at the entry point, so its parameters stay
+    # within the volume diameter.
+    ent_x = org_x + t_min * dir_x
+    ent_y = org_y + t_min * dir_y
+    ray_x = dir_x
+    ray_y = dir_y
+    t_end = t_max - t_min
 
     # === SIDDON METHOD TRAVERSAL (same algorithm as parallel beam) ===
     accum = _ZERO  # Accumulated projection value
@@ -145,14 +152,14 @@ def _fan_2d_forward_kernel(
 
     # Traversal parameters (identical to parallel beam implementation)
     step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)
-    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF
-    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _TINY else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _TINY else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _TINY else _BIG
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _TINY else _BIG
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
-    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _TINY else _BIG
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _TINY else _BIG
 
     # Main traversal loop with cell-constant Siddon integration.
     while t < t_end:
@@ -172,7 +179,8 @@ def _fan_2d_forward_kernel(
             iy += step_y
             ty += dt_y
     
-    d_sino[iang, idet] = accum
+    # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
+    d_sino[iang, idet] = accum * voxel_spacing
 
 @_FASTMATH_DECORATOR
 
@@ -233,21 +241,22 @@ def _fan_2d_backward_kernel(
         return
 
     # === 2D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
-    val = d_sino[iang, idet]  # Sinogram value to backproject along this ray
+    # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
+    val = d_sino[iang, idet] * voxel_spacing
 
     # Read source position from position matrix (in physical units)
-    src_x = np.float64(d_src_pos[iang, 0]) / voxel_spacing
-    src_y = np.float64(d_src_pos[iang, 1]) / voxel_spacing
+    src_x = d_src_pos[iang, 0] / voxel_spacing
+    src_y = d_src_pos[iang, 1] / voxel_spacing
 
     # Read detector center and orientation vector
-    det_cx = np.float64(d_det_center[iang, 0]) / voxel_spacing
-    det_cy = np.float64(d_det_center[iang, 1]) / voxel_spacing
+    det_cx = d_det_center[iang, 0] / voxel_spacing
+    det_cy = d_det_center[iang, 1] / voxel_spacing
 
-    u_vec_x = np.float64(d_det_u_vec[iang, 0])
-    u_vec_y = np.float64(d_det_u_vec[iang, 1])
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from center
-    u_offset = (np.float64(idet) - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Calculate 2D detector element position using center + u*u_vec
     det_x = det_cx + u_offset * u_vec_x
@@ -262,30 +271,36 @@ def _fan_2d_backward_kernel(
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len  # Normalized ray direction vector
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
-    # Compute intersection with volume boundaries using source position as ray origin
-    # Integrate only the source-to-detector segment, not the whole line.
-    t_min, t_max = 0.0, length
-    if dir_x != 0.0:
-        tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
+    # Measure the ray parameter from the endpoint nearer the volume centre, so a
+    # distant source does not make the float32 parameters coarse. Only the
+    # source-to-detector segment is integrated.
+    if src_x * src_x + src_y * src_y <= det_x * det_x + det_y * det_y:
+        org_x = src_x
+        org_y = src_y
+        t_min, t_max = _ZERO, length
+    else:
+        org_x = det_x
+        org_y = det_y
+        t_min, t_max = -length, _ZERO
+    if abs(dir_x) > _TINY:
+        tx1, tx2 = (-cx - org_x) / dir_x, (cx - org_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
-    elif src_x < -cx or src_x > cx: return
+    elif org_x < -cx or org_x > cx: return
 
-    if dir_y != 0.0:
-        ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
+    if abs(dir_y) > _TINY:
+        ty1, ty2 = (-cy - org_y) / dir_y, (cy - org_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
-    elif src_y < -cy or src_y > cy: return
+    elif org_y < -cy or org_y > cy: return
 
     if t_min >= t_max: return
 
-    # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse, and only an exactly zero direction component
-    # is treated as axis-parallel there. The float32 traversal restarts at the
-    # entry point, so its parameters stay within the volume diameter.
-    ent_x = np.float32(src_x + t_min * dir_x)
-    ent_y = np.float32(src_y + t_min * dir_y)
-    ray_x = np.float32(dir_x)
-    ray_y = np.float32(dir_y)
-    t_end = np.float32(t_max - t_min)
+    # The traversal restarts at the entry point, so its parameters stay
+    # within the volume diameter.
+    ent_x = org_x + t_min * dir_x
+    ent_y = org_y + t_min * dir_y
+    ray_x = dir_x
+    ray_y = dir_y
+    t_end = t_max - t_min
 
     # === SIDDON METHOD TRAVERSAL INITIALIZATION ===
     t = _ZERO
@@ -293,14 +308,14 @@ def _fan_2d_backward_kernel(
     iy = int(math.floor(ent_y + t * ray_y + cy))
 
     step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)
-    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF
-    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _TINY else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _TINY else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _TINY else _BIG
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _TINY else _BIG
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
-    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _TINY else _BIG
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _TINY else _BIG
 
     # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Adjoint of the cell-constant Siddon forward projection.
@@ -351,8 +366,9 @@ def _fan_2d_fbp_backproject_kernel(
     if ix >= Nx or iy >= Ny:
         return
 
-    x_v = np.float32(ix) - cx
-    y_v = np.float32(iy) - cy
+    # Sample at voxel centres, matching the cell-constant Siddon projector.
+    x_v = np.float32(ix) + _HALF - cx
+    y_v = np.float32(iy) + _HALF - cy
 
     det_spacing_v = det_spacing / voxel_spacing
     half_u = np.float32(n_det) * _HALF

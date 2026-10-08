@@ -48,8 +48,9 @@ def shepp_logan_2d(Nx, Ny):
     cx = Nx * 0.5
     cy = Ny * 0.5
     ys, xs = np.mgrid[0:Ny, 0:Nx].astype(np.float32)
-    xn = (xs - cx) / (Nx / 2)
-    yn = (ys - cy) / (Ny / 2)
+    # Sample at voxel centres, the convention of the projector and FBP kernels.
+    xn = (xs + 0.5 - cx) / (Nx / 2)
+    yn = (ys + 0.5 - cy) / (Ny / 2)
     for (x0, y0, a, b, angdeg, ampl) in ellipses:
         th = math.radians(angdeg)
         xp = (xn - x0) * math.cos(th) + (yn - y0) * math.sin(th)

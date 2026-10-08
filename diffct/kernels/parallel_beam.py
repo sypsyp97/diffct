@@ -13,8 +13,8 @@ from numba import cuda
 from ..constants import (
     _FASTMATH_DECORATOR,
     _FDK_ACCURACY_DECORATOR,
-    _INF,
-    _NEG_INF,
+    _BIG,
+    _TINY,
     _ZERO,
     _ONE,
     _HALF,
@@ -100,7 +100,7 @@ def _parallel_2d_forward_kernel(
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
     # Volume extends from [-cx, cx] x [-cy, cy] in voxel coordinate system
     # Mathematical basis: For ray r(t) = origin + t*direction, solve r(t) = boundary for parameter t
-    t_min, t_max = _NEG_INF, _INF  # Initialize ray parameter range to unbounded
+    t_min, t_max = -_BIG, _BIG  # Initialize ray parameter range to unbounded
     
     # X-direction boundary intersections
     # Handle non-parallel rays: compute intersection parameters with left (-cx) and right (+cx) boundaries
@@ -149,16 +149,16 @@ def _parallel_2d_forward_kernel(
     # Determine traversal direction and step sizes for each axis
     step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)  # Voxel stepping direction
     # Hoist inverse directions to reduce divisions and branches
-    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF
-    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _TINY else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _TINY else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _TINY else _BIG
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _TINY else _BIG
 
     # Calculate parameter values for next voxel boundary crossings using inv_dir_*
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
-    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _TINY else _BIG
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _TINY else _BIG
 
     # === MAIN RAY TRAVERSAL LOOP ===
     # Step through voxels along ray path, accumulating cell-constant contributions.
@@ -181,7 +181,8 @@ def _parallel_2d_forward_kernel(
             iy += step_y  # Move to next voxel in y-direction
             ty += dt_y    # Update next y-boundary crossing parameter
     
-    d_sino[iang, idet] = accum
+    # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
+    d_sino[iang, idet] = accum * voxel_spacing
 
 
 # ============================================================================
@@ -241,7 +242,8 @@ def _parallel_2d_backward_kernel(
         return
 
     # === 2D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
-    val = d_sino[iang, idet]  # Sinogram value to backproject
+    # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
+    val = d_sino[iang, idet] * voxel_spacing
 
     # Read ray direction (parallel for all rays in this view)
     dir_x = np.float64(d_ray_dir[iang, 0])
@@ -262,7 +264,7 @@ def _parallel_2d_backward_kernel(
     pnt_y = det_oy + u_offset * u_vec_y
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
-    t_min, t_max = _NEG_INF, _INF
+    t_min, t_max = -_BIG, _BIG
     if dir_x != 0.0:
         tx1, tx2 = (-cx - pnt_x) / dir_x, (cx - pnt_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
@@ -291,14 +293,14 @@ def _parallel_2d_backward_kernel(
     iy = int(math.floor(ent_y + t * ray_y + cy))
 
     step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)
-    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF
-    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _TINY else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _TINY else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _TINY else _BIG
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _TINY else _BIG
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
-    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _TINY else _BIG
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _TINY else _BIG
 
     # === BACKPROJECTION TRAVERSAL LOOP ===
     # Adjoint of the cell-constant Siddon forward projection.
@@ -351,8 +353,9 @@ def _parallel_2d_fbp_backproject_kernel(
     if ix >= Nx or iy >= Ny:
         return
 
-    x_v = np.float32(ix) - cx
-    y_v = np.float32(iy) - cy
+    # Sample at voxel centres, matching the cell-constant Siddon projector.
+    x_v = np.float32(ix) + _HALF - cx
+    y_v = np.float32(iy) + _HALF - cy
 
     det_spacing_v = det_spacing / voxel_spacing
     half_u = np.float32(n_det) * _HALF

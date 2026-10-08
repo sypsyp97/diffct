@@ -91,6 +91,22 @@ def _validate_trajectory(trajectory, beam):
         dots = torch.sum(first * second.to(first.device), dim=1)
         if torch.any(torch.abs(dots) > 1e-4).item():
             raise ValueError("trajectory direction axes must be orthogonal")
+    if beam in ("fan", "cone"):
+        # float64 avoids overflow of half-precision input and dtype mismatches in cross().
+        source = geometry[0].double()
+        principal = geometry[1].to(source.device, torch.float64) - source
+        lengths = torch.linalg.vector_norm(principal, dim=1)
+        if torch.any(lengths == 0).item():
+            raise ValueError("source and detector center must differ in every view")
+        principal = principal / lengths[:, None]
+        det_u = geometry[2].to(source.device, torch.float64)
+        if beam == "fan":
+            facing = principal[:, 0] * det_u[:, 1] - principal[:, 1] * det_u[:, 0]
+        else:
+            normal = torch.linalg.cross(det_u, geometry[3].to(source.device, torch.float64), dim=1)
+            facing = torch.sum(principal * normal, dim=1)
+        if torch.any(torch.abs(facing) < 1e-4).item():
+            raise ValueError("the detector must not be edge-on to the source in any view")
 
     return tuple(geometry), n_views
 
@@ -191,6 +207,23 @@ class Projector:
         self.detector_spacing = _detector_spacing(detector_spacing, beam)
         self.voxel_spacing = _positive_float(voxel_spacing, "voxel_spacing")
         self._trajectory, n_views = _validate_trajectory(trajectory, beam)
+        if beam in ("fan", "cone"):
+            # The kernels set up each ray in float32 from the endpoint nearer the
+            # volume centre, which is the origin.
+            distances = torch.stack([
+                torch.linalg.vector_norm(component.double(), dim=1).cpu()
+                for component in self._trajectory[:2]
+            ]) / self.voxel_spacing
+            if torch.any(distances.min(dim=0).values > 1e6).item():
+                raise ValueError(
+                    "the source or the detector center must lie within 1e6 voxels "
+                    "of the volume center in every view"
+                )
+            if torch.any(distances > 1e15).item():
+                raise ValueError(
+                    "the source and the detector center must lie within 1e15 voxels "
+                    "of the volume center"
+                )
         self._geometry_cache = {}
         self._devices = _normalize_devices(devices)
         if not isinstance(distributed, bool):

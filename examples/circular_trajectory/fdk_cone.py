@@ -44,9 +44,10 @@ def shepp_logan_3d(shape):
     """Build a 3D Shepp-Logan phantom clipped to ``[0, 1]``."""
     Nz, Ny, Nx = shape
     zz, yy, xx = np.mgrid[:Nz, :Ny, :Nx].astype(np.float32)
-    xx = (xx - Nx * 0.5) / (Nx * 0.5)
-    yy = (yy - Ny * 0.5) / (Ny * 0.5)
-    zz = (zz - Nz * 0.5) / (Nz * 0.5)
+    # Sample at voxel centres, the convention of the projector and FDK kernels.
+    xx = (xx + 0.5 - Nx * 0.5) / (Nx * 0.5)
+    yy = (yy + 0.5 - Ny * 0.5) / (Ny * 0.5)
+    zz = (zz + 0.5 - Nz * 0.5) / (Nz * 0.5)
 
     el_params = np.array(
         [
@@ -103,9 +104,8 @@ def main():
 
     # ``voxel_spacing`` is the physical size of one voxel in the same
     # length unit used by ``du``, ``dv``, ``sdd`` and ``sid`` below.
-    # All geometry math inside the CUDA kernels is done in voxel units,
-    # and physical spacings are divided by ``voxel_spacing`` internally,
-    # so only the *ratios* matter.
+    # Projections are line integrals in that length unit, so scaling
+    # every length by the same factor scales the sinogram too.
     voxel_spacing = 1.0
 
     # ------------------------------------------------------------------

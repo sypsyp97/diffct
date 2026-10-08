@@ -21,6 +21,12 @@ _INF = _DTYPE(np.inf)
 _NEG_INF = _DTYPE(-np.inf)
 """Negative floating-point infinity in default data type."""
 
+_BIG = _DTYPE(1e30)
+"""Finite stand-in for infinity in fastmath kernels, where LLVM may assume no inf occurs."""
+
+_TINY = _DTYPE(1e-20)
+"""Smallest ray direction component that the Siddon kernels divide by; ray parameters then stay below _BIG."""
+
 _ZERO = _DTYPE(0.0)
 """Floating-point zero in default data type."""
 

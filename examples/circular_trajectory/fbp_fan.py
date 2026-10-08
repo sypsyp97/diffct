@@ -52,11 +52,12 @@ def shepp_logan_2d(Nx, Ny):
         (-0.22,  0.0,    0.16,   0.41,   18.0, -0.8),
         (0.0,    0.35,   0.21,   0.25,    0.0,  0.7),
     ]
-    cx = Nx * 0.5  # kernel convention
+    cx = Nx * 0.5
     cy = Ny * 0.5
     ys, xs = np.mgrid[0:Ny, 0:Nx].astype(np.float32)
-    xn = (xs - cx) / (Nx / 2)
-    yn = (ys - cy) / (Ny / 2)
+    # Sample at voxel centres, the convention of the projector and FBP kernels.
+    xn = (xs + 0.5 - cx) / (Nx / 2)
+    yn = (ys + 0.5 - cy) / (Ny / 2)
     for (x0, y0, a, b, angdeg, ampl) in ellipses:
         th = math.radians(angdeg)
         xp = (xn - x0) * math.cos(th) + (yn - y0) * math.sin(th)
@@ -78,8 +79,8 @@ def main():
 
     # ``voxel_spacing`` is the physical size of one pixel in the same
     # length unit used by ``detector_spacing``, ``sdd`` and ``sid``
-    # below. Internally all physical quantities are divided by
-    # ``voxel_spacing``, so only their *ratios* matter.
+    # below. Projections are line integrals in that length unit, so
+    # scaling every length by the same factor scales the sinogram too.
     voxel_spacing = 1.0
 
     # ------------------------------------------------------------------
