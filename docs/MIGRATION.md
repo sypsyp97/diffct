@@ -21,6 +21,12 @@ remain available.
 - The `dev` detector coordinate convention is `(index - size / 2) * pitch`.
   Circular-only `main` used `(index - (size - 1) / 2) * pitch`. Check detector
   calibration when migrating; these conventions differ by half a detector bin.
+- Voxel `index` along an axis of size `N` has its centre at
+  `(index + 0.5 - N / 2) * voxel_spacing`; the volume is centred on the
+  origin. The projector, the backprojector and the FBP/FDK helpers use this
+  convention.
+- Projections are line integrals in the length unit of the geometry. Scale
+  measured `-log(I / I0)` data and the attenuation image in the same unit.
 - The `main` separable-footprint backends (`sf`, `sf_tr`, `sf_tt`) are not
   implemented for arbitrary trajectories in this candidate. The matched
   cell-constant Siddon projector is used. Code depending on SF needs a separate

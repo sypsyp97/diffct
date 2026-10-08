@@ -79,8 +79,10 @@ use `--gres=gpu:a100:8 --qos=a100multi` when allocating, and
 and tinygpu partitions have `MaxNodes=1`. Alex's FAU allocation does not permit
 multi-node jobs; a separate NHR project is required. See the
 [official Alex multi-node instructions](https://doc.nhr.fau.de/clusters/alex/#multi-node-job-available-on-demand-for-nhr-projects).
-Actual cross-node GPU validation remains pending on a cluster with the required
-allocation permission.
+
+Cross-node runs are validated on Leonardo Booster with two nodes and four
+A100 GPUs per node: one torchrun launcher per node, `--nproc-per-node=4`, and
+the c10d rendezvous shown above. See [VALIDATION.md](VALIDATION.md).
 
 Use the Python environment and GPU resource flags appropriate to the allocation.
 Launch all ranks within one cluster allocation. Running between two
@@ -153,6 +155,6 @@ Use `--sizes`, `--views`, and `--repeats` for your actual workload. Tiny problem
 can be dominated by transfer and launch overhead, so test the acquisition size
 you intend to run rather than assuming a fixed speedup from GPU count.
 
-See [measured results](VALIDATION.md): two A100s in NCCL mode accelerated both
-tested sizes; the single-process `devices` mode accelerated 128 cubed but was
-slower for 64 cubed. The default benchmark preserves that failure.
+See [measured results](VALIDATION.md). On two A100s the single-process
+`devices` mode was slower than one GPU for 64 cubed; the NCCL mode accelerated
+every tested size. The default benchmark keeps that failure visible.

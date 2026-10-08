@@ -1,11 +1,15 @@
 # diffct：任意轨迹的可微 CT 算子
 
-此候选基于 `dev`，分支为 `codex/arbitrary-trajectory-multigpu`。
-GitHub 默认分支和 PyPI 发布版本
-尚未修改。投影和匹配反投影默认使用逐视角几何，可用于圆轨迹、螺旋轨迹
-以及用户提供的标定轨迹。
+diffct 提供平行束、扇束和锥束的 CUDA 正投影与匹配反投影。每个视角有自己的
+源位置、探测器位置和探测器轴，因此圆轨迹、螺旋轨迹和标定轨迹走同一套代码。
+算子是 PyTorch autograd 函数，可在单卡、多卡和多节点上运行。
 
-## 简单 API
+> 本文对应候选分支 `codex/arbitrary-trajectory-multigpu`。GitHub 默认分支和
+> PyPI 版本还没有 `Projector` 接口。从旧 `main` 迁移前请读
+> [迁移说明](docs/MIGRATION.md)。安装步骤和 CUDA 版本说明见
+> [英文 README](README.md#installation)。
+
+## 快速上手
 
 ```python
 import torch
@@ -17,71 +21,65 @@ trajectory = spiral_trajectory_3d(
 operator = Projector(trajectory, volume_shape=(32, 32, 32),
                      detector_shape=(48, 40), detector_spacing=(1.0, 1.0))
 volume = torch.ones(operator.volume_shape, device="cuda", requires_grad=True)
-sinogram = operator.project(volume)
-adjoint = operator.backproject(sinogram)
+sinogram = operator.project(volume)        # (views, u, v)
+adjoint = operator.backproject(sinogram)   # 匹配伴随，不是 FDK 重建
 sinogram.square().sum().backward()
 ```
 
-几何设置一次即可重复使用。二维扇束使用 `beam="fan"`，平行束使用
-`beam="parallel"`；图像形状为 `(height, width)`，探测器大小为整数。
-三维体数据形状为 `(depth, height, width)`，投影为 `(views, u, v)`，
-探测器大小和间距均按 `(u, v)` 排列。体素间距目前是各向同性标量。
+二维用 `beam="fan"` 或 `beam="parallel"`，图像形状 `(height, width)`，探测器
+大小为整数。
 
-可直接传入几何辅助函数返回的 tuple，也可提供自己的源位置、探测器中心
-和单位轴向量。几何固定，图像与投影数据支持 autograd；几何参数梯度不在
-此接口的支持范围内。
+## 几何与单位
 
-`backproject()` 是匹配伴随算子，用于迭代重建，并不直接生成 FDK 重建。
-任意轨迹可以进行投影和迭代重建，解析 FBP/FDK 仍需满足相应扫描条件。
+- 轨迹是逐视角张量：平行束 `(ray_dir, det_origin, det_u)`，扇束
+  `(src_pos, det_center, det_u)`，锥束 `(src_pos, det_center, det_u, det_v)`。
+  可用 `diffct.geometry` 的辅助函数生成，也可传入标定结果。
+- 方向向量为单位向量。平行束 `ray_dir` 与 `det_u` 正交，锥束 `det_u` 与
+  `det_v` 正交。
+- 体数据以原点为中心。长度为 `N` 的轴上，第 `i` 个体素中心在
+  `(i + 0.5 - N / 2) * voxel_spacing`。体素间距为各向同性标量。
+- 探测器第 `k` 个像素位于 `det_center + (k - N_det / 2) * pitch * det_u`。
+- 投影值是几何长度单位下的线积分。扇束和锥束只积分源点到探测器像素这一段。
+- 源点与探测器中心重合、或探测器侧对源点的视角会被拒绝。
+- 内核用 float32 计算。扇束和锥束的每个视角里，源点或探测器中心至少有一个须在
+  体中心 1e6 个体素以内；射线位置精度约为该较近距离的 6e-8 倍。
+- 梯度传到体数据和投影数据；几何参数不求梯度。
 
-## 多 GPU 与跨节点
+## 多卡与跨节点
 
-单进程多 GPU 增加 `devices=["cuda:0", "cuda:1"]` 即可。算子按视角
-分工，正投影保持视角顺序，反投影累加各卡结果，输出回到输入设备。
-每张卡保留完整体数据，不能借此装入单卡无法容纳的体数据。
+算子按视角分工，每张卡保存完整体数据。多卡能加速，但不能放下单卡放不下的
+体数据。
 
-跨进程、跨节点使用 PyTorch 的 NCCL 进程组和 `distributed=True`。
-各 rank 返回自己的投影视角，`operator.view_slice` 用于切分实测数据。
-反投影和图像梯度跨 rank 求和。所有 rank 必须调用相同的通信和反向传播
-序列，即使本 rank 没有视角。
+- 单进程多卡：加 `devices=["cuda:0", "cuda:1"]`。
+- 每卡一个进程（可跨节点）：初始化 NCCL 进程组，加 `distributed=True`。
+  `project()` 只返回本 rank 的视角，`operator.view_slice` 用来切实测数据；
+  `backproject()` 和图像梯度跨 rank 求和。
+- 投影域损失按 rank 求和；对各 rank 都有的完整反投影计算损失时，除以
+  `operator.world_size`。不要再叠加 DDP 梯度归约。
+- 所有 rank 必须做相同的 `project`、`backproject` 和反向调用，没有视角的 rank
+  也一样，否则其他 rank 会阻塞。
 
-投影域的局部损失使用求和；对每个 rank 都有的完整反投影结果计算损失时，
-损失除以 `operator.world_size`。不要叠加 DDP 的图像梯度归约。
+Slurm 启动方式和跨节点数值检查见 [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md)。
 
-```bash
-python -m torch.distributed.run --standalone --nproc-per-node=2 \
-    examples/distributed_reconstruction.py
-```
-
-详见 [跨节点运行说明](docs/DISTRIBUTED.md)。支持在 Alex 或 tinygpu 的
-同一个 Slurm allocation 内跨节点运行；两个独立集群间通信还需要独立的
-网络配置和验证。
-
-结果与加速验证使用 `examples/benchmark_projector.py`：先用 CPU 解析参考
-核对单卡射线积分，再比较多卡投影、反投影和图像梯度。它会实测包含传输、
-合并和通信的完整梯度迭代时间，报告加速比；默认比较 64³ 和 128³ 两个体
-数据规模。小任务可能受调度开销影响，应按实际扫描规模验证。
-
-```bash
-python examples/benchmark_projector.py --devices 0 1 --output gpu-benchmark.json
-```
-
-Alex 两张 A100 的完整迭代实测：NCCL 两进程在 64³、128³ 上分别加速
-1.46×、1.92×；单进程多卡在 128³ 上加速 1.46×，64³ 上未加速。
-详细数据与验证边界见 [结果报告](docs/VALIDATION.md)。
-
-## 安装与迁移
-
-从本地工作区执行 `pip install -e .`。CUDA/PyTorch/Numba 的环境设置见
-[英文说明](README.md)。NumPy 当前限制为 `<2.5`，以避开 Numba CUDA
-的已复现兼容问题。
-
-从旧 `main` 迁移时，注意探测器半个 bin 的坐标约定变化。旧 `main` 的
-SF 后端尚未移植到任意轨迹实现。底层 Function API 继续保留 `dev` 的形式。
-详见 [迁移说明](docs/MIGRATION.md)。
+## 验证
 
 ```bash
 python -m pytest tests/ -q
 ```
 
-许可：[Apache 2.0](LICENSE)。引用方式见英文 README。
+Leonardo Booster(A100-SXM-64GB,NCCL,每卡一个进程)实测：螺旋锥束、1024 个
+视角，一次梯度迭代(正投影加图像梯度)，取 9 次中位数。多卡结果与单卡在
+`rtol=5e-4` 内一致。
+
+| GPU 数 | 128³ | 256³ |
+|---|---:|---:|
+| 1 | 68.0 ms | 526.0 ms |
+| 4,单节点 | 18.2 ms(3.74×) | 136.7 ms(3.85×) |
+| 8,两节点 | 10.9 ms(6.23×) | 80.9 ms(6.50×) |
+
+小任务受数据传输和启动开销影响，加速更少。请用
+`examples/benchmark_projector.py` 按实际规模测量。
+
+详细数据和每项检查的边界见 [docs/VALIDATION.md](docs/VALIDATION.md)。
+
+许可：[Apache 2.0](LICENSE)。引用方式见 [英文 README](README.md#citation)。

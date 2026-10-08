@@ -9,6 +9,40 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Siddon projections are line integrals in physical length. Earlier
+  versions returned voxel-length integrals, which differ by the factor
+  ``voxel_spacing``. Backprojection scales the same way, so the pair stays
+  matched. Results with ``voxel_spacing == 1`` do not change.
+- FBP and FDK gather kernels sample at voxel centres,
+  ``(index + 0.5 - N / 2) * voxel_spacing``, as the cell-constant Siddon
+  projector does. Earlier reconstructions were half a voxel off.
+
+### Fixed
+
+- Fan and cone rays integrate only from the source to the detector pixel.
+  A source or detector inside the volume box gave the full-line integral.
+- Fan and cone ray setup measures the ray parameter from the endpoint
+  nearer the volume centre, and the traversal restarts at the volume entry
+  point. A distant source gave relative errors up to 5e-3 (source 1e6
+  voxels away) and could stop the traversal. Parallel-beam setup runs in
+  float64 for a distant detector origin. Projection speed does not change.
+- Ray setup treats a direction component as axis-parallel only below
+  1e-20, so a distant source with a small lateral component is no longer
+  rejected.
+- Siddon kernels use a finite sentinel instead of infinity, because
+  ``fastmath`` lets LLVM assume that infinity never occurs.
+- ``Projector`` rejects fan and cone views whose source coincides with the
+  detector centre or whose detector is edge-on to the source, and views where
+  both lie farther than 1e6 voxels from the volume centre.
+- The traversal treats a direction component as axis-parallel only below
+  1e-20. With the earlier 1e-6 limit, a ray that grazed a grid line was
+  assigned to the neighbouring row.
+- ``tests/distributed_projector_check.py`` no longer issues a MAX
+  all-reduce after a local failure while other ranks wait in a SUM
+  all-reduce.
+
 ## [1.3.0.dev0] - 2026-04-14
 
 First sync of the dev (arbitrary-trajectory) branch against the main

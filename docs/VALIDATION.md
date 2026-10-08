@@ -1,10 +1,46 @@
-# 候选分支的结果验证（2026-09-29）
+# 候选分支的结果验证
 
-此候选基于 `dev` 的 `cb516cf`，提供 `Projector` 任意逐视角几何接口。
+本文记录两轮 GPU 验证：2026-10-08 在 Leonardo Booster 上对当前代码的单节点、
+跨节点验证，以及 2026-09-29 在 Alex 上对初版 `37a12d9` 的单节点验证。
+
+## 当前代码：Leonardo Booster(2026-10-08)
+
+环境：A100-SXM-64GB,驱动 535,Torch `2.10.0+cu126`,numba-cuda 0.30.4。
+
+**正确性**
+
+- 完整测试 **136 通过**(两张 A100)。
+- 8 rank 跨节点 NCCL 检查(两个节点，每节点 4 卡)通过：平行束、扇束、螺旋锥束，
+  视角分配不均和空 rank 都在内。
+- Siddon 射线积分与独立 CPU float64 线段长度对比(源点到探测器像素这一段):
+  - 源点距体中心 1e2 到 1e6 个体素，扇束最大相对误差 ≤ 1.1e-6;探测器远至
+    1e6 个体素时 ≤ 9.8e-7;锥束最大绝对误差 ≤ 2.6e-5。
+  - 源点在体中心、探测器平面穿过体数据时，结果等于源点到探测器那一段。
+  - `voxel_spacing=0.5` 时投影值等于物理长度线积分。
+- 平行束 FBP 往返(投影、斜坡滤波、FBP):重建与原图的质心偏差 0.006 个体素，
+  内部幅值 0.999;`voxel_spacing` 取 1 和 0.5 结果相同。
+- 与初版 `37a12d9` 同卡对比，单卡正投影 256³ 为 137.3 ms 对 135.7 ms,
+  反投影 386.3 ms 对 387.7 ms。
+
+**实测加速**:螺旋锥束、1024 个视角，体素和探测器间距为 1;128³ 用
+`(192, 128)` 探测器,256³ 用 `(384, 256)`。完整梯度迭代,9 次中位数，
+分布式耗时取最慢 rank。多卡结果与单卡在 `rtol=5e-4, atol=5e-5` 内一致。
+
+| 配置 | 体数据 | 单卡 | 多卡 | 加速比 |
+| --- | --- | ---: | ---: | ---: |
+| 单节点 4 卡 | 128³ | 68.06 ms | 18.19 ms | **3.74×** |
+| 单节点 4 卡 | 256³ | 525.96 ms | 136.65 ms | **3.85×** |
+| 两节点 8 卡 | 128³ | 68.03 ms | 10.92 ms | **6.23×** |
+| 两节点 8 卡 | 256³ | 525.95 ms | 80.89 ms | **6.50×** |
+
+## 初版代码：Alex(2026-09-29)
+
+
+初版基于 `dev` 的 `cb516cf`，提供 `Projector` 任意逐视角几何接口。
 候选分支为 `codex/arbitrary-trajectory-multigpu`，供集群验证；
 GitHub 默认分支和 PyPI 发布版本保持原状。
 
-## 正确性
+### 正确性
 
 - Windows RTX 4070 SUPER：完整测试 **100 通过、6 跳过**。跳过的是需要两张 GPU 的测试。
 - Alex 作业 **4407851**，节点 `a0905`，两张 A100-SXM4-40GB：完整测试 **106 通过**。
@@ -14,7 +50,7 @@ GitHub 默认分支和 PyPI 发布版本保持原状。
 - 合成螺旋轨迹重建的残差由 `26922.10` 降至 `661.30`，10 次迭代后 MSE 为 `0.00609735`，与单卡验证一致。
 - 固定几何的调用者修改保护、原始输入梯度 dtype、非默认 CUDA stream、跨 stream 缓存复用和调用者自有进程组均已检查。CPU/CUDA 混合几何校验问题已有先失败后通过的回归测试。
 
-## 实测加速
+### 实测加速
 
 同一 Alex 作业、同型号 GPU，512 个螺旋视角，体素和探测器间距均为 1。
 64³ 使用 `(96, 64)` 探测器，128³ 使用 `(192, 128)` 探测器。
@@ -47,16 +83,23 @@ python examples/benchmark_projector.py --devices 0 1 --repeats 9 \
     --output local-benchmark.json
 ```
 
-## 跨节点状态与证据
+### 环境与记录
 
-真实双节点 GPU 验证尚未完成。Alex 的 FAU 资源配额不允许多节点作业，
-需要单独的 NHR 项目。后续应在已获多节点权限的集群上实测。
-[双节点运行说明](DISTRIBUTED.md) 同时覆盖不同主机检查、数值一致性和完整
-迭代加速。单节点的 NCCL 结果不能代替双节点实测。
-
-验证环境：Torch `2.13.0+cu130`、CUDA 13.0、驱动 `610.57.04`。
-经验证的 `diffct/operators.py` SHA-256：
+Torch `2.13.0+cu130`、CUDA 13.0、驱动 `610.57.04`。当时验证的
+`diffct/operators.py` SHA-256 为
 `E8BFDAE28B198DA9D951E4D864967A8710CF3BF51E891CB326FFF620189118F5`。
-源码快照和原始日志、逐 rank JSON、9 次计时样本保存在本地 `.validation/`，
-其中 `nccl-benchmark-4407851.json` 与 `local-benchmark-4407851.json` 对应上表。
-工作区已构建包含同一算子源码的 wheel，供本地安装验证。
+原始日志、逐 rank JSON 和计时样本保存在本地 `.validation/`。
+
+## 复现命令
+
+```bash
+python -m pytest tests/ -q
+python -m torch.distributed.run --standalone --nproc-per-node=2 \
+    tests/distributed_projector_check.py --require-cuda \
+    --expected-world-size=2 --output nccl-check.json
+python -m torch.distributed.run --standalone --nproc-per-node=2 \
+    examples/benchmark_projector.py --repeats 9 --output nccl-benchmark.json
+```
+
+跨节点命令见 [DISTRIBUTED.md](DISTRIBUTED.md)。单节点 NCCL 结果不能代替
+跨节点实测。
