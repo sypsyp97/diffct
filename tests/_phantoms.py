@@ -6,8 +6,10 @@ import numpy as np
 
 
 def shepp_logan_2d(N):
-    """2D Shepp-Logan clipped to [0, 1] on an NxN grid using the kernel's
-    grid-point convention ``cx = N * 0.5``."""
+    """2D Shepp-Logan clipped to [0, 1] and sampled at voxel centres.
+
+    Axis index i has coordinate ``(i + 0.5 - N / 2) / (N / 2)``.
+    """
     phantom = np.zeros((N, N), dtype=np.float32)
     ellipses = [
         (0.0, 0.0, 0.69, 0.92, 0.0, 1.0),
@@ -18,8 +20,8 @@ def shepp_logan_2d(N):
     ]
     cx = N * 0.5
     ys, xs = np.mgrid[0:N, 0:N].astype(np.float32)
-    xn = (xs - cx) / (N / 2)
-    yn = (ys - cx) / (N / 2)
+    xn = (xs + 0.5 - cx) / (N / 2)
+    yn = (ys + 0.5 - cx) / (N / 2)
     for (x0, y0, a, b, angdeg, ampl) in ellipses:
         th = math.radians(angdeg)
         xp = (xn - x0) * math.cos(th) + (yn - y0) * math.sin(th)
@@ -30,8 +32,10 @@ def shepp_logan_2d(N):
 
 
 def shepp_logan_3d(N):
-    """3D Shepp-Logan clipped to [0, 1] on an NxNxN grid using the kernel's
-    grid-point convention ``cx = cy = cz = N * 0.5``."""
+    """3D Shepp-Logan clipped to [0, 1] and sampled at voxel centres.
+
+    Axis index i has coordinate ``(i + 0.5 - N / 2) / (N / 2)``.
+    """
     el_params = np.array(
         [
             [0, 0, 0, 0.69, 0.92, 0.81, 0, 0, 0, 1.0],
@@ -48,9 +52,9 @@ def shepp_logan_3d(N):
         dtype=np.float32,
     )
     zz, yy, xx = np.mgrid[:N, :N, :N].astype(np.float32)
-    xx = (xx - N * 0.5) / (N * 0.5)
-    yy = (yy - N * 0.5) / (N * 0.5)
-    zz = (zz - N * 0.5) / (N * 0.5)
+    xx = (xx + 0.5 - N * 0.5) / (N * 0.5)
+    yy = (yy + 0.5 - N * 0.5) / (N * 0.5)
+    zz = (zz + 0.5 - N * 0.5) / (N * 0.5)
     x_pos = el_params[:, 0][:, None, None, None]
     y_pos = el_params[:, 1][:, None, None, None]
     z_pos = el_params[:, 2][:, None, None, None]

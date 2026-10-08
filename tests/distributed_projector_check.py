@@ -114,12 +114,32 @@ def _record_tensor_error(errors, name, actual, expected):
     return result["passed"]
 
 
-def _run_stage(record, device, name, operation):
-    value = None
+class _FatalStageError(RuntimeError):
+    def __init__(self, record, name, error):
+        super().__init__(f"{name}: {type(error).__name__}: {error}")
+        self.record = record
+
+
+def _validate_tensors(device, *specifications):
+    for name, tensor, shape, needs_grad in specifications:
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError(f"{name} must be a tensor")
+        if tuple(tensor.shape) != tuple(shape):
+            raise ValueError(f"{name} must have shape {tuple(shape)}")
+        if tensor.device != device or tensor.dtype != torch.float32:
+            raise TypeError(f"{name} must be float32 on {device}")
+        if needs_grad and not tensor.requires_grad:
+            raise ValueError(f"{name} must require gradients")
+
+
+def _run_stage(record, device, name, operation, validate):
     local_failure = None
     try:
-        value = operation()
-    except Exception as error:  # keep every rank in the same test sequence
+        # Validation must contain no distributed collectives. Every rank agrees
+        # before any rank enters the operation's library collectives.
+        validate()
+        torch.cuda.synchronize(device)
+    except Exception as error:
         local_failure = f"{type(error).__name__}: {error}"
 
     any_failure = _distributed_any(local_failure is not None, device)
@@ -131,7 +151,21 @@ def _run_stage(record, device, name, operation):
         record["stages"][name]["error"] = "another rank failed this stage"
     if any_failure:
         record["passed"] = False
-    return value, any_failure
+        return None, True
+
+    try:
+        value = operation()
+        torch.cuda.synchronize(device)
+    except Exception as error:
+        record["passed"] = False
+        record["stages"][name] = {
+            "passed": False,
+            "error": f"{type(error).__name__}: {error}",
+        }
+        # Peers may already be inside a SUM. Never issue a MAX or any other
+        # collective here; the runner flushes local evidence and exits.
+        raise _FatalStageError(record, name, error) from error
+    return value, False
 
 
 def _beam_case(beam, n_views, device):
@@ -318,11 +352,32 @@ def _run_case(beam, n_views, device, record):
         return
 
     start, stop = case["start"], case["stop"]
+
+    def validate_project_forward():
+        projector = case["projector"]
+        local_shape = (stop - start, *case["projection_shape"][1:])
+        if projector.projection_shape != local_shape:
+            raise ValueError("projector local projection shape differs from view slice")
+        _validate_tensors(
+            device,
+            ("volume", case["volume"], projector.volume_shape, True),
+            ("full sinogram", case["full_sinogram"], case["projection_shape"], False),
+            ("local weight", case["local_weight"], local_shape, False),
+            ("full weight", case["full_projection_weight"], case["projection_shape"], False),
+            ("probe volume", case["probe_volume"], projector.volume_shape, False),
+        )
+        dimensions = len(projector.volume_shape)
+        _validate_tensors(device, *(
+            (f"trajectory {index}", component, (n_views, dimensions), False)
+            for index, component in enumerate(case["trajectory"])
+        ))
+
     projection, failed = _run_stage(
         case_record,
         device,
         "project_forward",
         lambda: _project_and_compare(case, case_record),
+        validate_project_forward,
     )
     if failed:
         _skip_case_metrics(case_record, "project_forward", "a rank failed")
@@ -346,7 +401,13 @@ def _run_case(beam, n_views, device, record):
         )
 
     _, failed = _run_stage(
-        case_record, device, "project_backward", project_backward
+        case_record, device, "project_backward", project_backward,
+        lambda: _validate_tensors(
+            device,
+            ("projection", projection, case["projector"].projection_shape, True),
+            ("local weight", case["local_weight"], case["projector"].projection_shape, False),
+            ("volume", case["volume"], case["projector"].volume_shape, True),
+        ),
     )
     if failed:
         _skip_case_metrics(case_record, "project_backward", "a rank failed")
@@ -354,7 +415,15 @@ def _run_case(beam, n_views, device, record):
         record["cases"].append(case_record)
         return
 
-    local_sinogram = case["full_sinogram"][start:stop].clone().requires_grad_()
+    local_sinogram = None
+
+    def validate_backproject_forward():
+        nonlocal local_sinogram
+        local_sinogram = case["full_sinogram"][start:stop].clone().requires_grad_()
+        _validate_tensors(
+            device,
+            ("local sinogram", local_sinogram, case["projector"].projection_shape, True),
+        )
 
     def backproject_forward():
         backprojection = case["projector"].backproject(local_sinogram)
@@ -369,6 +438,7 @@ def _run_case(beam, n_views, device, record):
         device,
         "backproject_forward",
         backproject_forward,
+        validate_backproject_forward,
     )
     if failed:
         _skip_case_metrics(case_record, "backproject_forward", "a rank failed")
@@ -420,7 +490,13 @@ def _run_case(beam, n_views, device, record):
                 case_record["passed"] = False
 
     _, failed = _run_stage(
-        case_record, device, "backproject_backward", backproject_backward
+        case_record, device, "backproject_backward", backproject_backward,
+        lambda: _validate_tensors(
+            device,
+            ("backprojection", backprojection, case["projector"].volume_shape, True),
+            ("probe volume", case["probe_volume"], case["projector"].volume_shape, False),
+            ("local sinogram", local_sinogram, case["projector"].projection_shape, True),
+        ),
     )
     if failed:
         _skip_case_metrics(case_record, "backproject_backward", "a rank failed")
@@ -451,6 +527,25 @@ def _write_result(path, result):
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _result(local_record, ranks):
+    world_size = local_record["world_size"]
+    return {
+        "passed": all(item["passed"] for item in ranks),
+        "backend": "nccl",
+        "world_size": world_size,
+        "distinct_node_count": local_record["distinct_node_count"],
+        "nodes": local_record["nodes"],
+        "checks": {
+            "rtol": RTOL,
+            "atol": ATOL,
+            "global_view_counts": [world_size * 2 + 1, 1],
+            "beams": ["parallel", "fan", "cone"],
+            "init_timeout_seconds": int(INIT_TIMEOUT.total_seconds()),
+        },
+        "ranks": ranks,
+    }
 
 
 def _check_distributed(args):
@@ -526,6 +621,7 @@ def main(argv=None):
         },
         "world_size": world_size,
         "distinct_node_count": None,
+        "nodes": [],
         "passed": True,
         "errors": {},
         "stages": {},
@@ -555,22 +651,7 @@ def main(argv=None):
 
         gathered = [None] * world_size
         dist.all_gather_object(gathered, local_record)
-        passed = all(item["passed"] for item in gathered)
-        final_result = {
-            "passed": passed,
-            "backend": "nccl",
-            "world_size": world_size,
-            "distinct_node_count": node_count,
-            "nodes": sorted(set(hosts)),
-            "checks": {
-                "rtol": RTOL,
-                "atol": ATOL,
-                "global_view_counts": [n_uneven, 1],
-                "beams": ["parallel", "fan", "cone"],
-                "init_timeout_seconds": int(INIT_TIMEOUT.total_seconds()),
-            },
-            "ranks": gathered,
-        }
+        final_result = _result(local_record, gathered)
         if rank == 0 and args.output is not None:
             try:
                 _write_result(args.output, final_result)
@@ -586,9 +667,9 @@ def main(argv=None):
             print(json.dumps(final_result, indent=2, sort_keys=True, allow_nan=False))
         return 0 if final_result["passed"] else 1
     except Exception as error:
-        # A per-stage failure is synchronized above. This path covers setup or
-        # reporting failures; the process-group timeout bounds peer waits.
         local_record["passed"] = False
+        if isinstance(error, _FatalStageError):
+            local_record["cases"].append(error.record)
         local_record["errors"]["runner"] = {
             "passed": False,
             "error": f"{type(error).__name__}: {error}",
@@ -596,8 +677,29 @@ def main(argv=None):
         print(
             f"rank {rank}: NCCL check failed: {type(error).__name__}: {error}",
             file=sys.stderr,
+            flush=True,
         )
-        return 1
+        try:
+            # Gathering peer records is unsafe after a local failure. Preserve
+            # the report schema with only the rank whose evidence is available.
+            partial_result = _result(local_record, [local_record])
+            if args.output is not None:
+                path = args.output if rank == 0 else args.output.with_name(
+                    args.output.name + f".rank{rank}.json"
+                )
+                _write_result(path, partial_result)
+            print(
+                json.dumps(partial_result, indent=2, sort_keys=True, allow_nan=False),
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception as reporting_error:
+            print(f"rank {rank}: report flush failed: {reporting_error}",
+                  file=sys.stderr, flush=True)
+        finally:
+            # Do not destroy the group here: NCCL teardown can wait for peers
+            # blocked in a collective. A nonzero exit lets torchrun stop them.
+            os._exit(1)
     finally:
         if dist.is_initialized():
             dist.destroy_process_group()
