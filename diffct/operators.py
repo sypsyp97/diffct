@@ -175,9 +175,7 @@ class _ProjectorAutograd(torch.autograd.Function):
         ctx.mode = mode
         ctx.input_device = tensor.device
         ctx.input_dtype = tensor.dtype
-        ctx.save_for_backward(
-            tensor if any(ctx.needs_input_grad[3:]) else None, *geometry
-        )
+        ctx.save_for_backward(tensor if geometry else None, *geometry)
         return projector._run(
             tensor,
             is_project=mode != "backproject",
@@ -188,15 +186,21 @@ class _ProjectorAutograd(torch.autograd.Function):
     def backward(ctx, grad_output):
         tensor, *geometry = ctx.saved_tensors
         projector = ctx.projector
+        # Both branches below contain collectives. In distributed mode they run
+        # on every rank, so ranks whose inputs differ in requires_grad still
+        # issue the same collective sequence.
+        collective = projector._distributed and projector.world_size > 1
         grad_input = None
-        if ctx.needs_input_grad[0]:
+        if ctx.needs_input_grad[0] or collective:
             # The adjoint is this Function again, so second derivatives with
             # respect to volumes and sinograms work.
             grad_input = _ProjectorAutograd.apply(
                 grad_output, projector, _ADJOINT_MODE[ctx.mode], *geometry
             ).to(device=ctx.input_device, dtype=ctx.input_dtype)
+            if not ctx.needs_input_grad[0]:
+                grad_input = None
         geometry_grads = (None,) * len(geometry)
-        if any(ctx.needs_input_grad[3:]):
+        if any(ctx.needs_input_grad[3:]) or (collective and geometry):
             # Every mode is <cotangent, A_local(geometry) volume> for some pair.
             if ctx.mode == "project":
                 volume, cotangent = tensor, grad_output
@@ -310,6 +314,23 @@ class Projector:
             self.rank = 0
             self.world_size = 1
         self._process_group = process_group
+        if self._distributed and self.world_size > 1:
+            # Backward issues an extra all_reduce for geometry gradients, so
+            # every rank must agree on whether the trajectory requires them.
+            backend = torch.distributed.get_backend(process_group)
+            device = (
+                torch.device("cuda", torch.cuda.current_device())
+                if backend == "nccl" else torch.device("cpu")
+            )
+            flag = 1 if self._learnable else 0
+            bounds = torch.tensor([flag, -flag], device=device)
+            torch.distributed.all_reduce(
+                bounds, op=torch.distributed.ReduceOp.MAX, group=process_group
+            )
+            if bounds[0].item() != -bounds[1].item():
+                raise ValueError(
+                    "all ranks must agree on whether the trajectory requires gradients"
+                )
         self.view_slice = _balanced_slice(n_views, self.rank, self.world_size)
         self.projection_shape = (
             self.view_slice.stop - self.view_slice.start,

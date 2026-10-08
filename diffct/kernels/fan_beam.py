@@ -166,7 +166,7 @@ def _fan_2d_forward_kernel(
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_end)
             seg_len = t_next - t
-            if seg_len > _EPSILON:
+            if seg_len > _ZERO:
                 accum += d_image[iy, ix] * seg_len
         
         # Voxel boundary crossing logic (identical to parallel beam)
@@ -323,7 +323,7 @@ def _fan_2d_backward_kernel(
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_end)
             seg_len = t_next - t
-            if seg_len > _EPSILON:
+            if seg_len > _ZERO:
                 cuda.atomic.add(d_image, (iy, ix), val * seg_len)
 
         # === VOXEL BOUNDARY CROSSING LOGIC ===

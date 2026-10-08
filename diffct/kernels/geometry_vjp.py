@@ -15,7 +15,8 @@ face (``-f_first`` at an entry face, ``+f_last`` at an exit face). A face
 
 Segment ends at the source or the detector do not move a face crossing and
 contribute nothing. The derivative is exact for the discrete model wherever
-the ray does not pass through a cell edge or corner.
+the ray does not pass through a cell edge or corner. On an edge, where two
+crossings coincide, the kernels return the derivative of one adjacent side.
 
 Each thread traces one ray with the same setup and traversal as the
 projector kernels and adds ``grad_sino * dp/dgeometry`` to per-view
@@ -155,6 +156,8 @@ def _fan_2d_geometry_vjp_kernel(
         f = _ZERO
         if 0 <= ix < Nx and 0 <= iy < Ny:
             f = d_image[iy, ix]
+        t_next = min(tx, ty, t_end)
+        seg_len = t_next - t
         # The face crossed just before this cell: entry face or interior face.
         if pend_axis >= 0:
             c = (-f) if first else (f_prev - f)
@@ -167,9 +170,7 @@ def _fan_2d_geometry_vjp_kernel(
                 ga_y += da
                 gb_y += db
         first = False
-        t_next = min(tx, ty, t_end)
-        seg_len = t_next - t
-        if seg_len > _EPSILON:
+        if seg_len > _ZERO:
             accum += f * seg_len
         f_prev = f
         if tx <= ty:
@@ -343,6 +344,8 @@ def _cone_3d_geometry_vjp_kernel(
         f = _ZERO
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             f = d_vol[ix, iy, iz]
+        t_next = min(tx, ty, tz, t_end)
+        seg_len = t_next - t
         if pend_axis >= 0:
             c = (-f) if first else (f_prev - f)
             if pend_axis == 0:
@@ -358,9 +361,7 @@ def _cone_3d_geometry_vjp_kernel(
                 ga_z += da
                 gb_z += db
         first = False
-        t_next = min(tx, ty, tz, t_end)
-        seg_len = t_next - t
-        if seg_len > _EPSILON:
+        if seg_len > _ZERO:
             accum += f * seg_len
         f_prev = f
         if tx <= ty and tx <= tz:

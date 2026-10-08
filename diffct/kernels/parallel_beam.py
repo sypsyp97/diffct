@@ -167,7 +167,7 @@ def _parallel_2d_forward_kernel(
             # Determine next voxel boundary crossing (minimum of x, y boundaries or ray exit)
             t_next = min(tx, ty, t_end)
             seg_len = t_next - t  # Length of ray segment within current voxel region
-            if seg_len > _EPSILON:  # Only process segments with meaningful length (avoid numerical noise)
+            if seg_len > _ZERO:
                 accum += d_image[iy, ix] * seg_len
         
         # === VOXEL BOUNDARY CROSSING LOGIC ===
@@ -308,7 +308,7 @@ def _parallel_2d_backward_kernel(
         if 0 <= ix < Nx and 0 <= iy < Ny:
             t_next = min(tx, ty, t_end)
             seg_len = t_next - t
-            if seg_len > _EPSILON:
+            if seg_len > _ZERO:
                 cuda.atomic.add(d_image, (iy, ix), val * seg_len)
 
         # Advance to next voxel (identical logic to forward projection)

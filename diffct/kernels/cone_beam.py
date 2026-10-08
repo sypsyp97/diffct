@@ -207,7 +207,7 @@ def _cone_3d_forward_kernel(
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_end)
             seg_len = t_next - t
-            if seg_len > _EPSILON:
+            if seg_len > _ZERO:
                 accum += d_vol[ix, iy, iz] * seg_len
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
@@ -410,7 +410,7 @@ def _cone_3d_backward_kernel(
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_end)
             seg_len = t_next - t
-            if seg_len > _EPSILON:
+            if seg_len > _ZERO:
                 cuda.atomic.add(d_vol, (ix, iy, iz), g * seg_len)
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
