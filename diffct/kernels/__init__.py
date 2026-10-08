@@ -21,6 +21,11 @@ from .cone_beam import (
     _cone_3d_backward_kernel,
     _cone_3d_fdk_backproject_kernel,
 )
+from .geometry_vjp import (
+    _parallel_2d_geometry_vjp_kernel,
+    _fan_2d_geometry_vjp_kernel,
+    _cone_3d_geometry_vjp_kernel,
+)
 
 __all__ = [
     '_parallel_2d_forward_kernel',
@@ -32,4 +37,7 @@ __all__ = [
     '_cone_3d_forward_kernel',
     '_cone_3d_backward_kernel',
     '_cone_3d_fdk_backproject_kernel',
+    '_parallel_2d_geometry_vjp_kernel',
+    '_fan_2d_geometry_vjp_kernel',
+    '_cone_3d_geometry_vjp_kernel',
 ]

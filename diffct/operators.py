@@ -5,9 +5,9 @@ import numbers
 
 import torch
 from numba import cuda
-from torch.autograd.function import once_differentiable
 
 from .projectors import (
+    _geometry_vjp,
     ConeBackprojectorFunction,
     ConeProjectorFunction,
     FanBackprojectorFunction,
@@ -68,8 +68,6 @@ def _validate_trajectory(trajectory, beam):
             raise ValueError(f"trajectory tensors must have shape (views, {dimensions})")
         if not torch.is_floating_point(component):
             raise TypeError("trajectory tensors must have floating-point dtype")
-        if component.requires_grad:
-            raise ValueError("trajectory tensors must not require gradients")
         if component.shape[0] == 0:
             raise ValueError("trajectory must contain at least one view")
         if n_views is not None and component.shape[0] != n_views:
@@ -147,26 +145,85 @@ def _balanced_slice(n_views, rank, world_size):
     return slice(start, start + base + int(rank < extra))
 
 
+# Operator modes and their adjoints. "project_reduced" sums its input over
+# ranks before projecting; it is the adjoint of the replicated backprojection.
+_ADJOINT_MODE = {
+    "project": "backproject",
+    "backproject": "project_reduced",
+    "project_reduced": "backproject",
+}
+
+
+def _all_reduce_copy(projector, tensor):
+    """Return a SUM over ranks of ``tensor`` (the tensor itself without ranks)."""
+    if not (projector._distributed and projector.world_size > 1):
+        return tensor
+    reduced = tensor.detach().clone(memory_format=torch.contiguous_format)
+    with torch.cuda.device(reduced.device):
+        torch.distributed.all_reduce(
+            reduced, op=torch.distributed.ReduceOp.SUM, group=projector._process_group
+        )
+    return reduced
+
+
 class _ProjectorAutograd(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, tensor, projector, is_project):
+    def forward(ctx, tensor, projector, mode, *geometry):
         if not isinstance(tensor, torch.Tensor):
             raise TypeError("input must be a torch.Tensor")
         ctx.projector = projector
-        ctx.is_project = is_project
+        ctx.mode = mode
         ctx.input_device = tensor.device
         ctx.input_dtype = tensor.dtype
-        return projector._run(tensor, is_project)
+        ctx.save_for_backward(
+            tensor if any(ctx.needs_input_grad[3:]) else None, *geometry
+        )
+        return projector._run(
+            tensor,
+            is_project=mode != "backproject",
+            reduce_cotangent=mode == "project_reduced",
+        )
 
     @staticmethod
-    @once_differentiable
     def backward(ctx, grad_output):
-        grad_input = ctx.projector._run(
-            grad_output,
-            is_project=not ctx.is_project,
-            reduce_cotangent=not ctx.is_project,
+        tensor, *geometry = ctx.saved_tensors
+        projector = ctx.projector
+        grad_input = None
+        if ctx.needs_input_grad[0]:
+            # The adjoint is this Function again, so second derivatives with
+            # respect to volumes and sinograms work.
+            grad_input = _ProjectorAutograd.apply(
+                grad_output, projector, _ADJOINT_MODE[ctx.mode], *geometry
+            ).to(device=ctx.input_device, dtype=ctx.input_dtype)
+        geometry_grads = (None,) * len(geometry)
+        if any(ctx.needs_input_grad[3:]):
+            # Every mode is <cotangent, A_local(geometry) volume> for some pair.
+            if ctx.mode == "project":
+                volume, cotangent = tensor, grad_output
+            elif ctx.mode == "project_reduced":
+                volume, cotangent = _all_reduce_copy(projector, tensor), grad_output
+            else:
+                volume, cotangent = _all_reduce_copy(projector, grad_output), tensor
+            grads = _GeometryGradAutograd.apply(projector, volume, cotangent, *geometry)
+            geometry_grads = tuple(
+                grad if needed else None
+                for grad, needed in zip(grads, ctx.needs_input_grad[3:])
+            )
+        return (grad_input, None, None, *geometry_grads)
+
+
+class _GeometryGradAutograd(torch.autograd.Function):
+    """First-order geometry gradient; differentiating it again raises."""
+
+    @staticmethod
+    def forward(ctx, projector, volume, cotangent, *geometry):
+        return projector._geometry_grad(volume, cotangent, geometry)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        raise RuntimeError(
+            "diffct does not support second derivatives with respect to the geometry"
         )
-        return grad_input.to(device=ctx.input_device, dtype=ctx.input_dtype), None, None
 
 
 class Projector:
@@ -177,8 +234,12 @@ class Projector:
     ``(views, 2)``. A cone trajectory is
     ``(src_pos, det_center, det_u, det_v)`` with components shaped
     ``(views, 3)``. Direction axes are unit vectors; parallel ``ray_dir`` and
-    ``det_u`` and cone ``det_u`` and ``det_v`` are orthogonal. Geometry is
-    fixed and cloned by the projector.
+    ``det_u`` and cone ``det_u`` and ``det_v`` are orthogonal. If no trajectory
+    tensor requires gradients, the projector clones the geometry. Otherwise it
+    keeps references, reads the current values at every call, and returns
+    gradients for those tensors; the checks above run only at construction.
+    Second derivatives are available for volumes and sinograms, not for the
+    geometry.
 
     Volumes use ``(H, W)`` for parallel and fan beams and ``(D, H, W)`` for
     cone beams. Sinograms use ``(views, detectors)`` or ``(views, U, V)``.
@@ -186,7 +247,8 @@ class Projector:
     devices split views in list order; distributed mode returns rank-local
     projections and replicated backprojections. Distributed projection losses
     use SUM across ranks; divide replicated backprojection losses by
-    ``world_size`` and do not add a second DDP reduction for image gradients.
+    ``world_size`` and do not add a second DDP reduction for image or geometry
+    gradients.
     """
 
     def __init__(self, trajectory, volume_shape, detector_shape, *, beam="cone",
@@ -207,6 +269,9 @@ class Projector:
         self.detector_spacing = _detector_spacing(detector_spacing, beam)
         self.voxel_spacing = _positive_float(voxel_spacing, "voxel_spacing")
         self._trajectory, n_views = _validate_trajectory(trajectory, beam)
+        self._learnable = (
+            tuple(trajectory) if any(c.requires_grad for c in trajectory) else ()
+        )
         if beam in ("fan", "cone"):
             # The kernels set up each ray in float32 from the endpoint nearer the
             # volume centre, which is the origin.
@@ -252,6 +317,14 @@ class Projector:
         )
 
     def _geometry_for(self, device, global_slice):
+        if self._learnable:
+            # Learnable geometry changes between calls, so it is staged every time.
+            return tuple(
+                component.detach()[global_slice]
+                .to(device=device, dtype=torch.float32)
+                .contiguous()
+                for component in self._learnable
+            )
         key = (device.index, global_slice.start, global_slice.stop)
         stream = torch.cuda.current_stream(device)
         cached = self._geometry_cache.get(key)
@@ -349,6 +422,54 @@ class Projector:
                 )
             return result
 
+    def _geometry_grad(self, volume, cotangent, geometry):
+        """Return d<cotangent, A(geometry) volume>/d(geometry) over this rank's views.
+
+        ``cotangent`` holds the rank's view shard. The result covers the full
+        trajectory; distributed mode sums it over ranks.
+        """
+        devices = self._devices or (volume.device,)
+        local_views = self.projection_shape[0]
+        spacing = self.detector_spacing if self.beam == "cone" else self.detector_spacing[0]
+        grads = [
+            torch.zeros(component.shape, dtype=torch.float32, device=volume.device)
+            for component in geometry
+        ]
+        for device_rank, device in enumerate(devices):
+            local_slice = _balanced_slice(local_views, device_rank, len(devices))
+            if local_slice.start == local_slice.stop:
+                continue
+            global_slice = slice(
+                self.view_slice.start + local_slice.start,
+                self.view_slice.start + local_slice.stop,
+            )
+            with torch.cuda.device(device), cuda.gpus[device.index]:
+                parts = _geometry_vjp(
+                    self.beam,
+                    volume.detach().to(device=device),
+                    cotangent.detach()[local_slice].to(device=device),
+                    tuple(
+                        component.detach()[global_slice].to(device=device, dtype=torch.float32)
+                        for component in geometry
+                    ),
+                    spacing,
+                    self.voxel_spacing,
+                )
+            for grad, part in zip(grads, parts):
+                grad[global_slice] += part.to(device=volume.device)
+        if self._distributed and self.world_size > 1:
+            flat = torch.cat([grad.flatten() for grad in grads])
+            with torch.cuda.device(volume.device):
+                torch.distributed.all_reduce(
+                    flat, op=torch.distributed.ReduceOp.SUM, group=self._process_group
+                )
+            grads = list(flat.split([grad.numel() for grad in grads]))
+            grads = [part.view(component.shape) for part, component in zip(grads, geometry)]
+        return tuple(
+            grad.to(dtype=component.dtype, device=component.device)
+            for grad, component in zip(grads, geometry)
+        )
+
     def _project_raw(self, volume, geometry):
         if self.beam == "parallel":
             return ParallelProjectorFunction.apply(
@@ -387,7 +508,7 @@ class Projector:
         The output shape is ``projection_shape``; in distributed mode it holds
         this rank's contiguous view slice. The result stays on ``volume.device``.
         """
-        return _ProjectorAutograd.apply(volume, self, True)
+        return _ProjectorAutograd.apply(volume, self, "project", *self._learnable)
 
     def backproject(self, sinogram):
         """Backproject a floating-point CUDA sinogram.
@@ -397,7 +518,7 @@ class Projector:
         ``sinogram.device``; distributed mode SUM-reduces it to every rank, so
         divide a replicated-output loss by ``world_size``.
         """
-        return _ProjectorAutograd.apply(sinogram, self, False)
+        return _ProjectorAutograd.apply(sinogram, self, "backproject", *self._learnable)
 
     def __call__(self, volume):
         """Alias for :meth:`project`."""

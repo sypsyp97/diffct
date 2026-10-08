@@ -24,7 +24,77 @@ from .kernels import (
     _fan_2d_backward_kernel,
     _cone_3d_forward_kernel,
     _cone_3d_backward_kernel,
+    _parallel_2d_geometry_vjp_kernel,
+    _fan_2d_geometry_vjp_kernel,
+    _cone_3d_geometry_vjp_kernel,
 )
+
+
+# ============================================================================
+# Geometry gradients
+# ============================================================================
+
+def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spacing):
+    """Return d<grad_sino, A(geometry) volume>/d(geometry), one tensor per component.
+
+    ``detector_spacing`` is a scalar for 2D beams and ``(du, dv)`` for cone
+    beams. Results take the dtype and device of each geometry component.
+    """
+    device = volume.device
+    vol = volume.detach().to(device=device, dtype=torch.float32).contiguous()
+    cot = grad_sino.detach().to(device=device, dtype=torch.float32).contiguous()
+    geom = [g.detach().to(device=device, dtype=torch.float32).contiguous() for g in geometry]
+    grads = [torch.zeros_like(g) for g in geom]
+    d_geom = [TorchCUDABridge.tensor_to_cuda_array(g) for g in geom]
+    d_grads = [TorchCUDABridge.tensor_to_cuda_array(g) for g in grads]
+    numba_stream = _get_numba_external_stream_for(torch.cuda.current_stream())
+    if beam == "cone":
+        D, H, W = vol.shape
+        n_views, n_u, n_v = cot.shape
+        du, dv = detector_spacing
+        d_vol = TorchCUDABridge.tensor_to_cuda_array(vol.permute(2, 1, 0).contiguous())
+        grid, tpb = _grid_3d(n_v, n_u, n_views)
+        _cone_3d_geometry_vjp_kernel[grid, tpb, numba_stream](
+            d_vol, W, H, D, TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_u, n_v,
+            _DTYPE(du), _DTYPE(dv), *d_geom,
+            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5), _DTYPE(voxel_spacing), *d_grads,
+        )
+    else:
+        Ny, Nx = vol.shape
+        n_views, n_det = cot.shape
+        kernel = _parallel_2d_geometry_vjp_kernel if beam == "parallel" else _fan_2d_geometry_vjp_kernel
+        grid, tpb = _grid_2d(n_views, n_det)
+        kernel[grid, tpb, numba_stream](
+            TorchCUDABridge.tensor_to_cuda_array(vol), Nx, Ny,
+            TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_det,
+            _DTYPE(detector_spacing), *d_geom,
+            _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5), _DTYPE(voxel_spacing), *d_grads,
+        )
+    return tuple(grad.to(dtype=g.dtype, device=g.device) for grad, g in zip(grads, geometry))
+
+
+class _GeometryVJPFunction(torch.autograd.Function):
+    """First-order geometry gradient; differentiating it again raises."""
+
+    @staticmethod
+    def forward(ctx, beam, volume, grad_sino, detector_spacing, voxel_spacing, *geometry):
+        return _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spacing)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        raise RuntimeError(
+            "diffct does not support second derivatives with respect to the geometry"
+        )
+
+
+def _geometry_grads(needs_grad, beam, volume, grad_sino, geometry, detector_spacing, voxel_spacing):
+    """Geometry gradients for the components in ``needs_grad``; None for the rest."""
+    if not any(needs_grad):
+        return (None,) * len(geometry)
+    grads = _GeometryVJPFunction.apply(
+        beam, volume, grad_sino, detector_spacing, voxel_spacing, *geometry
+    )
+    return tuple(grad if needed else None for grad, needed in zip(grads, needs_grad))
 
 
 # ============================================================================
@@ -106,6 +176,11 @@ class ParallelProjectorFunction(torch.autograd.Function):
         ...     image, ray_dir, det_origin, det_u_vec, 128, 1.0
         ... )
         """
+        # Original inputs: backward builds a differentiable graph through them.
+        ctx.save_for_backward(
+            image if any(ctx.needs_input_grad[1:4]) else None,
+            ray_dir, det_origin, det_u_vec,
+        )
         device = DeviceManager.get_device(image)
         image = DeviceManager.ensure_device(image, device)
         ray_dir = DeviceManager.ensure_device(ray_dir, device)
@@ -141,46 +216,24 @@ class ParallelProjectorFunction(torch.autograd.Function):
             _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(ray_dir, det_origin, det_u_vec)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
         return sinogram
     
     @staticmethod
     def backward(ctx, grad_sinogram):
-        ray_dir, det_origin, det_u_vec = ctx.saved_tensors
+        image, ray_dir, det_origin, det_u_vec = ctx.saved_tensors
         num_detectors, detector_spacing, Ny, Nx, voxel_spacing = ctx.intermediate
-        device = DeviceManager.get_device(grad_sinogram)
-        grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
-        ray_dir = DeviceManager.ensure_device(ray_dir, device)
-        det_origin = DeviceManager.ensure_device(det_origin, device)
-        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
-
-        grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
-        ray_dir = ray_dir.to(dtype=torch.float32).contiguous()
-        det_origin = det_origin.to(dtype=torch.float32).contiguous()
-        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
-
-        n_views = ray_dir.shape[0]
-        grad_image = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
-
-        d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
-        d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_image)
-        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
-        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, num_detectors)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        _parallel_2d_backward_kernel[grid, tpb, numba_stream](
-            d_grad_sino, n_views, num_detectors,
-            d_img_grad, Nx, Ny,
-            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
+        grad_image = None
+        if ctx.needs_input_grad[0]:
+            # The adjoint is an autograd Function too, so second derivatives work.
+            grad_image = ParallelBackprojectorFunction.apply(
+                grad_sinogram, ray_dir, det_origin, det_u_vec, detector_spacing, Ny, Nx, voxel_spacing
+            )
+        geometry_grads = _geometry_grads(
+            ctx.needs_input_grad[1:4], "parallel", image, grad_sinogram,
+            (ray_dir, det_origin, det_u_vec), detector_spacing, voxel_spacing,
         )
-
-        return grad_image, None, None, None, None, None, None
+        return (grad_image, *geometry_grads, None, None, None)
 
 
 class ParallelBackprojectorFunction(torch.autograd.Function):
@@ -253,6 +306,11 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         ...     sinogram, ray_dir, det_origin, det_u_vec, 1.0, 128, 128
         ... )
         """
+        # Original inputs: backward builds a differentiable graph through them.
+        ctx.save_for_backward(
+            sinogram if any(ctx.needs_input_grad[1:4]) else None,
+            ray_dir, det_origin, det_u_vec,
+        )
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
         ray_dir = DeviceManager.ensure_device(ray_dir, device)
@@ -288,48 +346,24 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
             _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(ray_dir, det_origin, det_u_vec)
         ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1], voxel_spacing)
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
-        ray_dir, det_origin, det_u_vec = ctx.saved_tensors
+        sinogram, ray_dir, det_origin, det_u_vec = ctx.saved_tensors
         H, W, detector_spacing, n_views, n_det, voxel_spacing = ctx.intermediate
-        device = DeviceManager.get_device(grad_output)
-        grad_output = DeviceManager.ensure_device(grad_output, device)
-        ray_dir = DeviceManager.ensure_device(ray_dir, device)
-        det_origin = DeviceManager.ensure_device(det_origin, device)
-        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
-
-        grad_output = grad_output.to(dtype=torch.float32).contiguous()
-        ray_dir = ray_dir.to(dtype=torch.float32).contiguous()
-        det_origin = det_origin.to(dtype=torch.float32).contiguous()
-        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
-
-        Ny, Nx = grad_output.shape
-
-        # Allocate output tensor on the same device
-        grad_sino = torch.zeros((n_views, n_det), dtype=grad_output.dtype, device=device)
-
-        # Get Numba CUDA array views for kernel
-        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
-        d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
-        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
-        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, n_det)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        _parallel_2d_forward_kernel[grid, tpb, numba_stream](
-            d_grad_out, Nx, Ny, d_sino_grad, n_views, n_det,
-            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr, cx, cy, _DTYPE(voxel_spacing)
+        grad_sino = None
+        if ctx.needs_input_grad[0]:
+            grad_sino = ParallelProjectorFunction.apply(
+                grad_output, ray_dir, det_origin, det_u_vec, n_det, detector_spacing, voxel_spacing
+            )
+        # <grad_output, A^T y> = <A grad_output, y>, so the projector's VJP applies.
+        geometry_grads = _geometry_grads(
+            ctx.needs_input_grad[1:4], "parallel", grad_output, sinogram,
+            (ray_dir, det_origin, det_u_vec), detector_spacing, voxel_spacing,
         )
-
-        return grad_sino, None, None, None, None, None, None, None
+        return (grad_sino, *geometry_grads, None, None, None, None)
 
 
 class FanProjectorFunction(torch.autograd.Function):
@@ -400,6 +434,11 @@ class FanProjectorFunction(torch.autograd.Function):
         ...     image, src_pos, det_center, det_u_vec, 512, 1.0
         ... )
         """
+        # Original inputs: backward builds a differentiable graph through them.
+        ctx.save_for_backward(
+            image if any(ctx.needs_input_grad[1:4]) else None,
+            src_pos, det_center, det_u_vec,
+        )
         device = DeviceManager.get_device(image)
         image = DeviceManager.ensure_device(image, device)
         src_pos = DeviceManager.ensure_device(src_pos, device)
@@ -433,46 +472,24 @@ class FanProjectorFunction(torch.autograd.Function):
             cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(src_pos, det_center, det_u_vec)
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
         return sinogram
 
     @staticmethod
     def backward(ctx, grad_sinogram):
-        src_pos, det_center, det_u_vec = ctx.saved_tensors
-        (n_det, det_spacing, Ny, Nx, voxel_spacing) = ctx.intermediate
-        device = DeviceManager.get_device(grad_sinogram)
-        grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
-        src_pos = DeviceManager.ensure_device(src_pos, device)
-        det_center = DeviceManager.ensure_device(det_center, device)
-        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
-
-        grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
-        src_pos = src_pos.to(dtype=torch.float32).contiguous()
-        det_center = det_center.to(dtype=torch.float32).contiguous()
-        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
-
-        n_views = src_pos.shape[0]
-        grad_img = torch.zeros((Ny, Nx), dtype=grad_sinogram.dtype, device=device)
-
-        d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
-        d_img_grad = TorchCUDABridge.tensor_to_cuda_array(grad_img)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, n_det)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        _fan_2d_backward_kernel[grid, tpb, numba_stream](
-            d_grad_sino, n_views, n_det, d_img_grad, Nx, Ny,
-            _DTYPE(det_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
-            cx, cy, _DTYPE(voxel_spacing)
+        image, src_pos, det_center, det_u_vec = ctx.saved_tensors
+        num_detectors, detector_spacing, Ny, Nx, voxel_spacing = ctx.intermediate
+        grad_image = None
+        if ctx.needs_input_grad[0]:
+            # The adjoint is an autograd Function too, so second derivatives work.
+            grad_image = FanBackprojectorFunction.apply(
+                grad_sinogram, src_pos, det_center, det_u_vec, detector_spacing, Ny, Nx, voxel_spacing
+            )
+        geometry_grads = _geometry_grads(
+            ctx.needs_input_grad[1:4], "fan", image, grad_sinogram,
+            (src_pos, det_center, det_u_vec), detector_spacing, voxel_spacing,
         )
-
-        return grad_img, None, None, None, None, None, None
+        return (grad_image, *geometry_grads, None, None, None)
 
 
 class FanBackprojectorFunction(torch.autograd.Function):
@@ -546,6 +563,11 @@ class FanBackprojectorFunction(torch.autograd.Function):
         ...     sinogram, src_pos, det_center, det_u_vec, 1.0, 256, 256
         ... )
         """
+        # Original inputs: backward builds a differentiable graph through them.
+        ctx.save_for_backward(
+            sinogram if any(ctx.needs_input_grad[1:4]) else None,
+            src_pos, det_center, det_u_vec,
+        )
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
         src_pos = DeviceManager.ensure_device(src_pos, device)
@@ -579,47 +601,24 @@ class FanBackprojectorFunction(torch.autograd.Function):
             cx, cy, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(src_pos, det_center, det_u_vec)
         ctx.intermediate = (H, W, detector_spacing, n_views, n_det, voxel_spacing)
         return reco
 
     @staticmethod
     def backward(ctx, grad_output):
-        src_pos, det_center, det_u_vec = ctx.saved_tensors
-        (H, W, det_spacing, n_views, n_det, voxel_spacing) = ctx.intermediate
-        device = DeviceManager.get_device(grad_output)
-        grad_output = DeviceManager.ensure_device(grad_output, device)
-        src_pos = DeviceManager.ensure_device(src_pos, device)
-        det_center = DeviceManager.ensure_device(det_center, device)
-        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
-
-        grad_output = grad_output.to(dtype=torch.float32).contiguous()
-        src_pos = src_pos.to(dtype=torch.float32).contiguous()
-        det_center = det_center.to(dtype=torch.float32).contiguous()
-        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
-
-        Ny, Nx = grad_output.shape
-
-        grad_sino = torch.zeros((n_views, n_det), dtype=grad_output.dtype, device=device)
-
-        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output)
-        d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, n_det)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        _fan_2d_forward_kernel[grid, tpb, numba_stream](
-            d_grad_out, Nx, Ny, d_sino_grad, n_views, n_det,
-            _DTYPE(det_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
-            cx, cy, _DTYPE(voxel_spacing)
+        sinogram, src_pos, det_center, det_u_vec = ctx.saved_tensors
+        H, W, detector_spacing, n_views, n_det, voxel_spacing = ctx.intermediate
+        grad_sino = None
+        if ctx.needs_input_grad[0]:
+            grad_sino = FanProjectorFunction.apply(
+                grad_output, src_pos, det_center, det_u_vec, n_det, detector_spacing, voxel_spacing
+            )
+        # <grad_output, A^T y> = <A grad_output, y>, so the projector's VJP applies.
+        geometry_grads = _geometry_grads(
+            ctx.needs_input_grad[1:4], "fan", grad_output, sinogram,
+            (src_pos, det_center, det_u_vec), detector_spacing, voxel_spacing,
         )
-
-        return grad_sino, None, None, None, None, None, None, None
+        return (grad_sino, *geometry_grads, None, None, None, None)
 
 
 class ConeProjectorFunction(torch.autograd.Function):
@@ -697,6 +696,11 @@ class ConeProjectorFunction(torch.autograd.Function):
         ...     volume, src_pos, det_center, det_u_vec, det_v_vec, 256, 256, 1.0, 1.0
         ... )
         """
+        # Original inputs: backward builds a differentiable graph through them.
+        ctx.save_for_backward(
+            volume if any(ctx.needs_input_grad[1:5]) else None,
+            src_pos, det_center, det_u_vec, det_v_vec,
+        )
         device = DeviceManager.get_device(volume)
         volume = DeviceManager.ensure_device(volume, device)
         src_pos = DeviceManager.ensure_device(src_pos, device)
@@ -737,51 +741,24 @@ class ConeProjectorFunction(torch.autograd.Function):
             cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(src_pos, det_center, det_u_vec, det_v_vec)
         ctx.intermediate = (D, H, W, det_u, det_v, du, dv, voxel_spacing)
         return sino
 
     @staticmethod
     def backward(ctx, grad_sinogram):
-        src_pos, det_center, det_u_vec, det_v_vec = ctx.saved_tensors
+        volume, src_pos, det_center, det_u_vec, det_v_vec = ctx.saved_tensors
         (D, H, W, det_u, det_v, du, dv, voxel_spacing) = ctx.intermediate
-        device = DeviceManager.get_device(grad_sinogram)
-        grad_sinogram = DeviceManager.ensure_device(grad_sinogram, device)
-        src_pos = DeviceManager.ensure_device(src_pos, device)
-        det_center = DeviceManager.ensure_device(det_center, device)
-        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
-        det_v_vec = DeviceManager.ensure_device(det_v_vec, device)
-
-        grad_sinogram = grad_sinogram.to(dtype=torch.float32).contiguous()
-        src_pos = src_pos.to(dtype=torch.float32).contiguous()
-        det_center = det_center.to(dtype=torch.float32).contiguous()
-        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
-        det_v_vec = det_v_vec.to(dtype=torch.float32).contiguous()
-
-        n_views = src_pos.shape[0]
-
-        grad_vol_perm = torch.zeros((W, H, D), dtype=grad_sinogram.dtype, device=device)
-
-        d_grad_sino = TorchCUDABridge.tensor_to_cuda_array(grad_sinogram)
-        d_vol_grad = TorchCUDABridge.tensor_to_cuda_array(grad_vol_perm)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
-
-        grid, tpb = _grid_3d(det_v, det_u, n_views)
-        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        _cone_3d_backward_kernel[grid, tpb, numba_stream](
-            d_grad_sino, n_views, det_u, det_v, d_vol_grad, W, H, D,
-            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
-            cx, cy, cz, _DTYPE(voxel_spacing)
+        grad_vol = None
+        if ctx.needs_input_grad[0]:
+            # The adjoint is an autograd Function too, so second derivatives work.
+            grad_vol = ConeBackprojectorFunction.apply(
+                grad_sinogram, src_pos, det_center, det_u_vec, det_v_vec, D, H, W, du, dv, voxel_spacing
+            )
+        geometry_grads = _geometry_grads(
+            ctx.needs_input_grad[1:5], "cone", volume, grad_sinogram,
+            (src_pos, det_center, det_u_vec, det_v_vec), (du, dv), voxel_spacing,
         )
-
-        grad_vol = grad_vol_perm.permute(2, 1, 0).contiguous()
-        return grad_vol, None, None, None, None, None, None, None, None, None
+        return (grad_vol, *geometry_grads, None, None, None, None, None)
 
 
 class ConeBackprojectorFunction(torch.autograd.Function):
@@ -869,6 +846,11 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         ...     projections, src_pos, det_center, det_u_vec, det_v_vec, 128, 128, 128, 1.0, 1.0
         ... )
         """
+        # Original inputs: backward builds a differentiable graph through them.
+        ctx.save_for_backward(
+            sinogram if any(ctx.needs_input_grad[1:5]) else None,
+            src_pos, det_center, det_u_vec, det_v_vec,
+        )
         device = DeviceManager.get_device(sinogram)
         sinogram = DeviceManager.ensure_device(sinogram, device)
         src_pos = DeviceManager.ensure_device(src_pos, device)
@@ -907,54 +889,22 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             cx, cy, cz, _DTYPE(voxel_spacing)
         )
 
-        ctx.save_for_backward(src_pos, det_center, det_u_vec, det_v_vec)
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv, voxel_spacing)
         vol = vol_perm.permute(2, 1, 0).contiguous()
         return vol
 
     @staticmethod
     def backward(ctx, grad_output):
-        src_pos, det_center, det_u_vec, det_v_vec = ctx.saved_tensors
+        sinogram, src_pos, det_center, det_u_vec, det_v_vec = ctx.saved_tensors
         (D, H, W, n_u, n_v, du, dv, voxel_spacing) = ctx.intermediate
-        device = DeviceManager.get_device(grad_output)
-        grad_output = DeviceManager.ensure_device(grad_output, device)
-        src_pos = DeviceManager.ensure_device(src_pos, device)
-        det_center = DeviceManager.ensure_device(det_center, device)
-        det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
-        det_v_vec = DeviceManager.ensure_device(det_v_vec, device)
-
-        grad_output = grad_output.to(dtype=torch.float32).contiguous()
-        src_pos = src_pos.to(dtype=torch.float32).contiguous()
-        det_center = det_center.to(dtype=torch.float32).contiguous()
-        det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
-        det_v_vec = det_v_vec.to(dtype=torch.float32).contiguous()
-
-        n_views = src_pos.shape[0]
-
-        grad_sino = torch.zeros((n_views, n_u, n_v), dtype=grad_output.dtype, device=device)
-
-        grad_output_perm = grad_output.permute(2, 1, 0).contiguous()
-        d_grad_out = TorchCUDABridge.tensor_to_cuda_array(grad_output_perm)
-        d_sino_grad = TorchCUDABridge.tensor_to_cuda_array(grad_sino)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
-
-        grid, tpb = _grid_3d(n_v, n_u, n_views)
-        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        _cone_3d_forward_kernel[grid, tpb, numba_stream](
-            d_grad_out, W, H, D, d_sino_grad, n_views, n_u, n_v,
-            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
-            cx, cy, cz, _DTYPE(voxel_spacing)
+        grad_sino = None
+        if ctx.needs_input_grad[0]:
+            grad_sino = ConeProjectorFunction.apply(
+                grad_output, src_pos, det_center, det_u_vec, det_v_vec, n_u, n_v, du, dv, voxel_spacing
+            )
+        # <grad_output, A^T y> = <A grad_output, y>, so the projector's VJP applies.
+        geometry_grads = _geometry_grads(
+            ctx.needs_input_grad[1:5], "cone", grad_output, sinogram,
+            (src_pos, det_center, det_u_vec, det_v_vec), (du, dv), voxel_spacing,
         )
-
-        return grad_sino, None, None, None, None, None, None, None, None, None, None
-
-
-# ------------------------------------------------------------------
-# HELPER FUNCTIONS FOR ARBITRARY TRAJECTORIES
-# ------------------------------------------------------------------
+        return (grad_sino, *geometry_grads, None, None, None, None, None, None)
