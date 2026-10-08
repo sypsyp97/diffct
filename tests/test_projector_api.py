@@ -128,16 +128,6 @@ def test_constructor_rejects_malformed_or_nonfinite_geometry(beam):
             beam=beam,
         )
 
-    requires_grad = list(trajectory)
-    requires_grad[0] = requires_grad[0].clone().requires_grad_()
-    with pytest.raises((TypeError, ValueError)):
-        Projector(
-            tuple(requires_grad),
-            volume_shape,
-            detector_shape,
-            beam=beam,
-        )
-
     empty = tuple(component[:0] for component in trajectory)
     with pytest.raises((TypeError, ValueError)):
         Projector(empty, volume_shape, detector_shape, beam=beam)
@@ -212,14 +202,11 @@ def test_projector_rejects_cpu_input_tensor():
         projector.project(torch.ones(6, 7))
 
 
-@pytest.mark.cuda
-def test_projector_rejects_geometry_gradients_on_cuda():
-    _require_cuda()
-    device = torch.device("cuda", torch.cuda.current_device())
-    trajectory = list(circular_trajectory_2d_parallel(3, device=device))
-    trajectory[0] = trajectory[0].detach().requires_grad_()
-    with pytest.raises((TypeError, ValueError)):
-        Projector(tuple(trajectory), (6, 7), 5, beam="parallel")
+@pytest.mark.parametrize("beam", ["parallel", "fan", "cone"])
+def test_projector_accepts_geometry_gradients(beam):
+    trajectory, volume_shape, detector_shape = _base_constructor_args(beam)
+    trajectory = tuple(component.clone().requires_grad_() for component in trajectory)
+    Projector(trajectory, volume_shape, detector_shape, beam=beam)
 
 
 def _cuda_case(

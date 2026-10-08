@@ -3,11 +3,9 @@
 Checks ``detector_coordinates_1d``, ``angular_integration_weights``,
 ``fan_cosine_weights``, ``cone_cosine_weights``, and ``parker_weights``.
 
-Note: the dev-branch detector grid convention is
-``u[k] = (k - N/2) * ds``, which differs from the main branch's
-``(k - (N-1)/2)`` cell-centre convention. Dev's convention is built
-into every kernel (Siddon forward/backward, FBP/FDK gather) so the
-helper mirrors it. Expected values here reflect the dev convention.
+Detector cell centres use ``u[k] = (k - (N - 1)/2) * ds``.
+This convention applies to the weight helpers, Siddon forward/backward
+kernels, and FBP/FDK gather kernels.
 """
 
 import math
@@ -23,12 +21,11 @@ from diffct import (
 )
 
 
-def test_detector_coordinates_even_odd_match_dev_convention():
+def test_detector_coordinates_even_odd_match_cell_center_convention():
     even = detector_coordinates_1d(4, 1.0)
     odd = detector_coordinates_1d(5, 1.0)
-    # Dev convention: u[k] = (k - N/2) * ds
-    assert torch.allclose(even, torch.tensor([-2.0, -1.0, 0.0, 1.0]))
-    assert torch.allclose(odd, torch.tensor([-2.5, -1.5, -0.5, 0.5, 1.5]))
+    assert torch.allclose(even, torch.tensor([-1.5, -0.5, 0.5, 1.5]))
+    assert torch.allclose(odd, torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0]))
 
 
 def test_angular_integration_weights_full_scan_redundant():
@@ -84,21 +81,18 @@ def test_angular_integration_weights_open_short_scan_uses_trapezoid():
 def test_fan_cosine_weights_peak_at_origin():
     w = fan_cosine_weights(7, 1.0, 1000.0)
     # cos(gamma) = sdd / sqrt(sdd^2 + u^2): max at u closest to 0.
-    # Dev convention: for N=7 (odd), bin 3 has u = -0.5 (closest to 0).
-    # Actually wait, for N=7, (k - 3.5)*1 so bins are [-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5]
-    # Two bins (3 and 4) are equidistant from origin.
+    # For odd N=7, bin 3 is exactly at the origin.
     argmax = int(torch.argmax(w).item())
-    assert argmax in (3, 4)
+    assert argmax == 3
 
 
-def test_cone_cosine_weights_peak_near_detector_center():
+def test_cone_cosine_weights_peak_at_detector_center():
     w = cone_cosine_weights(9, 9, 1.0, 1.0, 1200.0)
-    # For N=9 (odd) the closest bins to (u=0, v=0) are the 4 around index (4, 4).
-    # Peak index should be one of those.
+    # For odd N=9, cell (4, 4) is exactly at (u=0, v=0).
     flat = w.flatten()
     peak = int(flat.argmax().item())
     pu, pv = peak // 9, peak % 9
-    assert pu in (3, 4) and pv in (3, 4)
+    assert (pu, pv) == (4, 4)
 
 
 def test_parker_full_scan_is_one():
@@ -113,7 +107,7 @@ def test_parker_short_scan_range_is_bounded():
     n_det = 128
     spacing = 1.0
     sdd = 400.0
-    u_max = (n_det * 0.5) * spacing  # dev convention
+    u_max = ((n_det - 1) * 0.5) * spacing
     gamma_max = math.atan(u_max / sdd)
     coverage = math.pi + 2.0 * gamma_max
 
