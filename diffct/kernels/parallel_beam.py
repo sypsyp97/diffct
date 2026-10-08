@@ -79,18 +79,18 @@ def _parallel_2d_forward_kernel(
 
     # === 2D PARALLEL BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Read ray direction (parallel for all rays in this view)
-    dir_x = d_ray_dir[iang, 0]
-    dir_y = d_ray_dir[iang, 1]
+    dir_x = np.float64(d_ray_dir[iang, 0])
+    dir_y = np.float64(d_ray_dir[iang, 1])
 
     # Read detector origin and orientation vector
-    det_ox = d_det_origin[iang, 0] / voxel_spacing
-    det_oy = d_det_origin[iang, 1] / voxel_spacing
+    det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
+    det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iang, 0]
-    u_vec_y = d_det_u_vec[iang, 1]
+    u_vec_x = np.float64(d_det_u_vec[iang, 0])
+    u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
     # Calculate detector element offset from origin
-    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float64(idet) - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Ray starting point: detector origin + offset along u-direction
     pnt_x = det_ox + u_offset * u_vec_x
@@ -128,34 +128,43 @@ def _parallel_2d_forward_kernel(
     if t_min >= t_max:
         d_sino[iang, idet] = _ZERO; return
 
+    # The setup above runs in float64 because a distant source makes float32
+    # ray parameters too coarse. The float32 traversal restarts at the entry
+    # point, so its parameters stay within the volume diameter.
+    ent_x = np.float32(pnt_x + t_min * dir_x)
+    ent_y = np.float32(pnt_y + t_min * dir_y)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    t_end = np.float32(t_max - t_min)
+
     # === SIDDON METHOD VOXEL TRAVERSAL INITIALIZATION ===
     accum = _ZERO  # Accumulated projection value along ray
-    t = t_min    # Current ray parameter (distance from ray start)
+    t = _ZERO
     
     # Convert ray entry point to voxel indices (image coordinate system)
-    ix = int(math.floor(pnt_x + t * dir_x + cx))  # Current voxel x-index
-    iy = int(math.floor(pnt_y + t * dir_y + cy))  # Current voxel y-index
+    ix = int(math.floor(ent_x + t * ray_x + cx))  # Current voxel x-index
+    iy = int(math.floor(ent_y + t * ray_y + cy))  # Current voxel y-index
 
     # Determine traversal direction and step sizes for each axis
-    step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)  # Voxel stepping direction
+    step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)  # Voxel stepping direction
     # Hoist inverse directions to reduce divisions and branches
-    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
-    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF
 
     # Calculate parameter values for next voxel boundary crossings using inv_dir_*
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
-    tx = (np.float32(next_ix) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
 
     # === MAIN RAY TRAVERSAL LOOP ===
     # Step through voxels along ray path, accumulating cell-constant contributions.
-    while t < t_max:
+    while t < t_end:
         if 0 <= ix < Nx and 0 <= iy < Ny:
             # Determine next voxel boundary crossing (minimum of x, y boundaries or ray exit)
-            t_next = min(tx, ty, t_max)
+            t_next = min(tx, ty, t_end)
             seg_len = t_next - t  # Length of ray segment within current voxel region
             if seg_len > _EPSILON:  # Only process segments with meaningful length (avoid numerical noise)
                 accum += d_image[iy, ix] * seg_len
@@ -234,18 +243,18 @@ def _parallel_2d_backward_kernel(
     val = d_sino[iang, idet]  # Sinogram value to backproject
 
     # Read ray direction (parallel for all rays in this view)
-    dir_x = d_ray_dir[iang, 0]
-    dir_y = d_ray_dir[iang, 1]
+    dir_x = np.float64(d_ray_dir[iang, 0])
+    dir_y = np.float64(d_ray_dir[iang, 1])
 
     # Read detector origin and orientation vector
-    det_ox = d_det_origin[iang, 0] / voxel_spacing
-    det_oy = d_det_origin[iang, 1] / voxel_spacing
+    det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
+    det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iang, 0]
-    u_vec_y = d_det_u_vec[iang, 1]
+    u_vec_x = np.float64(d_det_u_vec[iang, 0])
+    u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
     # Calculate detector element offset from origin
-    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float64(idet) - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Ray starting point: detector origin + offset along u-direction
     pnt_x = det_ox + u_offset * u_vec_x
@@ -265,26 +274,35 @@ def _parallel_2d_backward_kernel(
 
     if t_min >= t_max: return
 
-    # === SIDDON METHOD TRAVERSAL INITIALIZATION ===
-    t = t_min
-    ix = int(math.floor(pnt_x + t * dir_x + cx))
-    iy = int(math.floor(pnt_y + t * dir_y + cy))
+    # The setup above runs in float64 because a distant source makes float32
+    # ray parameters too coarse. The float32 traversal restarts at the entry
+    # point, so its parameters stay within the volume diameter.
+    ent_x = np.float32(pnt_x + t_min * dir_x)
+    ent_y = np.float32(pnt_y + t_min * dir_y)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    t_end = np.float32(t_max - t_min)
 
-    step_x, step_y = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1)
-    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF
-    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF
+    # === SIDDON METHOD TRAVERSAL INITIALIZATION ===
+    t = _ZERO
+    ix = int(math.floor(ent_x + t * ray_x + cx))
+    iy = int(math.floor(ent_y + t * ray_y + cy))
+
+    step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
-    tx = (np.float32(next_ix) - cx - pnt_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - pnt_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
 
     # === BACKPROJECTION TRAVERSAL LOOP ===
     # Adjoint of the cell-constant Siddon forward projection.
-    while t < t_max:
+    while t < t_end:
         if 0 <= ix < Nx and 0 <= iy < Ny:
-            t_next = min(tx, ty, t_max)
+            t_next = min(tx, ty, t_end)
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 cuda.atomic.add(d_image, (iy, ix), val * seg_len)

@@ -89,26 +89,26 @@ def _cone_3d_forward_kernel(
 
     # === 3D CONE BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Read source position from position matrix (in physical units)
-    src_x = d_src_pos[iview, 0] / voxel_spacing
-    src_y = d_src_pos[iview, 1] / voxel_spacing
-    src_z = d_src_pos[iview, 2] / voxel_spacing
+    src_x = np.float64(d_src_pos[iview, 0]) / voxel_spacing
+    src_y = np.float64(d_src_pos[iview, 1]) / voxel_spacing
+    src_z = np.float64(d_src_pos[iview, 2]) / voxel_spacing
 
     # Read detector center and orientation vectors
-    det_cx = d_det_center[iview, 0] / voxel_spacing
-    det_cy = d_det_center[iview, 1] / voxel_spacing
-    det_cz = d_det_center[iview, 2] / voxel_spacing
+    det_cx = np.float64(d_det_center[iview, 0]) / voxel_spacing
+    det_cy = np.float64(d_det_center[iview, 1]) / voxel_spacing
+    det_cz = np.float64(d_det_center[iview, 2]) / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iview, 0]
-    u_vec_y = d_det_u_vec[iview, 1]
-    u_vec_z = d_det_u_vec[iview, 2]
+    u_vec_x = np.float64(d_det_u_vec[iview, 0])
+    u_vec_y = np.float64(d_det_u_vec[iview, 1])
+    u_vec_z = np.float64(d_det_u_vec[iview, 2])
 
-    v_vec_x = d_det_v_vec[iview, 0]
-    v_vec_y = d_det_v_vec[iview, 1]
-    v_vec_z = d_det_v_vec[iview, 2]
+    v_vec_x = np.float64(d_det_v_vec[iview, 0])
+    v_vec_y = np.float64(d_det_v_vec[iview, 1])
+    v_vec_z = np.float64(d_det_v_vec[iview, 2])
 
     # Calculate detector element offset from center
-    u_offset = (np.float32(iu) - np.float32(n_u) * _HALF) * du / voxel_spacing
-    v_offset = (np.float32(iv) - np.float32(n_v) * _HALF) * dv / voxel_spacing
+    u_offset = (np.float64(iu) - np.float64(n_u) * _HALF) * du / voxel_spacing
+    v_offset = (np.float64(iv) - np.float64(n_v) * _HALF) * dv / voxel_spacing
 
     # Calculate 3D detector element position using center + u*u_vec + v*v_vec
     det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
@@ -128,7 +128,8 @@ def _cone_3d_forward_kernel(
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with 3D volume boundaries using source position as ray origin
-    t_min, t_max = _NEG_INF, _INF
+    # Integrate only the source-to-detector segment, not the whole line.
+    t_min, t_max = 0.0, length
     
     # X-direction boundary intersections
     if abs(dir_x) > _EPSILON:
@@ -154,37 +155,48 @@ def _cone_3d_forward_kernel(
     if t_min >= t_max:  # No valid 3D intersection
         d_sino[iview, iu, iv] = _ZERO; return
 
+    # The setup above runs in float64 because a distant source makes float32
+    # ray parameters too coarse. The float32 traversal restarts at the entry
+    # point, so its parameters stay within the volume diameter.
+    ent_x = np.float32(src_x + t_min * dir_x)
+    ent_y = np.float32(src_y + t_min * dir_y)
+    ent_z = np.float32(src_z + t_min * dir_z)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    ray_z = np.float32(dir_z)
+    t_end = np.float32(t_max - t_min)
+
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     accum = _ZERO  # Accumulated projection value
-    t = t_min    # Current ray parameter
+    t = _ZERO
     
     # Convert 3D ray entry point to voxel indices
-    ix = int(math.floor(src_x + t * dir_x + cx))  # Current voxel x-index
-    iy = int(math.floor(src_y + t * dir_y + cy))  # Current voxel y-index
-    iz = int(math.floor(src_z + t * dir_z + cz))  # Current voxel z-index
+    ix = int(math.floor(ent_x + t * ray_x + cx))  # Current voxel x-index
+    iy = int(math.floor(ent_y + t * ray_y + cy))  # Current voxel y-index
+    iz = int(math.floor(ent_z + t * ray_z + cz))  # Current voxel z-index
 
     # 3D traversal parameters (extends 2D algorithm)
-    step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
-    inv_dir_z = (_ONE / dir_z) if abs(dir_z) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
-    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
-    dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
+    step_x, step_y, step_z = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1), (1 if ray_z >= 0 else -1)
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
+    inv_dir_z = (_ONE / ray_z) if abs(ray_z) > _EPSILON else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF  # Parameter increment per x-voxel
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF  # Parameter increment per y-voxel
+    dt_z = abs(inv_dir_z) if abs(ray_z) > _EPSILON else _INF  # Parameter increment per z-voxel
 
     # Calculate parameter values for next 3D voxel boundary crossings
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
     next_iz = iz + (1 if step_z > 0 else 0)
-    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
+    tz = (np.float32(next_iz) - cz - ent_z) * inv_dir_z if abs(ray_z) > _EPSILON else _INF
 
     # === 3D TRAVERSAL LOOP WITH CELL-CONSTANT SIDDON INTEGRATION ===
-    while t < t_max:
+    while t < t_end:
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
-            t_next = min(tx, ty, tz, t_max)
+            t_next = min(tx, ty, tz, t_end)
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 accum += d_vol[ix, iy, iz] * seg_len
@@ -278,26 +290,26 @@ def _cone_3d_backward_kernel(
     g = d_sino[iview, iu, iv]  # Sinogram value to backproject along this ray
 
     # Read source position from position matrix (in physical units)
-    src_x = d_src_pos[iview, 0] / voxel_spacing
-    src_y = d_src_pos[iview, 1] / voxel_spacing
-    src_z = d_src_pos[iview, 2] / voxel_spacing
+    src_x = np.float64(d_src_pos[iview, 0]) / voxel_spacing
+    src_y = np.float64(d_src_pos[iview, 1]) / voxel_spacing
+    src_z = np.float64(d_src_pos[iview, 2]) / voxel_spacing
 
     # Read detector center and orientation vectors
-    det_cx = d_det_center[iview, 0] / voxel_spacing
-    det_cy = d_det_center[iview, 1] / voxel_spacing
-    det_cz = d_det_center[iview, 2] / voxel_spacing
+    det_cx = np.float64(d_det_center[iview, 0]) / voxel_spacing
+    det_cy = np.float64(d_det_center[iview, 1]) / voxel_spacing
+    det_cz = np.float64(d_det_center[iview, 2]) / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iview, 0]
-    u_vec_y = d_det_u_vec[iview, 1]
-    u_vec_z = d_det_u_vec[iview, 2]
+    u_vec_x = np.float64(d_det_u_vec[iview, 0])
+    u_vec_y = np.float64(d_det_u_vec[iview, 1])
+    u_vec_z = np.float64(d_det_u_vec[iview, 2])
 
-    v_vec_x = d_det_v_vec[iview, 0]
-    v_vec_y = d_det_v_vec[iview, 1]
-    v_vec_z = d_det_v_vec[iview, 2]
+    v_vec_x = np.float64(d_det_v_vec[iview, 0])
+    v_vec_y = np.float64(d_det_v_vec[iview, 1])
+    v_vec_z = np.float64(d_det_v_vec[iview, 2])
 
     # Calculate detector element offset from center
-    u_offset = (np.float32(iu) - np.float32(n_u) * _HALF) * du / voxel_spacing
-    v_offset = (np.float32(iv) - np.float32(n_v) * _HALF) * dv / voxel_spacing
+    u_offset = (np.float64(iu) - np.float64(n_u) * _HALF) * du / voxel_spacing
+    v_offset = (np.float64(iv) - np.float64(n_v) * _HALF) * dv / voxel_spacing
 
     # Calculate 3D detector element position using center + u*u_vec + v*v_vec
     det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
@@ -314,7 +326,8 @@ def _cone_3d_backward_kernel(
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute intersection with 3D volume boundaries using source position as ray origin
-    t_min, t_max = _NEG_INF, _INF
+    # Integrate only the source-to-detector segment, not the whole line.
+    t_min, t_max = 0.0, length
     
     # X-direction boundary intersections
     if abs(dir_x) > _EPSILON:
@@ -336,35 +349,46 @@ def _cone_3d_backward_kernel(
 
     if t_min >= t_max: return
 
+    # The setup above runs in float64 because a distant source makes float32
+    # ray parameters too coarse. The float32 traversal restarts at the entry
+    # point, so its parameters stay within the volume diameter.
+    ent_x = np.float32(src_x + t_min * dir_x)
+    ent_y = np.float32(src_y + t_min * dir_y)
+    ent_z = np.float32(src_z + t_min * dir_z)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    ray_z = np.float32(dir_z)
+    t_end = np.float32(t_max - t_min)
+
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
-    t = t_min
-    ix = int(math.floor(src_x + t * dir_x + cx))  # Current voxel x-index
-    iy = int(math.floor(src_y + t * dir_y + cy))  # Current voxel y-index
-    iz = int(math.floor(src_z + t * dir_z + cz))  # Current voxel z-index
+    t = _ZERO
+    ix = int(math.floor(ent_x + t * ray_x + cx))  # Current voxel x-index
+    iy = int(math.floor(ent_y + t * ray_y + cy))  # Current voxel y-index
+    iz = int(math.floor(ent_z + t * ray_z + cz))  # Current voxel z-index
 
     # 3D traversal parameters (extends 2D algorithm)
-    step_x, step_y, step_z = (1 if dir_x >= 0 else -1), (1 if dir_y >= 0 else -1), (1 if dir_z >= 0 else -1)
-    inv_dir_x = (_ONE / dir_x) if abs(dir_x) > _EPSILON else _ZERO
-    inv_dir_y = (_ONE / dir_y) if abs(dir_y) > _EPSILON else _ZERO
-    inv_dir_z = (_ONE / dir_z) if abs(dir_z) > _EPSILON else _ZERO
-    dt_x = abs(inv_dir_x) if abs(dir_x) > _EPSILON else _INF  # Parameter increment per x-voxel
-    dt_y = abs(inv_dir_y) if abs(dir_y) > _EPSILON else _INF  # Parameter increment per y-voxel
-    dt_z = abs(inv_dir_z) if abs(dir_z) > _EPSILON else _INF  # Parameter increment per z-voxel
+    step_x, step_y, step_z = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1), (1 if ray_z >= 0 else -1)
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _EPSILON else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _EPSILON else _ZERO
+    inv_dir_z = (_ONE / ray_z) if abs(ray_z) > _EPSILON else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _EPSILON else _INF  # Parameter increment per x-voxel
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _EPSILON else _INF  # Parameter increment per y-voxel
+    dt_z = abs(inv_dir_z) if abs(ray_z) > _EPSILON else _INF  # Parameter increment per z-voxel
 
     # Calculate parameter values for next 3D voxel boundary crossings
     next_ix = ix + (1 if step_x > 0 else 0)
     next_iy = iy + (1 if step_y > 0 else 0)
     next_iz = iz + (1 if step_z > 0 else 0)
-    tx = (np.float32(next_ix) - cx - src_x) * inv_dir_x if abs(dir_x) > _EPSILON else _INF
-    ty = (np.float32(next_iy) - cy - src_y) * inv_dir_y if abs(dir_y) > _EPSILON else _INF
-    tz = (np.float32(next_iz) - cz - src_z) * inv_dir_z if abs(dir_z) > _EPSILON else _INF
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _EPSILON else _INF
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _EPSILON else _INF
+    tz = (np.float32(next_iz) - cz - ent_z) * inv_dir_z if abs(ray_z) > _EPSILON else _INF
 
     # === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===
     # Adjoint of the cell-constant Siddon forward projection.
-    while t < t_max:
+    while t < t_end:
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
-            t_next = min(tx, ty, tz, t_max)
+            t_next = min(tx, ty, tz, t_end)
             seg_len = t_next - t
             if seg_len > _EPSILON:
                 cuda.atomic.add(d_vol, (ix, iy, iz), g * seg_len)
