@@ -107,8 +107,8 @@ def _cone_3d_forward_kernel(
     v_vec_z = d_det_v_vec[iview, 2]
 
     # Calculate detector element offset from center
-    u_offset = (np.float32(iu) - np.float32(n_u) * _HALF) * du / voxel_spacing
-    v_offset = (np.float32(iv) - np.float32(n_v) * _HALF) * dv / voxel_spacing
+    u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
+    v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
 
     # Calculate 3D detector element position using center + u*u_vec + v*v_vec
     det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
@@ -319,8 +319,8 @@ def _cone_3d_backward_kernel(
     v_vec_z = d_det_v_vec[iview, 2]
 
     # Calculate detector element offset from center
-    u_offset = (np.float32(iu) - np.float32(n_u) * _HALF) * du / voxel_spacing
-    v_offset = (np.float32(iv) - np.float32(n_v) * _HALF) * dv / voxel_spacing
+    u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
+    v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
 
     # Calculate 3D detector element position using center + u*u_vec + v*v_vec
     det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
@@ -481,8 +481,8 @@ def _cone_3d_fdk_backproject_kernel(
     du_v = du / voxel_spacing
     dv_v = dv / voxel_spacing
 
-    half_u = np.float32(n_u) * _HALF
-    half_v = np.float32(n_v) * _HALF
+    half_u = (np.float32(n_u) - _ONE) * _HALF
+    half_v = (np.float32(n_v) - _ONE) * _HALF
 
     accum = _ZERO
     for iview in range(n_views):

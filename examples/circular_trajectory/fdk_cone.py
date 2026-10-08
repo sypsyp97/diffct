@@ -149,7 +149,7 @@ def main():
     apply_parker = False
 
     if apply_parker:
-        u_max = (det_u * 0.5) * du  # dev convention
+        u_max = ((det_u - 1) * 0.5) * du  # largest |u| of a cell centre
         gamma_max = math.atan(u_max / sdd)
         scan_range = math.pi + 2.0 * gamma_max
     else:

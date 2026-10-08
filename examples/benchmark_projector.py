@@ -32,11 +32,11 @@ def box_lengths(trajectory, shape, detector, spacing, beam, indices):
     if beam == "cone":
         u, v = np.divmod(pixel, detector[1])
         positions = (geometry[1][views]
-                     + ((u - detector[0] / 2) * spacing[0])[:, None] * geometry[2][views]
-                     + ((v - detector[1] / 2) * spacing[1])[:, None] * geometry[3][views])
+                     + ((u - (detector[0] - 1) / 2) * spacing[0])[:, None] * geometry[2][views]
+                     + ((v - (detector[1] - 1) / 2) * spacing[1])[:, None] * geometry[3][views])
     else:
         positions = (geometry[1][views]
-                     + ((pixel - detector[0] / 2) * spacing[0])[:, None] * geometry[2][views])
+                     + ((pixel - (detector[0] - 1) / 2) * spacing[0])[:, None] * geometry[2][views])
     if beam == "parallel":
         origins, directions = positions, geometry[0][views]
     else:

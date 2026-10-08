@@ -90,7 +90,7 @@ def _fan_2d_forward_kernel(
     u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from center
-    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Calculate 2D detector element position using center + u*u_vec
     det_x = det_cx + u_offset * u_vec_x
@@ -256,7 +256,7 @@ def _fan_2d_backward_kernel(
     u_vec_y = d_det_u_vec[iang, 1]
 
     # Calculate detector element offset from center
-    u_offset = (np.float32(idet) - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Calculate 2D detector element position using center + u*u_vec
     det_x = det_cx + u_offset * u_vec_x
@@ -371,7 +371,7 @@ def _fan_2d_fbp_backproject_kernel(
     y_v = np.float32(iy) + _HALF - cy
 
     det_spacing_v = det_spacing / voxel_spacing
-    half_u = np.float32(n_det) * _HALF
+    half_u = (np.float32(n_det) - _ONE) * _HALF
 
     accum = _ZERO
     for iview in range(n_views):

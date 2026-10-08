@@ -121,9 +121,8 @@ def main():
     apply_parker = False
 
     if apply_parker:
-        # Use dev's detector convention (u[k] = (k - N/2)*ds) for the
-        # maximum |u| on the detector.
-        u_max = (num_detectors * 0.5) * detector_spacing
+        # Largest |u| of a detector cell centre, u[k] = (k - (N - 1)/2)*ds.
+        u_max = ((num_detectors - 1) * 0.5) * detector_spacing
         gamma_max = math.atan(u_max / sdd)
         scan_range = math.pi + 2.0 * gamma_max
     else:

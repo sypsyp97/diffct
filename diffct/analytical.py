@@ -51,15 +51,11 @@ def detector_coordinates_1d(num_detectors, detector_spacing, detector_offset=0.0
                             device=None, dtype=torch.float32):
     """Return detector cell centre coordinates along a 1D axis.
 
-    The convention matches the underlying dev-branch CUDA kernels:
-    ``u[k] = (k - num_detectors * 0.5) * detector_spacing + detector_offset``.
-    Note the ``num_detectors * 0.5`` (not ``(num_detectors - 1) * 0.5``) is
-    the existing dev-branch detector grid convention; this helper simply
-    mirrors it so any auxiliary Python math stays consistent with the GPU
-    kernels.
+    The convention matches the CUDA kernels: the detector array is centred,
+    ``u[k] = (k - (num_detectors - 1) * 0.5) * detector_spacing + detector_offset``.
     """
     k = torch.arange(num_detectors, device=device, dtype=dtype)
-    return (k - 0.5 * num_detectors) * detector_spacing + detector_offset
+    return (k - 0.5 * (num_detectors - 1)) * detector_spacing + detector_offset
 
 
 # ============================================================================

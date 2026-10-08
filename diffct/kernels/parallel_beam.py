@@ -90,7 +90,7 @@ def _parallel_2d_forward_kernel(
     u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
     # Calculate detector element offset from origin
-    u_offset = (np.float64(idet) - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Ray starting point: detector origin + offset along u-direction
     pnt_x = det_ox + u_offset * u_vec_x
@@ -257,7 +257,7 @@ def _parallel_2d_backward_kernel(
     u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
     # Calculate detector element offset from origin
-    u_offset = (np.float64(idet) - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+    u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
 
     # Ray starting point: detector origin + offset along u-direction
     pnt_x = det_ox + u_offset * u_vec_x
@@ -358,7 +358,7 @@ def _parallel_2d_fbp_backproject_kernel(
     y_v = np.float32(iy) + _HALF - cy
 
     det_spacing_v = det_spacing / voxel_spacing
-    half_u = np.float32(n_det) * _HALF
+    half_u = (np.float32(n_det) - _ONE) * _HALF
 
     accum = _ZERO
     for iview in range(n_views):
