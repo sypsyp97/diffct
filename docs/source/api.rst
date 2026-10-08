@@ -21,7 +21,8 @@ High-level Projector
    :special-members: __call__
 
 See ``docs/DISTRIBUTED.md`` for local GPU view splitting and multi-node launch
-instructions. Geometry gradients are not supported by this operator.
+instructions. Trajectory tensors that require gradients receive geometry
+gradients; see the README section on gradients.
 
 Core Projector Functions
 ------------------------

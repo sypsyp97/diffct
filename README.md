@@ -123,8 +123,14 @@ and an integer detector size. Iterative reconstruction examples are in
   example for calibration or trajectory optimization. The projector then keeps
   references to these tensors and reads their current values at every call.
   The low-level Function classes also return geometry gradients.
-- The geometry gradient is the exact derivative of the cell-constant model. It
-  is not defined where a ray passes exactly through a voxel edge or corner.
+- The geometry gradient is the exact derivative of the cell-constant model.
+- On an exact voxel edge or corner, the derivative is not defined. The kernels
+  return the derivative of one adjacent side. Central finite differences
+  average both sides, so they can differ. This occurs in symmetric setups. One
+  example: a view whose principal ray is parallel to a volume axis, a source on
+  a voxel face plane, and equal detector pitches along `u` and `v`. For
+  finite-difference checks, rotate the trajectory slightly, for example with
+  `start_angle=0.1`.
 - Second derivatives with respect to the geometry raise an error.
 - The geometry checks run only at construction. Keep optimized geometry valid,
   for example by optimizing angles and offsets instead of raw axis vectors.

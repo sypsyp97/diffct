@@ -34,6 +34,10 @@ and the project follows [Semantic Versioning](https://semver.org/).
 - FBP and FDK gather kernels sample at voxel centres,
   ``(index + 0.5 - N / 2) * voxel_spacing``, as the cell-constant Siddon
   projector does. Earlier reconstructions were half a voxel off.
+- Siddon projector and backprojector kernels no longer skip ray pieces of
+  length ``<= 1e-6``. They skip only pieces of length exactly 0 or less.
+  Forward projection is now a continuous function of the geometry: each piece
+  changes a projection value by at most cell value x ``1e-6``.
 
 ### Fixed
 
