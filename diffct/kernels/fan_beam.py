@@ -13,7 +13,6 @@ from ..constants import (
     _FASTMATH_DECORATOR,
     _FDK_ACCURACY_DECORATOR,
     _INF,
-    _NEG_INF,
     _ZERO,
     _ONE,
     _HALF,
@@ -111,13 +110,13 @@ def _fan_2d_forward_kernel(
     # Compute intersection with volume boundaries using source position as ray origin
     # Integrate only the source-to-detector segment, not the whole line.
     t_min, t_max = 0.0, length
-    if abs(dir_x) > _EPSILON:
+    if dir_x != 0.0:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x  # Volume boundary intersections
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx:  # Source outside volume bounds
         d_sino[iang, idet] = _ZERO; return
 
-    if abs(dir_y) > _EPSILON:
+    if dir_y != 0.0:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy:
@@ -127,8 +126,9 @@ def _fan_2d_forward_kernel(
         d_sino[iang, idet] = _ZERO; return
 
     # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse. The float32 traversal restarts at the entry
-    # point, so its parameters stay within the volume diameter.
+    # ray parameters too coarse, and only an exactly zero direction component
+    # is treated as axis-parallel there. The float32 traversal restarts at the
+    # entry point, so its parameters stay within the volume diameter.
     ent_x = np.float32(src_x + t_min * dir_x)
     ent_y = np.float32(src_y + t_min * dir_y)
     ray_x = np.float32(dir_x)
@@ -265,12 +265,12 @@ def _fan_2d_backward_kernel(
     # Compute intersection with volume boundaries using source position as ray origin
     # Integrate only the source-to-detector segment, not the whole line.
     t_min, t_max = 0.0, length
-    if abs(dir_x) > _EPSILON:
+    if dir_x != 0.0:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx: return
 
-    if abs(dir_y) > _EPSILON:
+    if dir_y != 0.0:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy: return
@@ -278,8 +278,9 @@ def _fan_2d_backward_kernel(
     if t_min >= t_max: return
 
     # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse. The float32 traversal restarts at the entry
-    # point, so its parameters stay within the volume diameter.
+    # ray parameters too coarse, and only an exactly zero direction component
+    # is treated as axis-parallel there. The float32 traversal restarts at the
+    # entry point, so its parameters stay within the volume diameter.
     ent_x = np.float32(src_x + t_min * dir_x)
     ent_y = np.float32(src_y + t_min * dir_y)
     ray_x = np.float32(dir_x)

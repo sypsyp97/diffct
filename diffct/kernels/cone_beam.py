@@ -13,7 +13,6 @@ from ..constants import (
     _FASTMATH_DECORATOR,
     _FDK_ACCURACY_DECORATOR,
     _INF,
-    _NEG_INF,
     _ZERO,
     _ONE,
     _HALF,
@@ -132,21 +131,21 @@ def _cone_3d_forward_kernel(
     t_min, t_max = 0.0, length
     
     # X-direction boundary intersections
-    if abs(dir_x) > _EPSILON:
+    if dir_x != 0.0:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx:  # Source outside x-bounds
         d_sino[iview, iu, iv] = _ZERO; return
     
     # Y-direction boundary intersections
-    if abs(dir_y) > _EPSILON:
+    if dir_y != 0.0:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy:  # Source outside y-bounds
         d_sino[iview, iu, iv] = _ZERO; return
     
     # Z-direction boundary intersections (extends 2D algorithm to 3D)
-    if abs(dir_z) > _EPSILON:
+    if dir_z != 0.0:
         tz1, tz2 = (-cz - src_z) / dir_z, (cz - src_z) / dir_z
         t_min, t_max = max(t_min, min(tz1, tz2)), min(t_max, max(tz1, tz2))
     elif src_z < -cz or src_z > cz:  # Source outside z-bounds
@@ -156,8 +155,9 @@ def _cone_3d_forward_kernel(
         d_sino[iview, iu, iv] = _ZERO; return
 
     # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse. The float32 traversal restarts at the entry
-    # point, so its parameters stay within the volume diameter.
+    # ray parameters too coarse, and only an exactly zero direction component
+    # is treated as axis-parallel there. The float32 traversal restarts at the
+    # entry point, so its parameters stay within the volume diameter.
     ent_x = np.float32(src_x + t_min * dir_x)
     ent_y = np.float32(src_y + t_min * dir_y)
     ent_z = np.float32(src_z + t_min * dir_z)
@@ -330,19 +330,19 @@ def _cone_3d_backward_kernel(
     t_min, t_max = 0.0, length
     
     # X-direction boundary intersections
-    if abs(dir_x) > _EPSILON:
+    if dir_x != 0.0:
         tx1, tx2 = (-cx - src_x) / dir_x, (cx - src_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif src_x < -cx or src_x > cx: return
     
     # Y-direction boundary intersections
-    if abs(dir_y) > _EPSILON:
+    if dir_y != 0.0:
         ty1, ty2 = (-cy - src_y) / dir_y, (cy - src_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif src_y < -cy or src_y > cy: return
     
     # Z-direction boundary intersections (extends 2D algorithm to 3D)
-    if abs(dir_z) > _EPSILON:
+    if dir_z != 0.0:
         tz1, tz2 = (-cz - src_z) / dir_z, (cz - src_z) / dir_z
         t_min, t_max = max(t_min, min(tz1, tz2)), min(t_max, max(tz1, tz2))
     elif src_z < -cz or src_z > cz: return
@@ -350,8 +350,9 @@ def _cone_3d_backward_kernel(
     if t_min >= t_max: return
 
     # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse. The float32 traversal restarts at the entry
-    # point, so its parameters stay within the volume diameter.
+    # ray parameters too coarse, and only an exactly zero direction component
+    # is treated as axis-parallel there. The float32 traversal restarts at the
+    # entry point, so its parameters stay within the volume diameter.
     ent_x = np.float32(src_x + t_min * dir_x)
     ent_y = np.float32(src_y + t_min * dir_y)
     ent_z = np.float32(src_z + t_min * dir_z)

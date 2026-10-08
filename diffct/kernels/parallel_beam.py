@@ -104,7 +104,7 @@ def _parallel_2d_forward_kernel(
     
     # X-direction boundary intersections
     # Handle non-parallel rays: compute intersection parameters with left (-cx) and right (+cx) boundaries
-    if abs(dir_x) > _EPSILON:  # Ray not parallel to x-axis (avoid division by zero)
+    if dir_x != 0.0:  # Ray not parallel to x-axis (avoid division by zero)
         tx1, tx2 = (-cx - pnt_x) / dir_x, (cx - pnt_x) / dir_x  # Left and right boundary intersections
         # Update valid parameter range: intersection of current range with x-boundary constraints
         # min/max operations ensure we get the entry/exit points correctly regardless of ray direction
@@ -115,7 +115,7 @@ def _parallel_2d_forward_kernel(
 
     # Y-direction boundary intersections (identical logic to x-direction)
     # Handle non-parallel rays: compute intersection parameters with bottom (-cy) and top (+cy) boundaries
-    if abs(dir_y) > _EPSILON:  # Ray not parallel to y-axis (avoid division by zero)
+    if dir_y != 0.0:  # Ray not parallel to y-axis (avoid division by zero)
         ty1, ty2 = (-cy - pnt_y) / dir_y, (cy - pnt_y) / dir_y  # Bottom and top boundary intersections
         # Intersect y-boundary constraints with existing parameter range from x-boundaries
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))  # Intersect with x-range
@@ -129,8 +129,9 @@ def _parallel_2d_forward_kernel(
         d_sino[iang, idet] = _ZERO; return
 
     # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse. The float32 traversal restarts at the entry
-    # point, so its parameters stay within the volume diameter.
+    # ray parameters too coarse, and only an exactly zero direction component
+    # is treated as axis-parallel there. The float32 traversal restarts at the
+    # entry point, so its parameters stay within the volume diameter.
     ent_x = np.float32(pnt_x + t_min * dir_x)
     ent_y = np.float32(pnt_y + t_min * dir_y)
     ray_x = np.float32(dir_x)
@@ -262,12 +263,12 @@ def _parallel_2d_backward_kernel(
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
     t_min, t_max = _NEG_INF, _INF
-    if abs(dir_x) > _EPSILON:
+    if dir_x != 0.0:
         tx1, tx2 = (-cx - pnt_x) / dir_x, (cx - pnt_x) / dir_x
         t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
     elif pnt_x < -cx or pnt_x > cx: return
 
-    if abs(dir_y) > _EPSILON:
+    if dir_y != 0.0:
         ty1, ty2 = (-cy - pnt_y) / dir_y, (cy - pnt_y) / dir_y
         t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
     elif pnt_y < -cy or pnt_y > cy: return
@@ -275,8 +276,9 @@ def _parallel_2d_backward_kernel(
     if t_min >= t_max: return
 
     # The setup above runs in float64 because a distant source makes float32
-    # ray parameters too coarse. The float32 traversal restarts at the entry
-    # point, so its parameters stay within the volume diameter.
+    # ray parameters too coarse, and only an exactly zero direction component
+    # is treated as axis-parallel there. The float32 traversal restarts at the
+    # entry point, so its parameters stay within the volume diameter.
     ent_x = np.float32(pnt_x + t_min * dir_x)
     ent_y = np.float32(pnt_y + t_min * dir_y)
     ray_x = np.float32(dir_x)
