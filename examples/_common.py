@@ -204,8 +204,21 @@ def synchronize(distributed):
         dist.barrier()
 
 
-def save_slices(path, panels, title):
-    """Save images (2D) or central slices (3D) side by side; skipped without matplotlib."""
+def central_section(volume, section):
+    """Central slice of a ``(D, H, W)`` volume: "axial" is ``(H, W)``, "coronal" is ``(D, W)`` with z up."""
+    if section == "axial":
+        return volume[volume.shape[0] // 2]
+    if section == "coronal":
+        return volume[:, volume.shape[1] // 2].flip(0)
+    raise ValueError(f"unknown section {section!r}; choose 'axial' or 'coronal'")
+
+
+def save_slices(path, panels, title, vmax=0.4, sections=("axial",)):
+    """Save images (2D) or central slices (3D) as a grid; skipped without matplotlib.
+
+    Each panel is ``(label, tensor)`` and fills one column; a 3D tensor gets one
+    row per entry of ``sections``. Labels may have a second line after ``\\n``.
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -213,14 +226,28 @@ def save_slices(path, panels, title):
     except ImportError:
         print("matplotlib is not installed; skipping", path)
         return
-    fig, axes = plt.subplots(1, len(panels), figsize=(3.2 * len(panels), 3.6))
-    for ax, (label, volume) in zip(np.atleast_1d(axes), panels):
-        image = volume[volume.shape[0] // 2] if volume.ndim == 3 else volume
-        ax.imshow(image.detach().cpu().numpy(), cmap="gray", vmin=0.0, vmax=0.4)
-        ax.set_title(label, fontsize=9)
-        ax.axis("off")
-    fig.suptitle(title)
-    fig.tight_layout()
-    fig.savefig(path, dpi=110)
+    background, ink, muted = "#111418", "#ECEAE6", "#9AA3AD"
+    rows = len(sections)
+    fig, axes = plt.subplots(rows, len(panels), figsize=(2.7 * len(panels), 2.7 * rows + 0.9),
+                             squeeze=False, facecolor=background)
+    for column, (label, volume) in enumerate(panels):
+        for row in range(rows):
+            image = central_section(volume, sections[row]) if volume.ndim == 3 else volume
+            ax = axes[row, column]
+            ax.imshow(image.detach().cpu().numpy(), cmap="gray", vmin=0.0, vmax=vmax)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            if column == 0 and rows > 1:
+                ax.set_ylabel(sections[row], color=muted, fontsize=10)
+        name, _, detail = label.partition("\n")
+        axes[0, column].set_title(name, color=ink, fontsize=11, pad=16 if detail else 6)
+        if detail:
+            axes[0, column].text(0.5, 1.02, detail, transform=axes[0, column].transAxes,
+                                 ha="center", va="bottom", color=muted, fontsize=9.5)
+    fig.suptitle(title, color=ink, fontsize=12, x=0.012, ha="left")
+    fig.tight_layout(rect=(0, 0, 1, 0.97), w_pad=0.4, h_pad=0.4)
+    fig.savefig(path, dpi=200, facecolor=background)
     plt.close(fig)
     print("saved", path)

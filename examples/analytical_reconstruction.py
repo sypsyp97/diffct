@@ -71,10 +71,10 @@ def main():
     print(f"window {args.window}: parallel FBP {psnr(parallel, image):.2f} dB, "
           f"fan FBP {psnr(fan, image):.2f} dB, cone FDK {psnr(cone, phantom):.2f} dB")
     if args.figure:
-        save_slices(args.figure, [("phantom", phantom),
-                                  (f"parallel FBP, {psnr(parallel, image):.1f} dB", parallel),
-                                  (f"fan FBP, {psnr(fan, image):.1f} dB", fan),
-                                  (f"cone FDK, {psnr(cone, phantom):.1f} dB", cone)],
+        save_slices(args.figure, [("phantom\nground truth", phantom),
+                                  (f"parallel FBP\n{psnr(parallel, image):.1f} dB", parallel),
+                                  (f"fan FBP\n{psnr(fan, image):.1f} dB", fan),
+                                  (f"cone FDK\n{psnr(cone, phantom):.1f} dB", cone)],
                     f"{n}² / {n}³ Shepp-Logan, {args.window} window")
 
 

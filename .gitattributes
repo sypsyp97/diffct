@@ -1,0 +1,10 @@
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.sbatch text eol=lf
+
+*.npz binary
+*.npy binary
+*.png binary
+*.gif binary
+*.mp4 binary
