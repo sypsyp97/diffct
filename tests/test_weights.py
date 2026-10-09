@@ -138,3 +138,20 @@ def test_parker_narrow_fan_full_scan_is_one():
     angles = torch.arange(360) * (2 * math.pi / 360)
     weights = parker_weights(angles, 2, 0.01, 800.0)
     torch.testing.assert_close(weights, torch.ones_like(weights))
+
+
+@pytest.mark.parametrize("coverage_degrees", [359.915, 359.92093, 359.925, 360.0])
+@pytest.mark.parametrize("endpoint_included", [False, True])
+def test_parker_and_angular_weights_preserve_amplitude_near_full_scan(
+    coverage_degrees, endpoint_included,
+):
+    n = 7200
+    coverage = math.radians(coverage_degrees)
+    angles = torch.linspace(0.0, coverage, n if endpoint_included else n + 1)[:n]
+    parker = parker_weights(angles, 5, 1.0, 80.0)
+    angular = angular_integration_weights(angles)
+    # Both short-scan tapers and full-scan redundancy must integrate each
+    # ray exactly once. Disagreeing classifications halve the amplitude.
+    integral = (parker * angular[:, None]).sum(dim=0)
+    torch.testing.assert_close(integral, torch.full_like(integral, math.pi),
+                               rtol=0, atol=2e-5)

@@ -149,15 +149,25 @@ def test_explicit_isocenter_allows_one_view(beam):
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("coverage_degrees", [330, 350, 360])
-def test_parker_fan_disk_center_amplitude(coverage_degrees):
+@pytest.mark.parametrize(("coverage_degrees", "n_views", "endpoint_included"), [
+    (330, 720, False), (350, 720, False), (360, 720, False),
+    (359.90, 7200, True), (359.92093, 7200, True),
+    (359.925, 7200, True), (360, 7200, True),
+])
+def test_parker_fan_disk_center_amplitude(coverage_degrees, n_views, endpoint_included):
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
-    n_views, n_det, pitch, sid, sdd, radius = 720, 256, 0.1, 20.0, 40.0, 4.0
+    n_det, pitch, sid, sdd, radius = 256, 0.1, 20.0, 40.0, 4.0
     coverage = math.radians(coverage_degrees)
-    angles = torch.arange(n_views, device="cuda") * (coverage / n_views)
-    trajectory = circular_trajectory_2d_fan(n_views, sid, sdd, end_angle=coverage,
-                                           device="cuda")
+    angles = torch.linspace(0.0, coverage, n_views if endpoint_included else n_views + 1,
+                            device="cuda")[:n_views]
+    # Build the actual acquisition from these angles, including its endpoint.
+    sine, cosine = angles.sin(), angles.cos()
+    trajectory = (
+        torch.stack((-sid * sine, sid * cosine), dim=1),
+        torch.stack(((sdd - sid) * sine, -(sdd - sid) * cosine), dim=1),
+        torch.stack((cosine, sine), dim=1),
+    )
     u = detector_coordinates_1d(n_det, pitch, device="cuda")
     # Exact line integrals of a unit disk, independent of Siddon/rasterization.
     distance = sid * torch.sin(torch.atan(u / sdd))
@@ -167,8 +177,6 @@ def test_parker_fan_disk_center_amplitude(coverage_degrees):
         n_det, pitch, sdd, device="cuda",
     )
     filtered = ramp_filter_1d(weighted, dim=1, sample_spacing=pitch, pad_factor=2)
-    filtered *= angular_integration_weights(
-        angles, redundant_full_scan=coverage_degrees == 360,
-    )[:, None]
+    filtered *= angular_integration_weights(angles)[:, None]
     reconstruction = fan_weighted_backproject(filtered, *trajectory, pitch, 7, 7)
     assert abs(reconstruction[3, 3].item() - 1.0) < 0.02

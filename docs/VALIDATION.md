@@ -202,3 +202,23 @@ Shepp-Logan 窗及两倍 padding。平均灰度误差分别从 -0.00745、-0.008
 和 `.validation/analytical-fixes-metrics.json`。回归测试在
 `tests/test_analytical_regressions.py`、`tests/test_geometry_autograd.py`、
 `tests/test_weights.py` 和 `tests/test_ramp_filter_windows.py`。
+
+### 接近整圈边界的补充修复
+
+在已发布的 `ca99741` 上，7200 个视角、包含末角的 359.92093° 扫描仍有
+半幅值问题：Parker 使用 `1e-6` 容差下限，角度积分使用 `1e-4`，导致
+Parker 按短扫描加权，而角度积分又施加整圈的 1/2 冗余因子。
+
+两者现在共享同一个扫描分类函数。扇束／锥束默认使用
+`angular_integration_weights(angles)`，会自动处理短扫描和整圈；显式
+`redundant_full_scan=False` 仍表示禁用整圈的 1/2 因子。
+
+RTX 4070 SUPER 的实际 CUDA 圆盘中心值从 **0.4999656 恢复到 0.9999741**。
+359.915°、359.925° 和完整 360° 的中心值仍接近 1。CPU 回归同时覆盖包含
+和排除末角的采样，要求 Parker 与角度权重组合后每个 bin 的积分为 pi。
+新增测试在修复前同时复现 CPU 权重减半和 CUDA 重建减半，修复后通过。
+完整回归为 **286 通过、12 跳过**；跳过项仍需要至少两张 GPU。
+
+失败日志、定量 CUDA 对照和完整回归日志保存在本地
+`.validation/near-full-scan-red.log`、`.validation/near-full-scan-metrics.json`
+和 `.validation/near-full-scan-full.log`。

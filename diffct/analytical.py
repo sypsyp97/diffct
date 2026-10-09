@@ -63,6 +63,19 @@ def detector_coordinates_1d(num_detectors, detector_spacing, detector_offset=0.0
 # ============================================================================
 
 
+def _angular_scan_period(span, median_step):
+    """Shared scan classification for angular quadrature and Parker weights."""
+    step = float(abs(median_step).item())
+    tol = max(1e-4, 0.05 * step)
+    # Endpoint-included, endpoint-excluded and downsampled circular scans
+    # can have a closure gap smaller than a normal retained-view interval.
+    for candidate in (math.pi, 2.0 * math.pi):
+        closure = float((span.new_tensor(candidate) - span).item())
+        if -tol <= closure <= 1.5 * step + tol:
+            return candidate
+    return None
+
+
 def angular_integration_weights(angles, redundant_full_scan=True):
     """Trapezoidal per-view integration weights for the analytical FBP/FDK sum.
 
@@ -73,9 +86,11 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     which is exactly what a voxel-driven gather backprojector with the
     ``(sid/U)^2`` weight needs to produce a unit-amplitude reconstruction.
 
-    For short scans (Parker-weighted) use ``redundant_full_scan=False``:
-    the weights then sum to the actual angular range and the Parker
-    window handles redundancy at the sinogram-filtering stage.
+    Short scans retain their actual angular range; the Parker window
+    handles their redundancy at the sinogram-filtering stage. Leave
+    ``redundant_full_scan=True`` for automatic fan/cone scan classification.
+    Setting it to ``False`` explicitly disables the full-turn ``1/2`` factor.
+    Parker and angular quadrature share the same periodic-scan decision.
     """
     angles = angles.to(dtype=torch.float32).contiguous()
     n = angles.shape[0]
@@ -94,19 +109,7 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     # when the missing closure gap matches the interior angular step.
     median_step = torch.median(diffs)
     span = angles_sorted[-1] - angles_sorted[0]
-    period = None
-    for candidate in (math.pi, 2.0 * math.pi):
-        closure = angles.new_tensor(candidate) - span
-        tol = max(1e-4, 0.05 * float(abs(median_step).item()))
-        # Full circular acquisitions can be endpoint-excluded
-        # (closure ~= median_step), endpoint-included (closure ~= 0),
-        # or downsampled from a finer full scan (closure smaller than
-        # the kept-view step, as in the walnut fixture). Treat these as
-        # periodic when the missing closure is no larger than one normal
-        # kept-view interval.
-        if closure >= -tol and float(closure.item()) <= 1.5 * float(abs(median_step).item()) + tol:
-            period = candidate
-            break
+    period = _angular_scan_period(span, median_step)
 
     w = torch.zeros(n, device=device, dtype=angles.dtype)
     if period is not None:
@@ -123,10 +126,7 @@ def angular_integration_weights(angles, redundant_full_scan=True):
         if n > 2:
             w[1:-1] = 0.5 * (diffs[:-1] + diffs[1:])
 
-    full_scan_tol = max(1e-4, 0.05 * float(abs(median_step).item()))
-    is_periodic_full_scan = period is not None and abs(period - 2.0 * math.pi) <= full_scan_tol
-    is_open_full_scan = period is None and abs(float((span - 2.0 * math.pi).item())) <= full_scan_tol
-    if redundant_full_scan and (is_periodic_full_scan or is_open_full_scan):
+    if redundant_full_scan and period == 2.0 * math.pi:
         w = w * 0.5  # absorb the 1/2 FBP/FDK redundancy factor
 
     # Return weights in the input order so the caller can just multiply
@@ -203,16 +203,17 @@ def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset
     gamma_max = float(gamma.abs().max().item())
 
     angles_sorted = torch.sort(angles).values
-    scan_range = float((angles_sorted[-1] - angles_sorted[0]).item())
-    step = float(torch.median(angles_sorted[1:] - angles_sorted[:-1]).item())
+    span = angles_sorted[-1] - angles_sorted[0]
+    median_step = torch.median(angles_sorted[1:] - angles_sorted[:-1])
     # Full-scan detection depends on acquired angles, not detector fan width.
-    # Allow one missing endpoint interval for endpoint-excluded full scans.
-    if scan_range >= 2.0 * math.pi - 1.5 * step - max(1e-6, 0.05 * step):
+    # Use exactly the quadrature's classification, including its tolerance.
+    if _angular_scan_period(span, median_step) == 2.0 * math.pi:
         # Already a full scan — no Parker needed.
         return torch.ones((n_ang, num_detectors), device=device, dtype=angles.dtype)
 
     # Generalized Parker taper for pi + 2*gamma_max <= coverage < 2*pi.
     # The minimum also accommodates an endpoint-excluded minimal short scan.
+    scan_range = float(span.item())
     delta = max(gamma_max, 0.5 * (scan_range - math.pi))
     beta = angles - angles.min()
     beta = beta.view(-1, 1)
