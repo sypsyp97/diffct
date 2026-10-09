@@ -1,9 +1,10 @@
-# diffct benchmarks
+# diffct benchmarks (dev branch)
 
-Performance benchmarks for every CUDA kernel in `diffct`, built on
-`pytest-benchmark`. These are **opt-in** — they are excluded from the
-default `pytest tests/` run by `--ignore=tests/benchmarks` in
-`pytest.ini`, so the regular test suite stays fast.
+Performance benchmarks for every CUDA kernel in the dev branch's
+arbitrary-trajectory `diffct`, built on `pytest-benchmark`. These
+are **opt-in** — they are excluded from the default `pytest tests/`
+run by `--ignore=tests/benchmarks` in `pytest.ini`, so the regular
+test suite stays fast.
 
 ## Running
 
@@ -20,15 +21,11 @@ Run a single geometry:
 pytest tests/benchmarks/test_bench_cone.py --benchmark-only
 ```
 
-Compare against a saved baseline (useful for before/after perf work):
+Compare against a saved baseline:
 
 ```bash
-# first, save a baseline
 pytest tests/benchmarks/ --benchmark-only --benchmark-save=baseline
-
 # ... make your changes ...
-
-# then compare
 pytest tests/benchmarks/ --benchmark-only --benchmark-compare=baseline
 ```
 
@@ -49,12 +46,11 @@ analytical FBP / FDK pipeline (cosine pre-weight + ramp filter +
 angular weights + voxel-gather kernel), because that is what a user
 actually pays for when reconstructing.
 
-## How it works
+## Trajectory API
 
-`pytest-benchmark` re-runs the target callable many times and reports
-the statistics (min / mean / median / stddev / rounds). CUDA streams
-are synchronised inside every call so we measure real GPU time rather
-than async kernel launch latency. The `pytest.ini` defaults
-(`benchmark_disable_gc`, `benchmark_warmup`,
-`benchmark_min_rounds=3`, `benchmark_max_time=2.0`) keep each
-benchmark under a couple of seconds while still averaging out noise.
+The dev branch kernels take per-view `(src_pos, det_center, det_u_vec
+[, det_v_vec])` arrays instead of closed-form `sdd / sid / angles`
+scalars. The benchmarks use `circular_trajectory_*` helpers from
+`diffct.geometry` to build a canonical circular orbit for each run,
+so the numbers reported here are directly comparable to a classical
+circular-orbit FBP / FDK implementation.

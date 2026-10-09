@@ -185,3 +185,11 @@ cython_debug/
 projectBrief.md
 .kiro
 .claude
+
+# Local GPU / cluster validation evidence
+.validation/
+
+# Manim render output
+docs/video/media/
+docs/video/scenes.txt
+docs/video/palette.png

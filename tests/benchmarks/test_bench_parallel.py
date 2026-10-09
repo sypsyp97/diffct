@@ -1,25 +1,15 @@
-"""Parallel-beam kernel benchmarks.
-
-Covers:
-- ``ParallelProjectorFunction`` (forward Siddon ray-march)
-- ``ParallelBackprojectorFunction`` (pure adjoint P^T Siddon scatter)
-- ``parallel_weighted_backproject`` (full analytical FBP: ramp +
-  angular weight + voxel-gather + 1/(2*pi) scale).
-
-Every benchmark runs on CUDA and auto-skips when CUDA is unavailable.
-Image / detector sizes sweep small / medium / large so the suite
-captures the cost scaling with problem size.
-"""
+"""Parallel-beam kernel benchmarks (arbitrary-trajectory API)."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from diffct.differentiable import (
+from diffct import (
     ParallelBackprojectorFunction,
     ParallelProjectorFunction,
     angular_integration_weights,
+    circular_trajectory_2d_parallel,
     parallel_weighted_backproject,
     ramp_filter_1d,
 )
@@ -34,11 +24,14 @@ from ._common import (
 
 
 PARALLEL_SIZES = [
-    # (n_img, n_ang, n_det, label)
     (128, 180, 192, "small"),
     (256, 360, 384, "medium"),
     (512, 720, 768, "large"),
 ]
+
+
+def _trajectory(n_ang, device):
+    return circular_trajectory_2d_parallel(n_ang, device=device)
 
 
 @pytest.mark.benchmark(group="parallel-forward")
@@ -51,13 +44,15 @@ def test_bench_parallel_forward(benchmark, n_img, n_ang, n_det, label):
     skip_if_no_cuda()
     device = torch.device("cuda")
     img = make_phantom_2d(n_img, device)
-    angles = full_scan_angles(n_ang, device)
+    ray_dir, det_origin, det_u_vec = _trajectory(n_ang, device)
 
     benchmark(
         sync_call,
         ParallelProjectorFunction.apply,
         img,
-        angles,
+        ray_dir,
+        det_origin,
+        det_u_vec,
         n_det,
         1.0,
     )
@@ -73,13 +68,15 @@ def test_bench_parallel_adjoint(benchmark, n_img, n_ang, n_det, label):
     skip_if_no_cuda()
     device = torch.device("cuda")
     sino = make_sinogram_2d(n_ang, n_det, device)
-    angles = full_scan_angles(n_ang, device)
+    ray_dir, det_origin, det_u_vec = _trajectory(n_ang, device)
 
     benchmark(
         sync_call,
         ParallelBackprojectorFunction.apply,
         sino,
-        angles,
+        ray_dir,
+        det_origin,
+        det_u_vec,
         1.0,
         n_img,
         n_img,
@@ -93,16 +90,15 @@ def test_bench_parallel_adjoint(benchmark, n_img, n_ang, n_det, label):
     ids=[s[3] for s in PARALLEL_SIZES],
 )
 def test_bench_parallel_fbp_pipeline(benchmark, n_img, n_ang, n_det, label):
-    """Full analytical FBP: ramp filter + angular weights + gather.
-
-    What a user actually pays for when reconstructing, as opposed to
-    just one of the four stages in isolation.
-    """
+    """Full analytical FBP: ramp + angular weight + gather."""
     skip_if_no_cuda()
     device = torch.device("cuda")
     img = make_phantom_2d(n_img, device)
+    ray_dir, det_origin, det_u_vec = _trajectory(n_ang, device)
     angles = full_scan_angles(n_ang, device)
-    sino = ParallelProjectorFunction.apply(img, angles, n_det, 1.0)
+    sino = ParallelProjectorFunction.apply(
+        img, ray_dir, det_origin, det_u_vec, n_det, 1.0
+    )
 
     def run():
         sino_filt = ramp_filter_1d(
@@ -110,6 +106,8 @@ def test_bench_parallel_fbp_pipeline(benchmark, n_img, n_ang, n_det, label):
         ).contiguous()
         d_beta = angular_integration_weights(angles, redundant_full_scan=True).view(-1, 1)
         sino_filt = sino_filt * d_beta
-        return parallel_weighted_backproject(sino_filt, angles, 1.0, n_img, n_img)
+        return parallel_weighted_backproject(
+            sino_filt, ray_dir, det_origin, det_u_vec, 1.0, n_img, n_img
+        )
 
     benchmark(sync_call, run)

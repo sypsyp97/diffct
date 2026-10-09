@@ -1,0 +1,42 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    # Run CI on this tag's commit. Publish the exact wheel that the matrix tested.
+    uses: ./.github/workflows/ci.yml
+
+  formal:
+    uses: ./.github/workflows/formal.yml
+
+  publish:
+    needs: [validate, formal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/diffct/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    needs: publish
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml

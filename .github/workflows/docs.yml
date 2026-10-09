@@ -1,37 +1,51 @@
-name: Deploy Documentation
+name: Deploy documentation
 
 on:
-  push:
-    branches:
-      - main  # Or your default branch
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-pages
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  deploy:
+    # Never consume PR artifacts in this privileged workflow. Execute no checkout code.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
+      actions: read
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Ignore builds superseded on main
+        id: current
+        uses: actions/github-script@v8
         with:
-          python-version: '3.x'
-
-      - name: Install dependencies
-        run: |
-          pip install sphinx-rtd-theme
-          pip install sphinx
-          pip install -r requirements.txt
-
-      - name: Build documentation
-        run: |
-          cd docs
-          make html
-
-      - name: Deploy to GitHub Pages
+          script: |
+            const { data } = await github.rest.repos.getBranch({
+              owner: context.repo.owner, repo: context.repo.repo, branch: 'main'
+            });
+            return data.commit.sha === context.payload.workflow_run.head_sha;
+      - uses: actions/download-artifact@v8
+        if: steps.current.outputs.result == 'true'
+        with:
+          name: docs-html
+          path: html
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Deploy to gh-pages
+        if: steps.current.outputs.result == 'true'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: docs/build/html
+          publish_dir: html

@@ -1,0 +1,55 @@
+{
+  "schema": "diffct-readme-figure-v1",
+  "exact_command": "python examples/walnut_reconstruction.py --figure out/walnut_measured.png",
+  "git_commit": "56955e8b369ad2b039f12132d4f764728068c2b4",
+  "git_dirty": true,
+  "slurm_job_id": "59823907",
+  "cluster": "Leonardo Booster (CINECA)",
+  "hostname": "lrdn1259.leonardo.local",
+  "gpu": "NVIDIA A100-SXM-64GB",
+  "elapsed_seconds": 161.0,
+  "input_data": {
+    "path": "examples/data/walnut_cone.npz",
+    "sha256": "c8dc5e20669386ca359e5f006c89616e64d42e9d9e2cbc747b416aa3e39f8b9b",
+    "source": "Meaney 2022, Zenodo 6986012, CC BY 4.0; see examples/data/NOTICE"
+  },
+  "outputs": {
+    "walnut_measured.png": "fe75250f31f2fadbae45b5c2dba8e719be217d54f5a5edeb83d794804209e15d"
+  },
+  "results": {
+    "fdk": {
+      "total_ms": 108.9
+    },
+    "sirt": {
+      "total_ms": 14232.3,
+      "ms_per_iteration": 71.16,
+      "iterations": 200
+    },
+    "cgls": {
+      "total_ms": 1493.1,
+      "ms_per_iteration": 74.66,
+      "iterations": 20
+    },
+    "tv": {
+      "total_ms": 23463.5,
+      "ms_per_iteration": 78.21,
+      "iterations": 300
+    }
+  },
+  "log": [
+    "walnut: 240 measured views, detector (256, 256), sid 210.66 mm, sdd 553.74 mm; volume 256^3 at 0.1522 mm",
+    "  fdk      108.9 ms (hann window)",
+    "  sirt   14232.3 ms (  71.16 ms/it, 200 it)",
+    "  cgls    1493.1 ms (  74.66 ms/it, 20 it)",
+    "  tv     23463.5 ms (  78.21 ms/it, 300 it)",
+    "saved out/walnut_measured.png"
+  ],
+  "git_dirty_paths": [
+    "docs/video/recon_psnr.json",
+    "docs/video/recon_slices.npz",
+    "docs/video/walnut_measured.npz"
+  ],
+  "git_dirty_note": "Video inputs written by docs/video/make_inputs.py, which ran in the same job; no source file differs from git_commit.",
+  "portable_path_normalization": "Job output directory replaced by out/",
+  "git_commit_note": "The job ran e49ec94; 56955e8 has the identical tree with corrected author metadata."
+}

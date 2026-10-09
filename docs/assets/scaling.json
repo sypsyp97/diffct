@@ -1,0 +1,71 @@
+{
+  "description": "Median time per operation, circular cone beam, 360 views, detector (2n, 1.5n) cells at pitch 1.25, Shepp-Logan phantom",
+  "gpu": "NVIDIA A100-SXM-64GB",
+  "system": "Leonardo Booster",
+  "software": "PyTorch 2.10 cu126, numba-cuda 0.30.4",
+  "source_commit": "b175b18",
+  "slurm_job": "59822225",
+  "hosts": {
+    "gpus_1": [
+      "lrdn3170.leonardo.local"
+    ],
+    "gpus_4_nodes_1": [
+      "lrdn3283.leonardo.local"
+    ],
+    "gpus_8_nodes_2": [
+      "lrdn3170.leonardo.local",
+      "lrdn3283.leonardo.local"
+    ]
+  },
+  "configurations": [
+    {
+      "key": "gpus_1",
+      "label": "1 GPU"
+    },
+    {
+      "key": "gpus_4_nodes_1",
+      "label": "4 GPUs, 1 node"
+    },
+    {
+      "key": "gpus_8_nodes_2",
+      "label": "8 GPUs, 2 nodes"
+    }
+  ],
+  "caption": "Circular cone beam, 360 views, A100-SXM-64GB (Leonardo Booster). Labels: time in ms on the 1-GPU bars, speed-up over 1 GPU on the others.",
+  "timings": {
+    "64": {
+      "gpus_1": {
+        "forward_ms": 1.795,
+        "adjoint_ms": 3.483,
+        "cgls_ms_per_iter": 4.625
+      },
+      "gpus_4_nodes_1": {
+        "forward_ms": 1.008,
+        "adjoint_ms": 1.463,
+        "cgls_ms_per_iter": 1.571
+      },
+      "gpus_8_nodes_2": {
+        "forward_ms": 0.877,
+        "adjoint_ms": 1.323,
+        "cgls_ms_per_iter": 1.555
+      }
+    },
+    "128": {
+      "gpus_1": {
+        "forward_ms": 8.448,
+        "adjoint_ms": 20.659,
+        "cgls_ms_per_iter": 30.078
+      },
+      "gpus_4_nodes_1": {
+        "forward_ms": 2.662,
+        "adjoint_ms": 5.894,
+        "cgls_ms_per_iter": 8.082
+      },
+      "gpus_8_nodes_2": {
+        "forward_ms": 1.684,
+        "adjoint_ms": 4.62,
+        "cgls_ms_per_iter": 5.591
+      }
+    }
+  }
+}

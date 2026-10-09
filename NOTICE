@@ -1,0 +1,18 @@
+diffct
+Copyright 2025 Yipeng Sun
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party data
+----------------
+
+examples/data/walnut_cone.npz is a downsampled derivative of
+
+    Meaney, Alexander (2022). "Cone-Beam Computed Tomography Dataset of a
+    Walnut." Zenodo. https://doi.org/10.5281/zenodo.6986012
+
+licensed under Creative Commons Attribution 4.0 International (CC BY 4.0,
+https://creativecommons.org/licenses/by/4.0/). The walnut images in
+docs/assets/ (walnut_measured.png, walnut_helical.png, diffct_intro.gif,
+diffct_intro.mp4) are reconstructions from these data. Credit the dataset as
+above when you reuse them. examples/data/NOTICE describes the preprocessing.

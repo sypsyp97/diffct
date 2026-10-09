@@ -1,0 +1,275 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+
+jobs:
+  lint:
+    name: Python error checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install ruff
+      # F401 includes public re-exports and existing unused imports. No style rules.
+      - run: ruff check --isolated --select E9,F --ignore F401 diffct tests examples
+
+  package:
+    name: Release metadata and distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install build twine pyyaml
+      - name: Check source versions and release tag
+        run: |
+          python - <<'PY'
+          import ast
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+          import yaml
+
+          project = tomllib.loads(Path('pyproject.toml').read_text())['project']
+          tree = ast.parse(Path('diffct/__init__.py').read_text())
+          versions = [ast.literal_eval(node.value) for node in tree.body
+                      if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == '__version__'
+                              for target in node.targets)]
+          assert len(versions) == 1, 'Expected one __version__ assignment'
+          changelog = re.search(r'^## \[(\d+\.\d+\.\d+)\]',
+                                Path('CHANGELOG.md').read_text(), re.MULTILINE)
+          assert changelog, 'Missing versioned changelog entry'
+          citation = yaml.safe_load(Path('CITATION.cff').read_text())
+          expected = project['version']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', expected), expected
+          assert versions[0] == citation['version'] == changelog[1] == expected, (
+              expected, versions[0], citation['version'], changelog[1])
+          if os.environ.get('GITHUB_REF_TYPE') == 'tag':
+              assert os.environ['GITHUB_REF_NAME'] == f'v{expected}', 'Tag/version mismatch'
+          print(f'All four versions agree: {expected}')
+          PY
+      # The default build creates the wheel from the sdist, not from the checkout.
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - name: Check archive contents and built metadata
+        run: |
+          python - <<'PY'
+          import email
+          import subprocess
+          import tarfile
+          import tomllib
+          import zipfile
+          from pathlib import Path, PurePosixPath
+          from packaging.markers import Marker
+          from packaging.requirements import Requirement
+
+          project = tomllib.loads(Path('pyproject.toml').read_text())['project']
+          expected_requirements = {str(Requirement(value)) for value in project['dependencies']}
+          optional_dependencies = project['optional-dependencies']
+          for extra, dependencies in optional_dependencies.items():
+              for value in dependencies:
+                  requirement = Requirement(value)
+                  marker = f'extra == "{extra}"'
+                  if requirement.marker is not None:
+                      marker = f'({requirement.marker}) and {marker}'
+                  requirement.marker = Marker(marker)
+                  expected_requirements.add(str(requirement))
+          wheels = list(Path('dist').glob('*.whl'))
+          sdists = list(Path('dist').glob('*.tar.gz'))
+          assert len(wheels) == len(sdists) == 1, 'Expected one wheel and one sdist'
+          tracked = subprocess.check_output(['git', 'ls-files', 'diffct', 'tests'], text=True).splitlines()
+          required = tracked + ['pyproject.toml', 'pytest.ini', 'README.md', 'CHANGELOG.md',
+                                'CITATION.cff', 'LICENSE', 'NOTICE']
+          with tarfile.open(sdists[0]) as archive:
+              members = archive.getmembers()
+              roots = {PurePosixPath(member.name).parts[0] for member in members}
+              assert len(roots) == 1, roots
+              contents = {}
+              for member in members:
+                  path = PurePosixPath(member.name)
+                  assert not path.is_absolute() and '..' not in path.parts, member.name
+                  assert member.isfile() or member.isdir(), member.name
+                  if member.isfile():
+                      contents[str(PurePosixPath(*path.parts[1:]))] = archive.extractfile(member).read()
+              for name in required:
+                  assert contents[name] == Path(name).read_bytes(), f'Sdist missing/changed: {name}'
+              sdist_metadata = email.message_from_bytes(contents['PKG-INFO'])
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              names = wheel.namelist()
+              package = {name for name in tracked if name.startswith('diffct/')}
+              assert {name for name in names if name.startswith('diffct/')} == package
+              for name in package:
+                  assert wheel.read(name) == Path(name).read_bytes(), f'Wheel changed: {name}'
+              assert all(name.startswith('diffct/') or '.dist-info/' in name for name in names), names
+              metadata_names = [name for name in names if name.endswith('.dist-info/METADATA')]
+              assert len(metadata_names) == 1, metadata_names
+              wheel_metadata = email.message_from_bytes(wheel.read(metadata_names[0]))
+              for license_name in ['LICENSE', 'NOTICE']:
+                  matches = [name for name in names if name.endswith(f'/licenses/{license_name}')]
+                  assert len(matches) == 1, matches
+                  assert wheel.read(matches[0]) == Path(license_name).read_bytes()
+          for metadata in [sdist_metadata, wheel_metadata]:
+              assert metadata['Name'] == project['name']
+              assert metadata['Version'] == project['version']
+              assert metadata['Requires-Python'] == project['requires-python']
+              assert {str(Requirement(value)) for value in metadata.get_all('Requires-Dist', [])} == expected_requirements
+              assert set(metadata.get_all('Provides-Extra', [])) == set(optional_dependencies)
+          print(f'Checked {len(package)} package files and {len(required)} sdist files')
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  cpu:
+    name: Installed wheel / Python ${{ matrix.python }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Install wheel and CPU test dependencies
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "$(ls dist/*.whl)[cu12]" pytest pytest-benchmark matplotlib tifffile
+          python -m pip check
+      - name: Test outside the source checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/wheel-tests"
+          cp -R tests pytest.ini "$RUNNER_TEMP/wheel-tests/"
+          cd "$RUNNER_TEMP/wheel-tests"
+          python - <<'PY'
+          import importlib.metadata
+          import sysconfig
+          from pathlib import Path
+          import diffct
+          import torch
+          from numba import cuda
+
+          installed = Path(diffct.__file__).resolve()
+          assert installed.is_relative_to(Path(sysconfig.get_paths()['purelib']).resolve()), installed
+          assert diffct.__version__ == importlib.metadata.version('diffct')
+          assert not torch.cuda.is_available(), 'This job must exercise the CPU path'
+          print(f'Imported installed wheel: {installed}; numba.cuda: {cuda.__file__}')
+          PY
+          python -m pytest tests -q -rs --strict-markers --junitxml=results.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = ET.parse('results.xml').findall('.//testcase')
+          passed = [case for case in cases if not any(
+              case.find(tag) is not None for tag in ['skipped', 'failure', 'error'])]
+          assert passed, 'No CPU tests passed; an all-skipped suite is not validation'
+          print(f'{len(passed)} CPU tests passed')
+          PY
+      - name: Example imports and command-line help
+        if: matrix.python == '3.14'
+        env:
+          MPLBACKEND: Agg
+        run: |
+          cd "$RUNNER_TEMP/wheel-tests"
+          python - <<'PY'
+          import os
+          import runpy
+          import sys
+          from pathlib import Path
+
+          examples = Path(os.environ['GITHUB_WORKSPACE']) / 'examples'
+          sys.path.insert(0, str(examples))
+          for name in ['_common.py', 'quickstart.py']:
+              runpy.run_path(str(examples / name), run_name='ci_import')
+              print(f'Imported {name}')
+          PY
+          for example in analytical_reconstruction benchmark_projector geometry_calibration iterative_reconstruction walnut_reconstruction plot_trajectory; do
+            python "$GITHUB_WORKSPACE/examples/$example.py" --help
+          done
+          python "$GITHUB_WORKSPACE/examples/data/preprocess_walnut.py" --help
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pytest-${{ matrix.python }}
+          path: ${{ runner.temp }}/wheel-tests/results.xml
+          if-no-files-found: warn
+
+  docs:
+    name: Documentation warnings
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - run: python -m pip install -r docs/requirements.txt
+      - run: python -m sphinx -b html -W --keep-going docs/source docs/build/html
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: docs-html
+          path: docs/build/html
+          if-no-files-found: error
+
+  required:
+    name: CI passed
+    if: always()
+    needs: [lint, package, cpu, docs]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every verification job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          results = json.loads(os.environ['RESULTS'])
+          failed = {name: job['result'] for name, job in results.items() if job['result'] != 'success'}
+          assert not failed, failed
+          PY

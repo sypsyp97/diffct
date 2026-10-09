@@ -2,19 +2,19 @@ cff-version: 1.2.0
 message: "If you use this software, please cite both the software (below) and the technical report listed under preferred-citation."
 title: "diffct: Differentiable Computed Tomography Reconstruction with CUDA"
 abstract: >-
-  A high-performance, CUDA-accelerated Python library for circular-orbit
-  computed tomography (CT) reconstruction with end-to-end differentiable
-  operators, amplitude-calibrated analytical FBP/FDK, and a separable-footprint
-  projector family for cell-integrated forward models. Built for optimization
-  and deep-learning integration.
+  Differentiable CUDA projectors for computed tomography (CT) with PyTorch
+  autograd. Each view has its own source and detector geometry, so circular,
+  helical, saddle and calibrated scans use the same matched Siddon operator.
+  Projections run on one GPU, several GPUs in one process, or across nodes,
+  and trajectory tensors receive geometry gradients for calibration.
 type: software
 authors:
   - family-names: Sun
     given-names: Yipeng
     email: yipeng.sun@fau.de
     alias: sypsyp97
-version: 1.3.4
-date-released: "2026-04-23"
+version: 2.0.0
+date-released: "2026-10-09"
 license: Apache-2.0
 repository-code: "https://github.com/sypsyp97/diffct"
 url: "https://sypsyp97.github.io/diffct/"
@@ -26,6 +26,8 @@ keywords:
   - CUDA
   - FBP
   - FDK
+  - multi-GPU
+  - geometry calibration
   - deep learning
   - medical imaging
 preferred-citation:

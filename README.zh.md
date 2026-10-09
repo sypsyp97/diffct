@@ -1,319 +1,190 @@
-# diffct: 可微分计算机断层重建算子
+<h1 align="center">diffct</h1>
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square)](https://doi.org/10.5281/zenodo.14999333)
-[![PyPI version](https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/diffct/)
-[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat-square)](https://sypsyp97.github.io/diffct/)
-[![CI/CD](https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square)](https://github.com/sypsyp97/diffct/actions)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sypsyp97/diffct)
+<p align="center"><a href="README.md">English</a> · 简体中文</p>
 
-🌏 **Language**: [English](README.md) | 简体中文
+<p align="center">
+  面向 CT 的可微 CUDA 投影算子：任意轨迹、多卡、多节点、几何梯度。
+</p>
 
-一个面向圆轨道 CT 重建的高性能 CUDA 加速库。提供端到端
-可微分的 projector / backprojector、幅度已标定的解析 FBP /
-FDK pipeline,以及基于单元积分模型的可分离 footprint
-(separable-footprint) projector 族。为优化问题和深度学习集成
-而设计。
+<p align="center">
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License"></a>
+  <a href="https://doi.org/10.5281/zenodo.14999333"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square" alt="DOI"></a>
+  <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
+  <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=docs&style=flat-square" alt="Documentation"></a>
+  <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/ci.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
+  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
+</p>
 
-⭐ **如果你觉得这个项目有用,请点个 star!**
+<p align="center">
+  <img src="docs/assets/diffct_intro.gif" width="100%" alt="diffct 动图：投影、正弦图、轨迹、多卡切分、重建和几何标定">
+</p>
 
-📄 **技术报告:** [Preprints manuscript](https://www.preprints.org/manuscript/202605.1446/v1) · [DOI](https://doi.org/10.20944/preprints202605.1446.v1)
+<p align="center">
+  <a href="docs/assets/diffct_intro.mp4">完整视频（MP4）</a> ·
+  <a href="https://www.preprints.org/manuscript/202605.1446/v1">技术报告</a> ·
+  <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
+</p>
 
-## 🔀 分支说明
+<p align="center">
+  <a href="#安装">安装</a> ·
+  <a href="#快速上手">快速上手</a> ·
+  <a href="#性能">性能</a> ·
+  <a href="#示例图">示例图</a> ·
+  <a href="#示例">示例</a> ·
+  <a href="#引用">引用</a>
+</p>
 
-### Main 分支(稳定版,发布到 PyPI)
-这是 **稳定发布** 分支,支持圆轨道 CT 重建。所有发布到
-[PyPI](https://pypi.org/project/diffct/) 的版本都来自 `main`。
-完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。
+> **2.0 版**用逐视角轨迹取代了 1.x 的圆轨迹接口。为 1.x 写的代码需要修改，见[迁移说明](docs/MIGRATION.md)。
+> Apple Silicon 请使用 [Linda-Sophie Schneider 的 MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
 
-### Dev 分支(任意轨迹)
-`dev` 分支是这个库面向任意轨迹的演进版本。kernel 接收逐视角的
-`(src_pos, det_center, det_u_vec[, det_v_vec])` 数组,而不是
-闭式的 `sdd / sid / beta` 标量,所以你可以在 **螺旋 (spiral)、
-鞍形 (saddle)、正弦 (sinusoidal) 或任意用户自定义轨迹** 上做
-重建。目前 `dev` 跟 `main` 的 1.2.11 解析重建重构(ramp filter、
-weighted backproject、测试、benchmark 套件)保持同步;唯一暂缓
-从 `main` 迁移过来的是 1.3.0 的 separable-footprint (SF) 后端 ——
-把梯形 footprint 推广到任意轨迹是一个独立的 research effort。
+## 为什么使用 diffct
 
-⚠️ **注意**: dev 分支处于活跃开发状态,不会发布到 PyPI。发现
-bug 请
-[提 issue](https://github.com/sypsyp97/diffct/issues)。
+据我们所知，diffct 是唯一同时具备以下四点的开源 GPU CT 库：任意逐视角轨迹、对体数据的自动求导、对采集几何的一阶梯度，以及内置的多卡和多节点执行。我们在 2026 年 10 月与 LEAP、TIGRE、ASTRA/tomosipo、DiffDRR 等库做了对比。
 
-## ✨ 功能特性
+- **任意轨迹。** 每个视角有各自的源点、探测器中心和探测器轴；圆轨迹、螺旋、鞍形、正弦、随机和标定扫描使用同一套代码。`requires_grad=True` 的轨迹张量可获得用于标定的几何梯度。
+- **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
+- **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或每卡一个进程并用 torchrun 与 NCCL。视角分片，体数据复制。加速比取决于工作负载和通信开销。
+- **解析辅助函数。** `diffct.analytical` 提供斜坡滤波器（ram-lak、shepp-logan、cosine、hamming、hann）、扇束、锥束和 Parker 权重，以及 FBP 与 FDK 反投影。
+- **已验证。** FDK 与 ASTRA 2.5.0 `FDK_CUDA` 的 PSNR 相差在 0.3 dB 以内；几何梯度与独立的 float64 参考结果相差约 1e-6。[A100 验证记录](docs/VALIDATION.md)报告 229 个通过的 pytest 测试。详见 [REFERENCE](docs/REFERENCE.md#validation-summary)（英文）。
 
-- **快**: 用 Numba CUDA 写的 forward / backward projector,外加
-  专用的 voxel-driven FBP / FDK gather kernel,内存写合并
-  (coalesced writes)。
-- **可微分**: 通过 `torch.autograd` 实现端到端梯度反传。每对
-  projector / backprojector 都是 byte-accurate 的 adjoint,在
-  `tests/test_adjoint_inner_product.py` 和
-  `tests/test_gradcheck.py` 里用 `torch.autograd.gradcheck` 验证。
-- **解析重建**: 幅度已标定的 FBP / FDK pipeline,由
-  `ramp_filter_1d`(支持 Ram-Lak / Hann / Hamming / cosine /
-  Shepp-Logan window,可配置 padding 和物理 `sample_spacing`)、
-  `fan_cosine_weights` / `cone_cosine_weights`、`parker_weights`、
-  `angular_integration_weights`、`parallel_weighted_backproject` /
-  `fan_weighted_backproject` / `cone_weighted_backproject` 组成。
-  单位密度 phantom 重建回来就是 amplitude 1,不需要手动缩放。
-- **Separable-footprint projectors**: 在
-  `FanProjectorFunction` / `ConeProjectorFunction` 调用里可以
-  通过 `backend="sf"`(fan) 或 `backend="sf_tr"` / `"sf_tt"`(cone)
-  切换到 voxel-driven 的 SF projector (Long-Fessler-Balter, IEEE
-  TMI 2010)。这是一个**质量守恒** (mass-conserving) 的单元积分
-  forward model,在 iterative reco 和 learned pipeline 里比
-  Siddon 的 ray-sampled 版本更贴近 sinogram 的物理含义。解析
-  FBP / FDK 那一侧的 `backend="sf"` 走的是 LEAP 的 chord-weighted
-  matched-adjoint 形式 (`projectors_SF.cu`),在 Shepp-Logan 上
-  amplitude 和 MSE 都跟 Siddon VD 持平 (差异 <1 %)。何时真的值得
-  用 SF 见下面的 Core Algorithm。forward 代价大约是 2-3 倍。
-- **测试齐全**: 71 个 pytest 用例覆盖 adjoint identity、gradcheck、
-  smoke、每种几何的 FBP / FDK 精度、detector / center offsets、
-  以及 27 个 ramp filter window case。`tests/benchmarks/` 下有
-  可选的 27 个 `pytest-benchmark` 性能用例用于前后对比。
+功能边界、限制和等中心规则见 [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits)（英文）。
 
-## 📐 支持的几何
+## 安装
 
-- **Parallel Beam**: 2D 平行束几何
-- **Fan Beam**: 2D 扇形束几何
-- **Cone Beam**: 3D 锥形束几何
-
-## 🔬 核心算法
-
-`diffct` 每一对 projector / backprojector 的核心都是
-**Siddon 算法** ([Siddon 1985](https://doi.org/10.1118/1.595715))
-—— 一个 ray-driven 的 integer DDA,让每条射线只在 voxel 边界处
-步进,对每条射线在 `O(N)` 步内给出精确的参数化 intersection
-长度,不会浪费时间走空 voxel。
-
-`diffct` 的 Siddon kernel 采用 **cell-constant 段积分**:每条
-射线的积分近似为 `Σ Δt_m · f_{cell(m)}`,也就是把射线穿过的每一
-个 pixel (2D) 或 voxel (3D) 按它在该 cell 里走过的精确弦长
-`Δt_m` 作加权累加,不在 cell 内部做任何插值。解析重建侧的
-voxel-driven FBP / FDK gather backprojector
-(`*_weighted_backproject`) 是独立的一条路径,仍然在滤波后的
-sinogram 上按每个 voxel 投影的探测器坐标做 bilinear 采样。
-Siddon kernel 对应的 autograd adjoint 把 ray-domain 梯度用同一
-个 `Δt_m` scatter 回同一个 cell,保证 `<Ax, y> ≈ <x, A^T y>`
-在 float32 精度下 byte-accurate(见
-`tests/test_adjoint_inner_product.py`)。
-
-**为什么这条路径能直接接 autograd**。射线积分
-`Σ Δt_m · f_{cell(m)}` 对 voxel 值 `f` 是线性的,所以
-`∂sinogram / ∂voxel` 就是穿过该 voxel 的所有射线段 `Δt_m` 之和
-—— 处处良定义、非零,且天然和 adjoint scatter 对称。
-`torch.autograd` 可以直接把梯度穿透 projector 回流,不需要任何
-surrogate 或 straight-through estimator 技巧。统一的 integer-DDA
-kernel 还让 forward / adjoint 代码结构在 parallel / fan / cone
-三种几何里保持同构,这也是 adjoint 能做到 byte-accurate 的前提。
-
-**锐度与 ramp filter window**。cell-constant Siddon 是一个沿射
-线的细线点采样,不做任何单元内低通,在一条完整的解析链路
-(forward → ramp filter → voxel-driven gather)里,高频内容基本
-不经 forward 衰减地进入 ramp filter。所以锐度 / ringing 的
-trade-off 主要在 ramp filter window 这一步控制:
-
-- **Ramp filter window**: `ramp_filter_1d(window=...)` 选择在 ramp
-  上叠加的频域 apodization。锐度排序:`"ram-lak"` > `"hamming"` >
-  `"hann"`。越锐的 window 保留越多高频内容,代价是 ringing /
-  噪声更明显。在常规 CBCT 几何下,这个是影响重建 MTF 最大的旋钮,
-  远大于 projector 后端的选择。
-
-**关于 Separable-footprint (SF) 后端 —— 说点实话**。
-`fan_weighted_backproject` 和 `cone_weighted_backproject` 上的
-`backend="sf"`(fan)/ `"sf_tr"` / `"sf_tt"`(cone) 把默认的
-bilinear voxel-driven gather 换成"按 voxel 投到探测器的梯形
-footprint 做积分"的 gather,走 LEAP 的 chord-weighted matched-
-adjoint 形式(`projectors_SF.cu`)。我们在 Shepp-Logan 和真核桃
-数据上实测的结果:
-
-- **幅度**:在 nominal / sub-nominal (`voxel = 0.5 * detector_pitch
-  * sid / sdd`) / 略 supra-nominal 三档 voxel size 下,SF 跟
-  Siddon VD 的 amplitude 都能对上(差异 < 1 %)。两个后端在
-  unit-density phantom 上都是幅度校准的,共用同一组解析 FBP / FDK
-  scale 常数。
-- **MSE / SSIM**:SF 比 VD 稍好一点点(零点几个百分点量级)。
-  不要期待后端选择本身能带来明显的 MSE 提升。
-- **肉眼可见的 MTF**:在 fan / cone 例子里常见的 1.5-3 倍放大率
-  下,SF 和 VD 产生 **肉眼几乎无差别** 的 edge profile。在一条
-  硬边缘上画 line profile,两条曲线完全重合。SF 文献里说的
-  "sub-nominal 下 SF 更锐"在极端 sub-nominal(voxel 远小于单个
-  探测器 bin)下是真的,但在我们 shipped example 的几何下看不到。
-
-那 SF 后端为什么还要保留?因为真正有价值的是 **forward** 这一侧:
-
-- SF forward 是 **mass-conserving** 的 —— 一个 voxel 的贡献会按
-  正确的 multi-bin footprint 摊到整条梯形上,而不是像
-  cell-constant Siddon 那样集中在一条细射线上的 point sample。
-  iterative 重建、learned prior、任何在 sinogram 上直接算 loss
-  的 pipeline 都更愿意用这种 forward。
-- SF 的 matched adjoint 是 byte-accurate 的(见
-  `tests/test_adjoint_inner_product.py`),所以梯度可以正确地
-  流过这个单元积分 forward model。
-- SF-matched autograd adjoint 跟 LEAP chord-weighted FBP gather
-  是两套不同的 kernel:前者在 `FanProjectorFunction` /
-  `ConeProjectorFunction` 的 backward pass 上被调用,后者在
-  `fan_weighted_backproject` / `cone_weighted_backproject` 选 SF
-  后端时被调用。两个都暴露出来,在 forward 和 backproject 两侧
-  都选 `backend="sf"` 就能得到一条完全的单元积分 pipeline。
-
-**一句话结论**。如果你只是想在常规 CBCT 几何上 FBP / FDK 一个
-Shepp-Logan 或者核桃,留在 `backend="siddon"` 调 ramp window 就好。
-当你关心的是 **forward model 是单元积分** —— iterative 重建、
-learned prior、sinogram loss、跟 LEAP 对齐的实验 —— 才切到
-`backend="sf"` / `"sf_tr"` / `"sf_tt"`。两条路径的具体用法在
-`examples/fbp_fan.py`、`examples/fdk_cone.py` 和
-`examples/realdata_walnut_fdk.py` 里都有演示。
-
-## 🥜 真实数据示例
-
-用真实核桃 CBCT 数据做的锥形束 FDK 重建,扫描来自赫尔辛基
-大学工业 CT 实验室([Meaney 2022, Zenodo
-10.5281/zenodo.6986012](https://doi.org/10.5281/zenodo.6986012),
-CC-BY 4.0)。仓库里预处理好的 sinogram 放在
-[`examples/data/walnut_cone.npz`](examples/data/walnut_cone.npz),
-是原始 721 x 2368 x 2240 uint16 采集的一个 241 视角、每视角
-256x256、做过 flat-field 归一化并取过 `-log` 的子集(8x 分辨率
-binning,中心 crop 256x256,float16 存储,约 25 MB)。一张
-示例重建 montage 在
-[`examples/data/walnut_reco.png`](examples/data/walnut_reco.png)。
-运行完整的解析 FDK pipeline:
+需要 CUDA GPU 和 PyTorch。请先按你的 CUDA 版本安装 PyTorch。
 
 ```bash
-python examples/realdata_walnut_fdk.py
+pip install "diffct[cu12]"    # CUDA 13 用 [cu13]；先按 CUDA 版本安装 PyTorch
 ```
 
-这个例子用的和 `fdk_cone.py` 里重建 Shepp-Logan 完全是同一套
-解析 wrapper(`cone_cosine_weights`、`ramp_filter_1d`、
-`angular_integration_weights`、`cone_weighted_backproject`),
-没有任何算法层面的改动 —— 只是把几何参数换成 `.npz` 里存的
-那一套。默认跑在 half-nominal 体素 + 512³ 网格 + `backend="sf_tr"`
-+ Hamming window;如果你切到 `backend="siddon"`,会得到肉眼
-几乎看不出差别的结果(后端选择在这里是一个 forward-model 的
-偏好,不是 sharpness 旋钮)。完整的 attribution 和再生步骤见
-[`examples/data/NOTICE`](examples/data/NOTICE)。
-
-## 🧩 代码结构
+从源码安装（含示例）：
 
 ```bash
-diffct/
-├── diffct/
-│   ├── __init__.py            # 公共 API 重新导出
-│   └── differentiable.py      # CUDA kernels、autograd Functions、
-│                              # 解析 helpers、SF 后端
-├── examples/                  # 圆轨道示例脚本
-│   ├── fbp_parallel.py
-│   ├── fbp_fan.py             # 带 Parker short-scan 开关
-│   ├── fdk_cone.py            # 带 Parker short-scan 开关
-│   ├── iterative_reco_parallel.py
-│   ├── iterative_reco_fan.py
-│   ├── iterative_reco_cone.py
-│   ├── realdata_fbp_parallel.py  # 合成真实数据流水线
-│   ├── realdata_fbp_fan.py       #   (Beer-Lambert + Poisson + -log)
-│   ├── realdata_fdk_cone.py
-│   ├── realdata_walnut_fdk.py    # 真核桃 CBCT 数据
-│   └── data/
-│       ├── walnut_cone.npz    # ~25 MB 预处理好的核桃 sinogram
-│       ├── walnut_reco.png    # 示例 FDK 重建 montage
-│       ├── preprocess_walnut.py  # 从 Zenodo 原始数据再生
-│       └── NOTICE             # CC-BY 4.0 attribution
-├── tests/
-│   ├── test_*.py              # adjoint / gradcheck / 精度 /
-│   │                          # offsets / weights / ramp-filter
-│   └── benchmarks/            # 可选的 pytest-benchmark 性能套件
-├── docs/                      # Sphinx 文档源
-├── pyproject.toml             # 项目元数据
-├── pytest.ini
-├── CHANGELOG.md               # Keep-a-Changelog 风格 release notes
-├── README.md                  # 英文 README
-├── README.zh.md               # 中文 README (本文件)
-└── LICENSE
-```
-
-## 🚀 快速开始
-
-### 依赖
-
-- 支持 CUDA 的 GPU
-- Python 3.10+
-- [PyTorch](https://pytorch.org/get-started/locally/)、[NumPy](https://numpy.org/)、[Numba](https://numba.readthedocs.io/en/stable/user/installing.html)、[CUDA](https://developer.nvidia.com/cuda-toolkit)
-
-### 安装
-
-**CUDA 12(推荐)**:
-```bash
-# 创建并激活 conda 环境
-conda create -n diffct python=3.12
-conda activate diffct
-
-# 安装 CUDA toolkit (这里以 12.8.1 为例)
-conda install nvidia/label/cuda-12.8.1::cuda-toolkit
-
-# 安装 PyTorch,从 https://pytorch.org/get-started/locally/ 查对应命令
-
-# 安装 CUDA 12 版的 Numba
-pip install numba-cuda[cu12]
-
-# 安装 diffct
-pip install diffct
+git clone https://github.com/sypsyp97/diffct.git
+cd diffct && pip install -e ".[cu12]"
+python examples/quickstart.py               # 冒烟测试：每种射束打印伴随误差约 1e-8
 ```
 
 <details>
-<summary>CUDA 13 安装</summary>
+<summary>CUDA 版本说明</summary>
 
-```bash
-conda create -n diffct python=3.12
-conda activate diffct
-
-conda install nvidia/label/cuda-13.0.2::cuda-toolkit
-
-# 安装 PyTorch,从 https://pytorch.org/get-started/locally/ 查对应命令
-
-pip install numba-cuda[cu13]
-
-pip install diffct
-```
+- Numba CUDA 导入 `numpy.row_stack`，NumPy 2.5 已删除该函数，所以保持 `numpy<2.5`。
+- NVVM 和 NVJitLink 要与 PyTorch 加载的 CUDA 库兼容。较新的 NVVM 配较旧的
+  NVJitLink 时，内核编译会失败。
+- 已测试的 CUDA 13 组合：
+  `pip install "numpy<2.5" "numba-cuda[cu13]" "cuda-toolkit[cccl,cudart,nvrtc,nvvm]==13.0.2" "nvidia-nvjitlink<13.1"`。
+- 已测试的 CUDA 12 组合：PyTorch 2.10（cu126）加 `numba-cuda[cu12]` 0.30.4，驱动为 NVIDIA 535。
 
 </details>
 
-<details>
-<summary>CUDA 11 安装</summary>
+## 快速上手
 
-```bash
-conda create -n diffct python=3.12
-conda activate diffct
+先创建一次采集几何，再调用 `project()` 和 `backproject()`。
 
-conda install nvidia/label/cuda-11.8.0::cuda-toolkit
+```python
+import torch
+from diffct import Projector, spiral_trajectory_3d
 
-# 安装 PyTorch,从 https://pytorch.org/get-started/locally/ 查对应命令
+trajectory = spiral_trajectory_3d(360, sid=320.0, sdd=512.0, z_range=40.0, n_turns=1.0, device="cpu")
+A = Projector(trajectory, volume_shape=(128, 128, 128), detector_shape=(384, 256), detector_spacing=0.8)
 
-pip install numba-cuda[cu11]
+volume = torch.rand(A.volume_shape, device="cuda")
+sinogram = A.project(volume)        # (360, 384, 256) 线积分
+adjoint = A.backproject(sinogram)   # 匹配的伴随算子 A^T
 
-pip install diffct
+x = torch.zeros_like(volume, requires_grad=True)
+loss = 0.5 * (A.project(x) - sinogram).square().sum()
+loss.backward()                     # x.grad = A^T (A x - y)
 ```
 
-</details>
+**自定义或标定轨迹。** 可直接传入标定得到的逐视角源点、探测器中心和方向轴张量，无需拟合圆轨迹。详见 [REFERENCE](docs/REFERENCE.md#custom-or-calibrated-trajectories)（英文）。
 
-### 跑测试
+**几何梯度。** 构造 `Projector` 前，将轨迹张量设为 `requires_grad=True`。详见 [REFERENCE](docs/REFERENCE.md#geometry-gradients)（英文）。
 
-```bash
-pytest tests/ -q                             # 66 个测试,~15 s
-pytest tests/benchmarks/ --benchmark-only    # 可选的性能套件,需要 pytest-benchmark
+**多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`；每卡一个进程并用 torchrun，可跨一个或多个节点。详见 [REFERENCE](docs/REFERENCE.md#several-gpus-and-nodes)（英文）和 [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md)。
+
+```python
+A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
 ```
 
-## 📝 引用
+## 性能
 
-如果你在研究中使用了本库,请引用软件和技术报告:
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png">
+    <img src="docs/assets/scaling_light.png" width="100%" alt="1、4、8 卡上正投影、伴随和 CGLS 每次迭代的耗时，64³ 和 128³">
+  </picture>
+</p>
+
+| 128³ 体数据 | 1 卡 | 4 卡，1 节点 | 8 卡，2 节点 |
+|---|---:|---:|---:|
+| 正投影 | 8.45 ms | 2.66 ms（3.2×） | 1.68 ms（5.0×） |
+| 伴随（反投影） | 20.66 ms | 5.89 ms（3.5×） | 4.62 ms（4.5×） |
+| CGLS 迭代 | 30.08 ms | 8.08 ms（3.7×） | 5.59 ms（5.4×） |
+
+圆轨迹，360 个视角，探测器 (2n, 1.5n) 个单元、pitch 1.25，Leonardo Booster 上的 A100 64 GB。小体积加速比较低：64³ 时，一次 CGLS 迭代在 1 卡、4 卡和 8 卡上分别为 4.63 ms、1.57 ms 和 1.56 ms。原始数据见 [docs/assets/scaling.json](docs/assets/scaling.json)。
+
+在本机比较单卡与多卡（脚本自带的默认扫描，不是上表的配置）：
+
+```bash
+python examples/benchmark_projector.py --devices 0 1
+```
+
+## 示例图
+
+**实测核桃。** 240 个实测视角，圆形锥束，256³：FDK（Hann 窗）、SIRT（200 次迭代）、CGLS（20 次）、TV（300 次，权重 0.3）；轴向和冠状面中心切片。
+
+<p align="center">
+  <img src="docs/assets/walnut_measured.png" width="100%" alt="实测核桃：FDK、SIRT、CGLS 和 TV 重建结果">
+</p>
+
+```bash
+python examples/walnut_reconstruction.py --figure out.png
+```
+
+**核桃螺旋扫描模拟。** 以 FDK 核桃体数据为真值，720 个视角，1% 噪声，256³。PSNR：FDK 26.67 dB，CGLS（30 次迭代）34.13 dB，SIRT（200 次）34.52 dB，TV（200 次，权重 1.0）37.77 dB。
+
+<p align="center">
+  <img src="docs/assets/walnut_helical.png" width="100%" alt="核桃螺旋扫描模拟：FDK、CGLS、SIRT 和 TV 重建结果">
+</p>
+
+```bash
+python examples/walnut_reconstruction.py --algorithms --save-volume walnut256.npy
+python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory helical --noise 0.01 --phantom walnut256.npy --figure out.png
+```
+
+核桃数据：Meaney 2022，Zenodo 6986012，CC BY 4.0，见 [examples/data/NOTICE](examples/data/NOTICE)。
+
+## 示例
+
+`quickstart.py`、`analytical_reconstruction.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式、分布式损失规则和全部实测结果见 [examples/README.md](examples/README.md)。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [轨迹指南](docs/source/trajectories.rst) | 轨迹元组和 `Projector` 用法 |
+| [docs/REFERENCE.md](docs/REFERENCE.md) | 功能边界、自定义轨迹、几何梯度、多卡细节、几何与单位（英文） |
+| [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | 执行与内存选择、分布式损失规则、Slurm 和跨节点检查 |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | 测试命令、验证细节和每项检查的边界 |
+| [docs/MIGRATION.md](docs/MIGRATION.md) | 从仅支持圆轨迹的 API 迁移 |
+| [docs/video/README.md](docs/video/README.md) | 动图视频的渲染方式 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
+
+在 CUDA 主机上运行测试：`python -m pytest tests/ -q`。
+
+## 引用
+
+如需引用本软件和技术报告，请使用以下 BibTeX：
 
 ```bibtex
 @software{diffct2025,
-  author       = {Yipeng Sun},
-  title        = {diffct: Differentiable Computed Tomography
-                 Reconstruction with CUDA},
-  year         = 2025,
-  publisher    = {Zenodo},
-  doi          = {10.5281/zenodo.14999333},
-  url          = {https://doi.org/10.5281/zenodo.14999333}
+  author    = {Yipeng Sun},
+  title     = {diffct: Differentiable Computed Tomography Reconstruction with CUDA},
+  year      = 2025,
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.14999333},
+  url       = {https://doi.org/10.5281/zenodo.14999333}
 }
 
 @article{202605.1446,
@@ -328,23 +199,6 @@ pytest tests/benchmarks/ --benchmark-only    # 可选的性能套件,需要 pyte
 }
 ```
 
-## 📄 许可证
+## 许可与致谢
 
-本项目基于 Apache 2.0 许可证发布 —— 详见 [LICENSE](LICENSE) 文件。
-
-## 🙏 致谢
-
-本项目高度受以下项目启发:
-
-- [PYRO-NN](https://github.com/csyben/PYRO-NN)
-- [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT)
-- [LEAP](https://github.com/LLNL/LEAP) (LLNL / Hyojin Kim 等)
-  —— 1.3.1 起 diffct 解析 FBP / FDK 路径上的三个 SF 反投 kernel
-  (`_fan_2d_sf_fbp_backproject_kernel`、
-  `_cone_3d_sf_tr_fdk_backproject_kernel`、
-  `_cone_3d_sf_tt_fdk_backproject_kernel`) 是按 LEAP
-  [`projectors_SF.cu`](https://github.com/LLNL/LEAP/blob/main/src/projectors_SF.cu)
-  里的 chord-weighted matched-adjoint 形式移植的。Apache 2.0 协议,
-  感谢 LEAP 团队的参考实现。
-
-欢迎提 issue 和 contribution!
+许可：[Apache 2.0](LICENSE)。本项目参考了 [PYRO-NN](https://github.com/csyben/PYRO-NN) 和 [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT)。欢迎提交 issue 和 pull request。核桃数据采用 CC BY 4.0 许可（Meaney 2022），见 [NOTICE](NOTICE)。

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import pytest
 import torch
 
@@ -30,25 +29,21 @@ def sync_call(fn, *args, **kwargs):
 
 
 def make_phantom_2d(n, device):
-    """Deterministic random phantom of shape ``(n, n)`` on ``device``."""
     torch.manual_seed(0xD1FFC7)
     return torch.randn(n, n, device=device, dtype=torch.float32).contiguous()
 
 
 def make_phantom_3d(n, device):
-    """Deterministic random phantom of shape ``(n, n, n)`` on ``device``."""
     torch.manual_seed(0xD1FFC7)
     return torch.randn(n, n, n, device=device, dtype=torch.float32).contiguous()
 
 
 def make_sinogram_2d(n_ang, n_det, device):
-    """Deterministic random sinogram of shape ``(n_ang, n_det)``."""
     torch.manual_seed(0xC7D1FF)
     return torch.randn(n_ang, n_det, device=device, dtype=torch.float32).contiguous()
 
 
 def make_sinogram_3d(n_views, det_u, det_v, device):
-    """Deterministic random sinogram of shape ``(n_views, det_u, det_v)``."""
     torch.manual_seed(0xC7D1FF)
     return torch.randn(
         n_views, det_u, det_v, device=device, dtype=torch.float32

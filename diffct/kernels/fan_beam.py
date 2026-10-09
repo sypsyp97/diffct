@@ -1,0 +1,451 @@
+"""CUDA kernels for 2D fan beam projections.
+
+This module contains CUDA kernels implementing the Siddon ray-tracing method
+for 2D fan beam forward projection and backprojection, plus a dedicated
+voxel-driven FBP gather kernel for analytical reconstruction pipelines.
+"""
+
+import math
+import numpy as np
+from numba import cuda
+
+from ..constants import (
+    _FASTMATH_DECORATOR,
+    _FDK_ACCURACY_DECORATOR,
+    _BIG,
+    _TINY,
+    _ZERO,
+    _ONE,
+    _HALF,
+    _EPSILON,
+)
+
+
+# ============================================================================
+# 2D Fan Beam Forward Projection Kernel
+# ============================================================================
+
+@_FASTMATH_DECORATOR
+def _fan_2d_forward_kernel(
+    d_image, Nx, Ny,
+    d_sino, n_ang, n_det,
+    det_spacing, d_src_pos, d_det_center, d_det_u_vec,
+    cx, cy, voxel_spacing
+):
+    """Compute the 2D fan beam forward projection with arbitrary source-detector trajectories.
+
+    This CUDA kernel implements cell-constant Siddon ray tracing for
+    2D fan beam forward projection. Supports arbitrary source and detector positions
+    for each view, enabling non-circular trajectories.
+
+    Parameters
+    ----------
+    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input 2D image array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output fan beam sinogram array on CUDA.
+    n_ang : int
+        Number of projection angles.
+    n_det : int
+        Number of detector elements.
+    det_spacing : float
+        Physical spacing between detector elements.
+    d_src_pos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Source positions for each view, shape (n_ang, 2), in physical units.
+    d_det_center : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector center positions for each view, shape (n_ang, 2), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_ang, 2).
+    cx : float
+        Half of image width in voxels.
+    cy : float
+        Half of image height in voxels.
+    voxel_spacing : float
+        Physical size of one voxel (in same units as det_spacing).
+
+    Notes
+    -----
+    Supports arbitrary fan beam geometries by specifying source position,
+    detector center, and detector orientation vectors for each view.
+    Integrates each ray through piecewise-constant pixel cells.
+    """
+    iang, idet = cuda.grid(2)
+    if iang >= n_ang or idet >= n_det:
+        return
+
+    # === 2D FAN BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
+    # Read source position from position matrix (in physical units)
+    src_x = d_src_pos[iang, 0] / voxel_spacing
+    src_y = d_src_pos[iang, 1] / voxel_spacing
+
+    # Read detector center and orientation vector
+    det_cx = d_det_center[iang, 0] / voxel_spacing
+    det_cy = d_det_center[iang, 1] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
+
+    # Calculate detector element offset from center
+    u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+
+    # Calculate 2D detector element position using center + u*u_vec
+    det_x = det_cx + u_offset * u_vec_x
+    det_y = det_cy + u_offset * u_vec_y
+
+    # === RAY DIRECTION CALCULATION ===
+    # Ray direction vector from source to detector element
+    dir_x, dir_y = det_x - src_x, det_y - src_y
+    length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
+    if length < _EPSILON:  # Degenerate ray case
+        d_sino[iang, idet] = _ZERO; return
+    
+    # Normalize ray direction vector for parametric traversal
+    inv_len = _ONE / length
+    dir_x, dir_y = dir_x * inv_len, dir_y * inv_len
+
+    # === RAY-VOLUME INTERSECTION CALCULATION ===
+    # Measure the ray parameter from the endpoint nearer the volume centre, so a
+    # distant source does not make the float32 parameters coarse. Only the
+    # source-to-detector segment is integrated.
+    if src_x * src_x + src_y * src_y <= det_x * det_x + det_y * det_y:
+        org_x = src_x
+        org_y = src_y
+        t_min, t_max = _ZERO, length
+    else:
+        org_x = det_x
+        org_y = det_y
+        t_min, t_max = -length, _ZERO
+    if abs(dir_x) > _TINY:
+        tx1, tx2 = (-cx - org_x) / dir_x, (cx - org_x) / dir_x  # Volume boundary intersections
+        t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
+    elif org_x < -cx or org_x > cx:  # Ray origin outside volume bounds
+        d_sino[iang, idet] = _ZERO; return
+
+    if abs(dir_y) > _TINY:
+        ty1, ty2 = (-cy - org_y) / dir_y, (cy - org_y) / dir_y
+        t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
+    elif org_y < -cy or org_y > cy:
+        d_sino[iang, idet] = _ZERO; return
+
+    if t_min >= t_max:  # No valid intersection
+        d_sino[iang, idet] = _ZERO; return
+
+    # The traversal restarts at the entry point, so its parameters stay
+    # within the volume diameter.
+    ent_x = org_x + t_min * dir_x
+    ent_y = org_y + t_min * dir_y
+    ray_x = dir_x
+    ray_y = dir_y
+    t_end = t_max - t_min
+
+    # === SIDDON METHOD TRAVERSAL (same algorithm as parallel beam) ===
+    accum = _ZERO  # Accumulated projection value
+    t = _ZERO
+    
+    # Convert ray entry point to voxel indices
+    ix = int(math.floor(ent_x + t * ray_x + cx))
+    iy = int(math.floor(ent_y + t * ray_y + cy))
+
+    # Traversal parameters (identical to parallel beam implementation)
+    step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _TINY else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _TINY else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _TINY else _BIG
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _TINY else _BIG
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _TINY else _BIG
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _TINY else _BIG
+
+    # Main traversal loop with cell-constant Siddon integration.
+    while t < t_end:
+        if 0 <= ix < Nx and 0 <= iy < Ny:
+            t_next = min(tx, ty, t_end)
+            seg_len = t_next - t
+            if seg_len > _ZERO:
+                accum += d_image[iy, ix] * seg_len
+        
+        # Voxel boundary crossing logic (identical to parallel beam)
+        if tx <= ty:
+            t = tx
+            ix += step_x
+            tx += dt_x
+        else:
+            t = ty
+            iy += step_y
+            ty += dt_y
+    
+    # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
+    d_sino[iang, idet] = accum * voxel_spacing
+
+@_FASTMATH_DECORATOR
+
+# ============================================================================
+# 2D Fan Beam Backprojection Kernel
+# ============================================================================
+
+def _fan_2d_backward_kernel(
+    d_sino, n_ang, n_det,
+    d_image, Nx, Ny,
+    det_spacing, d_src_pos, d_det_center, d_det_u_vec,
+    cx, cy, voxel_spacing
+):
+    """Compute the 2D fan beam backprojection with arbitrary source-detector trajectories.
+
+    This CUDA kernel implements the adjoint of cell-constant Siddon ray tracing for
+    2D fan beam backprojection. Supports arbitrary source and detector positions
+    for each view, enabling non-circular trajectories.
+
+    Parameters
+    ----------
+    d_sino : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Input fan beam sinogram array on CUDA.
+    n_ang : int
+        Number of projection angles.
+    n_det : int
+        Number of detector elements.
+    d_image : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Output image gradient array on CUDA.
+    Nx : int
+        Number of voxels along the x-axis.
+    Ny : int
+        Number of voxels along the y-axis.
+    det_spacing : float
+        Physical spacing between detector elements.
+    d_src_pos : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Source positions for each view, shape (n_ang, 2), in physical units.
+    d_det_center : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector center positions for each view, shape (n_ang, 2), in physical units.
+    d_det_u_vec : numba.cuda.cudadrv.devicearray.DeviceNDArray
+        Detector u-direction unit vectors for each view, shape (n_ang, 2).
+    cx : float
+        Half of image width in voxels.
+    cy : float
+        Half of image height in voxels.
+    voxel_spacing : float
+        Physical size of one voxel (in same units as det_spacing).
+
+    Notes
+    -----
+    As the adjoint to the fan beam forward projection, this operation
+    distributes sinogram values back into the volume along divergent ray
+    paths using atomic operations for thread-safe accumulation.
+    Supports arbitrary fan beam geometries.
+    """
+    iang, idet = cuda.grid(2)
+    if iang >= n_ang or idet >= n_det:
+        return
+
+    # === 2D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
+    # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
+    val = d_sino[iang, idet] * voxel_spacing
+
+    # Read source position from position matrix (in physical units)
+    src_x = d_src_pos[iang, 0] / voxel_spacing
+    src_y = d_src_pos[iang, 1] / voxel_spacing
+
+    # Read detector center and orientation vector
+    det_cx = d_det_center[iang, 0] / voxel_spacing
+    det_cy = d_det_center[iang, 1] / voxel_spacing
+
+    u_vec_x = d_det_u_vec[iang, 0]
+    u_vec_y = d_det_u_vec[iang, 1]
+
+    # Calculate detector element offset from center
+    u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+
+    # Calculate 2D detector element position using center + u*u_vec
+    det_x = det_cx + u_offset * u_vec_x
+    det_y = det_cy + u_offset * u_vec_y
+
+    # === RAY DIRECTION CALCULATION ===
+    # Ray direction vector from source to detector element
+    dir_x, dir_y = det_x - src_x, det_y - src_y
+    length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
+    if length < _EPSILON: return  # Skip degenerate rays
+    inv_len = _ONE / length        # Normalization factor for ray direction
+    dir_x, dir_y = dir_x * inv_len, dir_y * inv_len  # Normalized ray direction vector
+
+    # === RAY-VOLUME INTERSECTION CALCULATION ===
+    # Measure the ray parameter from the endpoint nearer the volume centre, so a
+    # distant source does not make the float32 parameters coarse. Only the
+    # source-to-detector segment is integrated.
+    if src_x * src_x + src_y * src_y <= det_x * det_x + det_y * det_y:
+        org_x = src_x
+        org_y = src_y
+        t_min, t_max = _ZERO, length
+    else:
+        org_x = det_x
+        org_y = det_y
+        t_min, t_max = -length, _ZERO
+    if abs(dir_x) > _TINY:
+        tx1, tx2 = (-cx - org_x) / dir_x, (cx - org_x) / dir_x
+        t_min, t_max = max(t_min, min(tx1, tx2)), min(t_max, max(tx1, tx2))
+    elif org_x < -cx or org_x > cx: return
+
+    if abs(dir_y) > _TINY:
+        ty1, ty2 = (-cy - org_y) / dir_y, (cy - org_y) / dir_y
+        t_min, t_max = max(t_min, min(ty1, ty2)), min(t_max, max(ty1, ty2))
+    elif org_y < -cy or org_y > cy: return
+
+    if t_min >= t_max: return
+
+    # The traversal restarts at the entry point, so its parameters stay
+    # within the volume diameter.
+    ent_x = org_x + t_min * dir_x
+    ent_y = org_y + t_min * dir_y
+    ray_x = dir_x
+    ray_y = dir_y
+    t_end = t_max - t_min
+
+    # === SIDDON METHOD TRAVERSAL INITIALIZATION ===
+    t = _ZERO
+    ix = int(math.floor(ent_x + t * ray_x + cx))
+    iy = int(math.floor(ent_y + t * ray_y + cy))
+
+    step_x, step_y = (1 if ray_x >= 0 else -1), (1 if ray_y >= 0 else -1)
+    inv_dir_x = (_ONE / ray_x) if abs(ray_x) > _TINY else _ZERO
+    inv_dir_y = (_ONE / ray_y) if abs(ray_y) > _TINY else _ZERO
+    dt_x = abs(inv_dir_x) if abs(ray_x) > _TINY else _BIG
+    dt_y = abs(inv_dir_y) if abs(ray_y) > _TINY else _BIG
+    next_ix = ix + (1 if step_x > 0 else 0)
+    next_iy = iy + (1 if step_y > 0 else 0)
+    tx = (np.float32(next_ix) - cx - ent_x) * inv_dir_x if abs(ray_x) > _TINY else _BIG
+    ty = (np.float32(next_iy) - cy - ent_y) * inv_dir_y if abs(ray_y) > _TINY else _BIG
+
+    # === FAN BEAM BACKPROJECTION TRAVERSAL LOOP ===
+    # Adjoint of the cell-constant Siddon forward projection.
+    while t < t_end:
+        if 0 <= ix < Nx and 0 <= iy < Ny:
+            t_next = min(tx, ty, t_end)
+            seg_len = t_next - t
+            if seg_len > _ZERO:
+                cuda.atomic.add(d_image, (iy, ix), val * seg_len)
+
+        # === VOXEL BOUNDARY CROSSING LOGIC ===
+        # Advance to next voxel based on which boundary is crossed first
+        if tx <= ty:
+            t = tx
+            ix += step_x
+            tx += dt_x
+        else:
+            t = ty
+            iy += step_y
+            ty += dt_y
+
+# ============================================================================
+# 2D Fan Beam Analytical FBP Backprojection Gather (voxel-driven)
+# ============================================================================
+#
+# Distinct from ``_fan_2d_backward_kernel`` above, which is the pure
+# Siddon adjoint ``P^T`` used by autograd. This kernel is the classical
+# voxel-driven FBP gather: for each output pixel it projects the pixel
+# centre onto the detector for each view, linearly samples the filtered
+# sinogram, and accumulates ``(sid_v / U_n)^2 * sample``.
+
+
+@_FDK_ACCURACY_DECORATOR
+def _fan_2d_fbp_backproject_kernel(
+    d_sino, n_views, n_det,
+    d_image, Nx, Ny,
+    det_spacing, d_src_pos, d_det_center, d_det_u_vec,
+    cx, cy, voxel_spacing, iso_x, iso_y
+):
+    """Voxel-driven fan-beam FBP backprojection gather (arbitrary trajectory).
+
+    For each pixel ``(ix, iy)`` loops over views and accumulates a linearly
+    interpolated filtered-sinogram sample weighted by ``(sid_n/U_n)^2``,
+    where ``U_n`` is the signed distance from the source ``S_v`` to the
+    pixel along the detector normal.
+    """
+    ix, iy = cuda.grid(2)
+    if ix >= Nx or iy >= Ny:
+        return
+    if n_det < 2:
+        d_image[iy, ix] = _ZERO
+        return
+
+    # Sample at voxel centres, matching the cell-constant Siddon projector.
+    x_v = np.float32(ix) + _HALF - cx
+    y_v = np.float32(iy) + _HALF - cy
+
+    det_spacing_v = det_spacing / voxel_spacing
+    half_u = (np.float32(n_det) - _ONE) * _HALF
+
+    accum = _ZERO
+    for iview in range(n_views):
+        sx = d_src_pos[iview, 0] / voxel_spacing
+        sy = d_src_pos[iview, 1] / voxel_spacing
+
+        dcx = d_det_center[iview, 0] / voxel_spacing
+        dcy = d_det_center[iview, 1] / voxel_spacing
+
+        ux = d_det_u_vec[iview, 0]
+        uy = d_det_u_vec[iview, 1]
+
+        # Detector normal in 2D: rotate u_vec 90 degrees. Choose the
+        # orientation that points from the source toward the detector,
+        # so that ``U_n`` is positive for voxels on the detector side.
+        nx = -uy
+        ny = ux
+        # Align normal so that (det_center - src) . n > 0.
+        align = (dcx - sx) * nx + (dcy - sy) * ny
+        if align < _ZERO:
+            nx = -nx
+            ny = -ny
+
+        # Perpendicular distance from source to voxel along normal.
+        px = x_v - sx
+        py = y_v - sy
+        U_n = px * nx + py * ny
+        if U_n <= _EPSILON:
+            continue
+
+        sdd_n = (dcx - sx) * nx + (dcy - sy) * ny
+        if sdd_n <= _EPSILON:
+            continue
+        mag = sdd_n / U_n
+
+        # Source-to-isocenter distance, independent of coordinate origin.
+        sid_n = (iso_x - sx) * nx + (iso_y - sy) * ny
+        if sid_n <= _EPSILON:
+            continue
+
+        hx = sx + mag * px
+        hy = sy + mag * py
+
+        rx = hx - dcx
+        ry = hy - dcy
+        u_det = rx * ux + ry * uy
+
+        fu = u_det / det_spacing_v + half_u
+        if fu < _ZERO or fu > (np.float32(n_det) - _ONE):
+            continue
+
+        iu0 = int(math.floor(fu))
+        if iu0 >= n_det - 1:
+            iu0 = n_det - 2
+        if iu0 < 0:
+            iu0 = 0
+        tu = fu - np.float32(iu0)
+        if tu < _ZERO:
+            tu = _ZERO
+        elif tu > _ONE:
+            tu = _ONE
+
+        s0 = d_sino[iview, iu0]
+        s1 = d_sino[iview, iu0 + 1]
+        sample = s0 * (_ONE - tu) + s1 * tu
+
+        w_ratio = sid_n / U_n
+        w = w_ratio * w_ratio
+
+        accum += w * sample
+
+    d_image[iy, ix] = accum
+
+

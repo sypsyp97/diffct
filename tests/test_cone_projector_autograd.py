@@ -1,16 +1,15 @@
 """Autograd tests for ``ConeProjectorFunction``.
 
-These tests intentionally exercise only the differentiable forward
-path. They protect the autograd-facing kernel from being broken by
-the analytical FDK changes, which live on a separate kernel branch.
+These tests exercise the differentiable forward path and verify the
+gradient has the right shape, is finite, and is not identically zero.
+They protect the autograd-facing kernel from accidental regressions
+(e.g. a detach inside the Function).
 """
-
-import math
 
 import pytest
 import torch
 
-from diffct.differentiable import ConeProjectorFunction
+from diffct import ConeProjectorFunction, circular_trajectory_3d, spiral_trajectory_3d
 
 
 def _skip_if_no_cuda():
@@ -29,21 +28,16 @@ def test_cone_projector_forward_and_backward_grad():
     vol = torch.randn(D, H, W, device=device, dtype=torch.float32).contiguous()
     vol.requires_grad_(True)
 
-    angles = torch.linspace(0.0, 2.0 * math.pi, 48, device=device, dtype=torch.float32)
+    src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
+        48, sid=600.0, sdd=900.0, device=device
+    )
     det_u, det_v = 32, 32
     sino = ConeProjectorFunction.apply(
-        vol,
-        angles,
-        det_u,
-        det_v,
-        1.0,
-        1.0,
-        900.0,
-        600.0,
-        1.0,
+        vol, src_pos, det_center, det_u_vec, det_v_vec,
+        det_u, det_v, 1.0, 1.0, 1.0,
     )
 
-    assert sino.shape == (angles.numel(), det_u, det_v)
+    assert sino.shape == (src_pos.shape[0], det_u, det_v)
     assert torch.isfinite(sino).all()
 
     sino.mean().backward()
@@ -57,9 +51,9 @@ def test_cone_projector_forward_and_backward_grad():
 
 
 @pytest.mark.cuda
-def test_cone_projector_gradient_with_offsets():
-    """The autograd path must still produce finite gradients when every
-    detector and center offset is set to a non-trivial value."""
+def test_cone_projector_gradient_on_spiral_trajectory():
+    """The autograd path must still produce finite gradients on a non
+    circular trajectory (spiral orbit)."""
     _skip_if_no_cuda()
     device = torch.device("cuda")
 
@@ -67,25 +61,16 @@ def test_cone_projector_gradient_with_offsets():
     vol = torch.randn(D, H, W, device=device, dtype=torch.float32).contiguous()
     vol.requires_grad_(True)
 
-    angles = torch.linspace(0.0, 2.0 * math.pi, 32, device=device, dtype=torch.float32)
+    src_pos, det_center, det_u_vec, det_v_vec = spiral_trajectory_3d(
+        32, sid=600.0, sdd=900.0, z_range=10.0, n_turns=1.0, device=device,
+    )
     sino = ConeProjectorFunction.apply(
-        vol,
-        angles,
-        24,
-        24,
-        1.0,
-        1.0,
-        900.0,
-        600.0,
-        1.0,
-        0.3,    # detector_offset_u
-        -0.2,   # detector_offset_v
-        0.1,    # center_offset_x
-        -0.15,  # center_offset_y
-        0.2,    # center_offset_z
+        vol, src_pos, det_center, det_u_vec, det_v_vec,
+        24, 24, 1.0, 1.0, 1.0,
     )
     assert torch.isfinite(sino).all()
 
     (sino ** 2).mean().backward()
     assert vol.grad is not None
     assert torch.isfinite(vol.grad).all()
+    assert vol.grad.abs().sum().item() > 0.0
