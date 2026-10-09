@@ -1,0 +1,10 @@
+# Linux installs the CUDA target; macOS uses Numba's bundled simulator.
+# Install Linux torch from https://download.pytorch.org/whl/cpu first.
+pytest==9.1.1
+z3-solver==5.1.0.0
+sympy==1.14.0
+hypothesis==6.168.5
+numpy==2.4.6
+torch==2.14.1
+numba==0.68.0
+numba-cuda[cu12]==0.30.4; platform_system == "Linux"
