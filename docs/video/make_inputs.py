@@ -1,19 +1,26 @@
 """Inputs for docs/video/diffct_intro.py.
 
-Run on a CUDA GPU from the repository root with ``python docs/video/make_inputs.py --gpu``:
+Install SciPy, then run from the repository root.
+``python docs/video/make_inputs.py --gpu`` needs CUDA and writes all four files below:
 
 walnut_measured.npz: axial and coronal central slices of the measured walnut
 (examples/data/walnut_cone.npz, all 240 views) reconstructed by FDK, SIRT,
-CGLS and TV, plus a few measured projections.
-recon_slices.npz, recon_psnr.json: the FDK walnut volume used as a phantom for a
-simulated helical scan with 1% noise, and its FDK / SIRT / CGLS / TV
-reconstructions with PSNR.
+CGLS and TV, plus four measured projections. The volume size is 256^3.
+SIRT uses 200 iterations, CGLS uses 20, and TV uses 300 with weight 0.3.
+recon_slices.npz: axial and coronal central slices of the phantom and its reconstructions.
+The phantom is the scaled FDK walnut volume, clamped to [0, 1].
+The simulated helical scan uses 720 views and 1% Gaussian noise at size 256^3.
+SIRT uses 200 iterations, CGLS uses 30, and TV uses 200 with weight 1.0.
+recon_psnr.json: PSNR values for the simulated FDK, SIRT, CGLS and TV reconstructions.
+data2d.npz: the measured FDK axial slice and a display sinogram made with SciPy.
 
 Without ``--gpu`` the script only rebuilds data2d.npz: the walnut axial slice
 from walnut_measured.npz and its parallel-beam sinogram over 180 degrees
-(scipy rotate + sum, for display only). The script does not write
-calib_history.json: that file is the loss history of a geometry calibration
-run (64^3, 150 steps) and is kept as it is.
+(SciPy rotate + sum, for display only). Both modes need SciPy.
+The script does not write calib_history.json. That file contains saved results
+from a separate geometry calibration run. geometry_calibration.py does not export it.
+The video reads walnut_measured.npz, data2d.npz and calib_history.json.
+It does not read recon_slices.npz or recon_psnr.json.
 """
 import argparse
 import json

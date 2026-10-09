@@ -60,6 +60,9 @@ Notes
 
 - The iteration counts are demonstration settings, not a general convergence
   schedule. Choose a stopping rule for your data.
+- The TV weight is an example setting. Choose it for your geometry, resolution,
+  voxel spacing and data scale. The solver uses half the mean squared residual
+  per ray and a mean TV term. Its voxel differences are not divided by voxel spacing.
 - Each GPU needs a full float32 volume and workspace. Inputs of other floating-point
   types are converted to float32 internally.
 - To adapt the loss for several ranks, see :doc:`multi_gpu`.
