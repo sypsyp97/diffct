@@ -6,8 +6,10 @@ Author: Alexander Meaney. License: CC-BY 4.0.
 Given the eight ``20201111_walnut_projections_*.zip`` archives from
 the Zenodo record, produce a single ``walnut_cone.npz`` that contains
 
-  - a (num_views, det_u, det_v) sinogram of *line integrals* (i.e.
-    already flat-field normalised and ``-log``'d),
+  - a (num_views, det_v, det_u) sinogram of *line integrals*: rows run
+    along v, columns along u. The published projections are already dark-
+    and flat-field corrected; this script divides each projection by an
+    estimate of its air level (I0) and takes ``-log``,
   - per-view angles in radians,
   - the scan geometry (sdd, sid, detector pixel pitch at the binning
     level chosen below). The shipped preprocessing also applies the
@@ -32,13 +34,13 @@ import os
 import zipfile
 
 import numpy as np
-import tifffile
 
 
 # ----- Scan geometry (from 20201111_walnut_.txt in the Zenodo record) -----
 SDD_FULL = 553.74           # mm, source-to-detector distance
 SID_FULL = 210.66           # mm, source-to-origin (isocenter) distance
 DET_PIXEL_FULL = 0.050      # mm, raw detector pixel pitch
+RAW_ROWS, RAW_COLS = 2368, 2240  # raw detector size: rows run along v, columns along u
 NUM_VIEWS_FULL = 721        # projections from 0 to 360 deg in 0.5 deg steps
 ANGLE_FIRST_DEG = 0.0
 ANGLE_INTERVAL_DEG = 0.5
@@ -63,8 +65,23 @@ FLAT_PERCENTILE = 99.5      # per-projection "air" estimate, in pct
 EPS_PHOTONS = 1.0           # clamp floor before -log
 
 
+def detector_center_offset(raw_size, bin_factor, crop):
+    """Offset, in raw pixels, of the center of a binned and center-cropped detector axis.
+
+    Binning drops the last ``raw_size % bin_factor`` raw pixels and the crop
+    start is rounded down, so the kept detector can sit off the raw center.
+    The result is positive along increasing pixel index.
+    """
+    binned = raw_size // bin_factor
+    size = binned if crop == 0 else crop
+    start = (binned - size) // 2
+    return (start + size / 2) * bin_factor - raw_size / 2
+
+
 def _iter_zip_projections(zip_path):
-    """Yield (0-based global index, raw uint16 image) for each TIFF."""
+    """Yield (0-based global index, uint16 image) for each TIFF."""
+    import tifffile
+
     with zipfile.ZipFile(zip_path) as z:
         names = sorted(n for n in z.namelist() if n.lower().endswith('.tif'))
         for n in names:
@@ -175,11 +192,13 @@ def main():
         raise ValueError('--view-stride must be >= 1')
 
     zips = _projection_zips(args.zip_dir)
+    if not zips:
+        raise FileNotFoundError(f'No walnut projection ZIPs found in {args.zip_dir}')
     print(f'Found {len(zips)} ZIPs in {args.zip_dir}')
 
     num_kept = (NUM_VIEWS_FULL + args.view_stride - 1) // args.view_stride
-    binH = 2368 // args.bin
-    binW = 2240 // args.bin
+    binH = RAW_ROWS // args.bin
+    binW = RAW_COLS // args.bin
     cropH = binH if args.crop == 0 else args.crop
     cropW = binW if args.crop == 0 else args.crop
     h0 = (binH - cropH) // 2
@@ -204,15 +223,14 @@ def main():
             kept_i = idx // args.view_stride
             if kept_i >= num_kept:
                 continue
+            if raw.shape != (RAW_ROWS, RAW_COLS):
+                raise ValueError(f'projection {idx} has shape {raw.shape}, expected {(RAW_ROWS, RAW_COLS)}')
             if args.rotation_axis_shift_raw_pixels:
                 raw = np.roll(raw, shift=args.rotation_axis_shift_raw_pixels, axis=1)
-            # Per-projection flat field: use a high percentile of the
-            # *raw* detector values, which approximates the unattenuated
-            # air reading for this exact projection.  Using a percentile
-            # (not the max) makes it robust to hot pixels; using it per-
-            # projection absorbs any slow tube-intensity drift between
-            # views.  We still assume a zero dark field because the
-            # dataset does not ship one.
+            # Air level of this projection: a high percentile of the
+            # detector values approximates the unattenuated reading. A
+            # percentile (not the max) is robust to hot pixels; one value per
+            # projection absorbs slow tube-intensity drift between views.
             i0_per[kept_i] = np.percentile(
                 raw.astype(np.float32),
                 args.flat_percentile,
@@ -222,8 +240,13 @@ def main():
             mask[kept_i] = True
 
     if not mask.all():
-        missing = np.where(~mask)[0]
-        print(f'WARNING: missing views: {missing[:10]}... ({len(missing)})')
+        missing = np.where(~mask)[0] * args.view_stride
+        raise ValueError(
+            f'{len(missing)} of {num_kept} kept projections are missing from {args.zip_dir} '
+            f'(first projection indices: {missing[:10].tolist()}); download all ZIP archives'
+        )
+    if not (np.isfinite(i0_per).all() and (i0_per > 0).all()):
+        raise ValueError('every projection needs a finite, positive air level (I0)')
 
     print(f'Binned+cropped stack: {cropped.shape} {cropped.dtype}')
     print(
@@ -231,9 +254,9 @@ def main():
         f'max={i0_per.max():.1f} mean={i0_per.mean():.1f}'
     )
 
-    # Flat-field + Beer-Lambert inversion.  The binned ``cropped`` values
-    # are mean counts per 8x8 block, so they live in the same units as
-    # ``i0_per`` (also a mean of raw counts) and the ratio is unitless.
+    # Beer-Lambert inversion. The binned ``cropped`` values are block means
+    # of the detector values, the same units as ``i0_per``, so the ratio is
+    # unitless.
     i0 = i0_per[:, None, None]
     ratio = np.clip(cropped / i0, EPS_PHOTONS / i0, 1.0)
     sinogram = -np.log(ratio)
@@ -258,6 +281,9 @@ def main():
     du = dv = DET_PIXEL_FULL * args.bin
 
     print(f'Binned pixel: {du} mm  det=({cropW} x {cropH})')
+    offset_u = detector_center_offset(RAW_COLS, args.bin, args.crop) * DET_PIXEL_FULL
+    offset_v = detector_center_offset(RAW_ROWS, args.bin, args.crop) * DET_PIXEL_FULL
+    print(f'Detector center offset from the crop: u {offset_u:+.3f} mm, v {offset_v:+.3f} mm')
     print(f'Angles: {angles.shape}  [{angles[0]:.3f}, {angles[-1]:.3f}] rad')
     print(
         'Rotation-axis correction: '

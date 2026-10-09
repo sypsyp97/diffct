@@ -106,7 +106,7 @@ def cgls(operator, measurements, iterations):
     def shard_dot(a, b):
         value = torch.sum(a.double() * b.double())
         if operator.world_size > 1:
-            dist.all_reduce(value)
+            dist.all_reduce(value, group=operator.process_group)
         return value
 
     x = torch.zeros(operator.volume_shape, device=measurements.device)
@@ -166,7 +166,7 @@ def tv_reconstruction(operator, measurements, iterations, weight=1.0, lr=0.1):
     """
     rays = torch.tensor(float(measurements.numel()), device=measurements.device)
     if operator.world_size > 1:
-        dist.all_reduce(rays)
+        dist.all_reduce(rays, group=operator.process_group)
     x = torch.zeros(operator.volume_shape, device=measurements.device, requires_grad=True)
     optimizer = torch.optim.Adam([x], lr=lr)
     for _ in range(iterations):
@@ -183,6 +183,8 @@ def tv_reconstruction(operator, measurements, iterations, weight=1.0, lr=0.1):
 def psnr(reconstruction, truth):
     """Peak signal-to-noise ratio in dB for images with peak value 1."""
     mse = torch.mean((reconstruction - truth) ** 2).item()
+    if mse == 0:
+        return math.inf
     return 10 * math.log10(1.0 / mse)
 
 

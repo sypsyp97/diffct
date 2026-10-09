@@ -34,6 +34,7 @@ from .utils import (
     _get_numba_external_stream_for,
     _grid_2d,
     _grid_3d,
+    _on_device_of,
 )
 from .kernels import (
     _parallel_2d_fbp_backproject_kernel,
@@ -365,6 +366,7 @@ def _as_contig_f32(t, device):
     return DeviceManager.ensure_device(t, device).to(dtype=torch.float32).contiguous()
 
 
+@_on_device_of("sinogram")
 def parallel_weighted_backproject(sinogram, ray_dir, det_origin, det_u_vec,
                                   detector_spacing, H, W, voxel_spacing=1.0):
     """Voxel-driven parallel-beam FBP backprojection with analytical constant.
@@ -448,6 +450,7 @@ def _analytical_geometry(src_pos, det_center, n, isocenter):
     return isocenter, float(sid_n.mean().item()), float(sdd_n.mean().item())
 
 
+@_on_device_of("sinogram")
 def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
                              detector_spacing, H, W, voxel_spacing=1.0, *, isocenter=None):
     """Voxel-driven fan-beam FBP backprojection with analytical constant.
@@ -503,6 +506,7 @@ def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
     return reco * scale
 
 
+@_on_device_of("sinogram")
 def cone_weighted_backproject(sinogram, src_pos, det_center, det_u_vec, det_v_vec,
                               D, H, W, du, dv, voxel_spacing=1.0, *, isocenter=None):
     """Voxel-driven cone-beam FDK backprojection with analytical constant.

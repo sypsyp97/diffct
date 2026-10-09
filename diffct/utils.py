@@ -5,6 +5,9 @@ PyTorch-CUDA bridging, stream caching, trigonometric table generation,
 memory layout validation, and CUDA grid computation.
 """
 
+import contextlib
+import functools
+import inspect
 import math
 import numpy as np
 import torch
@@ -150,6 +153,38 @@ def _get_numba_external_stream_for(pt_stream=None):
     return numba_stream
 
 
+@contextlib.contextmanager
+def _cuda_context(device):
+    """Make ``device`` the current device for PyTorch and Numba.
+
+    Kernel launches then use the CUDA context and the current stream of the
+    device that holds the data, not of the device that happens to be current.
+    """
+    device = torch.device(device)
+    with torch.cuda.device(device), cuda.gpus[device.index]:
+        yield
+
+
+def _on_device_of(name):
+    """Run the decorated function in the CUDA context of its argument ``name``.
+
+    The argument may be passed by position or by keyword.
+    """
+    def decorate(fn):
+        signature = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            bound = signature.bind_partial(*args, **kwargs).arguments
+            tensor = bound[name] if name in bound else None
+            if not (isinstance(tensor, torch.Tensor) and tensor.is_cuda):
+                return fn(*args, **kwargs)
+            with _cuda_context(tensor.device):
+                return fn(*args, **kwargs)
+        return wrapper
+    return decorate
+
+
 # ============================================================================
 # GPU-aware Trigonometric Table Generation
 # ============================================================================
@@ -185,6 +220,8 @@ def _trig_tables(angles, dtype=_DTYPE, device=None):
     """
     if isinstance(angles, torch.Tensor):
         device = angles.device if device is None else device
+        if not isinstance(dtype, torch.dtype):
+            dtype = torch.from_numpy(np.zeros(0, dtype=dtype)).dtype
         # Compute both cos and sin in one call to avoid redundant kernel launches
         angles_device = angles.to(dtype=dtype, device=device)
         cos = torch.cos(angles_device)

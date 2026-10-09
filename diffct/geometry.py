@@ -13,6 +13,17 @@ from typing import Callable, Tuple
 # Trajectory Generation Functions
 # ============================================================================
 
+def _check_source_positions(src_pos):
+    """Reject non-finite sources and sources at the isocenter, which have no viewing direction."""
+    if not torch.isfinite(src_pos).all():
+        raise ValueError("source_path_fn returned non-finite source positions")
+    if (torch.linalg.vector_norm(src_pos.detach(), dim=1) == 0).any():
+        raise ValueError(
+            "source_path_fn returned a source at the isocenter; every source needs a "
+            "nonzero distance from the origin"
+        )
+
+
 def circular_trajectory_3d(n_views, sid, sdd, start_angle=0.0, end_angle=None, device='cuda', dtype=torch.float32):
     """Generate circular trajectory geometry for cone-beam CT.
 
@@ -500,11 +511,11 @@ def custom_trajectory_3d(n_views, sid, sdd,
 
     Examples
     --------
-    >>> # Define a custom figure-8 trajectory
+    >>> # Circular orbit with a two-lobe (figure-8) vertical motion
     >>> def figure8_path(angles, sid):
     ...     src_pos = torch.zeros((len(angles), 3), device=angles.device, dtype=angles.dtype)
     ...     src_pos[:, 0] = -sid * torch.sin(angles)
-    ...     src_pos[:, 1] = sid * torch.cos(angles) * torch.sin(angles)
+    ...     src_pos[:, 1] = sid * torch.cos(angles)
     ...     src_pos[:, 2] = 50 * torch.sin(2 * angles)
     ...     return src_pos
     >>>
@@ -523,6 +534,7 @@ def custom_trajectory_3d(n_views, sid, sdd,
     if src_pos.shape != (n_views, 3):
         raise ValueError(f"source_path_fn must return tensor of shape ({n_views}, 3), "
                         f"got {src_pos.shape}")
+    _check_source_positions(src_pos)
 
     # Keep the entire frame in the source-path autograd graph. Constructing
     # tensors from scalar tensors detaches them; rewriting view slices in
@@ -750,6 +762,7 @@ def custom_trajectory_2d_fan(n_views, sid, sdd,
     if src_pos.shape != (n_views, 2):
         raise ValueError(f"source_path_fn must return tensor of shape ({n_views}, 2), "
                         f"got {src_pos.shape}")
+    _check_source_positions(src_pos)
 
     # Preallocate remaining position matrices
     det_center = torch.zeros((n_views, 2), device=device, dtype=dtype)

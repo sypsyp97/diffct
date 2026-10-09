@@ -523,6 +523,15 @@ class Projector:
             *self.detector_spacing, self.voxel_spacing,
         )
 
+    @property
+    def process_group(self):
+        """Process group of a distributed operator, or None for the default group.
+
+        Pass it as ``group=`` to collectives that combine per-rank results of this
+        operator, so they use the same ranks as the operator.
+        """
+        return self._process_group
+
     def project(self, volume):
         """Project a ``(H, W)`` or ``(D, H, W)`` CUDA tensor to float32.
 

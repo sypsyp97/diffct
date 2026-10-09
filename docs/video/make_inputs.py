@@ -11,8 +11,9 @@ reconstructions with PSNR.
 
 Without ``--gpu`` the script only rebuilds data2d.npz: the walnut axial slice
 from walnut_measured.npz and its parallel-beam sinogram over 180 degrees
-(scipy rotate + sum, for display only). calib_history.json is the loss history
-of a geometry calibration run (64^3, 150 steps).
+(scipy rotate + sum, for display only). The script does not write
+calib_history.json: that file is the loss history of a geometry calibration
+run (64^3, 150 steps) and is kept as it is.
 """
 import argparse
 import json
@@ -40,11 +41,11 @@ def measured():
     from diffct import Projector
     from _common import cgls, sirt, tv_reconstruction
     from walnut_reconstruction import DATA, circular_geometry, fdk, load_scan, shell_scale
-    sinogram, angles, sid, sdd, du, dv = load_scan(DATA)
+    sinogram, angles, sid, sdd, du, dv, offset_u, offset_v = load_scan(DATA)
     voxel = 256 * du * sid / sdd / SIZE
     y = torch.from_numpy(sinogram).cuda()
-    trajectory = circular_geometry(angles, sid, sdd)
-    full = fdk(y, angles, trajectory, du, dv, sdd, SIZE, voxel, "hann")
+    trajectory = circular_geometry(angles, sid, sdd, offset_u, offset_v)
+    full = fdk(y, angles, trajectory, du, dv, offset_u, offset_v, sdd, SIZE, voxel, "hann")
     scale = shell_scale(full)
     operator = Projector(trajectory, (SIZE,) * 3, sinogram.shape[1:], detector_spacing=(du, dv), voxel_spacing=voxel)
     target = y * scale
