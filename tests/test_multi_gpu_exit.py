@@ -81,3 +81,8 @@ def test_multi_gpu_exit():
         f"CUDA subprocess exited with return code {child.returncode}\n"
         f"Child stderr tail:\n{child.stderr[-8000:]}"
     )
+    for marker in ("Exception ignored", "Traceback", "ValueError", "OverflowError"):
+        assert marker not in child.stderr, (
+            f"CUDA subprocess reported {marker!r} during cleanup\n"
+            f"Child stderr tail:\n{child.stderr[-8000:]}"
+        )

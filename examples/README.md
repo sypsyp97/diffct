@@ -21,10 +21,12 @@ python examples/iterative_reconstruction.py --size 32 --views 32 \
     --trajectory helical --algorithms cgls --iterations 5
 ```
 
-This still computes an FDK baseline; five CGLS steps are a usage example, not
-the reconstruction-quality configuration in the results below. The default
-iterative run uses a 128³ volume, 360 views, and CGLS/SIRT/TV with 30/200/200
-iterations respectively.
+This still computes an FDK baseline. Five CGLS steps show how to use the script.
+The default iterative run uses a 128³ volume, 360 views, and CGLS/SIRT/TV with 30/200/200
+iterations respectively. Its TV weight is 1.0.
+The measured walnut script uses SIRT/CGLS/TV with 200/20/300 iterations and TV weight 0.3.
+These weights are example settings. Choose the TV weight for your geometry,
+voxel spacing, resolution and data scale.
 
 To inspect a helical trajectory without a GPU (PyTorch and matplotlib required):
 

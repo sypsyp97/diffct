@@ -1,11 +1,14 @@
 """diffct intro video (Manim CE 0.21). Render every scene, then join them (see README.md).
 
 The video introduces the project: what diffct is, what it adds (any trajectory, autograd,
-geometry gradients, many GPUs) and measured results. Data files in this directory are
-written by make_inputs.py: data2d.npz (walnut slice and its parallel sinogram),
-walnut_measured.npz (measured walnut reconstructions), calib_history.json (a real
-geometry calibration run). All reconstructions and timings are diffct output on
-A100 GPUs.
+geometry gradients, many GPUs) and measured results.
+The scenes read walnut_measured.npz, data2d.npz and calib_history.json from this directory.
+make_inputs.py writes the first two files. data2d.npz uses SciPy rotation and summation
+for a display sinogram. calib_history.json contains saved results from a separate
+geometry calibration run; make_inputs.py does not write it.
+The scenes do not read recon_slices.npz or recon_psnr.json.
+The multi-GPU timings are constants in the scene, based on docs/assets/scaling.json.
+Rendering the saved inputs does not need CUDA.
 
 Layout rules are enforced at render time: every header and caption sits on a fixed
 baseline, connectors are horizontal or vertical (`ortho`), labels must fit their boxes

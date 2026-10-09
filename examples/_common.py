@@ -159,10 +159,14 @@ def total_variation(x, eps=1e-6):
 def tv_reconstruction(operator, measurements, iterations, weight=1.0, lr=0.1):
     """Nonnegative least squares with a TV penalty, solved by Adam through autograd.
 
-    The data term is the mean squared residual per ray, so ``weight`` does not
-    depend on the scan size. Every rank adds the full TV term: the projector already sums the data
-    gradient over ranks, while the TV gradient is computed identically on
-    each rank and must not be divided by the number of ranks.
+    The data term is half the mean squared residual over all rays.
+    The TV term averages smoothed gradient magnitudes from adjacent voxel values.
+    These voxel differences are not divided by voxel spacing.
+    Averaging removes direct scaling with ray and voxel counts, but does not make
+    ``weight`` independent of geometry, resolution, voxel spacing or data scale.
+    Choose the weight for the scan and the volume scale.
+    Every rank adds the full TV term. The projector sums the data gradient over ranks.
+    Each rank computes the same TV gradient; do not divide it by the number of ranks.
     """
     rays = torch.tensor(float(measurements.numel()), device=measurements.device)
     if operator.world_size > 1:

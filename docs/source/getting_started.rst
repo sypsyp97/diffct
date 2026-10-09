@@ -14,7 +14,9 @@ driver first, then:
    python -c "import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"
    # from a source checkout: python examples/quickstart.py
 
-Use ``diffct[cu13]`` for CUDA 13. The NVVM and NVJitLink packages must match the
+Use ``diffct[cu13]`` for CUDA 13. The extra installs the CUDA compiler libraries
+that Numba CUDA needs. A plain ``pip install diffct`` does not install them; use it
+only if a CUDA Toolkit is already installed on the system. The NVVM and NVJitLink packages must match the
 CUDA libraries that PyTorch loads.
 
 Minimal forward / adjoint / gradient example
