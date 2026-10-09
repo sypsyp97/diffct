@@ -16,8 +16,11 @@ jobs:
     # Run CI on this tag's commit. Publish the exact wheel that the matrix tested.
     uses: ./.github/workflows/ci.yml
 
+  formal:
+    uses: ./.github/workflows/formal.yml
+
   publish:
-    needs: validate
+    needs: [validate, formal]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
