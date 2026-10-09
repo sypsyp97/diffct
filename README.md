@@ -45,7 +45,6 @@ To our knowledge, diffct is the only open-source GPU CT library that combines ar
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun and NCCL. Views are partitioned and the volume is replicated. Speedup depends on workload and communication costs.
 - **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak, shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP and FDK backprojection.
-- **Validated.** FDK matches ASTRA 2.5.0 `FDK_CUDA`: PSNR within 0.3 dB. Geometry gradients match an independent float64 reference to about 1e-6. The [recorded A100 validation](docs/VALIDATION.md) reports 229 passing pytest tests. Full notes: [REFERENCE](docs/REFERENCE.md#validation-summary).
 
 Capabilities, limits and isocenter rules: [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits).
 
@@ -124,7 +123,7 @@ A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, dev
 | Adjoint (backprojection) | 20.66 ms | 5.89 ms (3.5×) | 4.62 ms (4.5×) |
 | CGLS iteration | 30.08 ms | 8.08 ms (3.7×) | 5.59 ms (5.4×) |
 
-Circular trajectory, 360 views, detector (2n, 1.5n) cells at pitch 1.25, A100 64 GB on Leonardo Booster. Small volumes scale less: at 64³, one CGLS iteration takes 4.63 ms on 1 GPU, 1.57 ms on 4 and 1.56 ms on 8. Raw data: [docs/assets/scaling.json](docs/assets/scaling.json).
+Circular trajectory, 360 views, detector (2n, 1.5n) cells at pitch 1.25, A100 64 GB GPUs. Small volumes scale less: at 64³, one CGLS iteration takes 4.63 ms on 1 GPU, 1.57 ms on 4 and 1.56 ms on 8. Raw data: [docs/assets/scaling.json](docs/assets/scaling.json).
 
 To measure one against several GPUs on your machine (default scan of the script, not the table setup):
 
@@ -168,7 +167,6 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 | [Trajectory guide](docs/source/trajectories.rst) | Trajectory tuples and `Projector` usage |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | Capabilities and limits, custom trajectories, geometry gradients, multi-GPU details, geometry and units |
 | [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | Execution/memory choices, distributed loss rules, Slurm and cross-node checks |
-| [docs/VALIDATION.md](docs/VALIDATION.md) | Test commands, validation details and the limits of each check |
 | [docs/MIGRATION.md](docs/MIGRATION.md) | Moving from the circular-only API |
 | [docs/video/README.md](docs/video/README.md) | How the intro video is rendered |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |

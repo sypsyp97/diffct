@@ -1,10 +1,10 @@
 Measured Walnut
 ===============
 
-``examples/walnut_reconstruction.py`` reconstructs a real walnut from 240
-measured cone-beam projections on a full circular orbit (Meaney 2022, Zenodo
-6986012, CC BY 4.0; see ``examples/data/NOTICE``). The scan geometry goes to
-``Projector`` as explicit per-view tensors, the same way as a calibrated
+``examples/walnut_reconstruction.py`` reconstructs a measured walnut from 240
+cone-beam projections on a full circular orbit. The data are from Meaney 2022
+(Zenodo 6986012, CC BY 4.0; see ``examples/data/NOTICE``). The scan geometry is
+passed to ``Projector`` as explicit per-view tensors, the same way as a calibrated
 trajectory.
 
 Run it
@@ -13,10 +13,17 @@ Run it
 .. code-block:: bash
 
    python examples/walnut_reconstruction.py --figure walnut.png
+   python examples/walnut_reconstruction.py --size 512 --devices 0 1 2 3
 
-The figure shows axial and coronal centre slices of a 256³ volume: FDK with a
-Hann window, SIRT (200 iterations), CGLS (20) and TV-regularized least squares
-(300 Adam steps, weight 0.3).
+The figure shows axial and coronal centre slices. The reconstructions are:
+
+- FDK with a Hann window.
+- SIRT (200 iterations).
+- CGLS (20 iterations).
+- TV-regularized least squares (300 Adam steps, weight 0.3).
+
+Use ``--algorithms`` with no values to run FDK only. Use ``--window`` to change the
+FDK filter.
 
 .. image:: ../assets/walnut_measured.png
    :alt: Measured walnut: FDK, SIRT, CGLS and TV reconstructions
@@ -24,8 +31,8 @@ Hann window, SIRT (200 iterations), CGLS (20) and TV-regularized least squares
 Simulated helical scan
 ----------------------
 
-``--save-volume`` stores the FDK volume scaled to [0, 1]. Use it as the ground
-truth for a simulated helical scan with 720 views and 1% noise:
+``--save-volume`` stores the FDK volume scaled to [0, 1]. Use it as the phantom for
+a simulated helical scan:
 
 .. code-block:: bash
 
@@ -33,12 +40,5 @@ truth for a simulated helical scan with 720 views and 1% noise:
    python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory helical \
        --noise 0.01 --phantom walnut256.npy --figure helical.png
 
-PSNR against the walnut volume: FDK 26.67 dB, CGLS (30 iterations) 34.13 dB,
-SIRT (200) 34.52 dB, TV (200, weight 1.0) 37.77 dB.
-
 .. image:: ../assets/walnut_helical.png
    :alt: Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions
-
-Each figure has a provenance record (command, commit, GPU, timings, PSNR and
-data checksum) in ``docs/assets/walnut_measured.json`` and
-``docs/assets/walnut_helical.json``.

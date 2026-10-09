@@ -5,7 +5,7 @@ geometry gradients, many GPUs) and measured results. Data files in this director
 written by make_inputs.py: data2d.npz (walnut slice and its parallel sinogram),
 walnut_measured.npz (measured walnut reconstructions), calib_history.json (a real
 geometry calibration run). All reconstructions and timings are diffct output on
-A100 GPUs (Leonardo Booster).
+A100 GPUs.
 
 Layout rules are enforced at render time: every header and caption sits on a fixed
 baseline, connectors are horizontal or vertical (`ortho`), labels must fit their boxes
@@ -560,7 +560,7 @@ class S04MultiGPU(Scene):
         for row in chart:
             self.play(FadeIn(row[0]), GrowFromEdge(row[1], LEFT), run_time=0.8)
             self.play(FadeIn(row[2]), run_time=0.35)
-        cap("measured on Leonardo Booster; small volumes scale less", hold=2.6)
+        cap("measured on A100 64 GB GPUs; small volumes scale less", hold=2.6)
         fade_except(self, hdr)
 
 

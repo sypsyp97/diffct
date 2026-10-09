@@ -1,22 +1,7 @@
 {
   "description": "Median time per operation, circular cone beam, 360 views, detector (2n, 1.5n) cells at pitch 1.25, Shepp-Logan phantom",
   "gpu": "NVIDIA A100-SXM-64GB",
-  "system": "Leonardo Booster",
   "software": "PyTorch 2.10 cu126, numba-cuda 0.30.4",
-  "source_commit": "b175b18",
-  "slurm_job": "59822225",
-  "hosts": {
-    "gpus_1": [
-      "lrdn3170.leonardo.local"
-    ],
-    "gpus_4_nodes_1": [
-      "lrdn3283.leonardo.local"
-    ],
-    "gpus_8_nodes_2": [
-      "lrdn3170.leonardo.local",
-      "lrdn3283.leonardo.local"
-    ]
-  },
   "configurations": [
     {
       "key": "gpus_1",
@@ -31,7 +16,7 @@
       "label": "8 GPUs, 2 nodes"
     }
   ],
-  "caption": "Circular cone beam, 360 views, A100-SXM-64GB (Leonardo Booster). Labels: time in ms on the 1-GPU bars, speed-up over 1 GPU on the others.",
+  "caption": "Circular cone beam, 360 views, A100-SXM-64GB. Labels: time in ms on the 1-GPU bars, speed-up over 1 GPU on the others.",
   "timings": {
     "64": {
       "gpus_1": {

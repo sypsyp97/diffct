@@ -19,4 +19,4 @@ ffmpeg -i ../assets/diffct_intro.mp4 -i palette.png \
 
 The reconstructions come from the measured walnut in `examples/data/walnut_cone.npz`
 (Meaney 2022, CC BY 4.0; see `examples/data/NOTICE`). The timings in the multi-GPU scene
-are measured diffct results on A100 64 GB GPUs (Leonardo Booster); see `docs/assets/scaling.json`.
+are measured diffct results on A100 64 GB GPUs; see `docs/assets/scaling.json`.

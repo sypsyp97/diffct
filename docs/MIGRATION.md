@@ -114,10 +114,3 @@ Geometry derivatives are first-order only and are piecewise derivatives of the
 cell-constant Siddon model. At voxel-boundary crossings they need not agree with
 a centered finite difference. Second derivatives with respect to geometry raise
 an error; volume and sinogram second derivatives are supported.
-
-## Verification
-
-Run `python -m pytest tests/ -q` on a CUDA host, then the distributed check in
-`docs/DISTRIBUTED.md`. CPU-only orchestration checks do not establish GPU
-correctness. Compare numeric results and gradients to the single-GPU operator;
-do not treat a successfully launched job as a completed validation.

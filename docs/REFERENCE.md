@@ -16,14 +16,6 @@ a single view), supply `isocenter=(x, y)` or `(x, y, z)`. Analytical interpolati
 requires at least two detector bins per axis. The finite discrete Ram-Lak filter
 uses `pad_factor>=2` for linear convolution when unwindowed.
 
-## Validation summary
-
-- **Validated.** FDK matches ASTRA 2.5.0 `FDK_CUDA` on the same projections:
-  PSNR within 0.3 dB, and a maximum pixel difference below 1% of the phantom
-  maximum. Geometry gradients match an independent float64 reference to about
-  1e-6. The [recorded A100 validation](VALIDATION.md) reports 229 passing
-  pytest tests; these are measured results, not guarantees for every scan.
-
 ## Custom or calibrated trajectories
 
 Use a generator for a standard scan, or pass your calibrated tensors directly.
@@ -149,13 +141,3 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
 - Geometry checks run only at construction. Optimize angles and offsets, not raw
   axis vectors, so the geometry stays valid.
 
-## Example scan and calibration results
-
-Launch modes, distributed-loss rules and all measured results are in [examples/README.md](../examples/README.md). Shared helpers are in `examples/_common.py`. The example scan uses n³ unit
-voxels, a source 2.5 n from the isocentre, a detector 4 n from the source
-(magnification 1.6), (3n, 2n) detector cells, pitch 0.8 and 360 views.
-
-Geometry calibration (64³, 360 views, per-view angle error 0.54° RMS, detector
-shift (1.5, -1.0) voxels, Adam 300 steps) recovers the angle error to
-0.0001-0.0025° RMS and the detector shift to below 0.001 voxel in every launch
-mode.
