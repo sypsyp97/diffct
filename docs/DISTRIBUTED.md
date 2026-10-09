@@ -1,56 +1,138 @@
 # Multiple GPUs and nodes
 
-`Projector` partitions views, not voxels. Every GPU holds a full volume. This
-reduces per-device projection work and sinogram storage; it does not pool GPU
-memory for a volume that cannot fit on one device.
+`Projector` partitions views, not voxels. Every participating GPU needs room
+for a full volume. Adding GPUs does not let a volume exceed one device's
+memory. Distributed mode stores only each rank's sinogram shard; single-process
+multi-GPU mode gathers the full sinogram back onto the input device.
+
+Install this branch as described in the [root README](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/README.md) and run
+commands from the repository root. CUDA is required for projection and
+backprojection. The multi-process examples below also require PyTorch with
+NCCL support.
 
 ## One process, multiple GPUs
 
+This complete example needs two visible CUDA GPUs:
+
 ```python
-operator = Projector(trajectory, (32, 32, 32), (48, 40),
-                     devices=["cuda:0", "cuda:1"])
-sinogram = operator.project(volume)
-adjoint = operator.backproject(sinogram)
+import torch
+from diffct import Projector, spiral_trajectory_3d
+
+trajectory = spiral_trajectory_3d(
+    31, sid=80.0, sdd=128.0, z_range=8.0, n_turns=1.0, device="cpu"
+)
+operator = Projector(
+    trajectory, (32, 32, 32), (48, 40), devices=["cuda:0", "cuda:1"]
+)
+volume = torch.ones((32, 32, 32), device="cuda:0", requires_grad=True)
+sinogram = operator.project(volume)                 # (31, 48, 40), cuda:0
+adjoint = operator.backproject(sinogram.detach())    # (32, 32, 32), cuda:0
+sinogram.square().sum().backward()                   # volume.grad on cuda:0
 ```
 
-No process group is required. Outputs and gradients belong to the input tensor's
-device. Uneven view counts are supported and devices with no views contribute
-zero without launching an empty CUDA grid.
+No process group is required. Views are split into contiguous shards in device
+list order. Outputs return to the input tensor's CUDA device as float32;
+input gradients use the input's device and dtype. Uneven view counts are
+supported, and devices with no views do not launch an empty CUDA grid.
+Use the ordinary full-sinogram loss in this mode; no world-size scaling applies.
 
 ## One GPU per process
 
-Set the CUDA device before initializing NCCL:
+Save the following as `distributed_demo.py` in the repository root. It creates
+the same synthetic volume on each rank, generates only the local measurements,
+and differentiates one global mean-squared data term. No input files are needed.
 
 ```python
 import os
+
 import torch
 import torch.distributed as dist
-from diffct import Projector
+from diffct import Projector, spiral_trajectory_3d
 
-torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+# Select the process's GPU before creating the NCCL process group.
+device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
+torch.cuda.set_device(device)
 dist.init_process_group("nccl")
-operator = Projector(trajectory, (32, 32, 32), (48, 40), distributed=True)
-local_measurements = full_measurements[operator.view_slice]
-local_prediction = operator.project(volume)
-loss = (local_prediction - local_measurements).square().sum()
-loss.backward()  # each rank receives the summed image gradient
-dist.destroy_process_group()
+try:
+    n_views = 31
+    detector_shape = (48, 40)  # (U, V)
+    trajectory = spiral_trajectory_3d(
+        n_views, sid=80.0, sdd=128.0, z_range=8.0, n_turns=1.0, device="cpu"
+    )
+    operator = Projector(
+        trajectory, (32, 32, 32), detector_shape, distributed=True
+    )
+    truth = torch.ones(operator.volume_shape, device=device)
+    local_measurements = operator.project(truth)
+    volume = torch.zeros_like(truth, requires_grad=True)
+    local_prediction = operator.project(volume)
+
+    # Divide each local SUM by the GLOBAL ray count, not by its shard size.
+    total_rays = n_views * detector_shape[0] * detector_shape[1]
+    local_loss = 0.5 * (local_prediction - local_measurements).square().sum() / total_rays
+    local_loss.backward()  # every rank receives the full, summed volume gradient
+
+    # Reduce a detached copy for reporting, not the tensor used for backward.
+    global_loss = local_loss.detach().clone()
+    dist.all_reduce(global_loss, op=dist.ReduceOp.SUM)
+    if operator.rank == 0:
+        print(f"global half-MSE: {global_loss.item():.6g}")
+finally:
+    dist.destroy_process_group()
 ```
 
-All ranks must use identical trajectory and shape settings and start with the
-same replicated volume. `project()` returns only the rank's contiguous shard;
-`projection_shape` describes its shape. `backproject()` takes that shard and
-returns the sum over all ranks, replicated on each input device. Both operations
-support ordinary autograd. Backprojection backward sums output cotangents across
-ranks, so divide a loss on its replicated output by `world_size`. Do not combine
-these image-gradient collectives with an extra DDP reduction.
+Launch it on one node with two GPUs:
+
+```bash
+python -m torch.distributed.run --standalone --nproc-per-node=2 distributed_demo.py
+```
+
+### Shard shapes and replicated state
+
+All ranks must use identical full trajectories, shapes and spacings, and start
+with the same replicated volume. The operator does not broadcast these inputs.
+If geometry is learnable, keep its values and optimizer state synchronized too;
+all ranks must agree on whether any trajectory tensor requires gradients.
+
+- `operator.view_slice` identifies this rank's contiguous range of global views.
+  To use existing full measurements, select
+  `local_measurements = full_measurements[operator.view_slice].to(device)`.
+  Alternatively, load just that range without storing the full sinogram per rank.
+- `operator.projection_shape` is `(local_views, detectors)` for parallel/fan beams
+  or `(local_views, U, V)` for cone beams. It is the output shape of `project()`
+  and the required input shape of `backproject()`.
+- `backproject(local_measurements)` sums contributions from all ranks and returns
+  a full replicated volume on each rank's input device. It is the matched
+  adjoint, not an inverse reconstruction.
 
 Every rank must participate in the same collective calls and backward sequence,
-including ranks with zero views. An optional `process_group` restricts the
-operator to that initialized group. The caller owns group initialization and
-cleanup; the library does not silently open network connections.
+including ranks with zero views. Do not put a `backproject()` or a participating
+`backward()` inside a rank-0-only branch. An optional `process_group` restricts
+the operator to that initialized group; `rank`, `world_size` and `view_slice`
+then refer to that group. The caller owns group initialization and cleanup.
 
-Run the included iterative reconstruction on one node:
+### Loss scaling
+
+These rules apply to `distributed=True`, using the operator's process group:
+
+- **Projection data terms:** form the loss from local views and call `backward()`
+  on every rank. The operator SUM-reduces volume and learnable-geometry gradients.
+  Use a local `.sum()` for global least squares; divide that sum by the global
+  number of rays for a mean. A local `.mean()` weights unequal shards incorrectly
+  and is undefined for an empty shard.
+- **Losses on replicated backprojection output:** divide each rank's copy of the
+  same output loss by `operator.world_size` before `backward()`. Backprojection
+  backward sums those output cotangents across ranks.
+- **Regularizers directly on the replicated volume:** add the full regularizer
+  on each rank, without dividing by world size. Its gradient is computed locally;
+  the projector has already summed the data-term gradient. The TV example in
+  [`_common.py`](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/examples/_common.py) follows this convention.
+- **Logging:** SUM-reduce a detached copy of a local data term. A regularizer that
+  is already replicated should be logged once, not summed again.
+- **DDP:** do not add another DDP reduction for the image or geometry gradients
+  already reduced by `Projector`.
+
+For an end-to-end reconstruction with synchronized optimizer steps, run:
 
 ```bash
 python -m torch.distributed.run --standalone --nproc-per-node=2 \
@@ -92,7 +174,7 @@ multi-node jobs; a separate NHR project is required. See the
 
 Cross-node runs are validated on Leonardo Booster with two nodes and four
 A100 GPUs per node: one torchrun launcher per node, `--nproc-per-node=4`, and
-the c10d rendezvous shown above. See [VALIDATION.md](VALIDATION.md).
+the c10d rendezvous shown above. See [VALIDATION.md](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/VALIDATION.md).
 
 Use the Python environment and GPU resource flags appropriate to the allocation.
 Launch all ranks within one cluster allocation. Running between two
@@ -165,6 +247,6 @@ Use `--sizes`, `--views`, and `--repeats` for your actual workload. Tiny problem
 can be dominated by transfer and launch overhead, so test the acquisition size
 you intend to run rather than assuming a fixed speedup from GPU count.
 
-See [measured results](VALIDATION.md). On two A100s the single-process
+See [measured results](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/VALIDATION.md). On two A100s the single-process
 `devices` mode was slower than one GPU for 64 cubed; the NCCL mode accelerated
 every tested size. The default benchmark keeps that failure visible.

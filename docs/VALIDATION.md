@@ -150,5 +150,5 @@ python -m torch.distributed.run --standalone --nproc-per-node=2 \
     examples/benchmark_projector.py --repeats 9 --output nccl-benchmark.json
 ```
 
-跨节点命令见 [DISTRIBUTED.md](DISTRIBUTED.md)。单节点 NCCL 结果不能代替
+跨节点命令见 [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/DISTRIBUTED.md)。单节点 NCCL 结果不能代替
 跨节点实测。

@@ -1,0 +1,4 @@
+# Documentation build tools; install the package dependencies separately.
+sphinx
+sphinx-rtd-theme
+myst-parser
