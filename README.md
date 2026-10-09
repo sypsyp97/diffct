@@ -39,6 +39,8 @@
 
 ## Why diffct
 
+To our knowledge, diffct is the only open-source GPU CT library that combines arbitrary per-view trajectories, autograd through the volume, first-order gradients through the acquisition geometry, and built-in multi-GPU and multi-node execution. We compared it with LEAP, TIGRE, ASTRA/tomosipo, DiffDRR and others in October 2026.
+
 - **Arbitrary trajectories.** Each view has its own source, detector centre and detector axes. Circular, helical, saddle, sinusoidal, random and calibrated scans use the same code. Trajectory tensors with `requires_grad=True` receive geometry gradients for calibration.
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun and NCCL. Views are partitioned and the volume is replicated. Speedup depends on workload and communication costs.
