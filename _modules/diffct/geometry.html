@@ -5,7 +5,7 @@
     <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>diffct.geometry - diffct 2.0.0</title>
+        <title>diffct.geometry - diffct 2.0.1</title>
       <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../../_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
@@ -161,7 +161,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="../../index.html"><div class="brand">diffct 2.0.0</div></a>
+      <a href="../../index.html"><div class="brand">diffct 2.0.1</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -182,7 +182,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
   
-  <span class="sidebar-brand-text">diffct 2.0.0</span>
+  <span class="sidebar-brand-text">diffct 2.0.1</span>
   
 </a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -253,6 +253,17 @@
 <span class="c1"># ============================================================================</span>
 <span class="c1"># Trajectory Generation Functions</span>
 <span class="c1"># ============================================================================</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_check_source_positions</span><span class="p">(</span><span class="n">src_pos</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Reject non-finite sources and sources at the isocenter, which have no viewing direction."""</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">src_pos</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">():</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"source_path_fn returned non-finite source positions"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">vector_norm</span><span class="p">(</span><span class="n">src_pos</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">"source_path_fn returned a source at the isocenter; every source needs a "</span>
+            <span class="s2">"nonzero distance from the origin"</span>
+        <span class="p">)</span>
+
 
 <div class="viewcode-block" id="circular_trajectory_3d">
 <a class="viewcode-back" href="../../api.html#diffct.geometry.circular_trajectory_3d">[docs]</a>
@@ -758,11 +769,11 @@
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
-<span class="sd">    &gt;&gt;&gt; # Define a custom figure-8 trajectory</span>
+<span class="sd">    &gt;&gt;&gt; # Circular orbit with a two-lobe (figure-8) vertical motion</span>
 <span class="sd">    &gt;&gt;&gt; def figure8_path(angles, sid):</span>
 <span class="sd">    ...     src_pos = torch.zeros((len(angles), 3), device=angles.device, dtype=angles.dtype)</span>
 <span class="sd">    ...     src_pos[:, 0] = -sid * torch.sin(angles)</span>
-<span class="sd">    ...     src_pos[:, 1] = sid * torch.cos(angles) * torch.sin(angles)</span>
+<span class="sd">    ...     src_pos[:, 1] = sid * torch.cos(angles)</span>
 <span class="sd">    ...     src_pos[:, 2] = 50 * torch.sin(2 * angles)</span>
 <span class="sd">    ...     return src_pos</span>
 <span class="sd">    &gt;&gt;&gt;</span>
@@ -781,6 +792,7 @@
     <span class="k">if</span> <span class="n">src_pos</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"source_path_fn must return tensor of shape (</span><span class="si">{</span><span class="n">n_views</span><span class="si">}</span><span class="s2">, 3), "</span>
                         <span class="sa">f</span><span class="s2">"got </span><span class="si">{</span><span class="n">src_pos</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="n">_check_source_positions</span><span class="p">(</span><span class="n">src_pos</span><span class="p">)</span>
 
     <span class="c1"># Keep the entire frame in the source-path autograd graph. Constructing</span>
     <span class="c1"># tensors from scalar tensors detaches them; rewriting view slices in</span>
@@ -1017,6 +1029,7 @@
     <span class="k">if</span> <span class="n">src_pos</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"source_path_fn must return tensor of shape (</span><span class="si">{</span><span class="n">n_views</span><span class="si">}</span><span class="s2">, 2), "</span>
                         <span class="sa">f</span><span class="s2">"got </span><span class="si">{</span><span class="n">src_pos</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="n">_check_source_positions</span><span class="p">(</span><span class="n">src_pos</span><span class="p">)</span>
 
     <span class="c1"># Preallocate remaining position matrices</span>
     <span class="n">det_center</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
@@ -1298,7 +1311,7 @@
       
     </aside>
   </div>
-</div><script src="../../_static/documentation_options.js?v=51b770b3"></script>
+</div><script src="../../_static/documentation_options.js?v=f5cff4aa"></script>
     <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>

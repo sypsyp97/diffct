@@ -5,7 +5,7 @@
     <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>diffct.operators - diffct 2.0.0</title>
+        <title>diffct.operators - diffct 2.0.1</title>
       <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../../_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
@@ -161,7 +161,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="../../index.html"><div class="brand">diffct 2.0.0</div></a>
+      <a href="../../index.html"><div class="brand">diffct 2.0.1</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -182,7 +182,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
   
-  <span class="sidebar-brand-text">diffct 2.0.0</span>
+  <span class="sidebar-brand-text">diffct 2.0.1</span>
   
 </a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -766,6 +766,15 @@
             <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">detector_spacing</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">voxel_spacing</span><span class="p">,</span>
         <span class="p">)</span>
 
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process_group</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""Process group of a distributed operator, or None for the default group.</span>
+
+<span class="sd">        Pass it as ``group=`` to collectives that combine per-rank results of this</span>
+<span class="sd">        operator, so they use the same ranks as the operator.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_process_group</span>
+
 <div class="viewcode-block" id="Projector.project">
 <a class="viewcode-back" href="../../api.html#diffct.Projector.project">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">project</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">volume</span><span class="p">):</span>
@@ -829,7 +838,7 @@
       
     </aside>
   </div>
-</div><script src="../../_static/documentation_options.js?v=51b770b3"></script>
+</div><script src="../../_static/documentation_options.js?v=f5cff4aa"></script>
     <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>

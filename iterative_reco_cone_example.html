@@ -6,7 +6,7 @@
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Measured Walnut" href="walnut_example.html"><link rel="prev" title="Fan Beam Iterative Reconstruction" href="iterative_reco_fan_example.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>Cone Beam Iterative Reconstruction - diffct 2.0.0</title>
+        <title>Cone Beam Iterative Reconstruction - diffct 2.0.1</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -162,7 +162,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="index.html"><div class="brand">diffct 2.0.0</div></a>
+      <a href="index.html"><div class="brand">diffct 2.0.1</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -183,7 +183,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
   
-  <span class="sidebar-brand-text">diffct 2.0.0</span>
+  <span class="sidebar-brand-text">diffct 2.0.1</span>
   
 </a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -403,7 +403,7 @@ types are converted to float32 internally.</p></li>
 <span class="linenos"> 70</span>        <span class="c1"># Same noise for every launch mode: global peak, noise drawn for all views.</span>
 <span class="linenos"> 71</span>        <span class="n">peak</span> <span class="o">=</span> <span class="n">measurements</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
 <span class="linenos"> 72</span>        <span class="k">if</span> <span class="n">distributed</span><span class="p">:</span>
-<span class="linenos"> 73</span>            <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">(</span><span class="n">peak</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">ReduceOp</span><span class="o">.</span><span class="n">MAX</span><span class="p">)</span>
+<span class="linenos"> 73</span>            <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">(</span><span class="n">peak</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">ReduceOp</span><span class="o">.</span><span class="n">MAX</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="n">operator</span><span class="o">.</span><span class="n">process_group</span><span class="p">)</span>
 <span class="linenos"> 74</span>        <span class="n">generator</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Generator</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">1234</span><span class="p">)</span>
 <span class="linenos"> 75</span>        <span class="n">noise</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">((</span><span class="n">args</span><span class="o">.</span><span class="n">views</span><span class="p">,</span> <span class="o">*</span><span class="n">scan</span><span class="o">.</span><span class="n">detector</span><span class="p">),</span> <span class="n">generator</span><span class="o">=</span><span class="n">generator</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
 <span class="linenos"> 76</span>        <span class="n">measurements</span> <span class="o">=</span> <span class="n">measurements</span> <span class="o">+</span> <span class="n">args</span><span class="o">.</span><span class="n">noise</span> <span class="o">*</span> <span class="n">peak</span> <span class="o">*</span> <span class="n">noise</span><span class="p">[</span><span class="n">operator</span><span class="o">.</span><span class="n">view_slice</span><span class="p">]</span>
@@ -523,7 +523,7 @@ types are converted to float32 internally.</p></li>
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=51b770b3"></script>
+</div><script src="_static/documentation_options.js?v=f5cff4aa"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>

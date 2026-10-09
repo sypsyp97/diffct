@@ -5,7 +5,7 @@
     <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>diffct.projectors - diffct 2.0.0</title>
+        <title>diffct.projectors - diffct 2.0.1</title>
       <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../../_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
@@ -161,7 +161,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="../../index.html"><div class="brand">diffct 2.0.0</div></a>
+      <a href="../../index.html"><div class="brand">diffct 2.0.1</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -182,7 +182,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
   
-  <span class="sidebar-brand-text">diffct 2.0.0</span>
+  <span class="sidebar-brand-text">diffct 2.0.1</span>
   
 </a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -253,6 +253,7 @@
     <span class="n">DeviceManager</span><span class="p">,</span>
     <span class="n">TorchCUDABridge</span><span class="p">,</span>
     <span class="n">_get_numba_external_stream_for</span><span class="p">,</span>
+    <span class="n">_on_device_of</span><span class="p">,</span>
     <span class="n">_trig_tables</span><span class="p">,</span>
     <span class="n">_validate_3d_memory_layout</span><span class="p">,</span>
     <span class="n">_grid_2d</span><span class="p">,</span>
@@ -318,6 +319,7 @@
 <span class="w">    </span><span class="sd">"""First-order geometry gradient; differentiating it again raises."""</span>
 
     <span class="nd">@staticmethod</span>
+    <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"volume"</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">beam</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span> <span class="o">*</span><span class="n">geometry</span><span class="p">):</span>
         <span class="k">return</span> <span class="n">_geometry_vjp</span><span class="p">(</span><span class="n">beam</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">grad_sino</span><span class="p">,</span> <span class="n">geometry</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span>
 
@@ -362,25 +364,19 @@
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
 <span class="sd">    &gt;&gt;&gt; import torch</span>
-<span class="sd">    &gt;&gt;&gt; from diffct.differentiable import ParallelProjectorFunction</span>
+<span class="sd">    &gt;&gt;&gt; from diffct import ParallelProjectorFunction, circular_trajectory_2d_parallel</span>
 <span class="sd">    &gt;&gt;&gt;</span>
-<span class="sd">    &gt;&gt;&gt; # Create a 2D image with gradient tracking</span>
 <span class="sd">    &gt;&gt;&gt; image = torch.randn(128, 128, device='cuda', requires_grad=True)</span>
-<span class="sd">    &gt;&gt;&gt; # Define projection parameters</span>
-<span class="sd">    &gt;&gt;&gt; angles = torch.linspace(0, torch.pi, 180, device='cuda')</span>
-<span class="sd">    &gt;&gt;&gt; num_detectors = 128</span>
-<span class="sd">    &gt;&gt;&gt; detector_spacing = 1.0</span>
-<span class="sd">    &gt;&gt;&gt; # Compute forward projection</span>
-<span class="sd">    &gt;&gt;&gt; projector = ParallelProjectorFunction.apply</span>
-<span class="sd">    &gt;&gt;&gt; sinogram = projector(image, angles, num_detectors, detector_spacing)</span>
-<span class="sd">    &gt;&gt;&gt; # Compute loss and gradients</span>
-<span class="sd">    &gt;&gt;&gt; loss = sinogram.sum()</span>
-<span class="sd">    &gt;&gt;&gt; loss.backward()</span>
-<span class="sd">    &gt;&gt;&gt; print(f"Gradient shape: {image.grad.shape}")  # (128, 128)</span>
+<span class="sd">    &gt;&gt;&gt; ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(180, device='cuda')</span>
+<span class="sd">    &gt;&gt;&gt; sinogram = ParallelProjectorFunction.apply(image, ray_dir, det_origin, det_u_vec, 192, 1.0)</span>
+<span class="sd">    &gt;&gt;&gt; sinogram.sum().backward()</span>
+<span class="sd">    &gt;&gt;&gt; image.grad.shape</span>
+<span class="sd">    torch.Size([128, 128])</span>
 <span class="sd">    """</span>
 <div class="viewcode-block" id="ParallelProjectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.ParallelProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
+    <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"image"</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">ray_dir</span><span class="p">,</span> <span class="n">det_origin</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Compute the 2D parallel beam forward projection with arbitrary trajectories using CUDA acceleration.</span>
 
@@ -506,18 +502,19 @@
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
 <span class="sd">    &gt;&gt;&gt; import torch</span>
-<span class="sd">    &gt;&gt;&gt; from diffct.differentiable import ParallelBackprojectorFunction</span>
+<span class="sd">    &gt;&gt;&gt; from diffct import ParallelBackprojectorFunction, circular_trajectory_2d_parallel</span>
 <span class="sd">    &gt;&gt;&gt;</span>
-<span class="sd">    &gt;&gt;&gt; sinogram = torch.randn(180, 128, device='cuda', requires_grad=True)</span>
-<span class="sd">    &gt;&gt;&gt; angles = torch.linspace(0, torch.pi, 180, device='cuda')</span>
-<span class="sd">    &gt;&gt;&gt; recon = ParallelBackprojectorFunction.apply(sinogram, angles, 1.0, 128, 128)</span>
-<span class="sd">    &gt;&gt;&gt; loss = recon.sum()</span>
-<span class="sd">    &gt;&gt;&gt; loss.backward()</span>
-<span class="sd">    &gt;&gt;&gt; print(sinogram.grad.shape)  # (180, 128)</span>
+<span class="sd">    &gt;&gt;&gt; sinogram = torch.randn(180, 192, device='cuda', requires_grad=True)</span>
+<span class="sd">    &gt;&gt;&gt; ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(180, device='cuda')</span>
+<span class="sd">    &gt;&gt;&gt; image = ParallelBackprojectorFunction.apply(sinogram, ray_dir, det_origin, det_u_vec, 1.0, 128, 128)</span>
+<span class="sd">    &gt;&gt;&gt; image.sum().backward()</span>
+<span class="sd">    &gt;&gt;&gt; sinogram.grad.shape</span>
+<span class="sd">    torch.Size([180, 192])</span>
 <span class="sd">    """</span>
 <div class="viewcode-block" id="ParallelBackprojectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.ParallelBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
+    <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"sinogram"</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">ray_dir</span><span class="p">,</span> <span class="n">det_origin</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">H</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Compute the 2D parallel beam backprojection with arbitrary trajectories using CUDA acceleration.</span>
 
@@ -645,18 +642,19 @@
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
 <span class="sd">    &gt;&gt;&gt; import torch</span>
-<span class="sd">    &gt;&gt;&gt; from diffct.differentiable import FanProjectorFunction</span>
+<span class="sd">    &gt;&gt;&gt; from diffct import FanProjectorFunction, circular_trajectory_2d_fan</span>
 <span class="sd">    &gt;&gt;&gt;</span>
 <span class="sd">    &gt;&gt;&gt; image = torch.randn(256, 256, device='cuda', requires_grad=True)</span>
-<span class="sd">    &gt;&gt;&gt; angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')</span>
-<span class="sd">    &gt;&gt;&gt; sinogram = FanProjectorFunction.apply(image, angles, 512, 1.0, 1500.0, 1000.0)</span>
-<span class="sd">    &gt;&gt;&gt; loss = sinogram.sum()</span>
-<span class="sd">    &gt;&gt;&gt; loss.backward()</span>
-<span class="sd">    &gt;&gt;&gt; print(image.grad.shape)  # (256, 256)</span>
+<span class="sd">    &gt;&gt;&gt; src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(360, sid=1000.0, sdd=1500.0, device='cuda')</span>
+<span class="sd">    &gt;&gt;&gt; sinogram = FanProjectorFunction.apply(image, src_pos, det_center, det_u_vec, 512, 1.0)</span>
+<span class="sd">    &gt;&gt;&gt; sinogram.sum().backward()</span>
+<span class="sd">    &gt;&gt;&gt; image.grad.shape</span>
+<span class="sd">    torch.Size([256, 256])</span>
 <span class="sd">    """</span>
 <div class="viewcode-block" id="FanProjectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.FanProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
+    <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"image"</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">num_detectors</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Compute the 2D fan beam forward projection with arbitrary trajectories using CUDA acceleration.</span>
 
@@ -781,18 +779,19 @@
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
 <span class="sd">    &gt;&gt;&gt; import torch</span>
-<span class="sd">    &gt;&gt;&gt; from diffct.differentiable import FanBackprojectorFunction</span>
+<span class="sd">    &gt;&gt;&gt; from diffct import FanBackprojectorFunction, circular_trajectory_2d_fan</span>
 <span class="sd">    &gt;&gt;&gt;</span>
 <span class="sd">    &gt;&gt;&gt; sinogram = torch.randn(360, 512, device='cuda', requires_grad=True)</span>
-<span class="sd">    &gt;&gt;&gt; angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')</span>
-<span class="sd">    &gt;&gt;&gt; recon = FanBackprojectorFunction.apply(sinogram, angles, 1.0, 256, 256, 1500.0, 1000.0)</span>
-<span class="sd">    &gt;&gt;&gt; loss = recon.sum()</span>
-<span class="sd">    &gt;&gt;&gt; loss.backward()</span>
-<span class="sd">    &gt;&gt;&gt; print(sinogram.grad.shape)  # (360, 512)</span>
+<span class="sd">    &gt;&gt;&gt; src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(360, sid=1000.0, sdd=1500.0, device='cuda')</span>
+<span class="sd">    &gt;&gt;&gt; image = FanBackprojectorFunction.apply(sinogram, src_pos, det_center, det_u_vec, 1.0, 256, 256)</span>
+<span class="sd">    &gt;&gt;&gt; image.sum().backward()</span>
+<span class="sd">    &gt;&gt;&gt; sinogram.grad.shape</span>
+<span class="sd">    torch.Size([360, 512])</span>
 <span class="sd">    """</span>
 <div class="viewcode-block" id="FanBackprojectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.FanBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
+    <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"sinogram"</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Compute the 2D fan beam backprojection with arbitrary trajectories using CUDA acceleration.</span>
 
@@ -918,18 +917,21 @@
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
 <span class="sd">    &gt;&gt;&gt; import torch</span>
-<span class="sd">    &gt;&gt;&gt; from diffct.differentiable import ConeProjectorFunction</span>
+<span class="sd">    &gt;&gt;&gt; from diffct import ConeProjectorFunction, circular_trajectory_3d</span>
 <span class="sd">    &gt;&gt;&gt;</span>
 <span class="sd">    &gt;&gt;&gt; volume = torch.randn(128, 128, 128, device='cuda', requires_grad=True)</span>
-<span class="sd">    &gt;&gt;&gt; angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')</span>
-<span class="sd">    &gt;&gt;&gt; projections = ConeProjectorFunction.apply(volume, angles, 256, 256, 1.0, 1.0, 1500.0, 1000.0)</span>
-<span class="sd">    &gt;&gt;&gt; loss = projections.sum()</span>
-<span class="sd">    &gt;&gt;&gt; loss.backward()</span>
-<span class="sd">    &gt;&gt;&gt; print(volume.grad.shape)  # (128, 128, 128)</span>
+<span class="sd">    &gt;&gt;&gt; src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(360, sid=1000.0, sdd=1500.0, device='cuda')</span>
+<span class="sd">    &gt;&gt;&gt; projections = ConeProjectorFunction.apply(</span>
+<span class="sd">    ...     volume, src_pos, det_center, det_u_vec, det_v_vec, 256, 256, 1.0, 1.0</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; projections.sum().backward()</span>
+<span class="sd">    &gt;&gt;&gt; volume.grad.shape</span>
+<span class="sd">    torch.Size([128, 128, 128])</span>
 <span class="sd">    """</span>
 <div class="viewcode-block" id="ConeProjectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.ConeProjectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
+    <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"volume"</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">det_v_vec</span><span class="p">,</span> <span class="n">det_u</span><span class="p">,</span> <span class="n">det_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Compute the 3D cone beam forward projection with arbitrary trajectories using CUDA acceleration.</span>
 
@@ -1072,22 +1074,21 @@
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
 <span class="sd">    &gt;&gt;&gt; import torch</span>
-<span class="sd">    &gt;&gt;&gt; from diffct.differentiable import ConeBackprojectorFunction</span>
+<span class="sd">    &gt;&gt;&gt; from diffct import ConeBackprojectorFunction, circular_trajectory_3d</span>
 <span class="sd">    &gt;&gt;&gt;</span>
 <span class="sd">    &gt;&gt;&gt; projections = torch.randn(360, 256, 256, device='cuda', requires_grad=True)</span>
-<span class="sd">    &gt;&gt;&gt; angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')</span>
-<span class="sd">    &gt;&gt;&gt; D, H, W = 128, 128, 128</span>
-<span class="sd">    &gt;&gt;&gt; du, dv = 1.0, 1.0</span>
-<span class="sd">    &gt;&gt;&gt; sdd, sid = 1500.0, 1000.0</span>
-<span class="sd">    &gt;&gt;&gt; backprojector = ConeBackprojectorFunction.apply</span>
-<span class="sd">    &gt;&gt;&gt; volume = backprojector(projections, angles, D, H, W, du, dv, sdd, sid)</span>
-<span class="sd">    &gt;&gt;&gt; loss = volume.sum()</span>
-<span class="sd">    &gt;&gt;&gt; loss.backward()</span>
-<span class="sd">    &gt;&gt;&gt; print(f"Projection gradient shape: {projections.grad.shape}")  # (360, 256, 256)</span>
+<span class="sd">    &gt;&gt;&gt; src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(360, sid=1000.0, sdd=1500.0, device='cuda')</span>
+<span class="sd">    &gt;&gt;&gt; volume = ConeBackprojectorFunction.apply(</span>
+<span class="sd">    ...     projections, src_pos, det_center, det_u_vec, det_v_vec, 128, 128, 128, 1.0, 1.0</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; volume.sum().backward()</span>
+<span class="sd">    &gt;&gt;&gt; projections.grad.shape</span>
+<span class="sd">    torch.Size([360, 256, 256])</span>
 <span class="sd">    """</span>
 <div class="viewcode-block" id="ConeBackprojectorFunction.forward">
 <a class="viewcode-back" href="../../api.html#diffct.ConeBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
+    <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"sinogram"</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">det_v_vec</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Compute the 3D cone beam backprojection with arbitrary trajectories using CUDA acceleration.</span>
 
@@ -1235,7 +1236,7 @@
       
     </aside>
   </div>
-</div><script src="../../_static/documentation_options.js?v=51b770b3"></script>
+</div><script src="../../_static/documentation_options.js?v=f5cff4aa"></script>
     <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>
