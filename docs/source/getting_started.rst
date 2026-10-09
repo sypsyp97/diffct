@@ -1,94 +1,91 @@
 Getting Started
 ===============
 
-This guide will walk you through the process of setting up `diffct` and running your first CT reconstruction example.
+Install the candidate branch
+----------------------------
 
-Prerequisites
--------------
-
-**Hardware Requirements:**
-- CUDA-capable GPU (compute capability 6.0 or higher recommended)
-- Minimum 4GB GPU memory for basic examples
-
-**Software Requirements:**
-- Python 3.10 or later
-- CUDA Toolkit 11.0 or later
-- Required Python packages:
-  - PyTorch (with CUDA support)
-  - NumPy
-  - Numba (with CUDA support)
-
-Installation
-------------
-
-Install this local arbitrary-trajectory candidate from its checkout. The
-currently published PyPI release does not contain this candidate's high-level API:
+Projection and backprojection require an NVIDIA CUDA GPU. Geometry construction
+and some validation tests can run on CPU; there is no CPU projection backend.
+Install a CUDA-enabled PyTorch build appropriate for your driver first, then:
 
 .. code-block:: bash
 
-   pip install -e .
+   git clone --branch codex/arbitrary-trajectory-multigpu --single-branch \
+       https://github.com/sypsyp97/diffct.git
+   cd diffct
+   python -m pip install "numpy<2.5" "numba-cuda[cu12]"
+   python -m pip install -e .
+   python -c "import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"
+   python examples/quickstart.py
 
-**Verify Installation:**
+Use ``numba-cuda[cu13]`` for a compatible CUDA 13 stack. Keep NVVM and NVJitLink
+compatible with the CUDA libraries loaded by PyTorch. ``torch.cuda.is_available()``
+only checks PyTorch's device access; the quickstart additionally compiles and
+executes the Numba kernels. The first call includes JIT compilation overhead.
+The :doc:`validation` page records previously tested environments and results;
+these are not a guarantee for every CUDA/Python combination.
+
+Minimal forward / adjoint / gradient example
+--------------------------------------------
 
 .. code-block:: python
 
    import torch
-   import diffct
-   
-   # Check CUDA availability
-   print(f"CUDA available: {torch.cuda.is_available()}")
-   print(f"DiffCT version: {diffct.__version__}")
+   from diffct import Projector, circular_trajectory_2d_parallel
 
-Quick Start Example
--------------------
+   trajectory = circular_trajectory_2d_parallel(180, device="cpu")
+   A = Projector(trajectory, (64, 64), 96, beam="parallel",
+                 detector_spacing=1.0, voxel_spacing=1.0)
+   image = torch.zeros(A.volume_shape, device="cuda", dtype=torch.float32)
+   image[20:44, 20:44] = 1.0
+   measurements = A.project(image)        # (180, 96)
+   adjoint = A.backproject(measurements)  # (64, 64), not an inverse
 
-Here's a minimal example that uses the new geometry helpers and projector API:
+   estimate = torch.zeros_like(image, requires_grad=True)
+   loss = 0.5 * (A.project(estimate) - measurements).square().sum()
+   loss.backward()                       # A^T (A estimate - measurements)
+   print(measurements.shape, estimate.grad.shape)
 
-.. code-block:: python
+``Projector`` defaults to ``beam="cone"``. Set ``beam="parallel"`` or
+``beam="fan"`` explicitly for 2D data. Inputs must be floating-point CUDA tensors
+with exactly the configured shape, without batch/channel dimensions. Computation
+and outputs are float32. Fixed geometry can be supplied on CPU; the operator
+stages and caches each GPU's geometry shard.
 
-   import torch
-   from diffct import Projector
-   from diffct.geometry import circular_trajectory_2d_parallel
+Choose a workflow
+-----------------
 
-   # Set device
-   device = torch.device('cuda')
+- A custom or non-circular scan: :doc:`trajectories` covers coordinates, detector
+  ordering and geometry gradients.
+- An iterative reconstruction: run ``python examples/iterative_reconstruction.py
+  --trajectory helical``. See :doc:`examples` for the supported methods.
+- Multiple GPUs or nodes: read :doc:`distributed` before using local shards or
+  differentiating losses. Extra GPUs do not pool memory for the volume.
+- An existing circular-only installation: follow :doc:`migration`; the old
+  scalar-angle signatures and separable-footprint backends are not drop-in APIs.
 
-   # Create a simple test image (128x128)
-   image = torch.zeros((128, 128), device=device)
-   image[40:88, 40:88] = 1.0  # Square phantom
+Troubleshooting
+---------------
 
-   # Define projection parameters
-   num_views = 180
-   num_detectors = 128
-   detector_spacing = 1.0
-   voxel_spacing = 1.0
+- **CUDA is unavailable:** check the selected Python environment, PyTorch CUDA
+  build, GPU allocation and driver. Installing diffct does not provision a GPU.
+- **Kernel compilation fails:** check Numba CUDA, NVVM and NVJitLink versions as
+  a set, rather than upgrading one CUDA component independently.
+- **Shape error:** use ``(D, H, W)`` for cone volumes and ``(views, U, V)`` for
+  their sinograms. In distributed mode, use ``A.projection_shape`` and
+  ``A.view_slice`` rather than the global view count.
+- **Invalid geometry:** axes must be unit vectors with the orthogonality and
+  non-degeneracy constraints described in :doc:`trajectories`.
 
-   # Generate parallel-beam geometry
-   trajectory = circular_trajectory_2d_parallel(num_views, device='cpu')
-   operator = Projector(trajectory, image.shape, num_detectors,
-                        beam='parallel', detector_spacing=detector_spacing,
-                        voxel_spacing=voxel_spacing)
+Build these docs without a GPU
+------------------------------
 
-   # Forward projection
-   sinogram = operator.project(image)
+The documentation imports diffct for its API reference but does not execute CUDA
+examples. From the repository root, with the package dependencies installed:
 
-   # Backprojection
-   reconstruction = operator.backproject(sinogram)
+.. code-block:: bash
 
-   print(f"Original image shape: {image.shape}")
-   print(f"Sinogram shape: {sinogram.shape}")
-   print(f"Reconstruction shape: {reconstruction.shape}")
+   python -m pip install sphinx sphinx-rtd-theme myst-parser
+   python -m sphinx -W --keep-going -b html docs/source docs/build/html
 
-``backproject`` is the matched adjoint, not an inverse reconstruction. Supply
-any valid per-view trajectory tuple to the same interface. For cone beam, use a
-``(depth, height, width)`` volume and a ``(detector_u, detector_v)`` detector.
-Add ``devices=['cuda:0', 'cuda:1']`` to share views between local GPUs, or initialize
-a process group and use ``distributed=True`` for view sharding across ranks.
-See ``docs/DISTRIBUTED.md`` for gradient conventions and launch instructions.
-
-Next Steps
-----------
-
-- Explore the :doc:`examples` for detailed reconstruction algorithms
-- Check the :doc:`api` reference for complete function documentation
-- Review the mathematical background in each example for deeper understanding
+Open ``docs/build/html/index.html`` to review this checkout's documentation.

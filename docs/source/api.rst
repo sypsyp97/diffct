@@ -20,41 +20,51 @@ High-level Projector
    :members:
    :special-members: __call__
 
-See ``docs/DISTRIBUTED.md`` for local GPU view splitting and multi-node launch
-instructions. Trajectory tensors that require gradients receive geometry
-gradients; see the README section on gradients.
+See :doc:`distributed` for local GPU view splitting and multi-node launch
+instructions, and :doc:`trajectories` for geometry gradients and coordinate
+conventions. ``Projector`` lives in ``diffct.operators`` and is re-exported here.
 
 Core Projector Functions
 ------------------------
 
+These advanced ``autograd.Function`` wrappers take explicit trajectory tensors.
+Use the ``forward`` signatures below as the argument order for ``.apply(...)``;
+new applications should prefer ``Projector`` for validation and device staging.
+
 .. currentmodule:: diffct
 
 .. autoclass:: ParallelProjectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
 .. autoclass:: ParallelBackprojectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
 .. autoclass:: FanProjectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
 .. autoclass:: FanBackprojectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
 .. autoclass:: ConeProjectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
 .. autoclass:: ConeBackprojectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
@@ -89,8 +99,10 @@ Analytical Reconstruction Helpers
 
 These helpers build the per-view pre-weights, angle-integration weights,
 filter, and backprojection pieces of an analytical FBP / FDK pipeline.
-They are plain functions (no autograd state) and can be freely mixed
-with the autograd operators above. Every helper is trajectory-agnostic:
+The weighted-backprojection helpers use dedicated CUDA gather kernels, not
+the differentiable matched-adjoint path. Do not assume end-to-end autograd
+through an analytical reconstruction. Geometry-dependent helpers accept
+per-view trajectories:
 it takes the same ``(src_pos, det_center, det_u_vec[, det_v_vec])``
 arrays that the projector / backprojector Functions consume, so the
 same code path works for circular and non-circular trajectories.
@@ -219,12 +231,17 @@ Backward Compatibility
 
 .. currentmodule:: diffct.differentiable
 
-``diffct.differentiable`` continues to expose the legacy API surface for existing code bases. New projects should import from ``diffct`` (top level) or the specific submodules shown above.
+``diffct.differentiable`` re-exports this branch's API; it does not restore
+the circular-only scalar-angle signatures. See :doc:`migration`. New projects
+should import ``Projector`` from ``diffct``.
 
 Usage Notes
 -----------
 
-- All projector operators accept tensors on CUDA devices and return results on the same device. Use ``diffct.utils.DeviceManager`` helpers when integrating into larger code bases.
+- ``Projector`` requires image/sinogram inputs on CUDA and returns float32 results
+  on the input device. Geometry tensors can be on CPU and are staged internally.
 - Geometry helper functions build the ``ray_dir``, ``det_origin``, and detector orientation vectors expected by the projector operators.
-- Gradients flow through both forward and backward passes; set ``requires_grad=True`` on inputs that participate in optimisation loops.
+- Image/sinogram gradients support second derivatives with fixed geometry.
+  Geometry gradients are first-order only; set ``requires_grad=True`` before
+  constructing ``Projector``. Scalar spacing settings are not differentiable.
 - Ensure tensors are contiguous and use consistent dtype (``torch.float32``) for maximum kernel performance.

@@ -1,7 +1,41 @@
 # Examples
 
-Runnable scripts for the `Projector` API. Install diffct first (see the [root README](../README.md)), then run every command from the repository root.
-All scripts need a CUDA GPU, except `plot_trajectory.py`.
+Runnable scripts for this branch's `Projector` API. Install the checkout first
+(see the [root README](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/README.md)), then run every command from the repository
+root. Projection/reconstruction scripts need CUDA; `plot_trajectory.py` runs on
+CPU. Plotting and the reconstruction scripts' `--figure` option also need
+`matplotlib`, which is not a core diffct dependency.
+
+## Start here
+
+For the API, shapes, adjoint checks and autograd, run:
+
+```bash
+python examples/quickstart.py
+```
+
+For a smaller iterative demonstration on one GPU:
+
+```bash
+python examples/iterative_reconstruction.py --size 32 --views 32 \
+    --trajectory helical --algorithms cgls --iterations 5
+```
+
+This still computes an FDK baseline; five CGLS steps are a usage example, not
+the reconstruction-quality configuration in the results below. The default
+iterative run uses a 128³ volume, 360 views, and CGLS/SIRT/TV with 30/200/200
+iterations respectively.
+
+To inspect a helical trajectory without a GPU (PyTorch and matplotlib required):
+
+```bash
+python examples/plot_trajectory.py --trajectory spiral3d --device cpu \
+    --output plots/spiral3d.png
+```
+
+The reconstruction CLI calls this trajectory `helical`; the plotting CLI calls
+it `spiral3d`, and both use `spiral_trajectory_3d`. Use `--help` on the configurable
+scripts to see their own options.
 
 ## Index
 
@@ -9,7 +43,7 @@ All scripts need a CUDA GPU, except `plot_trajectory.py`.
 | --- | --- | --- |
 | `quickstart.py` | Projector basics for parallel, fan and cone beams: projection, backprojection, adjoint check, image and geometry gradients. | 1 GPU |
 | `analytical_reconstruction.py` | Parallel-beam FBP, fan-beam FBP and cone-beam FDK. `--window` selects the ramp-filter window. | 1 GPU |
-| `iterative_reconstruction.py` | Any trajectory (`--trajectory circular/helical/saddle/sinusoidal`). CGLS, SIRT and TV-regularized nonnegative least squares (Adam through autograd). FDK baseline. `--noise` adds Gaussian noise. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
+| `iterative_reconstruction.py` | Cone-beam reconstruction with `--trajectory circular`, `helical`, `saddle` or `sinusoidal`. CGLS, SIRT and TV-regularized nonnegative least squares (Adam through autograd). FDK baseline outside distributed mode. `--noise` adds Gaussian noise. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `geometry_calibration.py` | Recovers per-view angle errors and a detector shift from projections, using geometry gradients. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `benchmark_projector.py` | Checks correctness and measures speed of one GPU against several GPUs. | `--devices` in one process, torchrun |
 | `plot_trajectory.py` | Plots a trajectory generator. | CPU |
@@ -19,7 +53,10 @@ Shared helpers are in `_common.py`: the Shepp-Logan phantom, the scan geometry, 
 
 ## Launch modes
 
-Each mode uses the same script. Use the command that matches your allocation.
+The reconstruction and geometry-calibration scripts support all four modes
+below. Other scripts support only the modes in the index. Use the command that
+matches your allocation. Every GPU must fit a full volume; views are partitioned,
+not volume voxels.
 
 **1. One GPU**
 
@@ -33,15 +70,23 @@ python examples/iterative_reconstruction.py
 python examples/iterative_reconstruction.py --devices 0 1 2 3
 ```
 
-The views are split over the listed GPUs. No process group is needed.
+The views are split over the listed GPUs and the full sinogram is returned on
+the input device. No process group is needed.
 
 **3. One node, torchrun (one process per GPU)**
 
 ```bash
-torchrun --nproc-per-node=4 examples/iterative_reconstruction.py
+python -m torch.distributed.run --standalone --nproc-per-node=4 \
+    examples/iterative_reconstruction.py
 ```
 
-Do not pass `--devices` with torchrun. The script stops with an error when both are given.
+With multiple ranks, each process selects its GPU from `LOCAL_RANK`, creates an
+NCCL process group, and stores its own sinogram shard. The volume and optimizer
+state are replicated. Do not pass `--devices` for these multi-process runs.
+The iterative script skips the FDK baseline in distributed mode because it does
+not gather the full sinogram. When using its `--noise` option, keep `--views`
+at least as large as the number of processes: the example's noise setup requires
+a nonempty local shard, even though `Projector` itself supports empty shards.
 
 **4. Several nodes, Slurm**
 
@@ -60,15 +105,25 @@ The template starts one torchrun launcher per node and uses NCCL between all GPU
 
 ```bash
 python examples/benchmark_projector.py --devices 0 1
-torchrun --standalone --nproc-per-node=2 examples/benchmark_projector.py
+python -m torch.distributed.run --standalone --nproc-per-node=2 \
+    examples/benchmark_projector.py
 ```
+
+By default, the benchmark requires at least two GPUs and exits nonzero if a
+requested workload fails its numerical checks or minimum speedup (default:
+1.0× for the complete gradient iteration). `--min-speedup=0` also permits a
+single-GPU utility check. A completed run can still fail its acceleration check.
+Small workloads are not guaranteed to speed up. See the
+[distributed guide](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/DISTRIBUTED.md) for full standalone examples,
+cross-node checks and memory constraints.
 
 ## Rules for distributed losses
 
 These rules apply when you write your own loss with `Projector(..., distributed=True)`. The examples follow them.
 
-- Projection losses: each rank computes its term on its own view shard. The total loss is the sum of these terms over ranks. Use `dist.all_reduce` on a scalar before you log it or compare it.
-- Losses on the output of `backproject()`: divide the loss by `world_size` before `backward()`. Backprojection backward sums the output gradients over ranks.
+- Projection losses: each rank computes a sum on its own view shard. For a global mean, divide each local sum by the global ray count; a local `.mean()` is wrong for unequal shards and undefined for empty shards. The projector sums image and learnable-geometry gradients across ranks.
+- For reporting a global data loss, `dist.all_reduce` a detached clone of the local scalar. Do not all-reduce the loss used for `backward()` yourself.
+- Losses on the output of `backproject()`: divide each rank's identical replicated-output loss by `operator.world_size` before `backward()`. Backprojection backward sums the output gradients over ranks.
 - Losses on the replicated volume only (for example a TV term on `x`): add the full term on every rank. Do not divide it by the number of ranks. Each rank computes the same gradient, and the projector already sums the data gradient over ranks.
 - Every rank must make the same calls in the same order, including `project()`, `backproject()` and `backward()`. This applies to ranks with zero views.
 - Do not add a DDP reduction on top. The image-gradient collectives already sum over ranks.
@@ -77,7 +132,10 @@ These rules apply when you write your own loss with `Projector(..., distributed=
 
 ## Results
 
-All numbers are measured on Leonardo Booster (A100 64 GB, PyTorch 2.10 cu126, numba-cuda 0.30.4) on 2026-10-09.
+The following are recorded measurements from Leonardo Booster (A100 64 GB,
+PyTorch 2.10 cu126, numba-cuda 0.30.4) on 2026-10-09, not expected results for
+every GPU. See the [validation record](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/VALIDATION.md) for related
+correctness and cross-node results.
 
 ### Iterative reconstruction
 

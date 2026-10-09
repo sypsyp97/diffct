@@ -1,5 +1,5 @@
 Parallel Beam Iterative Reconstruction
-=====================================
+======================================
 
 This example demonstrates 2D parallel beam iterative reconstruction using the differentiable `ParallelProjectorFunction` and `ParallelBackprojectorFunction` from `diffct`. The maintained iterative example is ``examples/iterative_reconstruction.py``, which reconstructs a 3D cone beam scan on any trajectory with CGLS, SIRT and TV; the 2D derivation on this page still applies to the 2D ``Projector`` beams.
 

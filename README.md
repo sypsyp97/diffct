@@ -1,5 +1,7 @@
 <h1 align="center">diffct</h1>
 
+<p align="center">English · <a href="README.zh.md">简体中文</a></p>
+
 <p align="center">
   Differentiable CUDA projectors for CT: arbitrary trajectories, multi-GPU, multi-node, geometry gradients.
 </p>
@@ -8,9 +10,9 @@
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://doi.org/10.5281/zenodo.14999333"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square" alt="DOI"></a>
   <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
-  <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat-square" alt="Documentation"></a>
+  <a href="docs/source/trajectories.rst"><img src="https://img.shields.io/badge/docs-branch-brightgreen.svg?style=flat-square" alt="Branch documentation"></a>
   <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
-  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 <p align="center">
@@ -34,7 +36,8 @@
 
 > **Branch status.** This README describes the candidate branch
 > `codex/arbitrary-trajectory-multigpu`. The GitHub default branch and the PyPI
-> release do not contain the `Projector` API yet. Read the
+> release do not contain the `Projector` API yet. Start with the
+> [branch guide](docs/source/trajectories.rst) and read the
 > [migration notes](docs/MIGRATION.md) before you move from the circular-only API.
 >
 > The Apple/MLX port is maintained by
@@ -47,20 +50,31 @@
   detector axes. Circular, helical, saddle, sinusoidal, random and calibrated
   scans use the same code.
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint
-  pair. Both are PyTorch autograd functions, with gradients for volumes and
-  sinograms and second derivatives (Hessian-vector products).
+  pair for the cell-constant Siddon model. Both support PyTorch autograd,
+  with volume/sinogram gradients and second derivatives (Hessian-vector products).
 - **Geometry gradients.** Trajectory tensors with `requires_grad=True` receive
   gradients for calibration and trajectory optimization.
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or
-  one process per GPU with torchrun and NCCL. More GPUs make the operator
-  faster. They do not make a larger volume fit.
+  one process per GPU with torchrun and NCCL. Views are partitioned; the
+  volume is replicated. Speedup depends on workload and communication costs.
 - **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak,
   shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP
   and FDK backprojection.
 - **Validated.** FDK matches ASTRA 2.5.0 `FDK_CUDA` on the same projections:
   PSNR within 0.3 dB, and a maximum pixel difference below 1% of the phantom
   maximum. Geometry gradients match an independent float64 reference to about
-  1e-6. 229 pytest tests pass on A100.
+  1e-6. The [recorded A100 validation](docs/VALIDATION.md) reports 229 passing
+  pytest tests; these are measured results, not guarantees for every scan.
+
+### Capabilities and limits
+
+| Area | Supported here | Important limit |
+|---|---|---|
+| Acquisition | 2D parallel/fan and 3D cone beams; per-view source/detector geometry | Flat detectors with unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
+| Autograd | Volume/sinogram gradients and second derivatives; first-order geometry gradients | Geometry second derivatives raise an error; validity checks run at construction |
+| Execution | CUDA, one-process multi-GPU, or distributed ranks across nodes | Kernels and outputs are float32; CPU geometry is allowed, CPU projection is not |
+| Reconstruction | Matched adjoint plus separate FBP/FDK helpers | `backproject()` is not an inverse; FDK remains approximate and does not become exact for arbitrary scans |
+| Memory | Views split across GPUs/ranks | Every participating GPU needs a full volume; local multi-GPU also gathers the full sinogram on the input device |
 
 ## Install
 
@@ -108,9 +122,48 @@ loss = 0.5 * (A.project(x) - sinogram).square().sum()
 loss.backward()                     # x.grad = A^T (A x - y)
 ```
 
+### Custom or calibrated trajectories
+
+Use a generator for a standard scan, or pass your calibrated tensors directly.
+The tuple describes every source position, detector centre and detector axis;
+no circular-orbit fit is required. For example, two illustrative cone views:
+
+```python
+calibrated = tuple(torch.tensor(rows, dtype=torch.float32) for rows in (
+    [[-320.0, 0.0, -20.0], [0.0, -300.0, 25.0]],  # source (x, y, z)
+    [[192.0, 0.0, -20.0], [0.0, 212.0, 25.0]],    # detector centre (x, y, z)
+    [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],         # unit detector u axes
+    [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],         # unit detector v axes
+))
+A_custom = Projector(calibrated, (64, 96, 128), (192, 128),
+                     beam="cone", voxel_spacing=1.0, detector_spacing=(0.8, 1.0))
+y_custom = A_custom.project(torch.ones(A_custom.volume_shape, device="cuda"))
+# y_custom.shape == (2, 192, 128): (views, detector_u, detector_v)
+```
+
+Replace the two rows in each component with all views from your calibration,
+in measurement order. Coordinates are world `(x, y, z)`; volume tensors are
+`(z, y, x)` / `(D, H, W)`. Use one length unit for positions and spacings;
+axes are unit directions, not pixel-sized vectors. See
+[Geometry and units](#geometry-and-units) for 2D tuples and centring conventions.
+The `custom_trajectory_3d` helper instead derives a detector pose from a source
+path looking toward the origin; use explicit tuples when detector poses are
+independently calibrated.
+
 ### Several GPUs and nodes
 
-Each GPU holds the full volume and a share of the views.
+Choose the execution mode by how you want to hold the projections:
+
+| Mode | Configuration | Projection ownership |
+|---|---|---|
+| One GPU | Default `Projector(...)` | Full sinogram on the input CUDA device |
+| One process, several GPUs | `devices=[0, 1, ...]` | Views computed on several GPUs, then full sinogram gathered on the input CUDA device |
+| One GPU per process, one or more nodes | `distributed=True` after process-group initialization | Rank-local sinogram with shape `A.projection_shape`, indexed by `A.view_slice` |
+
+All modes require the full volume on each participating GPU. Local multi-GPU
+execution also needs room for the full input/output sinogram on the caller's
+device, plus temporary copies; it does not pool memory. Distributed mode keeps
+projections sharded, while backprojection sums and replicates the full volume.
 
 **One process, several GPUs:**
 
@@ -126,15 +179,19 @@ sbatch examples/slurm/multi_node.sbatch examples/iterative_reconstruction.py --t
 ```
 
 With `distributed=True`, every rank must make the same `project`, `backproject`
-and backward calls. Sum projection-domain losses over ranks. Do not add a DDP
-gradient reduction on top of the operator. Slurm details and the cross-node
+and backward calls, even on ranks with zero views. Use each rank's local
+projection loss with SUM semantics; the operator sums image and geometry
+gradients across ranks. Divide a loss on replicated backprojection output by
+`world_size`. Do not add a DDP gradient reduction on top of the operator.
+Initialization, loss examples, Slurm details and the cross-node
 check are in [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md).
 
 ### Geometry gradients
 
 Trajectory tensors with `requires_grad=True` get gradients for the source,
 detector centre and detector axes. The gradient is the exact derivative of the
-cell-constant model.
+cell-constant model. Set `requires_grad=True` before constructing `Projector`;
+otherwise it snapshots the geometry. Rebuild it after changing fixed geometry.
 
 ```python
 source, det_center, det_u, det_v = (t.clone() for t in trajectory)
@@ -235,19 +292,26 @@ mode.
 - Use the helpers in `diffct.geometry` (`circular_*`, `spiral_*`,
   `sinusoidal_*`, `saddle_*`, `random_*`, `custom_*`), or pass calibrated
   tensors.
+- Geometry rows use world `(x, y)` or `(x, y, z)` coordinates. Volume axes
+  run in `(y, x)` or `(z, y, x)` order. There are no batch/channel dimensions.
 - Direction vectors have unit length. `ray_dir` is orthogonal to `det_u`, and
-  `det_u` is orthogonal to `det_v`. Detector pitch is a separate argument.
+  `det_u` is orthogonal to `det_v`. Detector pitch is a separate argument:
+  a scalar in 2D, a scalar or `(du, dv)` pair for cone beams.
+  `detector_shape=(U, V)` and cone sinograms always follow `(views, U, V)`.
 - The volume is centred on the origin. Voxel `i` of an axis with `N` voxels has
   its centre at `(i + 0.5 - N / 2) * voxel_spacing`. Voxel spacing is one
   isotropic value.
 - The detector array is centred. Pixel `k` of `N_det` pixels lies at
-  `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`, the same
-  convention as `main`.
+  `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`
+  (`det_origin` for parallel beams), the same convention as `main`. For cone
+  beams, add the analogous offset along `det_v` using its own pitch.
 - Projections are line integrals in the length unit of the geometry. `Projector`
   rejects views where the source equals the detector centre, or the detector is
   edge-on to the source.
 - The kernels work in float32. In fan and cone beams, the source or the
-  detector centre must be within 1e6 voxels of the volume centre in each view.
+  detector centre must be within 1e6 voxels of the volume centre in each view;
+  both must be within 1e15 voxels. Geometry may be on CPU or CUDA, but volumes
+  and sinograms passed to the operator must be floating-point CUDA tensors.
   Ray positions are accurate to about 6e-8 times that nearer distance.
 
 **Gradient edge cases:**
@@ -265,7 +329,8 @@ mode.
 
 | Document | Contents |
 |---|---|
-| [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | Slurm launch commands and the numeric cross-node check |
+| [Branch guide](docs/source/trajectories.rst) | Trajectory tuples, `Projector` usage and scope of this branch |
+| [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | Execution/memory choices, distributed loss rules, Slurm and cross-node checks |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | Test commands, validation details and the limits of each check |
 | [docs/MIGRATION.md](docs/MIGRATION.md) | Moving from the circular-only API |
 | [docs/video/README.md](docs/video/README.md) | How the intro video is rendered |

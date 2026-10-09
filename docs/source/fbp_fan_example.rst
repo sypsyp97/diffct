@@ -1,84 +1,49 @@
 Fan Beam Filtered Backprojection (FBP)
-====================================
+======================================
 
-This example demonstrates 2D fan beam filtered backprojection (FBP) reconstruction using the `FanProjectorFunction` and `FanBackprojectorFunction` from `diffct`.
+This page describes the maintained ``examples/analytical_reconstruction.py``
+pipeline. See :doc:`api` for filter options and helper signatures.
 
-Overview
+Run it
+------
+
+.. code-block:: bash
+
+   python examples/analytical_reconstruction.py --size 64 --window shepp-logan
+   python examples/analytical_reconstruction.py --size 128 --figure analytical.png
+
+The script runs all three beam types on one CUDA GPU and reports PSNR against
+the synthetic phantom. ``--figure`` additionally requires Matplotlib.
+
+Pipeline
 --------
 
-Fan beam FBP extends parallel beam reconstruction to the more realistic fan beam geometry used in clinical CT scanners. This example shows how to:
+The maintained example uses a full-turn circular fan-beam scan with 360 views,
+``sid=2.5 * size``, ``sdd=4 * size``, ``3 * size`` detector cells and pitch 0.8.
+Distances and pitch use the same units as the unit-spaced image voxels.
 
-- Configure fan beam geometry parameters (SID, SDD)
-- Generate fan beam projections with proper weighting
-- Apply ramp filtering with cosine weighting correction
-- Perform fan beam backprojection reconstruction
+1. Project a phantom slice with ``Projector(beam="fan")``.
+2. Apply ``fan_cosine_weights`` for the detector pitch and source-detector distance.
+3. Apply ``ramp_filter_1d`` along ``dim=1``, with ``sample_spacing=pitch``
+   and ``pad_factor=2``.
+4. Multiply by full-turn ``angular_integration_weights`` with
+   ``redundant_full_scan=True``.
+5. Call ``fan_weighted_backproject`` for the distance-weighted gather and
+   analytical scaling.
 
-Mathematical Background
------------------------
+This example is a full scan. Short-scan redundancy handling requires compatible
+angles/coverage and Parker weights; it is not enabled by changing the view count.
 
-**Fan Beam Geometry**
+The analytical weighted gather is separate from the cell-constant Siddon adjoint
+used by ``Projector.backproject()``. Do not substitute the raw adjoint and add an
+extra ``pi / number_of_views`` factor: the maintained pipeline already applies
+angular integration weights and the helper's analytical normalization. These
+CUDA gather helpers do not provide the same autograd path as ``Projector``.
 
-Fan beam CT uses a point X-ray source creating a fan-shaped beam. Key geometric parameters:
-
-- **SDD** :math:`D_s`: Source-to-Detector Distance (distance from X-ray source to detector array)
-- **SID** :math:`D_{sid}`: Source-to-Isocenter Distance (distance from X-ray source to rotation center)
-- **Fan angle** :math:`\gamma`: Angle between central ray and detector element
-
-The detector position :math:`u` relates to fan angle :math:`\gamma` by:
-
-.. math::
-   \gamma = \arctan\left(\frac{u}{D_s}\right)
-
-**Fan Beam Forward Projection**
-
-The fan beam projection at source angle :math:`\beta` and detector position :math:`u` is:
-
-.. math::
-   p(\beta, u) = \int_0^{\infty} f\left(\vec{r}_s + t \cdot \vec{d}(\beta, u)\right) dt
-
-where :math:`\vec{r}_s` is the source position and :math:`\vec{d}(\beta, u)` is the ray direction vector.
-
-**Fan Beam FBP Algorithm**
-
-Fan beam FBP reconstruction involves three sequential steps:
-
-1. **Cosine Weighting**: Compensate for ray divergence:
-
-   .. math::
-      p_w(\beta, u) = p(\beta, u) \cdot \cos(\gamma) = p(\beta, u) \cdot \frac{D_s}{\sqrt{D_s^2 + u^2}}
-
-2. **Ramp Filtering**: Apply frequency domain filter:
-
-   .. math::
-      p_f(\beta, u) = \mathcal{F}^{-1}\{|\omega| \cdot \mathcal{F}\{p_w(\beta, u)\}\}
-
-3. **Fan Beam Backprojection**: Reconstruct using weighted backprojection:
-
-   .. math::
-      f(x,y) = \int_0^{2\pi} \frac{D_s^2}{(D_s + x\cos\beta + y\sin\beta)^2} p_f(\beta, u_{xy}) d\beta
-
-   where the detector coordinate :math:`u_{xy}` for pixel :math:`(x,y)` is:
-
-   .. math::
-      u_{xy} = D_s \frac{-x\sin\beta + y\cos\beta}{D_s + x\cos\beta + y\sin\beta}
-
-**Implementation Steps**
-
-1. **Phantom Generation**: Create Shepp-Logan phantom for testing
-2. **Fan Beam Projection**: Generate sinogram using `FanProjectorFunction` with geometry from helpers such as ``diffct.geometry.circular_trajectory_2d_fan``
-3. **Cosine Weighting**: Apply divergence correction weights
-4. **Ramp Filtering**: Filter each projection in frequency domain
-5. **Fan Beam Backprojection**: Reconstruct using `FanBackprojectorFunction`
-6. **Normalization**: Scale by :math:`\frac{\pi}{N_{\text{angles}}}` factor
-
-**Advantages of Fan Beam Geometry**
-
-- **Clinical Relevance**: Matches real CT scanner geometry
-- **Higher Flux**: Better X-ray utilization than parallel beam
-- **Natural Magnification**: Improved spatial resolution
-- **Faster Acquisition**: Wider coverage per projection angle
+Maintained source
+-----------------
 
 .. literalinclude:: ../../examples/analytical_reconstruction.py
    :language: python
    :linenos:
-   :caption: Analytical Reconstruction Example (parallel, fan and cone beam)
+   :caption: Parallel FBP, fan FBP and cone FDK

@@ -1,7 +1,11 @@
 Cone Beam Iterative Reconstruction
 ==================================
 
-This example demonstrates gradient-based iterative reconstruction for 3D cone beam CT using the differentiable `ConeProjectorFunction` from `diffct`. The maintained iterative example is ``examples/iterative_reconstruction.py``, which reconstructs a 3D cone beam scan on any trajectory with CGLS, SIRT and TV; the 2D derivation on this page still applies to the 2D ``Projector`` beams.
+This example demonstrates gradient-based iterative reconstruction for 3D cone beam CT using ``diffct.Projector``. The maintained script
+``examples/iterative_reconstruction.py`` reconstructs generated circular, helical,
+saddle and sinusoidal scans with CGLS, SIRT and TV-regularized nonnegative least
+squares. Supply other valid trajectory tuples through the Python API. See
+:doc:`distributed` before adapting the loss to multiple ranks.
 
 Overview
 --------
@@ -87,21 +91,25 @@ Common 3D regularization terms:
 Memory Management Strategies
 ----------------------------
 
-3D reconstruction requires careful memory management:
+Each participating GPU needs the full float32 volume and workspace. The operator
+converts floating-point inputs to float32 internally, so a float16 input does not
+provide a half-precision projector or remove its full-volume allocation.
 
-- **Gradient Checkpointing**: Trade computation for memory in backpropagation
-- **Mixed Precision**: Use float16 when possible to reduce memory usage
-- **Batch Processing**: Process volume slices when memory is extremely limited
-- **Efficient Data Layout**: Optimize tensor storage and access patterns
+- Avoid retaining computation graphs between optimization steps unless needed.
+- Use distributed view shards to reduce sinogram storage per rank; local multi-GPU
+  mode still gathers the full sinogram on the caller's device.
+- Reduce the problem size when a full volume and workspace do not fit. This
+  implementation does not provide volume-slab or independent-slice execution for
+  the 3D cone operator.
 
 Convergence Characteristics
 ---------------------------
 
-3D cone beam reconstruction typically exhibits:
-
-1. **Initial Convergence** (0-100 iterations): Rapid loss decrease, basic 3D structure emerges
-2. **Detail Refinement** (100-500 iterations): Fine 3D features develop progressively
-3. **Final Convergence** (500+ iterations): Slow improvement, potential overfitting risk
+Convergence depends on acquisition coverage, noise, initialization, solver and
+regularization. The example prints residual and phantom-based quality measures;
+its iteration counts are demonstration settings, not a universal convergence
+schedule. Real measurements have no ground-truth phantom, so choose an appropriate
+stopping criterion for that problem.
 
 Challenges in 3D Reconstruction
 -------------------------------

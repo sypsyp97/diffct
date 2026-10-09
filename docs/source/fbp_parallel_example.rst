@@ -1,69 +1,44 @@
 Parallel Beam Filtered Backprojection (FBP)
-==========================================
+===========================================
 
-This example demonstrates 2D parallel beam filtered backprojection (FBP) reconstruction using the `ParallelProjectorFunction` and `ParallelBackprojectorFunction` from `diffct`.
+This page describes the maintained ``examples/analytical_reconstruction.py``
+pipeline. See :doc:`api` for filter options and helper signatures.
 
-Overview
+Run it
+------
+
+.. code-block:: bash
+
+   python examples/analytical_reconstruction.py --size 64 --window shepp-logan
+   python examples/analytical_reconstruction.py --size 128 --figure analytical.png
+
+The script runs all three beam types on one CUDA GPU and reports PSNR against
+the synthetic phantom. ``--figure`` additionally requires Matplotlib.
+
+Pipeline
 --------
 
-Parallel beam FBP is the standard analytical reconstruction method for 2D parallel beam CT. This example shows how to:
+The maintained example uses a half-turn circular parallel-beam scan with 360
+views. The detector has ``3 * size`` cells and pitch 0.5 in voxel units.
 
-- Configure parallel beam geometry parameters
-- Generate synthetic projection data using the Shepp-Logan phantom
-- Apply ramp filtering in the frequency domain
-- Perform backprojection to reconstruct the image
-- Visualize and evaluate reconstruction results
+1. Generate a phantom slice and project it with ``Projector(beam="parallel")``.
+2. Filter along the detector dimension (``dim=1``) with
+   ``ramp_filter_1d(..., sample_spacing=pitch, pad_factor=2)``.
+3. Multiply by ``angular_integration_weights(half_turn,
+   redundant_full_scan=False)``.
+4. Call ``parallel_weighted_backproject`` with the trajectory on the sinogram's
+   CUDA device. This helper includes its analytical normalization.
 
-Mathematical Background
------------------------
+The analytical weighted gather is separate from the cell-constant Siddon adjoint
+used by ``Projector.backproject()``. Do not substitute the raw adjoint and add an
+extra ``pi / number_of_views`` factor: the maintained pipeline already applies
+angular integration weights and the helper's analytical normalization. These
+CUDA gather helpers do not provide the same autograd path as ``Projector``.
 
-**Parallel Beam Geometry**
-
-In parallel beam CT, X-rays are collimated into parallel beams. The projection at angle :math:`\theta` and detector position :math:`t` is given by the Radon transform:
-
-.. math::
-   p(t, \theta) = \int_{-\infty}^{\infty} f(t\cos\theta - s\sin\theta, t\sin\theta + s\cos\theta) \, ds
-
-where :math:`f(x,y)` is the 2D attenuation coefficient distribution.
-
-**Filtered Backprojection Algorithm**
-
-The FBP reconstruction consists of three sequential steps:
-
-1. **Forward Projection**: Compute sinogram using the Radon transform
-2. **Ramp Filtering**: Apply frequency domain filter :math:`H(\omega) = |\omega|`
-3. **Backprojection**: Reconstruct using filtered projections
-
-The complete FBP formula is:
-
-.. math::
-   f(x,y) = \int_0^\pi p_f(x\cos\theta + y\sin\theta, \theta) \, d\theta
-
-where :math:`p_f(t, \theta)` is the filtered projection:
-
-.. math::
-   p_f(t, \theta) = \mathcal{F}^{-1}\{|\omega| \cdot \mathcal{F}\{p(t, \theta)\}\}
-
-**Implementation Steps**
-
-1. **Phantom Generation**: Create Shepp-Logan phantom with 5 ellipses
-2. **Forward Projection**: Generate sinogram using `ParallelProjectorFunction` with geometry from ``diffct.geometry.circular_trajectory_2d_parallel``
-3. **Ramp Filtering**: Apply :math:`H(\omega) = |\omega|` filter in frequency domain
-4. **Backprojection**: Reconstruct using `ParallelBackprojectorFunction`
-5. **Normalization**: Scale by :math:`\frac{\pi}{N_{\text{angles}}}` factor
-
-**Shepp-Logan Phantom**
-
-The phantom consists of 5 ellipses representing brain tissue structures:
-
-- **Outer skull**: Large ellipse with low attenuation
-- **Brain tissue**: Medium ellipse with baseline attenuation
-- **Ventricles**: Small ellipses with fluid-like attenuation
-- **Lesions**: High-contrast features for reconstruction assessment
-
-Each ellipse is defined by center position, semi-axes, rotation angle, and attenuation coefficient.
+Maintained source
+-----------------
 
 .. literalinclude:: ../../examples/analytical_reconstruction.py
    :language: python
    :linenos:
-   :caption: Analytical Reconstruction Example (parallel, fan and cone beam)
+   :caption: Parallel FBP, fan FBP and cone FDK
