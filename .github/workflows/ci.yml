@@ -179,7 +179,7 @@ jobs:
       - name: Test outside the source checkout
         run: |
           mkdir -p "$RUNNER_TEMP/wheel-tests"
-          cp -R tests pytest.ini "$RUNNER_TEMP/wheel-tests/"
+          cp -R tests examples pytest.ini "$RUNNER_TEMP/wheel-tests/"
           cd "$RUNNER_TEMP/wheel-tests"
           python - <<'PY'
           import importlib.metadata

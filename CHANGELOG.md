@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-10-09
+
+### Fixed
+
+- The low-level projector and backprojector Functions and the analytical
+  weighted backprojections run in the CUDA context of their input. Before,
+  inputs on another GPU than the current device could use the wrong context
+  and stream.
+- ``custom_trajectory_3d`` and ``custom_trajectory_2d_fan`` raise
+  ``ValueError`` for a source at the isocenter or a non-finite source,
+  instead of returning NaN geometry. The figure-8 example in the
+  ``custom_trajectory_3d`` docstring no longer puts a source at the origin.
+- The class docstring examples of the six projector Functions use the
+  per-view trajectory API.
+- ``_trig_tables`` accepts NumPy dtypes for tensor input.
+- Walnut example: ``preprocess_walnut.py`` raises when projection archives or
+  views are missing or an air level is not positive, instead of writing NaN
+  data. A non-default crop keeps the detector centre offset, and
+  ``walnut_reconstruction.py`` applies it to the geometry and the FDK
+  weights. The default crop has no offset.
+- Examples: ``psnr`` returns infinity for identical images; distributed
+  reductions in CGLS, TV and the noise peak use the operator's process
+  group.
+
+### Added
+
+- ``Projector.process_group``: the process group of a distributed operator.
+
 ## [2.0.0] - 2026-10-09
 
 Version 2.0.0 replaces the circular-orbit API of 1.x with arbitrary

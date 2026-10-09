@@ -28,10 +28,10 @@ been:
   - spatially binned 8x (2368x2240 -> 296x280 detector pixels),
   - cropped to the central 256x256 detector region,
   - angularly subsampled every 3rd view (721 -> 241 projections),
-  - flat-field normalised per-projection (using the 99.5th percentile
-    of each raw uint16 image as the "air" reference; no separate
-    dark scan is available in the source record, so we assume zero
-    dark field) and converted to line integrals via ``-log(I / I0)``,
+  - divided per projection by an air level I0 (the 99.5th percentile
+    of each image; the published projections are already dark- and
+    flat-field corrected) and converted to line integrals via
+    ``-log(I / I0)``,
   - stored as float16 in a compressed .npz together with the
     physical geometry (sdd, sid, binned pixel pitch, angles in
     radians in diffct handedness) plus regeneration metadata such

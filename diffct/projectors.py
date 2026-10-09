@@ -12,6 +12,7 @@ from .utils import (
     DeviceManager,
     TorchCUDABridge,
     _get_numba_external_stream_for,
+    _on_device_of,
     _trig_tables,
     _validate_3d_memory_layout,
     _grid_2d,
@@ -77,6 +78,7 @@ class _GeometryVJPFunction(torch.autograd.Function):
     """First-order geometry gradient; differentiating it again raises."""
 
     @staticmethod
+    @_on_device_of("volume")
     def forward(ctx, beam, volume, grad_sino, detector_spacing, voxel_spacing, *geometry):
         return _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spacing)
 
@@ -119,23 +121,17 @@ class ParallelProjectorFunction(torch.autograd.Function):
     Examples
     --------
     >>> import torch
-    >>> from diffct.differentiable import ParallelProjectorFunction
+    >>> from diffct import ParallelProjectorFunction, circular_trajectory_2d_parallel
     >>>
-    >>> # Create a 2D image with gradient tracking
     >>> image = torch.randn(128, 128, device='cuda', requires_grad=True)
-    >>> # Define projection parameters
-    >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
-    >>> num_detectors = 128
-    >>> detector_spacing = 1.0
-    >>> # Compute forward projection
-    >>> projector = ParallelProjectorFunction.apply
-    >>> sinogram = projector(image, angles, num_detectors, detector_spacing)
-    >>> # Compute loss and gradients
-    >>> loss = sinogram.sum()
-    >>> loss.backward()
-    >>> print(f"Gradient shape: {image.grad.shape}")  # (128, 128)
+    >>> ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(180, device='cuda')
+    >>> sinogram = ParallelProjectorFunction.apply(image, ray_dir, det_origin, det_u_vec, 192, 1.0)
+    >>> sinogram.sum().backward()
+    >>> image.grad.shape
+    torch.Size([128, 128])
     """
     @staticmethod
+    @_on_device_of("image")
     def forward(ctx, image, ray_dir, det_origin, det_u_vec, num_detectors, detector_spacing=1.0, voxel_spacing=1.0):
         """Compute the 2D parallel beam forward projection with arbitrary trajectories using CUDA acceleration.
 
@@ -254,16 +250,17 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
     Examples
     --------
     >>> import torch
-    >>> from diffct.differentiable import ParallelBackprojectorFunction
+    >>> from diffct import ParallelBackprojectorFunction, circular_trajectory_2d_parallel
     >>>
-    >>> sinogram = torch.randn(180, 128, device='cuda', requires_grad=True)
-    >>> angles = torch.linspace(0, torch.pi, 180, device='cuda')
-    >>> recon = ParallelBackprojectorFunction.apply(sinogram, angles, 1.0, 128, 128)
-    >>> loss = recon.sum()
-    >>> loss.backward()
-    >>> print(sinogram.grad.shape)  # (180, 128)
+    >>> sinogram = torch.randn(180, 192, device='cuda', requires_grad=True)
+    >>> ray_dir, det_origin, det_u_vec = circular_trajectory_2d_parallel(180, device='cuda')
+    >>> image = ParallelBackprojectorFunction.apply(sinogram, ray_dir, det_origin, det_u_vec, 1.0, 128, 128)
+    >>> image.sum().backward()
+    >>> sinogram.grad.shape
+    torch.Size([180, 192])
     """
     @staticmethod
+    @_on_device_of("sinogram")
     def forward(ctx, sinogram, ray_dir, det_origin, det_u_vec, detector_spacing=1.0, H=128, W=128, voxel_spacing=1.0):
         """Compute the 2D parallel beam backprojection with arbitrary trajectories using CUDA acceleration.
 
@@ -384,16 +381,17 @@ class FanProjectorFunction(torch.autograd.Function):
     Examples
     --------
     >>> import torch
-    >>> from diffct.differentiable import FanProjectorFunction
+    >>> from diffct import FanProjectorFunction, circular_trajectory_2d_fan
     >>>
     >>> image = torch.randn(256, 256, device='cuda', requires_grad=True)
-    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
-    >>> sinogram = FanProjectorFunction.apply(image, angles, 512, 1.0, 1500.0, 1000.0)
-    >>> loss = sinogram.sum()
-    >>> loss.backward()
-    >>> print(image.grad.shape)  # (256, 256)
+    >>> src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(360, sid=1000.0, sdd=1500.0, device='cuda')
+    >>> sinogram = FanProjectorFunction.apply(image, src_pos, det_center, det_u_vec, 512, 1.0)
+    >>> sinogram.sum().backward()
+    >>> image.grad.shape
+    torch.Size([256, 256])
     """
     @staticmethod
+    @_on_device_of("image")
     def forward(ctx, image, src_pos, det_center, det_u_vec, num_detectors, detector_spacing, voxel_spacing=1.0):
         """Compute the 2D fan beam forward projection with arbitrary trajectories using CUDA acceleration.
 
@@ -511,16 +509,17 @@ class FanBackprojectorFunction(torch.autograd.Function):
     Examples
     --------
     >>> import torch
-    >>> from diffct.differentiable import FanBackprojectorFunction
+    >>> from diffct import FanBackprojectorFunction, circular_trajectory_2d_fan
     >>>
     >>> sinogram = torch.randn(360, 512, device='cuda', requires_grad=True)
-    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
-    >>> recon = FanBackprojectorFunction.apply(sinogram, angles, 1.0, 256, 256, 1500.0, 1000.0)
-    >>> loss = recon.sum()
-    >>> loss.backward()
-    >>> print(sinogram.grad.shape)  # (360, 512)
+    >>> src_pos, det_center, det_u_vec = circular_trajectory_2d_fan(360, sid=1000.0, sdd=1500.0, device='cuda')
+    >>> image = FanBackprojectorFunction.apply(sinogram, src_pos, det_center, det_u_vec, 1.0, 256, 256)
+    >>> image.sum().backward()
+    >>> sinogram.grad.shape
+    torch.Size([360, 512])
     """
     @staticmethod
+    @_on_device_of("sinogram")
     def forward(ctx, sinogram, src_pos, det_center, det_u_vec, detector_spacing, H, W, voxel_spacing=1.0):
         """Compute the 2D fan beam backprojection with arbitrary trajectories using CUDA acceleration.
 
@@ -639,16 +638,19 @@ class ConeProjectorFunction(torch.autograd.Function):
     Examples
     --------
     >>> import torch
-    >>> from diffct.differentiable import ConeProjectorFunction
+    >>> from diffct import ConeProjectorFunction, circular_trajectory_3d
     >>>
     >>> volume = torch.randn(128, 128, 128, device='cuda', requires_grad=True)
-    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
-    >>> projections = ConeProjectorFunction.apply(volume, angles, 256, 256, 1.0, 1.0, 1500.0, 1000.0)
-    >>> loss = projections.sum()
-    >>> loss.backward()
-    >>> print(volume.grad.shape)  # (128, 128, 128)
+    >>> src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(360, sid=1000.0, sdd=1500.0, device='cuda')
+    >>> projections = ConeProjectorFunction.apply(
+    ...     volume, src_pos, det_center, det_u_vec, det_v_vec, 256, 256, 1.0, 1.0
+    ... )
+    >>> projections.sum().backward()
+    >>> volume.grad.shape
+    torch.Size([128, 128, 128])
     """
     @staticmethod
+    @_on_device_of("volume")
     def forward(ctx, volume, src_pos, det_center, det_u_vec, det_v_vec, det_u, det_v, du, dv, voxel_spacing=1.0):
         """Compute the 3D cone beam forward projection with arbitrary trajectories using CUDA acceleration.
 
@@ -784,20 +786,19 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     Examples
     --------
     >>> import torch
-    >>> from diffct.differentiable import ConeBackprojectorFunction
+    >>> from diffct import ConeBackprojectorFunction, circular_trajectory_3d
     >>>
     >>> projections = torch.randn(360, 256, 256, device='cuda', requires_grad=True)
-    >>> angles = torch.linspace(0, 2 * torch.pi, 360, device='cuda')
-    >>> D, H, W = 128, 128, 128
-    >>> du, dv = 1.0, 1.0
-    >>> sdd, sid = 1500.0, 1000.0
-    >>> backprojector = ConeBackprojectorFunction.apply
-    >>> volume = backprojector(projections, angles, D, H, W, du, dv, sdd, sid)
-    >>> loss = volume.sum()
-    >>> loss.backward()
-    >>> print(f"Projection gradient shape: {projections.grad.shape}")  # (360, 256, 256)
+    >>> src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(360, sid=1000.0, sdd=1500.0, device='cuda')
+    >>> volume = ConeBackprojectorFunction.apply(
+    ...     projections, src_pos, det_center, det_u_vec, det_v_vec, 128, 128, 128, 1.0, 1.0
+    ... )
+    >>> volume.sum().backward()
+    >>> projections.grad.shape
+    torch.Size([360, 256, 256])
     """
     @staticmethod
+    @_on_device_of("sinogram")
     def forward(ctx, sinogram, src_pos, det_center, det_u_vec, det_v_vec, D, H, W, du, dv, voxel_spacing=1.0):
         """Compute the 3D cone beam backprojection with arbitrary trajectories using CUDA acceleration.
 

@@ -70,7 +70,7 @@ def main():
         # Same noise for every launch mode: global peak, noise drawn for all views.
         peak = measurements.max()
         if distributed:
-            torch.distributed.all_reduce(peak, op=torch.distributed.ReduceOp.MAX)
+            torch.distributed.all_reduce(peak, op=torch.distributed.ReduceOp.MAX, group=operator.process_group)
         generator = torch.Generator(device=device).manual_seed(1234)
         noise = torch.randn((args.views, *scan.detector), generator=generator, device=device)
         measurements = measurements + args.noise * peak * noise[operator.view_slice]
