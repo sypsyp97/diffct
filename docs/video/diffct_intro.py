@@ -1,10 +1,16 @@
-"""diffct intro video (Manim CE). Render each scene, then concatenate.
+"""diffct intro video (Manim CE 0.21). Render every scene, then join them (see README.md).
 
-Data files (same directory), written by make_inputs.py: data2d.npz (walnut slice and
-its parallel sinogram), walnut_measured.npz (measured walnut reconstructions),
-recon_slices.npz + recon_psnr.json (simulated helical scan of the walnut volume),
-calib_history.json (real calibration run). All reconstructions are diffct output
-on Leonardo A100 GPUs.
+The video introduces the project: what diffct is, what it adds (any trajectory, autograd,
+geometry gradients, many GPUs) and measured results. Data files in this directory are
+written by make_inputs.py: data2d.npz (walnut slice and its parallel sinogram),
+walnut_measured.npz (measured walnut reconstructions), calib_history.json (a real
+geometry calibration run). All reconstructions and timings are diffct output on
+A100 GPUs (Leonardo Booster).
+
+Layout rules are enforced at render time: every header and caption sits on a fixed
+baseline, connectors are horizontal or vertical (`ortho`), labels must fit their boxes
+(`fits`), stay inside the safe area (`safe`) and keep apart (`apart`), and captions are
+one line.
 """
 import json
 import math
@@ -14,24 +20,32 @@ import numpy as np
 from manim import *
 
 HERE = Path(__file__).parent
-# 3Blue1Brown palette: near-black background, Manim's BLUE_C / GREEN_C / YELLOW / GOLD_C / RED_C.
+
 BG = "#0E1013"
 INK = "#ECECEC"
 SUB = "#A0A6AE"
 GRID = "#3C4650"
+PANEL = "#161C22"
 BLUE = "#58C4DD"
-TEAL = "#83C167"
-VIOLET = "#9A72AC"
-CLAY = "#F0AC5F"
+GREEN = "#83C167"
 YELLOW = "#F9E04C"
-ROSE = "#FC6255"
-ROSE_DEEP = "#C55F73"
-GPU_COLORS = [BLUE, TEAL, YELLOW, CLAY]
-CHAPTERS = ["Projection", "Ray tracing", "Trajectories", "Multi-GPU", "Measured data", "Helical scan",
-            "Geometry gradients"]
+GOLD = "#F0AC5F"
+RED = "#FC6255"
+VIOLET = "#9A72AC"
+GPU_COLORS = [BLUE, GREEN, YELLOW, GOLD]
+
+CHAPTERS = ["Any trajectory", "Autograd", "Geometry gradients", "Many GPUs", "Measured data"]
+
+XL, XR = -6.3, 6.3
+HEAD_BASE = 3.17               # every chapter header sits on this baseline
+CAP_BASE = -3.33               # every caption sits on this baseline
+BAR_Y = -3.78
+TOP, BOTTOM = 2.65, -2.9       # content area between header and caption
 
 config.background_color = BG
 
+
+# ---------------------------------------------------------------- helpers
 
 def T(text, size=34, color=INK):
     return Tex(text, font_size=size, color=color)
@@ -41,439 +55,558 @@ def M(tex, size=36, color=INK):
     return MathTex(tex, font_size=size, color=color)
 
 
-def gray_image(array, vmax, height):
-    img = np.clip(np.asarray(array, dtype=np.float32) / vmax, 0, 1)
-    rgb = (np.stack([img] * 3, axis=-1) * 255).astype(np.uint8)
-    mob = ImageMobject(rgb)
-    mob.set_resampling_algorithm(RESAMPLING_ALGORITHMS["linear"])
-    mob.height = height
+def baseline(mob):
+    """Baseline of a text object: the median bottom of its glyphs (descenders are the minority)."""
+    return float(np.median([g.get_bottom()[1] for g in mob.family_members_with_points()]))
+
+
+def on_baseline(mob, y):
+    return mob.shift(UP * (y - baseline(mob)))
+
+
+def left_at(mob, x):
+    return mob.shift(RIGHT * (x - mob.get_left()[0]))
+
+
+def right_at(mob, x):
+    return mob.shift(RIGHT * (x - mob.get_right()[0]))
+
+
+def fits(inner, outer, pad=0.08):
+    il, ir, ib, it = inner.get_left()[0], inner.get_right()[0], inner.get_bottom()[1], inner.get_top()[1]
+    ol, orr, ob, ot = outer.get_left()[0], outer.get_right()[0], outer.get_bottom()[1], outer.get_top()[1]
+    assert il >= ol + pad and ir <= orr - pad and ib >= ob + pad and it <= ot - pad, \
+        f"does not fit: x[{il:.2f},{ir:.2f}] y[{ib:.2f},{it:.2f}] in x[{ol:.2f},{orr:.2f}] y[{ob:.2f},{ot:.2f}]"
+    return inner
+
+
+def apart(*mobs, gap=0.12):
+    for i, a in enumerate(mobs):
+        for b in mobs[i + 1:]:
+            sep_x = max(b.get_left()[0] - a.get_right()[0], a.get_left()[0] - b.get_right()[0])
+            sep_y = max(b.get_bottom()[1] - a.get_top()[1], a.get_bottom()[1] - b.get_top()[1])
+            assert max(sep_x, sep_y) >= gap, \
+                f"too close: {getattr(a, 'tex_string', type(a).__name__)} vs {getattr(b, 'tex_string', type(b).__name__)}"
+    return mobs
+
+
+def safe(mob, top=TOP, bottom=BOTTOM):
+    l, r, b, t = mob.get_left()[0], mob.get_right()[0], mob.get_bottom()[1], mob.get_top()[1]
+    assert l >= XL - 1e-6 and r <= XR + 1e-6 and b >= bottom - 1e-6 and t <= top + 1e-6, \
+        f"outside the safe area: x[{l:.2f},{r:.2f}] y[{b:.2f},{t:.2f}]"
     return mob
 
 
-def chapter(scene, index, title, fixed=False):
-    """Chapter header at the top left and a progress bar along the bottom edge."""
-    number = T(f"{index:02d}", 32, ROSE)
-    name = T(title, 44, INK)
-    header = VGroup(number, name).arrange(RIGHT, buff=0.3, aligned_edge=DOWN).to_corner(UL, buff=0.5)
-    left, right = -config.frame_width / 2 + 0.5, config.frame_width / 2 - 0.5
-    y = -config.frame_height / 2 + 0.22
-    track = Line([left, y, 0], [right, y, 0], color=GRID, stroke_width=3)
-    done = left + (right - left) * (index - 1) / len(CHAPTERS)
-    stop = left + (right - left) * index / len(CHAPTERS)
-    filled = Line([left, y, 0], [max(done, left + 1e-3), y, 0], color=ROSE, stroke_width=3)
-    target = Line([left, y, 0], [stop, y, 0], color=ROSE, stroke_width=3)
-    if fixed:
-        scene.add_fixed_in_frame_mobjects(header, track, filled)
-    scene.play(FadeIn(header, shift=0.15 * RIGHT), FadeIn(track), FadeIn(filled), run_time=0.8)
-    scene.play(Transform(filled, target), run_time=0.8)
-    return VGroup(header, track, filled)
+def ortho(*points, color=SUB, sw=3, tip=0.16, arrow=True):
+    """A connector made only of horizontal and vertical segments."""
+    pts = [np.array(p, dtype=float) for p in points]
+    for a, b in zip(pts[:-1], pts[1:]):
+        assert abs(a[0] - b[0]) < 1e-6 or abs(a[1] - b[1]) < 1e-6, f"diagonal segment {a} -> {b}"
+    g = VGroup(*[Line(a, b, color=color, stroke_width=sw) for a, b in zip(pts[:-2], pts[1:-1])])
+    if arrow:
+        g.add(Arrow(pts[-2], pts[-1], buff=0, color=color, stroke_width=sw, tip_length=tip,
+                    max_tip_length_to_length_ratio=0.6, max_stroke_width_to_length_ratio=100))
+    else:
+        g.add(Line(pts[-2], pts[-1], color=color, stroke_width=sw))
+    return g
 
 
-def note(text, size=30, color=SUB):
-    return T(text, size, color).to_edge(DOWN, buff=0.6)
+def gray_image(array, height, vmax=None, width=None):
+    a = np.asarray(array, dtype=np.float32)
+    img = np.clip(a / (vmax or a.max()), 0, 1)
+    mob = ImageMobject((np.stack([img] * 3, axis=-1) * 255).astype(np.uint8))
+    mob.set_resampling_algorithm(RESAMPLING_ALGORITHMS["linear"])
+    mob.height = height
+    if width:
+        mob.stretch_to_fit_width(width)
+    return mob
+
+
+def framed(mob, color=GRID, sw=1.5):
+    return Group(mob, Rectangle(width=mob.width, height=mob.height, stroke_color=color, stroke_width=sw).move_to(mob))
+
+
+def code(text, size=26, color=INK, width=None):
+    """A code card: monospace text in a dark rounded panel."""
+    t = T(r"\texttt{" + text + "}", size, color)
+    b = RoundedRectangle(width=width or t.width + 0.6, height=t.height + 0.42, corner_radius=0.12,
+                         stroke_color=GRID, stroke_width=1.5, fill_color=PANEL, fill_opacity=1)
+    t.move_to(b)
+    if width:
+        left_at(t, b.get_left()[0] + 0.3)
+    fits(t, b, pad=0.1)
+    return VGroup(b, t)
+
+
+def header_mob(index):
+    header = Tex(r"{\footnotesize " + f"{index:02d}" + "}", r"\enspace " + CHAPTERS[index - 1], font_size=44,
+                 color=INK)
+    header[0].set_color(RED)
+    left_at(header, XL)
+    return on_baseline(header, HEAD_BASE)
+
+
+def bar(done):
+    track = Line([XL, BAR_Y, 0], [XR, BAR_Y, 0], color=GRID, stroke_width=3)
+    x = XL + (XR - XL) * done / len(CHAPTERS)
+    return track, Line([XL, BAR_Y, 0], [max(x, XL + 1e-3), BAR_Y, 0], color=RED, stroke_width=3)
+
+
+def chapter(scene, index):
+    """Start from the exact frame the previous scene ended on (its header and bar), then morph
+    the old title into the new one while the bar fills one step."""
+    track, filled = bar(index - 1)
+    old = header_mob(max(index - 1, 1))
+    scene.add(track, filled, old)
+    _, target = bar(index)
+    if index == 1:
+        scene.play(Transform(filled, target), run_time=0.6)
+        return VGroup(old, track, filled)
+    new = header_mob(index)
+    scene.play(TransformMatchingShapes(old, new), Transform(filled, target), run_time=0.9)
+    return VGroup(new, track, filled)
+
+
+class Captions:
+    """One caption line on the fixed caption baseline; each new one replaces the last."""
+    def __init__(self, scene):
+        self.scene, self.cur = scene, None
+
+    def __call__(self, text, hold=2.4, color=SUB, size=32):
+        new = safe(on_baseline(T(text, size, color).set_x(0), CAP_BASE), top=-2.9, bottom=-3.6)
+        assert new.height < 0.45, f"caption wraps to two lines: {text}"
+        if self.cur is None:
+            self.scene.play(FadeIn(new, shift=0.08 * UP), run_time=0.5)
+        else:
+            self.scene.play(FadeOut(self.cur, shift=0.08 * UP), FadeIn(new, shift=0.08 * UP), run_time=0.5)
+        self.cur = new
+        if hold:
+            self.scene.wait(hold)
+        return new
 
 
 def fade_all(scene, run_time=0.8):
     scene.play(*[FadeOut(m) for m in scene.mobjects], run_time=run_time)
 
 
-class S1Title(Scene):
+def fade_except(scene, keep, run_time=0.8):
+    """Clear the frame but leave `keep` (the chapter header and progress bar) untouched."""
+    kept = set(keep.get_family())
+    scene.play(*[FadeOut(m) for m in scene.mobjects if m not in kept and not (set(m.get_family()) & kept)],
+               run_time=run_time)
+
+
+def chip(index, name, width=3.4):
+    b = RoundedRectangle(width=width, height=0.66, corner_radius=0.14, stroke_color=GRID, stroke_width=1.5,
+                         fill_color=PANEL, fill_opacity=1)
+    n = T(f"{index:02d}", 28, RED)
+    t = T(name, 28, SUB)
+    left_at(n, b.get_left()[0] + 0.28).set_y(b.get_center()[1])
+    left_at(t, n.get_right()[0] + 0.22)
+    on_baseline(t, baseline(n))
+    fits(VGroup(n, t), b, pad=0.1)
+    return VGroup(b, n, t)
+
+
+# ---------------------------------------------------------------- 3D drawing on a 2D canvas
+
+class View3D:
+    """Orthographic view of 3D points: rotate about z by the azimuth, tilt by a fixed elevation."""
+    def __init__(self, centre, scale, elevation=22, azimuth=-35):
+        self.centre, self.scale = np.array(centre, dtype=float), scale
+        self.el = math.radians(elevation)
+        self.az = ValueTracker(azimuth)
+
+    def __call__(self, p):
+        a = math.radians(self.az.get_value())
+        x, y, z = p
+        u = math.cos(a) * x - math.sin(a) * y
+        d = math.sin(a) * x + math.cos(a) * y
+        v = math.cos(self.el) * z + math.sin(self.el) * d
+        return self.centre + self.scale * np.array([u, v, 0.0])
+
+
+R_ORBIT = 2.4
+HALF = 0.85                    # half edge of the volume cube
+
+
+def orbit(kind, t):
+    """Source position at parameter t in [0, 1) for each named trajectory."""
+    a = 2 * math.pi * t
+    if kind == "helical":
+        a = 3 * math.pi * t
+        return np.array([R_ORBIT * math.cos(a), R_ORBIT * math.sin(a), -0.95 + 1.9 * t])
+    z = {"circular": 0.0, "saddle": 0.6 * math.cos(2 * a), "sinusoidal": 0.45 * math.sin(3 * a)}[kind]
+    return np.array([R_ORBIT * math.cos(a), R_ORBIT * math.sin(a), z])
+
+
+CALIBRATED = None
+
+
+def calibrated_poses(n=36, seed=4):
+    rng = np.random.default_rng(seed)
+    a = np.linspace(0, 2 * math.pi, n, endpoint=False) + rng.normal(0, 0.05, n)
+    r = R_ORBIT + rng.normal(0, 0.08, n)
+    z = rng.normal(0, 0.18, n)
+    return [np.array([ri * math.cos(ai), ri * math.sin(ai), zi]) for ai, ri, zi in zip(a, r, z)]
+
+
+def cube_edges(view, color=VIOLET):
+    c = [np.array([sx, sy, sz]) * HALF for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
+    edges = [(i, j) for i in range(8) for j in range(i + 1, 8) if np.sum(np.abs(c[i] - c[j]) > 0) == 1]
+    return VGroup(*[Line(view(c[i]), view(c[j]), color=color, stroke_width=1.8) for i, j in edges])
+
+
+def detector_and_rays(view, p, color=BLUE):
+    """Flat detector opposite the source, facing it, and the four corner rays."""
+    radial = p / np.linalg.norm(p)
+    tangent = np.cross(np.array([0, 0, 1.0]), radial)
+    tangent /= np.linalg.norm(tangent)
+    up = np.cross(radial, tangent)
+    centre = -radial * 1.55
+    corners = [centre + 0.95 * su * tangent + 0.75 * sv * up for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    panel = Polygon(*[view(q) for q in corners], color=SUB, stroke_width=1.5, fill_color=SUB, fill_opacity=0.18)
+    rays = VGroup(*[Line(view(p), view(q), color=color, stroke_width=1.2, stroke_opacity=0.55) for q in corners])
+    return VGroup(rays, panel, Dot(view(p), radius=0.08, color=RED))
+
+
+# ---------------------------------------------------------------- scenes
+
+class S00Intro(Scene):
+    """Opening: measured walnut data, the name, and the chapter map."""
     def construct(self):
-        name = T(r"\textbf{diffct}", 132)
-        tag = T("Differentiable CT projectors on GPUs", 48, SUB).next_to(name, DOWN, buff=0.4)
-        line = Line(LEFT * 4.2, RIGHT * 4.2, color=ROSE, stroke_width=3).next_to(tag, DOWN, buff=0.45)
-        chips = VGroup(*[
-            VGroup(RoundedRectangle(width=4.3, height=0.85, corner_radius=0.2, stroke_color=c, stroke_width=2,
-                                    fill_color=c, fill_opacity=0.08), T(text, 34, c))
-            for text, c in (("any trajectory", BLUE), ("many GPUs, many nodes", TEAL),
-                            ("geometry gradients", VIOLET))
-        ]).arrange(RIGHT, buff=0.35).next_to(line, DOWN, buff=0.6)
-        for chip in chips:
-            chip[1].move_to(chip[0])
-        VGroup(name, tag, line, chips).move_to(ORIGIN)
-        self.play(Write(name), run_time=1.6)
-        self.play(FadeIn(tag, shift=0.2 * UP), Create(line), run_time=1.2)
-        self.play(LaggedStart(*[FadeIn(c, shift=0.15 * UP) for c in chips], lag_ratio=0.35), run_time=1.6)
-        self.wait(2.4)
-        fade_all(self)
-
-
-class S2Projection(Scene):
-    def construct(self):
-        chapter(self, 1, "A forward projection is a line integral")
-        data = np.load(HERE / "data2d.npz")
-        phantom, sino = data["phantom"], data["sinogram"]
-        size = 4.2
-        img = gray_image(phantom, 1.0, size).move_to(LEFT * 3.3 + DOWN * 0.45)
-        frame = Square(size, color=GRID, stroke_width=1.5).move_to(img)
-        sino_h, sino_w = 4.6, 4.0
-        sino_img = gray_image(sino, sino.max(), sino_h).stretch_to_fit_width(sino_w).move_to(RIGHT * 3.9 + DOWN * 0.15)
-        sino_frame = Rectangle(width=sino_w, height=sino_h, color=GRID, stroke_width=1.5).move_to(sino_img)
-        cover = Rectangle(width=sino_w + 0.04, height=sino_h + 0.04, fill_color=BG, fill_opacity=1,
-                          stroke_width=0).move_to(sino_img)
-        head1 = T("walnut slice $f$", 34, SUB).next_to(frame, DOWN, buff=0.3)
-        head2 = T(r"sinogram $y$ (angle $\downarrow$, detector $\rightarrow$)", 34, SUB).next_to(sino_frame, DOWN, buff=0.3)
-        self.play(FadeIn(img), Create(frame), FadeIn(head1), run_time=1.0)
-        self.add(sino_img, cover, sino_frame)
-        self.play(FadeIn(head2), Create(sino_frame), run_time=0.8)
-
-        theta = ValueTracker(0.0)
-        centre = img.get_center()
-        half = size / 2
-        n_rays = 15
-
-        def geometry():
-            a = math.radians(theta.get_value())
-            return np.array([math.sin(a), -math.cos(a), 0.0]), np.array([math.cos(a), math.sin(a), 0.0])
-
-        def rays():
-            d, u = geometry()
-            group = VGroup()
-            for k in np.linspace(-0.9, 0.9, n_rays):
-                p = centre + k * half * u
-                group.add(Line(p - 1.12 * half * d, p + 1.12 * half * d, color=BLUE, stroke_width=1.8,
-                               stroke_opacity=0.7))
-            return group
-
-        def detector():
-            d, u = geometry()
-            base = centre + 1.2 * half * d
-            row = sino[min(int(round(theta.get_value())), len(sino) - 1)]
-            prof = row / sino.max()
-            xs = np.linspace(-1, 1, len(prof)) * half
-            pts = [base + x * u + 0.45 * p * d for x, p in zip(xs, prof)]
-            line = Line(base - half * u, base + half * u, color=GRID, stroke_width=2)
-            curve = VMobject(color=TEAL, stroke_width=3).set_points_smoothly(pts[::3])
-            return VGroup(line, curve)
-
-        ray_group = always_redraw(rays)
-        det_group = always_redraw(detector)
-        cover.add_updater(lambda m: m.stretch_to_fit_height(max((sino_h + 0.04) * (1 - theta.get_value() / 180), 1e-3))
-                          .align_to(sino_frame, DOWN))
-        self.play(Create(ray_group), FadeIn(det_group), FadeOut(head1), run_time=1.2)
-        formula = M(r"y_i = \sum_k f_k\,\ell_{ik}", 48).to_corner(UR, buff=0.5)
-        self.play(Write(formula), run_time=1.0)
-        self.play(theta.animate.set_value(180), run_time=9.0, rate_func=linear)
-        cover.clear_updaters()
-        self.play(FadeIn(head1), run_time=0.6)
-        self.wait(1.5)
-        fade_all(self)
-
-
-class S3Siddon(Scene):
-    def construct(self):
-        chapter(self, 2, "Exact ray tracing, exact adjoint")
-        n = 9
-        cell = 0.66
-        rng = np.random.default_rng(3)
-        values = rng.uniform(0.15, 0.85, (n, n))
-        cells = VGroup()
-        for i in range(n):
-            for j in range(n):
-                sq = Square(cell, stroke_color=GRID, stroke_width=1.2,
-                            fill_color=interpolate_color(ManimColor(BG), ManimColor("#B9C2CC"), values[i, j] * 0.55),
-                            fill_opacity=1)
-                sq.move_to(np.array([(j - (n - 1) / 2) * cell, ((n - 1) / 2 - i) * cell, 0]))
-                cells.add(sq)
-        cells.move_to(LEFT * 3.3 + DOWN * 0.3)
-        a = cells.get_corner(DL) + np.array([-0.7, 0.75, 0])
-        b = cells.get_corner(UR) + np.array([0.7, -1.4, 0])
-        ray = Line(a, b, color=BLUE, stroke_width=3.5)
-        self.play(FadeIn(cells), run_time=1.0)
-        self.play(Create(ray), run_time=1.2)
-
-        crossed, pieces = [], []
-        origin = cells.get_corner(UL)
-        last, start = None, None
-        for t in np.linspace(0, 1, 4000):
-            p = a + t * (b - a)
-            j = int((p[0] - origin[0]) // cell)
-            i = int((origin[1] - p[1]) // cell)
-            key = (i, j) if 0 <= i < n and 0 <= j < n else None
-            if key != last:
-                if last is not None:
-                    crossed.append(last)
-                    pieces.append((start, p))
-                last, start = key, p
-        highlights = VGroup()
-        segs = VGroup()
-        for (i, j), (p, q) in zip(crossed, pieces):
-            highlights.add(cells[i * n + j].copy().set_fill(ROSE, 0.35).set_stroke(ROSE, 2))
-            segs.add(Line(p, q, color=ROSE, stroke_width=7))
-        eq = M(r"y = \sum_k f_k\,\ell_k", 56).move_to(RIGHT * 3.6 + UP * 1.7)
-        self.play(Write(eq), run_time=1.0)
-        self.play(LaggedStart(*[AnimationGroup(FadeIn(h), Create(s)) for h, s in zip(highlights, segs)],
-                              lag_ratio=0.4), run_time=4.5)
-        notes = VGroup(
-            T(r"$\ell_k$: exact length of the ray in cell $k$", 36, INK),
-            T(r"backprojection walks the same cells: $A^{\top}$", 36, INK),
-            T(r"one CUDA thread per ray, float32", 36, SUB),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.42).move_to(RIGHT * 3.6 + DOWN * 0.7)
-        for line in notes:
-            self.play(FadeIn(line, shift=0.15 * RIGHT), run_time=0.9)
-            self.wait(0.5)
-        check = M(r"\langle A x,\, y\rangle = \langle x,\, A^{\top} y\rangle", 40, TEAL).next_to(notes, DOWN, buff=0.55)
-        self.play(Write(check), run_time=1.2)
+        data = np.load(HERE / "walnut_measured.npz")
+        tiles = [gray_image(np.flipud(p.T), 1.7, vmax=data["projections"].max()) for p in data["projections"]]
+        tiles += [gray_image(data[f"{k}_axial"], 1.7, vmax=1.0) for k in ("fdk", "sirt", "cgls", "tv")]
+        wall = Group(*[framed(t) for t in tiles]).arrange_in_grid(rows=2, cols=4, buff=0.16).move_to(ORIGIN)
+        self.play(LaggedStart(*[FadeIn(c, scale=0.96) for c in wall], lag_ratio=0.1), run_time=2.0)
+        self.wait(0.6)
+        veil = Rectangle(width=config.frame_width, height=config.frame_height, fill_color=BG, fill_opacity=0.86,
+                         stroke_width=0)
+        title = T(r"\textbf{diffct}", 120, INK)
+        sub = T("differentiable CUDA projectors for CT, built on PyTorch", 38, SUB)
+        line = Line(LEFT * 4.8, RIGHT * 4.8, color=RED, stroke_width=3)
+        VGroup(title, sub, line).arrange(DOWN, buff=0.35).move_to(UP * 1.05)
+        self.play(FadeIn(veil), run_time=0.7)
+        self.play(Write(title), run_time=1.2)
+        self.play(FadeIn(sub, shift=0.1 * UP), Create(line), run_time=0.9)
+        chips = VGroup(*[chip(k + 1, name) for k, name in enumerate(CHAPTERS)])
+        top = VGroup(*chips[:3]).arrange(RIGHT, buff=0.2)
+        bottom = VGroup(*chips[3:]).arrange(RIGHT, buff=0.2)
+        VGroup(top, bottom).arrange(DOWN, buff=0.2).move_to(DOWN * 1.75)
+        safe(chips)
+        self.play(LaggedStart(*[FadeIn(c, shift=0.1 * UP) for c in chips], lag_ratio=0.12), run_time=1.4)
         self.wait(2.0)
-        fade_all(self)
+        keep = chips[0]
+        self.play(keep[0].animate.set_stroke(YELLOW, width=3), keep[2].animate.set_color(YELLOW), run_time=0.5)
+        self.play(*[FadeOut(m) for m in self.mobjects
+                    if m is not keep and not (set(m.get_family()) & set(keep.get_family()))], run_time=0.8)
+        track, filled = bar(0)
+        head = header_mob(1)
+        # The chip box travels with its text and dissolves on arrival.
+        box_end = keep[0].copy().set_stroke(opacity=0).set_fill(opacity=0) \
+            .stretch_to_fit_width(head.width + 0.5).stretch_to_fit_height(head.height + 0.3).move_to(head)
+        self.play(ReplacementTransform(keep[1], head[0]), ReplacementTransform(keep[2], head[1]),
+                  Transform(keep[0], box_end), FadeIn(track), FadeIn(filled), run_time=1.1)
+        self.remove(keep[0])
+        self.wait(0.2)
 
 
-class S4Trajectories(ThreeDScene):
+class S01Trajectory(Scene):
+    """Any scan geometry: one source and detector pose per view, the same Projector call."""
     def construct(self):
-        chapter(self, 3, "Any trajectory, one pose per view", fixed=True)
-        self.set_camera_orientation(phi=66 * DEGREES, theta=-50 * DEGREES, zoom=1.35)
-        cube = Cube(side_length=1.6, fill_color=VIOLET, fill_opacity=0.12, stroke_color=VIOLET, stroke_width=1.2)
-        R = 2.6
-
-        def path(kind):
-            def f(t):
-                a = 2 * np.pi * t
-                z = {"circular": 0.0, "helical": -1.0 + 2.0 * t, "saddle": 0.7 * np.cos(2 * a),
-                     "sinusoidal": 0.55 * np.sin(3 * a)}[kind]
-                return np.array([R * np.cos(a), R * np.sin(a), z])
-            return f
-
-        names = ["circular", "helical", "saddle", "sinusoidal"]
-        colors = [BLUE, TEAL, CLAY, VIOLET]
-        menu = VGroup(*[T(name, 36, SUB) for name in names],
-                      T("calibrated poses", 36, SUB)).arrange(DOWN, aligned_edge=LEFT, buff=0.42)
-        menu.to_edge(RIGHT, buff=0.6).shift(UP * 0.2)
-        api = T(r"\texttt{Projector((source, detector, u, v), ...)}", 32, SUB).to_edge(DOWN, buff=0.45)
-        self.add_fixed_in_frame_mobjects(menu, api)
-        self.play(FadeIn(cube), FadeIn(menu), FadeIn(api), run_time=1.0)
+        hdr = chapter(self, 1)
+        cap = Captions(self)
+        view = View3D(centre=[-3.1, -0.1, 0], scale=1.12)
+        kinds = ["circular", "helical", "saddle", "sinusoidal", "calibrated"]
+        colors = [BLUE, GREEN, GOLD, VIOLET, RED]
         t = ValueTracker(0.0)
-        current = {"f": path("circular")}
+        state = {"k": 0}
+        poses = calibrated_poses()
 
-        def source_and_cone():
-            p = current["f"](t.get_value() % 1.0)
-            centre = -p * 0.75
-            radial = p / np.linalg.norm(p)
-            tangent = np.cross(np.array([0, 0, 1.0]), radial)
-            corners = [centre + 0.9 * su * tangent + 0.7 * sv * np.array([0, 0, 1.0])
-                       for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-            detector = Polygon(*corners, color=SUB, stroke_width=1.5, fill_color=SUB, fill_opacity=0.15)
-            lines = VGroup(*[Line(p, c, color=BLUE, stroke_width=1.2, stroke_opacity=0.6) for c in corners])
-            return VGroup(detector, lines, Dot3D(p, radius=0.07, color=ROSE))
+        def source():
+            kind = kinds[state["k"]]
+            if kind == "calibrated":
+                return poses[int(t.get_value() * len(poses)) % len(poses)]
+            return orbit(kind, t.get_value() % 1.0)
 
-        def highlight(k):
-            return [menu[j].animate.set_color(colors[k] if j == k else SUB) for j in range(len(names))]
+        def path():
+            kind, color = kinds[state["k"]], colors[state["k"]]
+            if kind == "calibrated":
+                return VGroup(*[Dot(view(p), radius=0.05, color=color) for p in poses])
+            pts = [view(orbit(kind, s)) for s in np.linspace(0, 1, 160)]
+            return VMobject(color=color, stroke_width=3.5).set_points_as_corners(pts)
 
-        cone = always_redraw(source_and_cone)
-        curve = ParametricFunction(path("circular"), t_range=[0, 1], color=BLUE, stroke_width=3.5)
-        self.play(Create(curve), FadeIn(cone), *highlight(0), run_time=1.2)
-        self.begin_ambient_camera_rotation(rate=0.08)
-        self.play(t.animate.set_value(1.0), run_time=3.0, rate_func=linear)
-        for k, name in enumerate(names[1:], start=1):
-            current["f"] = path(name)
-            new_curve = ParametricFunction(path(name), t_range=[0, 1], color=colors[k], stroke_width=3.5)
-            self.play(Transform(curve, new_curve), *highlight(k), run_time=1.0)
-            self.play(t.animate.increment_value(1.0), run_time=3.0, rate_func=linear)
-        self.play(menu[-1].animate.set_color(ROSE), menu[3].animate.set_color(SUB), run_time=0.8)
-        self.wait(1.5)
-        self.stop_ambient_camera_rotation()
-        fade_all(self)
+        cube = always_redraw(lambda: cube_edges(view))
+        curve = always_redraw(path)
+        rig = always_redraw(lambda: detector_and_rays(view, source(), colors[state["k"]]))
+
+        # Right panel: the list of trajectories and the call that takes any of them.
+        rows = VGroup()
+        for kind, color in zip(kinds, colors):
+            swatch = Line(ORIGIN, RIGHT * 0.5, color=color, stroke_width=5)
+            label = T(kind, 32, SUB)
+            left_at(label, 0.75)
+            on_baseline(label, 0)
+            swatch.move_to([0.25, label.get_center()[1], 0])
+            rows.add(VGroup(swatch, label))
+        rows.arrange(DOWN, aligned_edge=LEFT, buff=0.32)
+        left_at(rows, 1.0).set_y(1.0)
+        call = VGroup(code(r"traj = (src\_pos, det\_center, det\_u, det\_v)", 22, width=5.3),
+                      code(r"A = Projector(traj, (D, H, W), (U, V))", 22, width=5.3)).arrange(DOWN, buff=0.12)
+        left_at(call, 1.0).set_y(-1.85)
+        safe(rows), safe(call), apart(rows, call)
+
+        self.play(FadeIn(cube), Create(curve), FadeIn(rig), FadeIn(rows), run_time=1.2)
+        cap("each view has its own source, detector centre and detector axes", hold=0)
+        self.play(rows[0][1].animate.set_color(colors[0]), run_time=0.4)
+        self.play(t.animate.set_value(1.0), view.az.animate.increment_value(25), run_time=3.2, rate_func=linear)
+        for k in range(1, len(kinds)):
+            state["k"] = k
+            t.set_value(0.0)
+            self.play(rows[k - 1][1].animate.set_color(SUB), rows[k][1].animate.set_color(colors[k]),
+                      run_time=0.4)
+            if k == 2:
+                cap("circular, helical, saddle, sinusoidal, or any list of per-view poses", hold=0)
+            self.play(t.animate.set_value(1.0), view.az.animate.increment_value(20), run_time=2.4,
+                      rate_func=linear)
+        self.play(FadeIn(call, shift=0.1 * UP), run_time=0.7)
+        cap("one Projector call for every scan geometry", hold=2.4)
+        fade_except(self, hdr)
 
 
-class S5MultiGPU(Scene):
+class S02Autograd(Scene):
+    """project() and backproject() are a matched pair of autograd functions."""
     def construct(self):
-        chapter(self, 4, "Views split across GPUs and nodes")
-        n_gpu, per = 8, 4
-        palette = GPU_COLORS + [interpolate_color(ManimColor(c), ManimColor(INK), 0.35) for c in GPU_COLORS]
-        blocks = VGroup(*[Rectangle(width=0.28, height=0.6, stroke_width=0, fill_opacity=1,
+        hdr = chapter(self, 2)
+        cap = Captions(self)
+        data = np.load(HERE / "data2d.npz")
+        side = 2.6
+        x_img = framed(gray_image(data["phantom"], side, vmax=1.0)).move_to([-4.2, 0.95, 0])
+        y_img = framed(gray_image(data["sinogram"], side, width=side)).move_to([4.2, 0.95, 0])
+        x_lab = on_baseline(T("volume $x$", 30, SUB).set_x(x_img.get_x()), x_img.get_bottom()[1] - 0.45)
+        y_lab = on_baseline(T("sinogram $y$", 30, SUB).set_x(y_img.get_x()), y_img.get_bottom()[1] - 0.45)
+        gap_l, gap_r = x_img.get_right()[0], y_img.get_left()[0]
+        fwd_y, back_y = 1.55, 0.35
+        fwd = ortho([gap_l + 0.15, fwd_y, 0], [gap_r - 0.15, fwd_y, 0], color=BLUE)
+        back = ortho([gap_r - 0.15, back_y, 0], [gap_l + 0.15, back_y, 0], color=GOLD)
+        fwd_lab = T(r"\texttt{A.project(x)}", 28, BLUE).next_to(fwd, UP, buff=0.14)
+        back_lab = T(r"\texttt{A.backproject(y)}", 28, GOLD).next_to(back, DOWN, buff=0.14)
+        adj = M(r"\langle A x,\; y\rangle \;=\; \langle x,\; A^{\top} y\rangle", 40, INK).move_to([0, -1.3, 0])
+        grad = code(r"loss = ((A.project(x) - y)**2).sum() / 2;\ loss.backward()", 22)
+        grad.move_to([0, -2.3, 0])
+        result = M(r"\nabla_x\,\mathrm{loss} = A^{\top}(A x - y)", 30, GREEN)
+        safe(Group(x_img, y_img, x_lab, y_lab, fwd_lab, back_lab, adj, grad))
+        apart(fwd_lab, back_lab, gap=0.3)
+        apart(adj, grad, gap=0.2)
+
+        self.play(FadeIn(x_img), FadeIn(x_lab), run_time=0.7)
+        self.play(GrowArrow(fwd[-1]), FadeIn(fwd_lab), run_time=0.8)
+        self.play(FadeIn(y_img), FadeIn(y_lab), run_time=0.7)
+        cap("project() traces every ray through the volume", hold=1.6)
+        self.play(GrowArrow(back[-1]), FadeIn(back_lab), run_time=0.8)
+        cap("backproject() walks the same rays in reverse", hold=1.2)
+        self.play(Write(adj), run_time=1.0)
+        cap("the two form an exact adjoint pair", hold=1.8)
+        self.play(FadeIn(grad, shift=0.1 * UP), run_time=0.7)
+        result.next_to(grad, RIGHT, buff=0.3)
+        if result.get_right()[0] > XR:
+            result.next_to(grad, UP, buff=0.12)
+        cap("both are PyTorch autograd functions, so any loss can be differentiated", hold=2.4)
+        fade_except(self, hdr)
+
+
+class S03Geometry(Scene):
+    """Trajectory tensors can require gradients: calibrate the scan from its projections."""
+    def construct(self):
+        hdr = chapter(self, 3)
+        cap = Captions(self)
+        history = json.loads((HERE / "calib_history.json").read_text())
+        centre = np.array([-3.3, -0.05, 0])
+        R = 2.05
+        n = 24
+        errors = np.random.default_rng(5).normal(0, math.radians(8), n)
+        angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        ring = Circle(radius=R, color=GRID, stroke_width=1.5).move_to(centre)
+        truth = VGroup(*[Dot(centre + R * np.array([math.cos(a), math.sin(a), 0]), radius=0.06, color=SUB)
+                         for a in angles])
+        slice_img = gray_image(np.load(HERE / "data2d.npz")["phantom"], 1.5, vmax=1.0).move_to(centre)
+        volume = Group(slice_img, Square(1.5, stroke_color=VIOLET, stroke_width=1.8).move_to(centre))
+        progress = ValueTracker(0.0)
+
+        def estimate():
+            s = 1 - progress.get_value()
+            return VGroup(*[Dot(centre + R * np.array([math.cos(a + s * e), math.sin(a + s * e), 0]), radius=0.09,
+                                color=RED) for a, e in zip(angles, errors)])
+
+        dots = always_redraw(estimate)
+        key_true = VGroup(Dot(radius=0.06, color=SUB), T("true poses", 28, SUB)).arrange(RIGHT, buff=0.15)
+        key_est = VGroup(Dot(radius=0.09, color=RED), T("estimate (schematic)", 28, RED)).arrange(RIGHT, buff=0.15)
+        legend = VGroup(key_true, key_est).arrange(RIGHT, buff=0.5)
+        on_baseline(legend, -2.75).set_x(centre[0])
+
+        steps = [h["step"] for h in history]
+        logs = [math.log10(h["loss"]) for h in history]
+        axes = Axes(x_range=[0, 150, 50], y_range=[1, 7, 2], x_length=4.6, y_length=3.0, tips=False,
+                    axis_config={"color": GRID, "stroke_width": 1.5}).move_to([3.45, 0.05, 0])
+        ylab = M(r"\log_{10}\,\mathrm{loss}", 26, SUB).rotate(PI / 2).next_to(axes, LEFT, buff=0.18)
+        xlab = T("Adam step", 26, SUB).next_to(axes, DOWN, buff=0.16)
+        flag = code(r"src\_pos.requires\_grad\_(True)", 22).next_to(axes, UP, buff=0.3)
+        result = T(r"angle error $0.55^\circ \rightarrow 0.006^\circ$ in 150 steps", 28, INK)
+        on_baseline(result, -2.75).set_x(axes.get_x())
+        safe(Group(ring, legend, axes, ylab, xlab, flag, result))
+        apart(legend, result, gap=0.3)
+
+        self.play(Create(ring), FadeIn(volume), FadeIn(truth), FadeIn(dots), FadeIn(legend), run_time=1.0)
+        cap("trajectory tensors can require gradients, like any other parameter", hold=0)
+        self.play(FadeIn(flag, shift=0.1 * UP), run_time=0.6)
+        self.wait(1.2)
+        self.play(Create(axes), FadeIn(ylab), FadeIn(xlab), run_time=0.8)
+        curve = always_redraw(lambda: axes.plot_line_graph(
+            steps[:max(2, 1 + int(round(progress.get_value() * (len(steps) - 1))))],
+            logs[:max(2, 1 + int(round(progress.get_value() * (len(steps) - 1))))],
+            line_color=RED, add_vertex_dots=False, stroke_width=3.5))
+        self.add(curve)
+        cap("gradient descent recovers per-view angle errors from the projections", hold=0)
+        self.play(progress.animate.set_value(1.0), run_time=5.0, rate_func=smooth)
+        self.play(FadeIn(result), run_time=0.6)
+        cap(r"real calibration run: $64^3$ volume, 360 views, detector shift recovered too", hold=2.4)
+        fade_except(self, hdr)
+
+
+class S04MultiGPU(Scene):
+    """Views are split across GPUs in one process, or across processes and nodes."""
+    def construct(self):
+        hdr = chapter(self, 4)
+        cap = Captions(self)
+        per, n_gpu = 4, 8
+        palette = GPU_COLORS + [interpolate_color(ManimColor(c), ManimColor(INK), 0.4) for c in GPU_COLORS]
+        blocks = VGroup(*[Rectangle(width=0.27, height=0.55, stroke_width=0, fill_opacity=1,
                                     fill_color=palette[k // per]) for k in range(n_gpu * per)])
-        blocks.arrange(RIGHT, buff=0.06).move_to(UP * 2.0 + RIGHT * 0.8)
-        views = T("360 views", 36, SUB).next_to(blocks, LEFT, buff=0.35)
-        self.play(LaggedStart(*[FadeIn(b) for b in blocks], lag_ratio=0.03), FadeIn(views), run_time=1.6)
+        blocks.arrange(RIGHT, buff=0.06).move_to([0.55, 2.0, 0])
+        views = T("views", 30, SUB)
+        right_at(views, blocks.get_left()[0] - 0.3)
+        on_baseline(views, blocks.get_bottom()[1] + 0.12)
 
         nodes = VGroup()
         for node in range(2):
             gpus = VGroup()
             for k in range(4):
                 c = palette[4 * node + k]
-                box = RoundedRectangle(width=1.2, height=1.3, corner_radius=0.12, stroke_color=c,
-                                       stroke_width=2, fill_color=c, fill_opacity=0.08)
-                box.add(T(f"GPU {k}", 30, c).move_to(box.get_top() + DOWN * 0.25))
-                gpus.add(box)
+                box = RoundedRectangle(width=1.15, height=1.25, corner_radius=0.12, stroke_color=c, stroke_width=2,
+                                       fill_color=c, fill_opacity=0.08)
+                lab = on_baseline(T(f"GPU {k}", 26, c).set_x(box.get_x()), box.get_top()[1] - 0.36)
+                gpus.add(VGroup(box, fits(lab, box)))
             gpus.arrange(RIGHT, buff=0.12)
-            frame = SurroundingRectangle(gpus, buff=0.18, corner_radius=0.14, color=SUB, stroke_width=1.5)
-            label = T(f"node {node + 1}", 32, SUB).next_to(frame, UP, buff=0.12).align_to(frame, LEFT)
+            frame = SurroundingRectangle(gpus, buff=0.16, corner_radius=0.14, color=SUB, stroke_width=1.5)
+            label = T(f"node {node + 1}", 28, SUB)
+            left_at(label, frame.get_left()[0])
+            on_baseline(label, frame.get_top()[1] + 0.14)
             nodes.add(VGroup(gpus, frame, label))
-        nodes.arrange(RIGHT, buff=1.2).move_to(DOWN * 0.15)
-        link = Line(nodes[0][1].get_right(), nodes[1][1].get_left(), color=ROSE, stroke_width=3)
-        nccl = T("NCCL", 30, ROSE).next_to(link, UP, buff=0.1)
-        self.play(FadeIn(nodes[0]), run_time=0.9)
+        nodes.arrange(RIGHT, buff=1.1).move_to([0, -0.05, 0])
+        y_link = nodes[0][1].get_center()[1]
+        link = ortho([nodes[0][1].get_right()[0], y_link, 0], [nodes[1][1].get_left()[0], y_link, 0],
+                     color=RED, arrow=False)
+        nccl = T("NCCL", 26, RED).next_to(link, UP, buff=0.1)
+        one = code(r"Projector(..., devices=[0, 1, 2, 3])", 22)
+        many = code(r"torchrun ...\ \ +\ \ Projector(..., distributed=True)", 22)
+        left_at(one, nodes[0][1].get_left()[0]).set_y(-1.95)
+        right_at(many, nodes[1][1].get_right()[0]).set_y(-1.95)
+        safe(Group(blocks, views, nodes, one, many))
+        apart(one, many, gap=0.2)
 
-        def move_to_node(node, first):
+        self.play(LaggedStart(*[FadeIn(b) for b in blocks], lag_ratio=0.02), FadeIn(views), run_time=1.2)
+        cap("projections are split by view; every GPU holds the full volume", hold=0)
+        self.play(FadeIn(nodes[0]), run_time=0.7)
+
+        def move_to_node(node):
             moves = []
-            for g in range(first, first + 4):
+            for g in range(4 * node, 4 * node + 4):
                 group = VGroup(*blocks[g * per:(g + 1) * per])
-                target = group.copy().arrange(RIGHT, buff=0.05).scale(0.8)
-                target.move_to(nodes[node][0][g - first].get_center() + DOWN * 0.27)
+                target = group.copy().arrange(RIGHT, buff=0.05).scale(0.85)
+                target.move_to(nodes[node][0][g - 4 * node][0].get_center() + DOWN * 0.18)
                 moves.append(Transform(group, target))
             return moves
 
-        note1 = T(r"one process: \texttt{Projector(..., devices=[0, 1, 2, 3])}", 30, INK).to_edge(DOWN, buff=1.35)
-        self.play(*move_to_node(0, 0), FadeIn(note1), run_time=1.6)
-        self.wait(1.2)
-        self.play(FadeIn(nodes[1]), Create(link), FadeIn(nccl), run_time=1.0)
-        note2 = T(r"one process per GPU: \texttt{torchrun ...}\ + \texttt{Projector(..., distributed=True)}", 34, INK)
-        note2.next_to(note1, DOWN, buff=0.28)
-        self.play(*move_to_node(1, 4), FadeOut(views), FadeIn(note2), run_time=1.6)
-        self.wait(2.2)
-        self.play(*[FadeOut(m) for m in (blocks, nodes, link, nccl, note1, note2)], run_time=0.8)
+        self.play(*move_to_node(0), FadeIn(one, shift=0.1 * UP), run_time=1.4)
+        cap("one process can drive several GPUs", hold=1.4)
+        self.play(FadeIn(nodes[1]), Create(link), FadeIn(nccl), run_time=0.9)
+        self.play(*move_to_node(1), FadeOut(views), FadeIn(many, shift=0.1 * UP), run_time=1.4)
+        cap("or one process per GPU, on one node or across nodes", hold=1.8)
+        fade_except(self, hdr)
 
-        # Measured CGLS iteration time, 128^3, 360 views, A100 64 GB (Leonardo Booster).
-        head = T(r"one CGLS iteration, $128^3$ volume, 360 views, A100 64 GB", 38, SUB).move_to(UP * 2.2)
-        rows = [("1 GPU", 30.078, ""), ("4 GPUs, 1 node", 8.082, r"\quad 3.7\texttimes"),
-                ("8 GPUs, 2 nodes", 5.591, r"\quad 5.4\texttimes")]
-        scale = 8.0 / 30.078
-        bars = VGroup()
+        # Measured: one CGLS iteration, 128^3 volume, 360 views, A100 64 GB (docs/assets/scaling.json).
+        rows = [("1 GPU", 30.078, ""), ("4 GPUs, 1 node", 8.082, r"\enspace (3.7\texttimes)"),
+                ("8 GPUs, 2 nodes", 5.591, r"\enspace (5.4\texttimes)")]
+        scale = 6.2 / 30.078
+        x0 = -2.2
+        chart = VGroup()
         for k, (name, ms, speed) in enumerate(rows):
-            y = 0.9 - 1.45 * k
-            label = T(name, 38, SUB).move_to(np.array([-4.3, y, 0])).align_to(np.array([-3.2, 0, 0]), RIGHT)
-            bar = Rectangle(width=ms * scale, height=0.85, stroke_width=0, fill_color=GPU_COLORS[k],
-                            fill_opacity=0.85).move_to(np.array([-3.0, y, 0]), aligned_edge=LEFT)
-            value = T(f"{ms:.1f} ms" + speed, 38, INK).next_to(bar, RIGHT, buff=0.25)
-            bars.add(VGroup(label, bar, value))
-        self.play(FadeIn(head), run_time=0.7)
-        for row in bars:
-            self.play(FadeIn(row[0]), GrowFromEdge(row[1], LEFT), run_time=1.0)
-            self.play(FadeIn(row[2]), run_time=0.5)
-        self.wait(2.8)
-        fade_all(self)
+            y = 1.15 - 1.25 * k
+            bar_mob = Rectangle(width=ms * scale, height=0.75, stroke_width=0, fill_color=GPU_COLORS[k],
+                                fill_opacity=0.85)
+            left_at(bar_mob, x0).set_y(y)
+            label = T(name, 32, SUB)
+            right_at(label, x0 - 0.3)
+            on_baseline(label, y - 0.12)
+            value = T(f"{ms:.1f} ms" + speed, 32, INK)
+            left_at(value, bar_mob.get_right()[0] + 0.25)
+            on_baseline(value, y - 0.12)
+            chart.add(VGroup(label, bar_mob, value))
+        title = T(r"one CGLS iteration, $128^3$ volume, 360 views, A100 64 GB", 30, SUB)
+        on_baseline(title, 2.15).set_x(0)
+        safe(Group(chart, title))
+        self.play(FadeIn(title), run_time=0.5)
+        for row in chart:
+            self.play(FadeIn(row[0]), GrowFromEdge(row[1], LEFT), run_time=0.8)
+            self.play(FadeIn(row[2]), run_time=0.35)
+        cap("measured on Leonardo Booster; small volumes scale less", hold=2.6)
+        fade_except(self, hdr)
 
 
-def slice_grid(columns, rows, size, vmax=1.0):
-    """Columns of (name, caption, {row: image}); row labels on the left."""
-    grid = Group()
-    for name, caption_text, images in columns:
-        cells = [gray_image(images[row], vmax, size) for row in rows]
-        column = Group(*cells).arrange(DOWN, buff=0.12)
-        title = T(name, 36, INK).next_to(column, UP, buff=0.18)
-        parts = [column, title]
-        if caption_text:
-            parts.append(T(caption_text, 32, SUB).next_to(column, DOWN, buff=0.16))
-        grid.add(Group(*parts))
-    grid.arrange(RIGHT, buff=0.22, aligned_edge=UP)
-    labels = VGroup(*[T(row, 30, SUB).rotate(PI / 2).next_to(grid[0][0][k], LEFT, buff=0.15)
-                      for k, row in enumerate(rows)])
-    return grid, labels
-
-
-class S6Measured(Scene):
+class S05Measured(Scene):
+    """A real walnut scan, reconstructed four ways from the same scan geometry."""
     def construct(self):
-        chapter(self, 5, "Measured walnut, 240 real projections")
+        hdr = chapter(self, 5)
+        cap = Captions(self)
         data = np.load(HERE / "walnut_measured.npz")
-        projections = data["projections"]
-        strip = Group(*[gray_image(np.flipud(p.T), projections.max(), 2.9) for p in projections])
-        strip.arrange(RIGHT, buff=0.25).move_to(UP * 0.1)
-        source = T("4 of 240 measured cone-beam projections (Meaney 2022, CC-BY 4.0)", 32, SUB)
-        source.next_to(strip, DOWN, buff=0.35)
-        self.play(LaggedStart(*[FadeIn(p, shift=0.1 * UP) for p in strip], lag_ratio=0.3), run_time=1.6)
-        self.play(FadeIn(source), run_time=0.6)
-        self.wait(2.0)
-        self.play(FadeOut(strip), FadeOut(source), run_time=0.7)
+        names = [("fdk", "FDK"), ("sirt", "SIRT"), ("cgls", "CGLS"), ("tv", "TV")]
+        size = 2.25
+        columns = Group()
+        titles = VGroup()
+        for key, label in names:
+            cells = Group(*[framed(gray_image(data[f"{key}_{s}"], size, vmax=1.0)) for s in ("axial", "coronal")])
+            cells.arrange(DOWN, buff=0.14)
+            columns.add(cells)
+        columns.arrange(RIGHT, buff=0.18).move_to([0.25, -0.2, 0])
+        for (key, label), cells in zip(names, columns):
+            titles.add(on_baseline(T(label, 32, INK).set_x(cells.get_x()), cells.get_top()[1] + 0.2))
+        rows = VGroup(*[T(s, 28, SUB).rotate(PI / 2).next_to(columns[0][k], LEFT, buff=0.18)
+                        for k, s in enumerate(("axial", "coronal"))])
+        safe(Group(columns, titles, rows))
 
-        names = [("fdk", "FDK"), ("sirt", "SIRT"), ("cgls", "CGLS"), ("tv", "TV + Adam")]
-        columns = [(label, None, {"axial": data[f"{key}_axial"], "coronal": data[f"{key}_coronal"]})
-                   for key, label in names]
-        grid, labels = slice_grid(columns, ("axial", "coronal"), 2.3)
-        Group(grid, labels).move_to(DOWN * 0.05)
-        self.play(FadeIn(labels), run_time=0.5)
-        for column in grid:
-            self.play(FadeIn(column, shift=0.1 * UP), run_time=0.9)
-        foot = note("one Projector for analytical and iterative reconstruction", 32).to_edge(DOWN, buff=0.45)
-        self.play(FadeIn(foot), run_time=0.6)
-        self.wait(3.2)
-        fade_all(self)
+        self.play(FadeIn(rows), FadeIn(columns[0]), FadeIn(titles[0]), run_time=0.8)
+        cap("240 measured cone-beam views of a walnut (Meaney 2022, CC BY 4.0)", hold=1.2)
+        for k in range(1, 4):
+            self.play(FadeIn(columns[k], shift=0.1 * UP), FadeIn(titles[k]), run_time=0.7)
+        cap("analytical FDK and iterative SIRT, CGLS and TV on the same scan geometry", hold=3.0)
+        fade_except(self, hdr)
 
 
-class S7Helical(Scene):
+class S06End(Scene):
+    """Install and links."""
     def construct(self):
-        chapter(self, 6, r"Simulated helical scan, 720 views, 1\% noise")
-        data = np.load(HERE / "recon_slices.npz")
-        psnr = json.loads((HERE / "recon_psnr.json").read_text())
-        names = [("phantom", "walnut volume", None), ("fdk", "FDK", "fdk"), ("sirt", "SIRT", "sirt"),
-                 ("cgls", "CGLS", "cgls"), ("tv", "TV + Adam", "tv")]
-        columns = [(label, f"{psnr[metric]:.1f} dB" if metric else "ground truth",
-                    {"axial": data[f"{key}_axial"], "coronal": data[f"{key}_coronal"]})
-                   for key, label, metric in names]
-        grid, labels = slice_grid(columns, ("axial", "coronal"), 2.2)
-        Group(grid, labels).move_to(DOWN * 0.2)
-        self.play(FadeIn(labels), run_time=0.5)
-        for column in grid:
-            self.play(FadeIn(column, shift=0.1 * UP), run_time=0.9)
-        self.wait(3.5)
-        fade_all(self)
-
-
-class S8Geometry(Scene):
-    def construct(self):
-        chapter(self, 7, "Gradients through the geometry")
-        history = json.loads((HERE / "calib_history.json").read_text())
-        centre = LEFT * 3.5 + DOWN * 0.1
-        R = 2.3
-        n = 24
-        rng = np.random.default_rng(5)
-        errors = rng.normal(0, math.radians(7), n)
-        true_pts = [centre + R * np.array([math.cos(a), math.sin(a), 0]) for a in np.linspace(0, 2 * np.pi, n, endpoint=False)]
-        ring = Circle(radius=R, color=GRID, stroke_width=1.5).move_to(centre)
-        ghosts = VGroup(*[Dot(p, radius=0.06, color=SUB) for p in true_pts])
-        progress = ValueTracker(0.0)
-
-        def dots():
-            s = 1 - progress.get_value()
-            group = VGroup()
-            for k, a in enumerate(np.linspace(0, 2 * np.pi, n, endpoint=False)):
-                b = a + s * errors[k]
-                p = centre + R * np.array([math.cos(b), math.sin(b), 0])
-                group.add(Dot(p, radius=0.09, color=ROSE))
-                if s > 0.05:
-                    group.add(Arrow(p, true_pts[k], buff=0.08, stroke_width=2.5, color=ROSE_DEEP,
-                                    max_tip_length_to_length_ratio=0.35, tip_length=0.12))
-            return group
-
-        moving = always_redraw(dots)
-        legend = VGroup(
-            VGroup(Dot(radius=0.07, color=SUB), T("true source positions", 32, SUB)).arrange(RIGHT, buff=0.15),
-            VGroup(Dot(radius=0.08, color=ROSE), T("current estimate", 32, ROSE)).arrange(RIGHT, buff=0.15),
-        ).arrange(RIGHT, buff=0.5).next_to(ring, DOWN, buff=0.4)
-        self.play(Create(ring), FadeIn(ghosts), FadeIn(moving), FadeIn(legend), run_time=1.2)
-
-        steps = [h["step"] for h in history]
-        logs = [math.log10(h["loss"]) for h in history]
-        axes = Axes(x_range=[0, steps[-1], 50], y_range=[1, 7, 2], x_length=5.6, y_length=3.4,
-                    axis_config={"color": GRID, "stroke_width": 1.5, "include_ticks": True},
-                    tips=False).move_to(RIGHT * 3.4 + DOWN * 0.1)
-        ylab = M(r"\log_{10}\,\mathrm{loss}", 30, SUB).rotate(PI / 2).next_to(axes, LEFT, buff=0.2)
-        xlab = T("Adam step", 32, SUB).next_to(axes, DOWN, buff=0.2)
-        eq = M(r"\frac{\partial\, \|A(\theta)\,x - y\|^2}{\partial \theta}", 42, INK).next_to(axes, UP, buff=0.35)
-        self.play(Create(axes), FadeIn(ylab), FadeIn(xlab), run_time=0.9)
-        self.play(Write(eq), run_time=1.0)
-        curve = always_redraw(lambda: axes.plot_line_graph(
-            steps[:max(2, 1 + int(progress.get_value() * (len(steps) - 1)))],
-            logs[:max(2, 1 + int(progress.get_value() * (len(steps) - 1)))],
-            line_color=ROSE, add_vertex_dots=False, stroke_width=3.5))
-        self.add(curve)
-        self.play(progress.animate.set_value(1.0), run_time=6.5, rate_func=smooth)
-        result = VGroup(T(r"per-view angle error $0.55^\circ \rightarrow 0.006^\circ$", 34, INK),
-                        T(r"150 steps, $64^3$ volume, real run", 30, SUB)).arrange(DOWN, buff=0.12)
-        result.next_to(xlab, DOWN, buff=0.25)
-        self.play(FadeIn(result), run_time=0.7)
-        self.wait(2.5)
-        fade_all(self)
-
-
-class S9End(Scene):
-    def construct(self):
-        name = T(r"\textbf{diffct}", 110)
-        lines = VGroup(
-            T(r"parallel · fan · cone beam\quad{}\textbar\quad{}any trajectory\quad{}\textbar\quad{}exact adjoint", 40, SUB),
-            T("PyTorch autograd for volumes, sinograms and geometry", 40, SUB),
-            T("one GPU · many GPUs · many nodes", 40, SUB),
-            T(r"\texttt{github.com/sypsyp97/diffct}", 44, ROSE),
-        ).arrange(DOWN, buff=0.36).next_to(name, DOWN, buff=0.6)
-        VGroup(name, lines).move_to(ORIGIN)
-        self.play(FadeIn(name), run_time=0.9)
-        self.play(LaggedStart(*[FadeIn(l, shift=0.1 * UP) for l in lines], lag_ratio=0.35), run_time=2.2)
+        track, filled = bar(len(CHAPTERS))
+        self.add(track, filled, header_mob(len(CHAPTERS)))
+        fade_all(self, run_time=0.7)
+        name = T(r"\textbf{diffct}", 110, INK)
+        install = code(r'pip install "diffct[cu12]"', 34)
+        links = VGroup(T(r"\texttt{sypsyp97.github.io/diffct}", 32, SUB),
+                       T(r"\texttt{github.com/sypsyp97/diffct}", 32, SUB)).arrange(DOWN, buff=0.22)
+        VGroup(name, install, links).arrange(DOWN, buff=0.5).move_to(ORIGIN)
+        safe(VGroup(name, install, links), top=3.6, bottom=-3.6)
+        self.play(FadeIn(name), run_time=0.8)
+        self.play(FadeIn(install, shift=0.1 * UP), run_time=0.7)
+        self.play(FadeIn(links, shift=0.1 * UP), run_time=0.7)
         self.wait(3.0)
+        fade_all(self, run_time=1.0)

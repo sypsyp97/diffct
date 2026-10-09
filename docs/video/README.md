@@ -6,7 +6,7 @@ and `docs/assets/diffct_intro.mp4`. Make the inputs on a CUDA GPU, then render a
 ```bash
 python docs/video/make_inputs.py --gpu      # walnut reconstructions; without --gpu only data2d.npz
 cd docs/video
-for s in S1Title S2Projection S3Siddon S4Trajectories S5MultiGPU S6Measured S7Helical S8Geometry S9End; do
+for s in S00Intro S01Trajectory S02Autograd S03Geometry S04MultiGPU S05Measured S06End; do
   manim -qh diffct_intro.py $s
   echo "file 'media/videos/diffct_intro/1080p60/$s.mp4'" >> scenes.txt
 done
