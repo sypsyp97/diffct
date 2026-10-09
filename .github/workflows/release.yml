@@ -1,20 +1,24 @@
 name: Create Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
+
+permissions:
+  contents: write
 
 jobs:
   release:
-    name: Create Release
+    # Called only after CI and PyPI publishing succeed in publish.yml.
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 10
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v8
         with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: true
