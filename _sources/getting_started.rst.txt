@@ -1,84 +1,87 @@
 Getting Started
 ===============
 
-This guide will walk you through the process of setting up `diffct` and running your first CT reconstruction example.
+Install
+-------
 
-Prerequisites
--------------
-
-**Hardware Requirements:**
-- CUDA-capable GPU (compute capability 6.0 or higher recommended)
-- Minimum 4GB GPU memory for basic examples
-
-**Software Requirements:**
-- Python 3.10 or later
-- CUDA Toolkit 11.0 or later
-- Required Python packages:
-  - PyTorch (with CUDA support)
-  - NumPy
-  - Numba (with CUDA support)
-
-Installation
-------------
-
-Install `diffct` directly from PyPI:
+Projection and backprojection require an NVIDIA CUDA GPU. Geometry construction
+and some validation tests can run on CPU; there is no CPU projection backend.
+Install a CUDA-enabled PyTorch build appropriate for your driver first, then:
 
 .. code-block:: bash
 
-   pip install diffct
+   python -m pip install "diffct[cu12]"
+   python -c "import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"
+   # from a source checkout: python examples/quickstart.py
 
-**Verify Installation:**
+Use ``diffct[cu13]`` for a compatible CUDA 13 stack. Keep NVVM and NVJitLink
+compatible with the CUDA libraries loaded by PyTorch. ``torch.cuda.is_available()``
+only checks PyTorch's device access; the quickstart additionally compiles and
+executes the Numba kernels. The first call includes JIT compilation overhead.
+The :doc:`validation` page records previously tested environments and results;
+these are not a guarantee for every CUDA/Python combination.
 
-.. code-block:: python
-
-   import torch
-   import diffct
-   
-   # Check CUDA availability
-   print(f"CUDA available: {torch.cuda.is_available()}")
-   print(f"DiffCT version: {diffct.__version__}")
-
-Quick Start Example
--------------------
-
-Here's a minimal example demonstrating parallel beam projection and backprojection:
+Minimal forward / adjoint / gradient example
+--------------------------------------------
 
 .. code-block:: python
 
    import torch
-   import numpy as np
-   from diffct import ParallelProjectorFunction, ParallelBackprojectorFunction
+   from diffct import Projector, circular_trajectory_2d_parallel
 
-   # Set device
-   device = 'cuda' if torch.cuda.is_available() else 'cpu'
-   
-   # Create a simple test image (128x128)
-   image = torch.zeros(128, 128, device=device)
-   image[40:88, 40:88] = 1.0  # Square phantom
-   
-   # Define projection parameters
-   num_angles = 180
-   angles = torch.linspace(0, np.pi, num_angles, device=device)
-   num_detectors = 128
-   detector_spacing = 1.0
-   
-   # Forward projection
-   sinogram = ParallelProjectorFunction.apply(
-       image, angles, num_detectors, detector_spacing
-   )
-   
-   # Backprojection
-   reconstruction = ParallelBackprojectorFunction.apply(
-       sinogram, angles, detector_spacing, 128, 128
-   )
-   
-   print(f"Original image shape: {image.shape}")
-   print(f"Sinogram shape: {sinogram.shape}")
-   print(f"Reconstruction shape: {reconstruction.shape}")
+   trajectory = circular_trajectory_2d_parallel(180, device="cpu")
+   A = Projector(trajectory, (64, 64), 96, beam="parallel",
+                 detector_spacing=1.0, voxel_spacing=1.0)
+   image = torch.zeros(A.volume_shape, device="cuda", dtype=torch.float32)
+   image[20:44, 20:44] = 1.0
+   measurements = A.project(image)        # (180, 96)
+   adjoint = A.backproject(measurements)  # (64, 64), not an inverse
 
-Next Steps
-----------
+   estimate = torch.zeros_like(image, requires_grad=True)
+   loss = 0.5 * (A.project(estimate) - measurements).square().sum()
+   loss.backward()                       # A^T (A estimate - measurements)
+   print(measurements.shape, estimate.grad.shape)
 
-- Explore the :doc:`examples` for detailed reconstruction algorithms
-- Check the :doc:`api` reference for complete function documentation
-- Review the mathematical background in each example for deeper understanding
+``Projector`` defaults to ``beam="cone"``. Set ``beam="parallel"`` or
+``beam="fan"`` explicitly for 2D data. Inputs must be floating-point CUDA tensors
+with exactly the configured shape, without batch/channel dimensions. Computation
+and outputs are float32. Fixed geometry can be supplied on CPU; the operator
+stages and caches each GPU's geometry shard.
+
+Choose a workflow
+-----------------
+
+- A custom or non-circular scan: :doc:`trajectories` covers coordinates, detector
+  ordering and geometry gradients.
+- An iterative reconstruction: run ``python examples/iterative_reconstruction.py
+  --trajectory helical``. See :doc:`examples` for the supported methods.
+- Multiple GPUs or nodes: read :doc:`distributed` before using local shards or
+  differentiating losses. Extra GPUs do not pool memory for the volume.
+- An existing circular-only installation: follow :doc:`migration`; the old
+  scalar-angle signatures and separable-footprint backends are not drop-in APIs.
+
+Troubleshooting
+---------------
+
+- **CUDA is unavailable:** check the selected Python environment, PyTorch CUDA
+  build, GPU allocation and driver. Installing diffct does not provision a GPU.
+- **Kernel compilation fails:** check Numba CUDA, NVVM and NVJitLink versions as
+  a set, rather than upgrading one CUDA component independently.
+- **Shape error:** use ``(D, H, W)`` for cone volumes and ``(views, U, V)`` for
+  their sinograms. In distributed mode, use ``A.projection_shape`` and
+  ``A.view_slice`` rather than the global view count.
+- **Invalid geometry:** axes must be unit vectors with the orthogonality and
+  non-degeneracy constraints described in :doc:`trajectories`.
+
+Build these docs without a GPU
+------------------------------
+
+The documentation build mocks the CUDA stack, so it needs no GPU. From the
+repository root:
+
+.. code-block:: bash
+
+   python -m pip install -r docs/requirements.txt
+   python -m sphinx -W --keep-going -b html docs/source docs/build/html
+
+Open ``docs/build/html/index.html`` to review this checkout's documentation.

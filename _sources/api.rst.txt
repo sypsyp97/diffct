@@ -1,173 +1,138 @@
 API Reference
 =============
 
-This section provides documentation for the differentiable CT operators
-and analytical reconstruction helpers in ``diffct``. Each autograd class
-is a PyTorch ``torch.autograd.Function`` that runs a CUDA kernel under
-the hood, enabling gradient propagation through the full projection /
-backprojection pipeline. The analytical helpers (``ramp_filter_1d``,
-``cone_cosine_weights``, ``cone_weighted_backproject`` and friends) are
-intentionally kept as plain functions so they can be composed with the
-autograd operators or used directly in one-shot FBP / FDK pipelines.
+The `diffct` package is organised into focused modules that can be combined to build differentiable CT pipelines:
 
-Overview
---------
+- ``diffct.projectors`` – PyTorch ``autograd.Function`` implementations for forward and backward projectors
+- ``diffct.geometry`` – helpers to generate detector/source trajectories for 2D and 3D scans
+- ``diffct.analytical`` – analytical FBP / FDK building blocks (ramp filter, cosine weights, Parker weights, voxel-driven backprojection wrappers)
+- ``diffct.kernels`` – CUDA kernel primitives (Siddon forward / adjoint / FBP gather) for advanced users
+- ``diffct.utils`` – CUDA device management and tensor bridge utilities
+- ``diffct.constants`` – low-level configuration values for advanced tuning
+- ``diffct.differentiable`` – deprecated compatibility shim that re-exports the public API
 
-The library exposes three families of operators, grouped by geometry:
+High-level Projector
+--------------------
 
-- **Parallel beam (2D):** parallel-beam geometry for 2D reconstruction.
-- **Fan beam (2D):** divergent fan-beam geometry.
-- **Cone beam (3D):** full 3D cone-beam geometry for volumetric
-  reconstruction with a 2D flat-panel detector.
+.. currentmodule:: diffct
 
-Each geometry ships a differentiable forward projector and a
-differentiable backprojector that are adjoints of each other (the
-backprojector is the gradient of the projector). For cone-beam the
-analytical FDK path is routed through a dedicated voxel-driven gather
-kernel; see the ``cone_weighted_backproject`` notes below.
+.. autoclass:: Projector
+   :members:
+   :special-members: __call__
 
-Parallel Beam Operators
------------------------
+See :doc:`distributed` for local GPU view splitting and multi-node launch
+instructions, and :doc:`trajectories` for geometry gradients and coordinate
+conventions. ``Projector`` lives in ``diffct.operators`` and is re-exported here.
 
-The parallel beam geometry assumes parallel X-ray beams, commonly used
-in synchrotron CT and some medical CT scanners.
+Core Projector Functions
+------------------------
 
-.. autoclass:: diffct.differentiable.ParallelProjectorFunction
+These advanced ``autograd.Function`` wrappers take explicit trajectory tensors.
+Use the ``forward`` signatures below as the argument order for ``.apply(...)``;
+new applications should prefer ``Projector`` for validation and device staging.
+
+.. currentmodule:: diffct
+
+.. autoclass:: ParallelProjectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: diffct.differentiable.ParallelBackprojectorFunction
+.. autoclass:: ParallelBackprojectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
-
-Fan Beam Operators
-------------------
-
-Fan beam geometry uses a point X-ray source with a fan-shaped beam,
-typical in medical CT scanners.
-
-.. autoclass:: diffct.differentiable.FanProjectorFunction
+.. autoclass:: FanProjectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: diffct.differentiable.FanBackprojectorFunction
+.. autoclass:: FanBackprojectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
-
-Cone Beam Operators
--------------------
-
-Cone beam geometry extends fan beam to 3D with a cone-shaped X-ray beam
-and a 2D detector. ``ConeProjectorFunction`` and
-``ConeBackprojectorFunction`` are exact adjoints of each other
-(cell-constant Siddon traversal) and drive the iterative cone
-example. For analytical FDK, use ``cone_weighted_backproject`` — it
-dispatches to a dedicated voxel-driven gather kernel with the classical
-``(sid/U)^2`` distance weighting.
-
-Projector backends
-^^^^^^^^^^^^^^^^^^
-
-Both the fan and cone Projector / Backprojector Function pairs accept a
-``backend`` keyword that selects the underlying CUDA kernel family:
-
-``"siddon"`` (default)
-    Ray-driven cell-constant Siddon traversal: each ray accumulates
-    the traversed pixel (2D) or voxel (3D) value weighted by its exact
-    intersection length, no sub-cell interpolation. Fastest, and is
-    the right default for the overwhelming majority of use cases.
-
-``"sf"`` (fan only)
-    Voxel-driven separable-footprint projector (Long-Fessler-Balter,
-    IEEE TMI 2010). Each voxel's footprint is a trapezoid built from
-    the four projected corners and is closed-form integrated over each
-    detector cell. Matched forward/adjoint kernels so autograd and the
-    standalone Backprojector both work; use for iterative reconstruction
-    under a mass-conserving cell-integral forward model.
-
-``"sf_tr"`` (cone only)
-    3D voxel-driven SF with a trapezoidal transaxial footprint and a
-    rectangular axial footprint evaluated at voxel-centre magnification.
-
-``"sf_tt"`` (cone only)
-    Same transaxial trapezoid as SF-TR but the axial footprint is also
-    a trapezoid built from the four ``(U_near, U_far) × (z_bot, z_top)``
-    projections. Captures axial magnification variation inside a single
-    voxel at large cone angles. Strictly more expressive than SF-TR but
-    2–4× slower.
-
-All three SF backends go through matched scatter/gather kernel pairs
-with byte-accurate adjoints (verified by ``test_adjoint_inner_product``
-and ``test_gradcheck``).
-
-**Which backend to pick.** Siddon is the fastest per-step forward
-model and is the right default when you only need a forward
-projection. For a **complete analytical reconstruction pipeline**
-(forward projection -> ramp filter -> `fan_weighted_backproject` /
-`cone_weighted_backproject`) the SF backends tend to produce lower
-reconstruction MSE: SF's mass-conserving cell-integrated sinogram
-pairs more naturally with the voxel-driven FBP / FDK gather
-backprojector than Siddon's thin-ray sampling, which feeds extra
-high-frequency ringing into the ramp filter.
-
-So:
-
-* ``"siddon"`` — default for raw forward speed. Best choice when you
-  only need a forward projection and not a reconstruction.
-* ``"sf"`` / ``"sf_tr"`` — recommended for analytical FBP / FDK
-  reconstruction when reconstruction quality matters more than
-  forward-projection runtime. ~2–3× slower forward than Siddon.
-* ``"sf_tt"`` — strictly more expressive than SF-TR; its axial-
-  trapezoid refinement costs another ~40 % forward runtime on top of
-  SF-TR, so use for extreme cone angles or algorithm research only.
-
-For **iterative reconstruction with autograd**, any backend is valid;
-SF has the theoretical advantage of exact voxel-scale mass
-conservation on both forward and adjoint, while Siddon gives the
-fastest per-iteration step.
-
-.. autoclass:: diffct.differentiable.ConeProjectorFunction
+.. autoclass:: ConeProjectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: diffct.differentiable.ConeBackprojectorFunction
+.. autoclass:: ConeBackprojectorFunction
+   :class-doc-from: init
    :members:
    :undoc-members:
    :show-inheritance:
 
+Geometry Helpers
+----------------
+
+.. currentmodule:: diffct.geometry
+
+**3D trajectories**
+
+.. autofunction:: circular_trajectory_3d
+.. autofunction:: random_trajectory_3d
+.. autofunction:: spiral_trajectory_3d
+.. autofunction:: sinusoidal_trajectory_3d
+.. autofunction:: saddle_trajectory_3d
+.. autofunction:: custom_trajectory_3d
+
+**2D trajectories**
+
+.. autofunction:: circular_trajectory_2d_parallel
+.. autofunction:: sinusoidal_trajectory_2d_parallel
+.. autofunction:: custom_trajectory_2d_parallel
+.. autofunction:: circular_trajectory_2d_fan
+.. autofunction:: sinusoidal_trajectory_2d_fan
+.. autofunction:: custom_trajectory_2d_fan
 
 Analytical Reconstruction Helpers
 ---------------------------------
 
+.. currentmodule:: diffct.analytical
+
 These helpers build the per-view pre-weights, angle-integration weights,
-filter, and backprojection pieces of an analytical FBP/FDK pipeline.
-They are plain functions (no autograd state) and can be freely mixed
-with the autograd operators above.
+filter, and backprojection pieces of an analytical FBP / FDK pipeline.
+The weighted-backprojection helpers use dedicated CUDA gather kernels, not
+the differentiable matched-adjoint path. Do not assume end-to-end autograd
+through an analytical reconstruction. Geometry-dependent helpers accept
+the same per-view ``(src_pos, det_center, det_u_vec[, det_v_vec])`` arrays
+that the projector / backprojector Functions consume. Analytical FBP/FDK
+still has acquisition-specific assumptions; arbitrary geometry does not
+make an analytical reconstruction exact for a non-circular scan.
 
-.. autofunction:: diffct.differentiable.detector_coordinates_1d
+Fan/cone backprojection accepts a keyword-only ``isocenter`` coordinate
+vector in physical units. With ``None`` (default), it is inferred by
+intersecting source lines along detector normals in least squares. This
+preserves amplitude when a circular orbit and object are translated
+together. Supply it explicitly for non-circular or ambiguous geometry,
+including single-view inputs. The three analytical backprojectors require
+at least two detector bins per interpolated axis, including the cone
+detector's v axis.
 
-.. autofunction:: diffct.differentiable.angular_integration_weights
+.. autofunction:: detector_coordinates_1d
 
-.. autofunction:: diffct.differentiable.fan_cosine_weights
+.. autofunction:: angular_integration_weights
 
-.. autofunction:: diffct.differentiable.cone_cosine_weights
+.. autofunction:: fan_cosine_weights
 
-.. autofunction:: diffct.differentiable.parker_weights
+.. autofunction:: cone_cosine_weights
 
-.. autofunction:: diffct.differentiable.ramp_filter_1d
+.. autofunction:: parker_weights
 
-.. autofunction:: diffct.differentiable.parallel_weighted_backproject
+.. autofunction:: ramp_filter_1d
 
-.. autofunction:: diffct.differentiable.fan_weighted_backproject
+.. autofunction:: parallel_weighted_backproject
 
-.. autofunction:: diffct.differentiable.cone_weighted_backproject
+.. autofunction:: fan_weighted_backproject
+
+.. autofunction:: cone_weighted_backproject
 
 
 Ramp Filter Options
@@ -179,13 +144,18 @@ reconstruction example. Its call signature is::
     ramp_filter_1d(sinogram_tensor, dim=-1, sample_spacing=1.0,
                    pad_factor=1, window=None, use_rfft=True)
 
+The filter is the FFT of a finite discrete Ram-Lak impulse response,
+scaled for angular frequency. It retains a small positive finite-length
+DC response instead of forcing the DC bin to zero, reducing low-frequency
+bias. For the unwindowed filter, ``pad_factor >= 2`` gives linear
+convolution over the retained detector samples.
+
 ``sample_spacing``
     Physical detector-cell spacing along ``dim`` (e.g. ``du`` for the
     cone-beam case). The filter is rescaled by ``1 / sample_spacing``
     internally so the output is in physical units and the
     reconstruction amplitude stays calibrated when detector pitch
-    changes. Pass ``1.0`` to reproduce the historical sample-unit
-    behavior.
+    changes. Pass ``1.0`` to reproduce sample-unit behaviour.
 
 ``pad_factor``
     Zero-pad the signal to ``pad_factor * N`` samples along ``dim``
@@ -199,9 +169,8 @@ reconstruction example. Its call signature is::
 ``window``
     Frequency-domain apodization multiplied onto the bare Ram-Lak ramp:
 
-    - ``None`` or ``"ram-lak"``: unwindowed Ram-Lak, sharpest, highest
-      noise.
-    - ``"hann"``: Hann window, strong high-frequency suppression.
+    - ``None`` or ``"ram-lak"``: unwindowed Ram-Lak, sharpest, highest noise.
+    - ``"hann"`` / ``"hanning"``: Hann window, strong high-frequency suppression.
     - ``"hamming"``: slightly milder than Hann.
     - ``"cosine"``: half-cosine rolloff.
     - ``"shepp-logan"``: ``sinc`` rolloff, classical choice.
@@ -214,68 +183,80 @@ reconstruction example. Its call signature is::
 Analytical FBP / FDK architecture
 ---------------------------------
 
-Each of the three analytical backprojection helpers dispatches to a
-dedicated voxel-driven gather kernel (parallel / fan / cone), separate
-from the Siddon-based ray-driven scatter kernels that drive autograd.
-The autograd kernels are the pure adjoints ``P^T`` of the forward
-projectors (no distance weighting, no magnification scale), so the
-autograd classes form self-consistent forward/backward adjoint pairs.
-The analytical helpers on top apply the appropriate FBP/FDK distance
-weighting and the analytical scale so the returned image is already
-amplitude-calibrated.
+Each of the three analytical backprojection helpers
+(``parallel_weighted_backproject``, ``fan_weighted_backproject``,
+``cone_weighted_backproject``) dispatches to a dedicated voxel-driven
+gather kernel, separate from the Siddon-based ray-driven scatter
+kernels that drive autograd. The autograd kernels are the pure
+adjoints ``P^T`` of the forward projectors (no distance weighting,
+no magnification scale), so the autograd classes form self-consistent
+forward / backward adjoint pairs. The analytical helpers on top apply
+the appropriate FBP / FDK distance weighting and the analytical
+scale so the returned image is already amplitude-calibrated.
 
 Scale factors applied inside the analytical helpers:
 
-- ``parallel_weighted_backproject``: multiplies by ``1 / (2 * pi)``
+- ``parallel_weighted_backproject`` multiplies by ``1 / (2 * pi)``
   (Fourier-convention constant; parallel beam has no source and no
-  magnification).
-- ``fan_weighted_backproject``: multiplies by ``sdd / (2 * pi * sid)``
-  (Fourier constant times physical-detector-to-isocenter-plane
-  magnification).
-- ``cone_weighted_backproject``: multiplies by ``sdd / (2 * pi * sid)``
-  (same derivation as the fan case; the extra third dimension does
-  not change the ramp-filter convention).
+  magnification so there is no ``(sid/U)^2`` weight).
+- ``fan_weighted_backproject`` applies a per-voxel ``(sid_n / U_n)^2``
+  weight inside the gather kernel and a ``sdd_mean / (2 * pi * sid_mean)``
+  scale on top.
+- ``cone_weighted_backproject`` applies a per-voxel ``(sid_n / U_n)^2``
+  weight inside the gather kernel and a ``sdd_mean / (2 * pi * sid_mean)``
+  scale on top.
 
-All three helpers use ``(sid / U)^2`` as the FDK/FBP distance weight
-for the divergent-beam cases (fan and cone), where
-``U = sid + x*sin(phi) - y*cos(phi)`` is the distance from the source
-to the pixel/voxel along the central ray direction. Parallel beam has
-no distance weighting.
+``sid_n`` and ``U_n`` are measured in the per-view detector-normal
+direction. For a canonical circular orbit ``sid_n`` reduces to the
+classical scalar ``sid``, and ``U_n`` to the classical
+``sid + x * sin(beta) - y * cos(beta)``. For non-circular trajectories
+(spiral, saddle, random) the helpers keep working by computing the
+per-view quantities directly from the trajectory arrays; the result
+is the standard heuristic generalisation of FDK beyond the circle.
 
+Utilities
+---------
+
+.. currentmodule:: diffct.utils
+
+.. autoclass:: DeviceManager
+   :members:
+
+.. autoclass:: TorchCUDABridge
+   :members:
+
+Additional helper functions (prefixed with an underscore) remain available for advanced integrations that require direct control over CUDA streams.
+
+Constants
+---------
+
+.. currentmodule:: diffct.constants
+
+.. autodata:: _DTYPE
+.. autodata:: _TPB_2D
+.. autodata:: _TPB_3D
+.. autodata:: _FASTMATH_DECORATOR
+.. autodata:: _INF
+.. autodata:: _EPSILON
+
+These values mirror the defaults used by the CUDA kernels. They are exposed for power users who need to fine-tune launch parameters or numeric tolerances; most applications should rely on the defaults.
+
+Backward Compatibility
+----------------------
+
+.. currentmodule:: diffct.differentiable
+
+``diffct.differentiable`` re-exports the 2.0 API; it does not restore
+the circular-only scalar-angle signatures. See :doc:`migration`. New projects
+should import ``Projector`` from ``diffct``.
 
 Usage Notes
 -----------
 
-**Memory Management**
-
-- All operators work on CUDA tensors for optimal performance.
-- Ensure sufficient GPU memory for the chosen volume / sinogram size.
-- Use ``torch.cuda.empty_cache()`` to release cached allocations when
-  switching to a large job.
-
-**Gradient Computation**
-
-- All autograd operators support automatic differentiation.
-- Gradients flow through both forward and adjoint paths.
-- Set ``requires_grad=True`` on input tensors to enable gradients.
-- Analytical helpers (``ramp_filter_1d``, ``angular_integration_weights``,
-  ``cone_weighted_backproject``, ...) are also differentiable in the
-  torch sense (they are pure tensor ops / autograd.Functions), so you
-  can use them inside a loss.
-
-**Performance Considerations**
-
-- Pass contiguous tensors with the expected dimension order
-  (``(D, H, W)`` for 3D volumes, ``(num_views, det_u, det_v)`` for cone
-  sinograms). The library validates layout and will raise if a
-  non-contiguous or transposed tensor is passed.
-- Use ``pad_factor=2`` in ``ramp_filter_1d`` for cone-beam FDK; the
-  extra FFT cost is usually negligible compared to the backprojection.
-
-**Coordinate Systems**
-
-- Image / volume coordinates: integer indices, ``(0, 0, 0)`` at the
-  corner of the array.
-- Detector coordinates: centered at the detector array center, with
-  ``u`` in-plane and ``v`` axial for cone beam.
-- Rotation: counter-clockwise around the z-axis (right-hand rule).
+- ``Projector`` requires image/sinogram inputs on CUDA and returns float32 results
+  on the input device. Geometry tensors can be on CPU and are staged internally.
+- Geometry helper functions build the ``ray_dir``, ``det_origin``, and detector orientation vectors expected by the projector operators.
+- Image/sinogram gradients support second derivatives with fixed geometry.
+  Geometry gradients are first-order only; set ``requires_grad=True`` before
+  constructing ``Projector``. Scalar spacing settings are not differentiable.
+- Ensure tensors are contiguous and use consistent dtype (``torch.float32``) for maximum kernel performance.

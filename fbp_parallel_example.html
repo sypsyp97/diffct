@@ -1,456 +1,454 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="./">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Fan Beam Filtered Backprojection (FBP)" href="fbp_fan_example.html"><link rel="prev" title="Examples" href="examples.html">
+
+    <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
+        <title>Parallel Beam Filtered Backprojection (FBP) - diffct 2.0.0</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
 
 
-<!DOCTYPE html>
-<html class="writer-html5" lang="en" data-content_root="./">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Parallel Beam Filtered Backprojection (FBP) &mdash; diffct  documentation</title>
-      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
-      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
-
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
   
-      <script src="_static/jquery.js?v=5d32c60e"></script>
-      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="_static/documentation_options.js?v=5929fcd5"></script>
-      <script src="_static/doctools.js?v=fd6eb6e6"></script>
-      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
-      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
-    <script src="_static/js/theme.js"></script>
-    <link rel="index" title="Index" href="genindex.html" />
-    <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="Fan Beam Filtered Backprojection (FBP)" href="fbp_fan_example.html" />
-    <link rel="prev" title="Examples" href="examples.html" /> 
-</head>
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
 
-<body class="wy-body-for-nav"> 
-  <div class="wy-grid-for-nav">
-    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
-      <div class="wy-side-scroll">
-        <div class="wy-side-nav-search" >
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
 
-          
-          
-          <a href="index.html" class="icon icon-home">
-            diffct
-          </a>
-<div role="search">
-  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
-    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
-    <input type="hidden" name="check_keywords" value="yes" />
-    <input type="hidden" name="area" value="default" />
-  </form>
-</div>
-        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
-<ul>
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="index.html"><div class="brand">diffct 2.0.0</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
+  
+  <span class="sidebar-brand-text">diffct 2.0.0</span>
+  
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
-<ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1 current"><a class="reference internal" href="examples.html">Examples</a><ul class="current">
-<li class="toctree-l2 current"><a class="current reference internal" href="#">Parallel Beam Filtered Backprojection (FBP)</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#source">Source</a></li>
-</ul>
-</li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
+<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam FDK Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam Feldkamp-Davis-Kress (FDK)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="walnut_example.html">Measured Walnut</a></li>
 </ul>
 </li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
 </ul>
 
-        </div>
+</div>
+</div>
+
       </div>
-    </nav>
-
-    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
-          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="index.html">diffct</a>
-      </nav>
-
-      <div class="wy-nav-content">
-        <div class="rst-content">
-          <div role="navigation" aria-label="Page navigation">
-  <ul class="wy-breadcrumbs">
-      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-          <li class="breadcrumb-item"><a href="examples.html">Examples</a></li>
-      <li class="breadcrumb-item active">Parallel Beam Filtered Backprojection (FBP)</li>
-      <li class="wy-breadcrumbs-aside">
-            <a href="_sources/fbp_parallel_example.rst.txt" rel="nofollow"> View page source</a>
-      </li>
-  </ul>
-  <hr/>
-</div>
-          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
-           <div itemprop="articleBody">
-             
-  <section id="parallel-beam-filtered-backprojection-fbp">
-<h1>Parallel Beam Filtered Backprojection (FBP)<a class="headerlink" href="#parallel-beam-filtered-backprojection-fbp" title="Link to this heading"></a></h1>
-<p>This example demonstrates 2D parallel-beam filtered backprojection
-on a Shepp-Logan phantom using the public call chain from <code class="docutils literal notranslate"><span class="pre">diffct</span></code>:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span>  <span class="o">--</span> <span class="n">differentiable</span> <span class="n">parallel</span> <span class="n">forward</span>
-<span class="n">ramp_filter_1d</span>                   <span class="o">--</span> <span class="n">ramp</span> <span class="nb">filter</span> <span class="n">along</span> <span class="n">the</span> <span class="n">detector</span> <span class="n">axis</span>
-<span class="n">angular_integration_weights</span>      <span class="o">--</span> <span class="n">per</span><span class="o">-</span><span class="n">view</span> <span class="n">integration</span> <span class="n">weights</span>
-<span class="n">parallel_weighted_backproject</span>    <span class="o">--</span> <span class="n">voxel</span><span class="o">-</span><span class="n">driven</span> <span class="n">FBP</span> <span class="n">backprojection</span> <span class="n">gather</span>
-</pre></div>
-</div>
-<p>The accompanying source file is <code class="file docutils literal notranslate"><span class="pre">examples/fbp_parallel.py</span></code>.</p>
-<section id="overview">
-<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
-<p>Parallel-beam FBP is the classical analytical reconstruction method
-for 2D parallel CT. Because there is no source (rays are collimated),
-the pipeline is the simplest of the three analytical paths in
-<code class="docutils literal notranslate"><span class="pre">diffct</span></code>: no cosine pre-weight, no distance weight, no magnification
-correction. What remains is ramp filtering, a per-view angular
-integration weight, and a <code class="docutils literal notranslate"><span class="pre">1/(2*pi)</span></code> analytical constant that the
-backprojection helper applies internally.</p>
-<p>This example shows how to:</p>
-<ul class="simple">
-<li><p>Sample a circular full-scan trajectory and a flat detector.</p></li>
-<li><p>Generate parallel projections of a 2D Shepp-Logan phantom.</p></li>
-<li><p>Apply ramp filtering with zero-padding and a Hann window.</p></li>
-<li><p>Run the dedicated voxel-driven FBP gather kernel through
-<code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code> to reconstruct the image, already
-amplitude-calibrated.</p></li>
-</ul>
-</section>
-<section id="mathematical-background">
-<h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading"></a></h2>
-<p><strong>Parallel-beam geometry</strong></p>
-<p>Rays at angle <span class="math notranslate nohighlight">\(\theta\)</span> are collimated in the direction
-<span class="math notranslate nohighlight">\((\cos\theta, \sin\theta)\)</span>. A detector cell at position
-<span class="math notranslate nohighlight">\(u\)</span> on the detector axis <span class="math notranslate nohighlight">\((-\sin\theta, \cos\theta)\)</span>
-samples a ray passing through the point
-<span class="math notranslate nohighlight">\((-u \sin\theta,\; u \cos\theta)\)</span> in image-space coordinates
-centered on the isocenter. The corresponding line integral is the
-classical Radon transform</p>
-<div class="math notranslate nohighlight">
-\[p(\theta, u) = \int_{-\infty}^{\infty}
-    f\!\left(-u \sin\theta + s \cos\theta,\;
-              u \cos\theta + s \sin\theta\right) ds.\]</div>
-<p>The pixel <span class="math notranslate nohighlight">\((x, y)\)</span> projects to the detector at
-<span class="math notranslate nohighlight">\(u_{xy} = -x \sin\theta + y \cos\theta\)</span>.</p>
-<p><strong>FBP algorithm</strong></p>
-<ol class="arabic">
-<li><p><strong>Ramp filtering</strong> along the detector axis:</p>
-<div class="math notranslate nohighlight">
-\[p_f(\theta, u) =
-    \mathcal{F}_u^{-1}\bigl\{\,|\omega_u|\,
-    \mathcal{F}_u\{p(\theta, u)\}\bigr\}.\]</div>
-</li>
-<li><p><strong>Voxel-driven backprojection</strong> without any distance weighting:</p>
-<div class="math notranslate nohighlight">
-\[f(x, y) = \frac{1}{4\pi}
-    \int_0^{2\pi}
-        p_f\!\left(\theta, u_{xy}(\theta)\right) d\theta.\]</div>
-<p>The <code class="docutils literal notranslate"><span class="pre">1/(4\pi)</span> <span class="pre">\cdot</span> <span class="pre">\int_0^{2\pi}</span></code> factor is equivalent to
-<span class="math notranslate nohighlight">\(\frac{1}{2\pi} \cdot \int_0^{\pi}\)</span>; <code class="docutils literal notranslate"><span class="pre">diffct</span></code> uses the
-full <span class="math notranslate nohighlight">\([0, 2\pi)\)</span> form with <code class="docutils literal notranslate"><span class="pre">redundant_full_scan=True</span></code> in
-<code class="docutils literal notranslate"><span class="pre">angular_integration_weights</span></code> to absorb the factor of 1/2.</p>
-<p><code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code> dispatches to a dedicated
-voxel-driven gather kernel <code class="docutils literal notranslate"><span class="pre">_parallel_2d_fbp_backproject_kernel</span></code>
-for this step. For each pixel and each view it computes
-<span class="math notranslate nohighlight">\(u_{xy}\)</span>, linearly samples the filtered sinogram, and sums
-- no distance weighting, no magnification. The Siddon-based
-autograd parallel backprojector is reserved for the differentiable
-path used by iterative reconstruction and is <em>not</em> touched by this
-analytical pipeline.</p>
-</li>
-</ol>
-<p><strong>Ramp Filter Options</strong></p>
-<p><code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code> accepts the same high-precision optional kwargs as
-in the fan and cone examples: <code class="docutils literal notranslate"><span class="pre">sample_spacing</span></code> (set to
-<code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code>), <code class="docutils literal notranslate"><span class="pre">pad_factor</span></code> (<code class="docutils literal notranslate"><span class="pre">2</span></code> recommended), <code class="docutils literal notranslate"><span class="pre">window</span></code>
-(<code class="docutils literal notranslate"><span class="pre">None</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;ram-lak&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;hann&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;hamming&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;cosine&quot;</span></code>,
-<code class="docutils literal notranslate"><span class="pre">&quot;shepp-logan&quot;</span></code>), and <code class="docutils literal notranslate"><span class="pre">use_rfft</span></code>. The call is backward compatible
-so passing only <code class="docutils literal notranslate"><span class="pre">(sino,</span> <span class="pre">dim=1)</span></code> still works.</p>
-<p><strong>Analytical FBP scale</strong></p>
-<p><code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code> multiplies its output by
-<code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi)</span></code>. This is the Fourier-convention constant that
-matches the <code class="docutils literal notranslate"><span class="pre">|omega|</span></code> ramp used by <code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code>. Unlike the
-fan and cone helpers there is no <code class="docutils literal notranslate"><span class="pre">sdd/sid</span></code> magnification factor
-because parallel beam has no source.</p>
-<p><strong>Implementation Steps</strong></p>
-<p>The <code class="docutils literal notranslate"><span class="pre">main()</span></code> function in <code class="file docutils literal notranslate"><span class="pre">examples/fbp_parallel.py</span></code> follows
-the unified 8-step structure: volume geometry, source trajectory,
-detector geometry, CUDA transfer, forward projection, FBP pipeline
-(ramp filter / angular weights / voxel-gather backprojection /
-optional ReLU), quantitative summary (including a gradient sanity
-check), visualization.</p>
-</section>
-<section id="source">
-<h2>Source<a class="headerlink" href="#source" title="Link to this heading"></a></h2>
-<div class="literal-block-wrapper docutils container" id="id1">
-<div class="code-block-caption"><span class="caption-text">2D Parallel Beam FBP Example</span><a class="headerlink" href="#id1" title="Link to this code"></a></div>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="sd">&quot;&quot;&quot;Parallel-beam FBP reconstruction example.</span>
-<span class="linenos">  2</span>
-<span class="linenos">  3</span><span class="sd">Pipeline (matches the fan-beam and cone-beam analytical examples):</span>
-<span class="linenos">  4</span>
-<span class="linenos">  5</span><span class="sd">    ParallelProjectorFunction.apply  # forward projection (sinogram)</span>
-<span class="linenos">  6</span><span class="sd">    ramp_filter_1d                   # ramp filter along detector axis</span>
-<span class="linenos">  7</span><span class="sd">    angular_integration_weights      # per-view integration weights</span>
-<span class="linenos">  8</span><span class="sd">    parallel_weighted_backproject    # voxel-driven FBP gather</span>
-<span class="linenos">  9</span>
-<span class="linenos"> 10</span><span class="sd">Parallel beam has no source, so there is no cosine pre-weighting and</span>
-<span class="linenos"> 11</span><span class="sd">no distance weighting during backprojection - the FBP pipeline only</span>
-<span class="linenos"> 12</span><span class="sd">needs ramp filtering, angular weights, and the ``1/(2*pi)`` analytical</span>
-<span class="linenos"> 13</span><span class="sd">constant that ``parallel_weighted_backproject`` applies internally.</span>
-<span class="linenos"> 14</span><span class="sd">&quot;&quot;&quot;</span>
-<span class="linenos"> 15</span>
-<span class="linenos"> 16</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
-<span class="linenos"> 17</span>
-<span class="linenos"> 18</span><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
-<span class="linenos"> 19</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<span class="linenos"> 20</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-<span class="linenos"> 21</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
-<span class="linenos"> 22</span>
-<span class="linenos"> 23</span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct.differentiable</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<span class="linenos"> 24</span>    <span class="n">ParallelProjectorFunction</span><span class="p">,</span>
-<span class="linenos"> 25</span>    <span class="n">angular_integration_weights</span><span class="p">,</span>
-<span class="linenos"> 26</span>    <span class="n">parallel_weighted_backproject</span><span class="p">,</span>
-<span class="linenos"> 27</span>    <span class="n">ramp_filter_1d</span><span class="p">,</span>
-<span class="linenos"> 28</span><span class="p">)</span>
-<span class="linenos"> 29</span>
-<span class="linenos"> 30</span>
-<span class="linenos"> 31</span><span class="k">def</span><span class="w"> </span><span class="nf">shepp_logan_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">):</span>
-<span class="linenos"> 32</span><span class="w">    </span><span class="sd">&quot;&quot;&quot;2D Shepp-Logan phantom clipped to ``[0, 1]``.&quot;&quot;&quot;</span>
-<span class="linenos"> 33</span>    <span class="n">Nx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">Nx</span><span class="p">)</span>
-<span class="linenos"> 34</span>    <span class="n">Ny</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">Ny</span><span class="p">)</span>
-<span class="linenos"> 35</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">Ny</span><span class="p">,</span> <span class="n">Nx</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-<span class="linenos"> 36</span>    <span class="c1"># (x0, y0, a, b, angle_deg, amplitude)</span>
-<span class="linenos"> 37</span>    <span class="n">ellipses</span> <span class="o">=</span> <span class="p">[</span>
-<span class="linenos"> 38</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span>    <span class="mf">0.0</span><span class="p">,</span>    <span class="mf">0.69</span><span class="p">,</span>   <span class="mf">0.92</span><span class="p">,</span>    <span class="mf">0.0</span><span class="p">,</span>  <span class="mf">1.0</span><span class="p">),</span>
-<span class="linenos"> 39</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span>   <span class="o">-</span><span class="mf">0.0184</span><span class="p">,</span> <span class="mf">0.6624</span><span class="p">,</span> <span class="mf">0.8740</span><span class="p">,</span>  <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
-<span class="linenos"> 40</span>        <span class="p">(</span><span class="mf">0.22</span><span class="p">,</span>   <span class="mf">0.0</span><span class="p">,</span>    <span class="mf">0.11</span><span class="p">,</span>   <span class="mf">0.31</span><span class="p">,</span>  <span class="o">-</span><span class="mf">18.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
-<span class="linenos"> 41</span>        <span class="p">(</span><span class="o">-</span><span class="mf">0.22</span><span class="p">,</span>  <span class="mf">0.0</span><span class="p">,</span>    <span class="mf">0.16</span><span class="p">,</span>   <span class="mf">0.41</span><span class="p">,</span>   <span class="mf">18.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.8</span><span class="p">),</span>
-<span class="linenos"> 42</span>        <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span>    <span class="mf">0.35</span><span class="p">,</span>   <span class="mf">0.21</span><span class="p">,</span>   <span class="mf">0.25</span><span class="p">,</span>    <span class="mf">0.0</span><span class="p">,</span>  <span class="mf">0.7</span><span class="p">),</span>
-<span class="linenos"> 43</span>    <span class="p">]</span>
-<span class="linenos"> 44</span>    <span class="n">cx</span> <span class="o">=</span> <span class="p">(</span><span class="n">Nx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
-<span class="linenos"> 45</span>    <span class="n">cy</span> <span class="o">=</span> <span class="p">(</span><span class="n">Ny</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
-<span class="linenos"> 46</span>    <span class="k">for</span> <span class="n">ix</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Nx</span><span class="p">):</span>
-<span class="linenos"> 47</span>        <span class="k">for</span> <span class="n">iy</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">Ny</span><span class="p">):</span>
-<span class="linenos"> 48</span>            <span class="n">xnorm</span> <span class="o">=</span> <span class="p">(</span><span class="n">ix</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">Nx</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 49</span>            <span class="n">ynorm</span> <span class="o">=</span> <span class="p">(</span><span class="n">iy</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">Ny</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos"> 50</span>            <span class="n">val</span> <span class="o">=</span> <span class="mf">0.0</span>
-<span class="linenos"> 51</span>            <span class="k">for</span> <span class="p">(</span><span class="n">x0</span><span class="p">,</span> <span class="n">y0</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">angdeg</span><span class="p">,</span> <span class="n">ampl</span><span class="p">)</span> <span class="ow">in</span> <span class="n">ellipses</span><span class="p">:</span>
-<span class="linenos"> 52</span>                <span class="n">th</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">deg2rad</span><span class="p">(</span><span class="n">angdeg</span><span class="p">)</span>
-<span class="linenos"> 53</span>                <span class="n">xprime</span> <span class="o">=</span> <span class="p">(</span><span class="n">xnorm</span> <span class="o">-</span> <span class="n">x0</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">th</span><span class="p">)</span> <span class="o">+</span> <span class="p">(</span><span class="n">ynorm</span> <span class="o">-</span> <span class="n">y0</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
-<span class="linenos"> 54</span>                <span class="n">yprime</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">xnorm</span> <span class="o">-</span> <span class="n">x0</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">th</span><span class="p">)</span> <span class="o">+</span> <span class="p">(</span><span class="n">ynorm</span> <span class="o">-</span> <span class="n">y0</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
-<span class="linenos"> 55</span>                <span class="k">if</span> <span class="n">xprime</span> <span class="o">*</span> <span class="n">xprime</span> <span class="o">/</span> <span class="p">(</span><span class="n">a</span> <span class="o">*</span> <span class="n">a</span><span class="p">)</span> <span class="o">+</span> <span class="n">yprime</span> <span class="o">*</span> <span class="n">yprime</span> <span class="o">/</span> <span class="p">(</span><span class="n">b</span> <span class="o">*</span> <span class="n">b</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">:</span>
-<span class="linenos"> 56</span>                    <span class="n">val</span> <span class="o">+=</span> <span class="n">ampl</span>
-<span class="linenos"> 57</span>            <span class="n">phantom</span><span class="p">[</span><span class="n">iy</span><span class="p">,</span> <span class="n">ix</span><span class="p">]</span> <span class="o">=</span> <span class="n">val</span>
-<span class="linenos"> 58</span>    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
-<span class="linenos"> 59</span>
-<span class="linenos"> 60</span>
-<span class="linenos"> 61</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
-<span class="linenos"> 62</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos"> 63</span>    <span class="c1"># 1. Image geometry</span>
-<span class="linenos"> 64</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos"> 65</span>    <span class="c1"># ``Nx`` / ``Ny`` are the reconstruction grid size in pixels. The</span>
-<span class="linenos"> 66</span>    <span class="c1"># phantom tensor has shape ``(Ny, Nx)`` (rows, cols) which matches</span>
-<span class="linenos"> 67</span>    <span class="c1"># the ``(H, W)`` layout every 2D routine in diffct expects.</span>
-<span class="linenos"> 68</span>    <span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span> <span class="o">=</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">256</span>
-<span class="linenos"> 69</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">shepp_logan_2d</span><span class="p">(</span><span class="n">Nx</span><span class="p">,</span> <span class="n">Ny</span><span class="p">)</span>
-<span class="linenos"> 70</span>
-<span class="linenos"> 71</span>    <span class="c1"># ``voxel_spacing`` is the physical pixel pitch in the same units as</span>
-<span class="linenos"> 72</span>    <span class="c1"># ``detector_spacing``. Only ratios matter internally.</span>
-<span class="linenos"> 73</span>    <span class="n">voxel_spacing</span> <span class="o">=</span> <span class="mf">1.0</span>
-<span class="linenos"> 74</span>
-<span class="linenos"> 75</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos"> 76</span>    <span class="c1"># 2. Source trajectory (parallel beam on a circular orbit)</span>
-<span class="linenos"> 77</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos"> 78</span>    <span class="c1"># For parallel beam the Radon inversion is periodic with period pi:</span>
-<span class="linenos"> 79</span>    <span class="c1"># views at beta and beta+pi carry the same information up to a</span>
-<span class="linenos"> 80</span>    <span class="c1"># flip of t. Sampling a full 2*pi range double-counts each ray and</span>
-<span class="linenos"> 81</span>    <span class="c1"># we correct for it with ``redundant_full_scan=True`` in the</span>
-<span class="linenos"> 82</span>    <span class="c1"># angular weights. You can equivalently use</span>
-<span class="linenos"> 83</span>    <span class="c1"># ``np.linspace(0, np.pi, num_angles, endpoint=False)`` together</span>
-<span class="linenos"> 84</span>    <span class="c1"># with ``redundant_full_scan=False``.</span>
-<span class="linenos"> 85</span>    <span class="n">num_angles</span> <span class="o">=</span> <span class="mi">360</span>
-<span class="linenos"> 86</span>    <span class="n">angles_np</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span>
-<span class="linenos"> 87</span>        <span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">num_angles</span><span class="p">,</span> <span class="n">endpoint</span><span class="o">=</span><span class="kc">False</span>
-<span class="linenos"> 88</span>    <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-<span class="linenos"> 89</span>
-<span class="linenos"> 90</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos"> 91</span>    <span class="c1"># 3. Detector geometry</span>
-<span class="linenos"> 92</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos"> 93</span>    <span class="c1"># ``num_detectors`` is the number of detector cells. ``detector_spacing``</span>
-<span class="linenos"> 94</span>    <span class="c1"># is their physical pitch. Parallel beam needs enough detector cells</span>
-<span class="linenos"> 95</span>    <span class="c1"># to cover the diagonal of the field of view (approximately</span>
-<span class="linenos"> 96</span>    <span class="c1"># ``sqrt(Nx^2 + Ny^2) * voxel_spacing / detector_spacing``) so that</span>
-<span class="linenos"> 97</span>    <span class="c1"># no ray through the FOV ever projects outside the detector.</span>
-<span class="linenos"> 98</span>    <span class="n">num_detectors</span> <span class="o">=</span> <span class="mi">512</span>
-<span class="linenos"> 99</span>    <span class="n">detector_spacing</span> <span class="o">=</span> <span class="mf">1.0</span>
-<span class="linenos">100</span>    <span class="n">detector_offset</span> <span class="o">=</span> <span class="mf">0.0</span>
-<span class="linenos">101</span>
-<span class="linenos">102</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">103</span>    <span class="c1"># 4. Move everything to CUDA</span>
-<span class="linenos">104</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">105</span>    <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
-<span class="linenos">106</span>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;This example requires CUDA.&quot;</span><span class="p">)</span>
-<span class="linenos">107</span>    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
-<span class="linenos">108</span>    <span class="n">image_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
-<span class="linenos">109</span>        <span class="n">phantom</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span>
-<span class="linenos">110</span>    <span class="p">)</span>
-<span class="linenos">111</span>    <span class="n">angles_torch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">angles_np</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-<span class="linenos">112</span>
-<span class="linenos">113</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">114</span>    <span class="c1"># 5. Forward projection: image -&gt; parallel sinogram</span>
-<span class="linenos">115</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">116</span>    <span class="c1"># ``ParallelProjectorFunction`` is the differentiable Siddon-based</span>
-<span class="linenos">117</span>    <span class="c1"># parallel-beam forward projector. It returns a</span>
-<span class="linenos">118</span>    <span class="c1"># (num_angles, num_detectors) sinogram. The call is autograd-aware</span>
-<span class="linenos">119</span>    <span class="c1"># so the same function can be used inside an iterative reconstruction</span>
-<span class="linenos">120</span>    <span class="c1"># loop (see ``iterative_reco_parallel.py``).</span>
-<span class="linenos">121</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">ParallelProjectorFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
-<span class="linenos">122</span>        <span class="n">image_torch</span><span class="p">,</span>
-<span class="linenos">123</span>        <span class="n">angles_torch</span><span class="p">,</span>
-<span class="linenos">124</span>        <span class="n">num_detectors</span><span class="p">,</span>
-<span class="linenos">125</span>        <span class="n">detector_spacing</span><span class="p">,</span>
-<span class="linenos">126</span>        <span class="n">voxel_spacing</span><span class="p">,</span>
-<span class="linenos">127</span>    <span class="p">)</span>
-<span class="linenos">128</span>
-<span class="linenos">129</span>    <span class="c1"># ==================================================================</span>
-<span class="linenos">130</span>    <span class="c1"># 6. FBP analytical reconstruction</span>
-<span class="linenos">131</span>    <span class="c1"># ==================================================================</span>
-<span class="linenos">132</span>
-<span class="linenos">133</span>    <span class="c1"># --- 6.1  1D ramp filter along the detector axis -----------------</span>
-<span class="linenos">134</span>    <span class="c1"># Parallel beam does not need a cosine pre-weight (there is no fan</span>
-<span class="linenos">135</span>    <span class="c1"># angle). The only filtering step is the 1D ramp along the</span>
-<span class="linenos">136</span>    <span class="c1"># detector-u axis. See the fdk_cone.py example for the full list</span>
-<span class="linenos">137</span>    <span class="c1"># of ``ramp_filter_1d`` options.</span>
-<span class="linenos">138</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">ramp_filter_1d</span><span class="p">(</span>
-<span class="linenos">139</span>        <span class="n">sinogram</span><span class="p">,</span>
-<span class="linenos">140</span>        <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-<span class="linenos">141</span>        <span class="n">sample_spacing</span><span class="o">=</span><span class="n">detector_spacing</span><span class="p">,</span>
-<span class="linenos">142</span>        <span class="n">pad_factor</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-<span class="linenos">143</span>        <span class="n">window</span><span class="o">=</span><span class="s2">&quot;hann&quot;</span><span class="p">,</span>
-<span class="linenos">144</span>    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
-<span class="linenos">145</span>
-<span class="linenos">146</span>    <span class="c1"># --- 6.2  Per-view angular integration weights -------------------</span>
-<span class="linenos">147</span>    <span class="c1"># For a full 2*pi scan uniformly sampled, each view contributes</span>
-<span class="linenos">148</span>    <span class="c1"># ``pi / num_angles`` to the FBP integral (the ``1/2`` redundancy</span>
-<span class="linenos">149</span>    <span class="c1"># factor is absorbed by ``redundant_full_scan=True``).</span>
-<span class="linenos">150</span>    <span class="n">d_beta</span> <span class="o">=</span> <span class="n">angular_integration_weights</span><span class="p">(</span>
-<span class="linenos">151</span>        <span class="n">angles_torch</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="kc">True</span>
-<span class="linenos">152</span>    <span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-<span class="linenos">153</span>    <span class="n">sinogram_filt</span> <span class="o">=</span> <span class="n">sinogram_filt</span> <span class="o">*</span> <span class="n">d_beta</span>
-<span class="linenos">154</span>
-<span class="linenos">155</span>    <span class="c1"># --- 6.3  Voxel-driven FBP backprojection ------------------------</span>
-<span class="linenos">156</span>    <span class="c1"># ``parallel_weighted_backproject`` dispatches to the dedicated</span>
-<span class="linenos">157</span>    <span class="c1"># parallel-beam FBP gather kernel. For each pixel and each view it</span>
-<span class="linenos">158</span>    <span class="c1"># computes the detector-u coordinate the pixel projects to,</span>
-<span class="linenos">159</span>    <span class="c1"># linearly samples the filtered sinogram and accumulates. The</span>
-<span class="linenos">160</span>    <span class="c1"># ``1/(2*pi)`` Fourier-convention constant is applied inside the</span>
-<span class="linenos">161</span>    <span class="c1"># wrapper so the returned image is already amplitude-calibrated.</span>
-<span class="linenos">162</span>    <span class="n">reconstruction_raw</span> <span class="o">=</span> <span class="n">parallel_weighted_backproject</span><span class="p">(</span>
-<span class="linenos">163</span>        <span class="n">sinogram_filt</span><span class="p">,</span>
-<span class="linenos">164</span>        <span class="n">angles_torch</span><span class="p">,</span>
-<span class="linenos">165</span>        <span class="n">detector_spacing</span><span class="p">,</span>
-<span class="linenos">166</span>        <span class="n">Ny</span><span class="p">,</span>
-<span class="linenos">167</span>        <span class="n">Nx</span><span class="p">,</span>
-<span class="linenos">168</span>        <span class="n">voxel_spacing</span><span class="o">=</span><span class="n">voxel_spacing</span><span class="p">,</span>
-<span class="linenos">169</span>        <span class="n">detector_offset</span><span class="o">=</span><span class="n">detector_offset</span><span class="p">,</span>
-<span class="linenos">170</span>    <span class="p">)</span>
-<span class="linenos">171</span>    <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">relu</span><span class="p">(</span><span class="n">reconstruction_raw</span><span class="p">)</span>
-<span class="linenos">172</span>
-<span class="linenos">173</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">174</span>    <span class="c1"># 7. Quantitative summary + a gradient sanity check</span>
-<span class="linenos">175</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">176</span>    <span class="n">raw_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction_raw</span> <span class="o">-</span> <span class="n">image_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">177</span>    <span class="n">clamped_loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mean</span><span class="p">((</span><span class="n">reconstruction</span> <span class="o">-</span> <span class="n">image_torch</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">178</span>    <span class="c1"># Trigger autograd to make sure the differentiable forward still</span>
-<span class="linenos">179</span>    <span class="c1"># flows a gradient back to ``image_torch`` after the pipeline.</span>
-<span class="linenos">180</span>    <span class="n">clamped_loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
-<span class="linenos">181</span>
-<span class="linenos">182</span>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Parallel Beam FBP example (circular full scan):&quot;</span><span class="p">)</span>
-<span class="linenos">183</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Raw MSE:              </span><span class="si">{</span><span class="n">raw_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">184</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Clamped MSE:          </span><span class="si">{</span><span class="n">clamped_loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">185</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Reconstruction shape: </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="linenos">186</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">187</span>        <span class="s2">&quot;  Raw reco data range:  &quot;</span>
-<span class="linenos">188</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction_raw</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">189</span>    <span class="p">)</span>
-<span class="linenos">190</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">191</span>        <span class="s2">&quot;  Clamped reco range:   &quot;</span>
-<span class="linenos">192</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">reconstruction</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">193</span>    <span class="p">)</span>
-<span class="linenos">194</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">195</span>        <span class="s2">&quot;  Phantom data range:   &quot;</span>
-<span class="linenos">196</span>        <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom</span><span class="o">.</span><span class="n">min</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">phantom</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
-<span class="linenos">197</span>    <span class="p">)</span>
-<span class="linenos">198</span>    <span class="nb">print</span><span class="p">(</span>
-<span class="linenos">199</span>        <span class="s2">&quot;  |phantom.grad|.mean:  &quot;</span>
-<span class="linenos">200</span>        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">image_torch</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6e</span><span class="si">}</span><span class="s2">&quot;</span>
-<span class="linenos">201</span>    <span class="p">)</span>
-<span class="linenos">202</span>
-<span class="linenos">203</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">204</span>    <span class="c1"># 8. Visualization</span>
-<span class="linenos">205</span>    <span class="c1"># ------------------------------------------------------------------</span>
-<span class="linenos">206</span>    <span class="n">sinogram_cpu</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-<span class="linenos">207</span>    <span class="n">reco_cpu</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-<span class="linenos">208</span>
-<span class="linenos">209</span>    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
-<span class="linenos">210</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-<span class="linenos">211</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">phantom</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
-<span class="linenos">212</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Phantom&quot;</span><span class="p">)</span>
-<span class="linenos">213</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">214</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
-<span class="linenos">215</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">sinogram_cpu</span><span class="p">,</span> <span class="n">aspect</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
-<span class="linenos">216</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Parallel Sinogram&quot;</span><span class="p">)</span>
-<span class="linenos">217</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">218</span>    <span class="n">plt</span><span class="o">.</span><span class="n">subplot</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-<span class="linenos">219</span>    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span><span class="n">reco_cpu</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;gray&quot;</span><span class="p">)</span>
-<span class="linenos">220</span>    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Parallel Reconstruction&quot;</span><span class="p">)</span>
-<span class="linenos">221</span>    <span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
-<span class="linenos">222</span>    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
-<span class="linenos">223</span>    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="linenos">224</span>
-<span class="linenos">225</span>
-<span class="linenos">226</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-<span class="linenos">227</span>    <span class="n">main</span><span class="p">()</span>
-</pre></div>
-</div>
-</div>
-</section>
-</section>
-
-
-           </div>
-          </div>
-          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="examples.html" class="btn btn-neutral float-left" title="Examples" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="fbp_fan_example.html" class="btn btn-neutral float-right" title="Fan Beam Filtered Backprojection (FBP)" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+      
     </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/sypsyp97/diffct/blob/main/docs/source/fbp_parallel_example.rst?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/sypsyp97/diffct/edit/main/docs/source/fbp_parallel_example.rst" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="parallel-beam-filtered-backprojection-fbp">
+<h1>Parallel Beam Filtered Backprojection (FBP)<a class="headerlink" href="#parallel-beam-filtered-backprojection-fbp" title="Link to this heading">¶</a></h1>
+<p>This page describes the maintained <code class="docutils literal notranslate"><span class="pre">examples/analytical_reconstruction.py</span></code>
+pipeline. See <a class="reference internal" href="api.html"><span class="doc">API Reference</span></a> for filter options and helper signatures.</p>
+<section id="run-it">
+<h2>Run it<a class="headerlink" href="#run-it" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/analytical_reconstruction.py<span class="w"> </span>--size<span class="w"> </span><span class="m">64</span><span class="w"> </span>--window<span class="w"> </span>shepp-logan
+python<span class="w"> </span>examples/analytical_reconstruction.py<span class="w"> </span>--size<span class="w"> </span><span class="m">128</span><span class="w"> </span>--figure<span class="w"> </span>analytical.png
+</pre></div>
+</div>
+<p>The script runs all three beam types on one CUDA GPU and reports PSNR against
+the synthetic phantom. <code class="docutils literal notranslate"><span class="pre">--figure</span></code> additionally requires Matplotlib.</p>
+</section>
+<section id="pipeline">
+<h2>Pipeline<a class="headerlink" href="#pipeline" title="Link to this heading">¶</a></h2>
+<p>The maintained example uses a half-turn circular parallel-beam scan with 360
+views. The detector has <code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">*</span> <span class="pre">size</span></code> cells and pitch 0.5 in voxel units.</p>
+<ol class="arabic simple">
+<li><p>Generate a phantom slice and project it with <code class="docutils literal notranslate"><span class="pre">Projector(beam=&quot;parallel&quot;)</span></code>.</p></li>
+<li><p>Filter along the detector dimension (<code class="docutils literal notranslate"><span class="pre">dim=1</span></code>) with
+<code class="docutils literal notranslate"><span class="pre">ramp_filter_1d(...,</span> <span class="pre">sample_spacing=pitch,</span> <span class="pre">pad_factor=2)</span></code>.</p></li>
+<li><p>Multiply by <code class="docutils literal notranslate"><span class="pre">angular_integration_weights(half_turn,</span>
+<span class="pre">redundant_full_scan=False)</span></code>.</p></li>
+<li><p>Call <code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code> with the trajectory on the sinogram’s
+CUDA device. This helper includes its analytical normalization.</p></li>
+</ol>
+<p>The analytical weighted gather is separate from the cell-constant Siddon adjoint
+used by <code class="docutils literal notranslate"><span class="pre">Projector.backproject()</span></code>. Do not substitute the raw adjoint and add an
+extra <code class="docutils literal notranslate"><span class="pre">pi</span> <span class="pre">/</span> <span class="pre">number_of_views</span></code> factor: the maintained pipeline already applies
+angular integration weights and the helper’s analytical normalization. These
+CUDA gather helpers do not provide the same autograd path as <code class="docutils literal notranslate"><span class="pre">Projector</span></code>.</p>
+</section>
+<section id="maintained-source">
+<h2>Maintained source<a class="headerlink" href="#maintained-source" title="Link to this heading">¶</a></h2>
+<div class="literal-block-wrapper docutils container" id="id1">
+<div class="code-block-caption"><span class="caption-text">Parallel FBP, fan FBP and cone FDK</span><a class="headerlink" href="#id1" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos"> 1</span><span class="sd">"""Analytical reconstruction: parallel-beam FBP, fan-beam FBP and cone-beam FDK.</span>
+<span class="linenos"> 2</span>
+<span class="linenos"> 3</span><span class="sd">Each pipeline is the textbook one: optional cosine weighting, ramp filter with</span>
+<span class="linenos"> 4</span><span class="sd">a window, angular weights, voxel-driven weighted backprojection. The window</span>
+<span class="linenos"> 5</span><span class="sd">trades sharpness against noise: "ram-lak" keeps all frequencies, "shepp-logan"</span>
+<span class="linenos"> 6</span><span class="sd">and "cosine" damp the highest, "hamming" and "hann" damp the most.</span>
+<span class="linenos"> 7</span>
+<span class="linenos"> 8</span><span class="sd">    python examples/analytical_reconstruction.py --window shepp-logan --figure fbp.png</span>
+<span class="linenos"> 9</span><span class="sd">"""</span>
+<span class="linenos">10</span>
+<span class="linenos">11</span><span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+<span class="linenos">12</span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="linenos">13</span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="linenos">14</span>
+<span class="linenos">15</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="linenos">16</span>
+<span class="linenos">17</span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<span class="linenos">18</span>    <span class="n">Projector</span><span class="p">,</span>
+<span class="linenos">19</span>    <span class="n">angular_integration_weights</span><span class="p">,</span>
+<span class="linenos">20</span>    <span class="n">circular_trajectory_2d_fan</span><span class="p">,</span>
+<span class="linenos">21</span>    <span class="n">circular_trajectory_2d_parallel</span><span class="p">,</span>
+<span class="linenos">22</span>    <span class="n">fan_cosine_weights</span><span class="p">,</span>
+<span class="linenos">23</span>    <span class="n">fan_weighted_backproject</span><span class="p">,</span>
+<span class="linenos">24</span>    <span class="n">parallel_weighted_backproject</span><span class="p">,</span>
+<span class="linenos">25</span>    <span class="n">ramp_filter_1d</span><span class="p">,</span>
+<span class="linenos">26</span><span class="p">)</span>
+<span class="linenos">27</span><span class="kn">from</span><span class="w"> </span><span class="nn">_common</span><span class="w"> </span><span class="kn">import</span> <span class="n">Scan</span><span class="p">,</span> <span class="n">fdk</span><span class="p">,</span> <span class="n">psnr</span><span class="p">,</span> <span class="n">save_slices</span><span class="p">,</span> <span class="n">shepp_logan_3d</span>
+<span class="linenos">28</span>
+<span class="linenos">29</span>
+<span class="linenos">30</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="linenos">31</span>    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="vm">__doc__</span><span class="p">,</span> <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">)</span>
+<span class="linenos">32</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--size"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
+<span class="linenos">33</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--window"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"shepp-logan"</span><span class="p">,</span>
+<span class="linenos">34</span>                        <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s2">"ram-lak"</span><span class="p">,</span> <span class="s2">"shepp-logan"</span><span class="p">,</span> <span class="s2">"cosine"</span><span class="p">,</span> <span class="s2">"hamming"</span><span class="p">,</span> <span class="s2">"hann"</span><span class="p">])</span>
+<span class="linenos">35</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--figure"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="n">Path</span><span class="p">)</span>
+<span class="linenos">36</span>    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+<span class="linenos">37</span>    <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+<span class="linenos">38</span>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"diffct needs a CUDA GPU"</span><span class="p">)</span>
+<span class="linenos">39</span>    <span class="n">n</span> <span class="o">=</span> <span class="n">args</span><span class="o">.</span><span class="n">size</span>
+<span class="linenos">40</span>    <span class="n">phantom</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">shepp_logan_3d</span><span class="p">(</span><span class="n">n</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+<span class="linenos">41</span>    <span class="n">image</span> <span class="o">=</span> <span class="n">phantom</span><span class="p">[</span><span class="n">n</span> <span class="o">//</span> <span class="mi">2</span><span class="p">]</span>
+<span class="linenos">42</span>    <span class="n">views</span> <span class="o">=</span> <span class="mi">360</span>
+<span class="linenos">43</span>    <span class="n">full_turn</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">views</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="linenos">44</span>    <span class="n">half_turn</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">views</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="linenos">45</span>
+<span class="linenos">46</span>    <span class="c1"># Parallel beam over 180 degrees; detector pitch 0.5 voxel.</span>
+<span class="linenos">47</span>    <span class="n">n_det</span><span class="p">,</span> <span class="n">pitch</span> <span class="o">=</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">n</span><span class="p">,</span> <span class="mf">0.5</span>
+<span class="linenos">48</span>    <span class="n">trajectory</span> <span class="o">=</span> <span class="n">circular_trajectory_2d_parallel</span><span class="p">(</span><span class="n">views</span><span class="p">,</span> <span class="n">end_angle</span><span class="o">=</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+<span class="linenos">49</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">beam</span><span class="o">=</span><span class="s2">"parallel"</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="n">pitch</span><span class="p">)</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+<span class="linenos">50</span>    <span class="n">filtered</span> <span class="o">=</span> <span class="n">ramp_filter_1d</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">sample_spacing</span><span class="o">=</span><span class="n">pitch</span><span class="p">,</span> <span class="n">pad_factor</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">window</span><span class="p">)</span>
+<span class="linenos">51</span>    <span class="n">filtered</span> <span class="o">=</span> <span class="n">filtered</span> <span class="o">*</span> <span class="n">angular_integration_weights</span><span class="p">(</span><span class="n">half_turn</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="linenos">52</span>    <span class="n">parallel</span> <span class="o">=</span> <span class="n">parallel_weighted_backproject</span><span class="p">(</span><span class="n">filtered</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="o">*</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">trajectory</span><span class="p">],</span>
+<span class="linenos">53</span>                                             <span class="n">pitch</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="linenos">54</span>
+<span class="linenos">55</span>    <span class="c1"># Fan beam over a full turn; magnification 1.6, detector pitch 0.8 (0.5 voxel at the isocentre).</span>
+<span class="linenos">56</span>    <span class="n">sid</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">pitch</span> <span class="o">=</span> <span class="mf">2.5</span> <span class="o">*</span> <span class="n">n</span><span class="p">,</span> <span class="mf">4.0</span> <span class="o">*</span> <span class="n">n</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">n</span><span class="p">,</span> <span class="mf">0.8</span>
+<span class="linenos">57</span>    <span class="n">trajectory</span> <span class="o">=</span> <span class="n">circular_trajectory_2d_fan</span><span class="p">(</span><span class="n">views</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+<span class="linenos">58</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">beam</span><span class="o">=</span><span class="s2">"fan"</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="n">pitch</span><span class="p">)</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+<span class="linenos">59</span>    <span class="n">weighted</span> <span class="o">=</span> <span class="n">sinogram</span> <span class="o">*</span> <span class="n">fan_cosine_weights</span><span class="p">(</span><span class="n">n_det</span><span class="p">,</span> <span class="n">pitch</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="linenos">60</span>    <span class="n">filtered</span> <span class="o">=</span> <span class="n">ramp_filter_1d</span><span class="p">(</span><span class="n">weighted</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">sample_spacing</span><span class="o">=</span><span class="n">pitch</span><span class="p">,</span> <span class="n">pad_factor</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">window</span><span class="p">)</span>
+<span class="linenos">61</span>    <span class="n">filtered</span> <span class="o">=</span> <span class="n">filtered</span> <span class="o">*</span> <span class="n">angular_integration_weights</span><span class="p">(</span><span class="n">full_turn</span><span class="p">,</span> <span class="n">redundant_full_scan</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="linenos">62</span>    <span class="n">fan</span> <span class="o">=</span> <span class="n">fan_weighted_backproject</span><span class="p">(</span><span class="n">filtered</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="o">*</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">trajectory</span><span class="p">],</span>
+<span class="linenos">63</span>                                   <span class="n">pitch</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="linenos">64</span>
+<span class="linenos">65</span>    <span class="c1"># Cone beam FDK on a circular orbit.</span>
+<span class="linenos">66</span>    <span class="n">scan</span> <span class="o">=</span> <span class="n">Scan</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">views</span><span class="p">)</span>
+<span class="linenos">67</span>    <span class="n">trajectory</span> <span class="o">=</span> <span class="n">scan</span><span class="o">.</span><span class="n">trajectory</span><span class="p">(</span><span class="s2">"circular"</span><span class="p">)</span>
+<span class="linenos">68</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">scan</span><span class="o">.</span><span class="n">detector</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="n">scan</span><span class="o">.</span><span class="n">pitch</span><span class="p">)</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">phantom</span><span class="p">)</span>
+<span class="linenos">69</span>    <span class="n">cone</span> <span class="o">=</span> <span class="n">fdk</span><span class="p">(</span><span class="n">scan</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">trajectory</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">window</span><span class="p">)</span>
+<span class="linenos">70</span>
+<span class="linenos">71</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"window </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">window</span><span class="si">}</span><span class="s2">: parallel FBP </span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">parallel</span><span class="p">,</span><span class="w"> </span><span class="n">image</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> dB, "</span>
+<span class="linenos">72</span>          <span class="sa">f</span><span class="s2">"fan FBP </span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">fan</span><span class="p">,</span><span class="w"> </span><span class="n">image</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> dB, cone FDK </span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">cone</span><span class="p">,</span><span class="w"> </span><span class="n">phantom</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">)</span>
+<span class="linenos">73</span>    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">figure</span><span class="p">:</span>
+<span class="linenos">74</span>        <span class="n">save_slices</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">figure</span><span class="p">,</span> <span class="p">[(</span><span class="s2">"phantom</span><span class="se">\n</span><span class="s2">ground truth"</span><span class="p">,</span> <span class="n">phantom</span><span class="p">),</span>
+<span class="linenos">75</span>                                  <span class="p">(</span><span class="sa">f</span><span class="s2">"parallel FBP</span><span class="se">\n</span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">parallel</span><span class="p">,</span><span class="w"> </span><span class="n">image</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">,</span> <span class="n">parallel</span><span class="p">),</span>
+<span class="linenos">76</span>                                  <span class="p">(</span><span class="sa">f</span><span class="s2">"fan FBP</span><span class="se">\n</span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">fan</span><span class="p">,</span><span class="w"> </span><span class="n">image</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">,</span> <span class="n">fan</span><span class="p">),</span>
+<span class="linenos">77</span>                                  <span class="p">(</span><span class="sa">f</span><span class="s2">"cone FDK</span><span class="se">\n</span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">cone</span><span class="p">,</span><span class="w"> </span><span class="n">phantom</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">,</span> <span class="n">cone</span><span class="p">)],</span>
+<span class="linenos">78</span>                    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">² / </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">³ Shepp-Logan, </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">window</span><span class="si">}</span><span class="s2"> window"</span><span class="p">)</span>
+<span class="linenos">79</span>
+<span class="linenos">80</span>
+<span class="linenos">81</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+<span class="linenos">82</span>    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
+</section>
 
-  <hr/>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="fbp_fan_example.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Fan Beam Filtered Backprojection (FBP)</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="examples.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Examples</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025-2026, Yipeng Sun
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Parallel Beam Filtered Backprojection (FBP)</a><ul>
+<li><a class="reference internal" href="#run-it">Run it</a></li>
+<li><a class="reference internal" href="#pipeline">Pipeline</a></li>
+<li><a class="reference internal" href="#maintained-source">Maintained source</a></li>
+</ul>
+</li>
+</ul>
 
-  <div role="contentinfo">
-    <p>&#169; Copyright 2025, Yipeng Sun.</p>
-  </div>
-
-  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
-    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
-    provided by <a href="https://readthedocs.org">Read the Docs</a>.
-   
-
-</footer>
+          </div>
         </div>
       </div>
-    </section>
+      
+      
+    </aside>
   </div>
-  <script>
-      jQuery(function () {
-          SphinxRtdTheme.Navigation.enable(true);
-      });
-  </script> 
-
-</body>
+</div><script src="_static/documentation_options.js?v=51b770b3"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=2871b0cb"></script>
+    </body>
 </html>
