@@ -54,15 +54,14 @@ Capabilities, limits and isocenter rules: [docs/REFERENCE.md](docs/REFERENCE.md#
 You need a CUDA GPU and PyTorch. Install PyTorch for your CUDA version first.
 
 ```bash
-pip install "numpy<2.5" "numba-cuda[cu12]"   # [cu13] for CUDA 13; install PyTorch for your CUDA first
-pip install diffct
+pip install "diffct[cu12]"    # [cu13] for CUDA 13; install PyTorch for your CUDA first
 ```
 
 From source, with the examples:
 
 ```bash
 git clone https://github.com/sypsyp97/diffct.git
-cd diffct && pip install -e .
+cd diffct && pip install -e ".[cu12]"
 python examples/quickstart.py               # smoke test: prints adjoint mismatch ~1e-8 for each beam
 ```
 

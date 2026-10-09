@@ -54,15 +54,14 @@
 需要 CUDA GPU 和 PyTorch。请先按你的 CUDA 版本安装 PyTorch。
 
 ```bash
-pip install "numpy<2.5" "numba-cuda[cu12]"   # CUDA 13 用 [cu13]；先按 CUDA 版本安装 PyTorch
-pip install diffct
+pip install "diffct[cu12]"    # CUDA 13 用 [cu13]；先按 CUDA 版本安装 PyTorch
 ```
 
 从源码安装（含示例）：
 
 ```bash
 git clone https://github.com/sypsyp97/diffct.git
-cd diffct && pip install -e .
+cd diffct && pip install -e ".[cu12]"
 python examples/quickstart.py               # 冒烟测试：每种射束打印伴随误差约 1e-8
 ```
 

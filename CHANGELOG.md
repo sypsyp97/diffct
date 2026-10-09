@@ -25,6 +25,8 @@ per-view trajectories. It breaks the 1.x interface; see
 
 - Multi-GPU execution in one process (``devices=[...]``) and one process per
   GPU with torchrun and NCCL, on one or several nodes.
+- Install extras ``diffct[cu12]`` and ``diffct[cu13]`` pull in the matching
+  numba-cuda CUDA bindings, so one ``pip install`` gives a working import.
 - Measured walnut example (``examples/walnut_reconstruction.py``), intro video
   and README figures with provenance records in ``docs/assets``.
 - Geometry gradients. Trajectory tensors may require gradients; ``Projector``

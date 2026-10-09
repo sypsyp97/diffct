@@ -10,12 +10,11 @@ Install a CUDA-enabled PyTorch build appropriate for your driver first, then:
 
 .. code-block:: bash
 
-   python -m pip install "numpy<2.5" "numba-cuda[cu12]"
-   python -m pip install diffct
+   python -m pip install "diffct[cu12]"
    python -c "import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"
    # from a source checkout: python examples/quickstart.py
 
-Use ``numba-cuda[cu13]`` for a compatible CUDA 13 stack. Keep NVVM and NVJitLink
+Use ``diffct[cu13]`` for a compatible CUDA 13 stack. Keep NVVM and NVJitLink
 compatible with the CUDA libraries loaded by PyTorch. ``torch.cuda.is_available()``
 only checks PyTorch's device access; the quickstart additionally compiles and
 executes the Numba kernels. The first call includes JIT compilation overhead.
@@ -77,12 +76,12 @@ Troubleshooting
 Build these docs without a GPU
 ------------------------------
 
-The documentation imports diffct for its API reference but does not execute CUDA
-examples. From the repository root, with the package dependencies installed:
+The documentation build mocks the CUDA stack, so it needs no GPU. From the
+repository root:
 
 .. code-block:: bash
 
-   python -m pip install sphinx sphinx-rtd-theme myst-parser
+   python -m pip install -r docs/requirements.txt
    python -m sphinx -W --keep-going -b html docs/source docs/build/html
 
 Open ``docs/build/html/index.html`` to review this checkout's documentation.
