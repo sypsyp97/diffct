@@ -246,7 +246,7 @@ Backward Compatibility
 
 .. currentmodule:: diffct.differentiable
 
-``diffct.differentiable`` re-exports this branch's API; it does not restore
+``diffct.differentiable`` re-exports the 2.0 API; it does not restore
 the circular-only scalar-angle signatures. See :doc:`migration`. New projects
 should import ``Projector`` from ``diffct``.
 

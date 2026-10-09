@@ -1,4 +1,4 @@
-"""Utility classes and helper functions for DiffCT package.
+"""Utility classes and helper functions for diffct package.
 
 This module provides utility classes and functions for device management,
 PyTorch-CUDA bridging, stream caching, trigonometric table generation,

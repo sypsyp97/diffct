@@ -1,7 +1,7 @@
 # Examples
 
-Runnable scripts for this branch's `Projector` API. Install the checkout first
-(see the [root README](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/README.md)), then run every command from the repository
+Runnable scripts for the `Projector` API. Install diffct from a source checkout first
+(see the [root README](https://github.com/sypsyp97/diffct/blob/main/README.md)), then run every command from the repository
 root. Projection/reconstruction scripts need CUDA; `plot_trajectory.py` runs on
 CPU. Plotting and the reconstruction scripts' `--figure` option also need
 `matplotlib`, which is not a core diffct dependency.
@@ -114,7 +114,7 @@ requested workload fails its numerical checks or minimum speedup (default:
 1.0× for the complete gradient iteration). `--min-speedup=0` also permits a
 single-GPU utility check. A completed run can still fail its acceleration check.
 Small workloads are not guaranteed to speed up. See the
-[distributed guide](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/DISTRIBUTED.md) for full standalone examples,
+[distributed guide](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md) for full standalone examples,
 cross-node checks and memory constraints.
 
 ## Rules for distributed losses
@@ -134,7 +134,7 @@ These rules apply when you write your own loss with `Projector(..., distributed=
 
 The following are recorded measurements from Leonardo Booster (A100 64 GB,
 PyTorch 2.10 cu126, numba-cuda 0.30.4) on 2026-10-09, not expected results for
-every GPU. See the [validation record](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/VALIDATION.md) for related
+every GPU. See the [validation record](https://github.com/sypsyp97/diffct/blob/main/docs/VALIDATION.md) for related
 correctness and cross-node results.
 
 ### Iterative reconstruction

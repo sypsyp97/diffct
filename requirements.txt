@@ -1,5 +1,5 @@
-# Core dependencies
-numpy
-torch
+numpy<2.5
 numba
+numba-cuda
+torch
 matplotlib

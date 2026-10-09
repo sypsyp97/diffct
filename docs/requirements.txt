@@ -1,4 +1,6 @@
-# Documentation build tools; install the package dependencies separately.
+# Documentation build tools. The CUDA stack is mocked in conf.py.
 sphinx
-sphinx-rtd-theme
+furo
 myst-parser
+sphinx-copybutton
+numpy<2.5

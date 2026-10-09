@@ -10,8 +10,8 @@
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://doi.org/10.5281/zenodo.14999333"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square" alt="DOI"></a>
   <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
-  <a href="docs/source/trajectories.rst"><img src="https://img.shields.io/badge/docs-branch-brightgreen.svg?style=flat-square" alt="Branch documentation"></a>
-  <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
+  <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=docs&style=flat-square" alt="Documentation"></a>
+  <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/ci.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
   <a href="https://deepwiki.com/sypsyp97/diffct"><img src="docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
@@ -34,8 +34,8 @@
   <a href="#引用">引用</a>
 </p>
 
-> **分支状态。** 本文档对应候选分支 `codex/arbitrary-trajectory-multigpu`。GitHub 默认分支和 PyPI 发行版尚无 `Projector` 接口。从仅支持圆轨迹的 API 迁移前，请先阅读[本分支指南](docs/source/trajectories.rst)和[迁移说明](docs/MIGRATION.md)。
-> Apple/MLX 移植版由 [Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider) 维护，见 [DiffCT-MLX](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
+> **2.0 版**用逐视角轨迹取代了 1.x 的圆轨迹接口。为 1.x 写的代码需要修改，见[迁移说明](docs/MIGRATION.md)。
+> Apple Silicon 请使用 [Linda-Sophie Schneider 的 MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
 
 ## 为什么使用 diffct
 
@@ -52,10 +52,15 @@
 需要 CUDA GPU 和 PyTorch。请先按你的 CUDA 版本安装 PyTorch。
 
 ```bash
-git clone https://github.com/sypsyp97/diffct.git
-cd diffct && git checkout codex/arbitrary-trajectory-multigpu
 pip install "numpy<2.5" "numba-cuda[cu12]"   # CUDA 13 用 [cu13]；先按 CUDA 版本安装 PyTorch
-pip install -e .
+pip install diffct
+```
+
+从源码安装（含示例）：
+
+```bash
+git clone https://github.com/sypsyp97/diffct.git
+cd diffct && pip install -e .
 python examples/quickstart.py               # 冒烟测试：每种射束打印伴随误差约 1e-8
 ```
 
@@ -157,7 +162,7 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 | 文档 | 内容 |
 |---|---|
-| [本分支指南](docs/source/trajectories.rst) | 轨迹元组、`Projector` 用法和分支适用范围 |
+| [轨迹指南](docs/source/trajectories.rst) | 轨迹元组和 `Projector` 用法 |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | 功能边界、自定义轨迹、几何梯度、多卡细节、几何与单位（英文） |
 | [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | 执行与内存选择、分布式损失规则、Slurm 和跨节点检查 |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | 测试命令、验证细节和每项检查的边界 |

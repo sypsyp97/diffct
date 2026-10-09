@@ -1,7 +1,7 @@
-# Preparing the arbitrary-trajectory branch for main
+# Migrating from diffct 1.x to 2.0
 
-This candidate branch is based on `dev` at `cb516cf`. It does not change the
-remote default branch, create a release, or update PyPI.
+diffct 2.0 replaces the circular-orbit API of 1.x with per-view trajectories.
+This page lists what changes for code written against 1.x.
 
 The recommended entry point is `diffct.Projector`. Its geometry is a tuple of
 per-view tensors, independent of whether the scan is circular, helical, tilted,
@@ -57,9 +57,9 @@ adjoint = operator.backproject(sinogram.detach())  # (64, 64)
 sinogram.square().mean().backward()                # image.grad is populated
 ```
 
-See [`examples/quickstart.py`](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/examples/quickstart.py) for parallel, fan and
+See [`examples/quickstart.py`](https://github.com/sypsyp97/diffct/blob/main/examples/quickstart.py) for parallel, fan and
 helical cone examples, including adjoint and geometry-gradient checks. Use
-[the distributed guide](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/DISTRIBUTED.md) before adapting a loss to multiple ranks;
+[the distributed guide](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md) before adapting a loss to multiple ranks;
 its normalization differs from a local per-rank mean.
 
 ## Moving from circular-only main
@@ -83,9 +83,8 @@ its normalization differs from a local per-rank mean.
 - Projections are line integrals in the length unit of the geometry. Scale
   measured `-log(I / I0)` data and the attenuation image in the same unit.
 - The `main` separable-footprint backends (`sf`, `sf_tr`, `sf_tt`) are not
-  implemented for arbitrary trajectories in this candidate. The matched
-  cell-constant Siddon projector is used. Code depending on SF needs a separate
-  migration decision before a remote promotion.
+  available in 2.0. All projectors use the matched cell-constant Siddon model.
+  Code that depends on SF can stay on diffct 1.3.4.
 
 `backproject()` computes the matched adjoint, not an inverse reconstruction.
 Use it in an iterative solver, or use the existing analytical helpers when
@@ -103,7 +102,7 @@ keeps references to the supplied tensors and reads their current values on each
 call. When a trajectory is computed from learnable parameters such as angles or
 shifts, rebuild that trajectory and the `Projector` inside each optimization
 step to create the new autograd graph. See
-[`examples/geometry_calibration.py`](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/examples/geometry_calibration.py).
+[`examples/geometry_calibration.py`](https://github.com/sypsyp97/diffct/blob/main/examples/geometry_calibration.py).
 
 Keep every geometry valid as it changes: components must have the same nonzero
 view count and finite values; direction axes must be unit vectors; parallel
@@ -116,12 +115,9 @@ cell-constant Siddon model. At voxel-boundary crossings they need not agree with
 a centered finite difference. Second derivatives with respect to geometry raise
 an error; volume and sinogram second derivatives are supported.
 
-## Verification and publication
+## Verification
 
 Run `python -m pytest tests/ -q` on a CUDA host, then the distributed check in
 `docs/DISTRIBUTED.md`. CPU-only orchestration checks do not establish GPU
 correctness. Compare numeric results and gradients to the single-GPU operator;
 do not treat a successfully launched job as a completed validation.
-
-Keep the existing remote `main`, `dev`, and published artifacts unchanged while
-validating this candidate branch. Remote promotion and release are separate actions.

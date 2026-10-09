@@ -10,8 +10,8 @@
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://doi.org/10.5281/zenodo.14999333"><img src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.14999333-blue.svg?style=flat-square" alt="DOI"></a>
   <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
-  <a href="docs/source/trajectories.rst"><img src="https://img.shields.io/badge/docs-branch-brightgreen.svg?style=flat-square" alt="Branch documentation"></a>
-  <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
+  <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=docs&style=flat-square" alt="Documentation"></a>
+  <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/ci.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
   <a href="https://deepwiki.com/sypsyp97/diffct"><img src="docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
@@ -34,8 +34,8 @@
   <a href="#citation">Citation</a>
 </p>
 
-> **Branch status.** This README describes the candidate branch `codex/arbitrary-trajectory-multigpu`. The GitHub default branch and PyPI release do not have the `Projector` API yet. Before you move from the circular-only API, read the [branch guide](docs/source/trajectories.rst) and [migration notes](docs/MIGRATION.md).
-> Apple/MLX port: [DiffCT-MLX](https://github.com/Linda-SophieSchneider/DiffCT-MLX), maintained by [Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider).
+> **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](docs/MIGRATION.md).
+> For Apple Silicon, use the [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
 ## Why diffct
 
@@ -52,10 +52,15 @@ Capabilities, limits and isocenter rules: [docs/REFERENCE.md](docs/REFERENCE.md#
 You need a CUDA GPU and PyTorch. Install PyTorch for your CUDA version first.
 
 ```bash
-git clone https://github.com/sypsyp97/diffct.git
-cd diffct && git checkout codex/arbitrary-trajectory-multigpu
 pip install "numpy<2.5" "numba-cuda[cu12]"   # [cu13] for CUDA 13; install PyTorch for your CUDA first
-pip install -e .
+pip install diffct
+```
+
+From source, with the examples:
+
+```bash
+git clone https://github.com/sypsyp97/diffct.git
+cd diffct && pip install -e .
 python examples/quickstart.py               # smoke test: prints adjoint mismatch ~1e-8 for each beam
 ```
 
@@ -159,7 +164,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 | Document | Contents |
 |---|---|
-| [Branch guide](docs/source/trajectories.rst) | Trajectory tuples, `Projector` usage and scope of this branch |
+| [Trajectory guide](docs/source/trajectories.rst) | Trajectory tuples and `Projector` usage |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | Capabilities and limits, custom trajectories, geometry gradients, multi-GPU details, geometry and units |
 | [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | Execution/memory choices, distributed loss rules, Slurm and cross-node checks |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | Test commands, validation details and the limits of each check |

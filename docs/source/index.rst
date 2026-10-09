@@ -8,10 +8,8 @@ trajectories and calibrated source/detector poses.
 
 .. important::
 
-   These sources describe the candidate branch
-   ``codex/arbitrary-trajectory-multigpu``. Install that checkout to use
-   ``Projector``. The published PyPI release and documentation deployed from
-   ``main`` are separate versions; a documentation badge is not a branch CI result.
+   diffct 2.0 replaces the circular-orbit API of 1.x. See :doc:`migration`
+   before you update code written for 1.x.
 
 What the operator supports
 --------------------------
@@ -42,6 +40,6 @@ Citation and license
 --------------------
 
 For software and technical-report citations, see the
-`branch README <https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/README.md#citation>`_.
+`README <https://github.com/sypsyp97/diffct/blob/main/README.md#citation>`_.
 The project uses the
-`Apache 2.0 license <https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/LICENSE>`_.
+`Apache 2.0 license <https://github.com/sypsyp97/diffct/blob/main/LICENSE>`_.

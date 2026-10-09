@@ -1,6 +1,6 @@
-"""Global constants and configuration for DiffCT package.
+"""Global constants and configuration for diffct package.
 
-This module defines core constants used throughout the DiffCT package,
+This module defines core constants used throughout the diffct package,
 including data types, CUDA thread block configurations, and numerical
 precision parameters.
 """

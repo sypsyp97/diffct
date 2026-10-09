@@ -5,7 +5,7 @@ for a full volume. Adding GPUs does not let a volume exceed one device's
 memory. Distributed mode stores only each rank's sinogram shard; single-process
 multi-GPU mode gathers the full sinogram back onto the input device.
 
-Install this branch as described in the [root README](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/README.md) and run
+Install diffct as described in the [root README](https://github.com/sypsyp97/diffct/blob/main/README.md) and run
 commands from the repository root. CUDA is required for projection and
 backprojection. The multi-process examples below also require PyTorch with
 NCCL support.
@@ -126,7 +126,7 @@ These rules apply to `distributed=True`, using the operator's process group:
 - **Regularizers directly on the replicated volume:** add the full regularizer
   on each rank, without dividing by world size. Its gradient is computed locally;
   the projector has already summed the data-term gradient. The TV example in
-  [`_common.py`](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/examples/_common.py) follows this convention.
+  [`_common.py`](https://github.com/sypsyp97/diffct/blob/main/examples/_common.py) follows this convention.
 - **Logging:** SUM-reduce a detached copy of a local data term. A regularizer that
   is already replicated should be logged once, not summed again.
 - **DDP:** do not add another DDP reduction for the image or geometry gradients
@@ -174,7 +174,7 @@ multi-node jobs; a separate NHR project is required. See the
 
 Cross-node runs are validated on Leonardo Booster with two nodes and four
 A100 GPUs per node: one torchrun launcher per node, `--nproc-per-node=4`, and
-the c10d rendezvous shown above. See [VALIDATION.md](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/VALIDATION.md).
+the c10d rendezvous shown above. See [VALIDATION.md](https://github.com/sypsyp97/diffct/blob/main/docs/VALIDATION.md).
 
 Use the Python environment and GPU resource flags appropriate to the allocation.
 Launch all ranks within one cluster allocation. Running between two
@@ -247,6 +247,6 @@ Use `--sizes`, `--views`, and `--repeats` for your actual workload. Tiny problem
 can be dominated by transfer and launch overhead, so test the acquisition size
 you intend to run rather than assuming a fixed speedup from GPU count.
 
-See [measured results](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/VALIDATION.md). On two A100s the single-process
+See [measured results](https://github.com/sypsyp97/diffct/blob/main/docs/VALIDATION.md). On two A100s the single-process
 `devices` mode was slower than one GPU for 64 cubed; the NCCL mode accelerated
 every tested size. The default benchmark keeps that failure visible.

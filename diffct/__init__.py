@@ -1,5 +1,5 @@
 # diffct/__init__.py
-"""DiffCT - Differentiable CT Reconstruction Package.
+"""diffct - Differentiable CT Reconstruction Package.
 
 A GPU-accelerated, differentiable computed tomography (CT) forward and backward
 projection library built with PyTorch and Numba CUDA.
@@ -49,7 +49,7 @@ try:
 except ImportError:
     pass
 
-__version__ = '1.3.3.dev0'
+__version__ = '2.0.0'
 
 __all__ = [
     'Projector',

@@ -1,8 +1,8 @@
 Getting Started
 ===============
 
-Install the candidate branch
-----------------------------
+Install
+-------
 
 Projection and backprojection require an NVIDIA CUDA GPU. Geometry construction
 and some validation tests can run on CPU; there is no CPU projection backend.
@@ -10,13 +10,10 @@ Install a CUDA-enabled PyTorch build appropriate for your driver first, then:
 
 .. code-block:: bash
 
-   git clone --branch codex/arbitrary-trajectory-multigpu --single-branch \
-       https://github.com/sypsyp97/diffct.git
-   cd diffct
    python -m pip install "numpy<2.5" "numba-cuda[cu12]"
-   python -m pip install -e .
+   python -m pip install diffct
    python -c "import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"
-   python examples/quickstart.py
+   # from a source checkout: python examples/quickstart.py
 
 Use ``numba-cuda[cu13]`` for a compatible CUDA 13 stack. Keep NVVM and NVJitLink
 compatible with the CUDA libraries loaded by PyTorch. ``torch.cuda.is_available()``

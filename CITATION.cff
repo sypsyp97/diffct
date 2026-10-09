@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software (below) and the technical report listed under preferred-citation."
+title: "diffct: Differentiable Computed Tomography Reconstruction with CUDA"
+abstract: >-
+  Differentiable CUDA projectors for computed tomography (CT) with PyTorch
+  autograd. Each view has its own source and detector geometry, so circular,
+  helical, saddle and calibrated scans use the same matched Siddon operator.
+  Projections run on one GPU, several GPUs in one process, or across nodes,
+  and trajectory tensors receive geometry gradients for calibration.
+type: software
+authors:
+  - family-names: Sun
+    given-names: Yipeng
+    email: yipeng.sun@fau.de
+    alias: sypsyp97
+version: 2.0.0
+date-released: "2026-10-09"
+license: Apache-2.0
+repository-code: "https://github.com/sypsyp97/diffct"
+url: "https://sypsyp97.github.io/diffct/"
+doi: 10.5281/zenodo.14999333
+keywords:
+  - computed tomography
+  - CT reconstruction
+  - differentiable programming
+  - CUDA
+  - FBP
+  - FDK
+  - multi-GPU
+  - geometry calibration
+  - deep learning
+  - medical imaging
+preferred-citation:
+  type: article
+  title: "diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories"
+  authors:
+    - family-names: Sun
+      given-names: Yipeng
+    - family-names: Schneider
+      given-names: Linda-Sophie
+    - family-names: Ye
+      given-names: Chengze
+    - family-names: Maier
+      given-names: Andreas
+  year: 2026
+  month: 5
+  journal: Preprints
+  publisher:
+    name: Preprints
+  doi: 10.20944/preprints202605.1446.v1
+  url: "https://doi.org/10.20944/preprints202605.1446.v1"
