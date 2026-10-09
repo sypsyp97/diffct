@@ -188,3 +188,8 @@ projectBrief.md
 
 # Local GPU / cluster validation evidence
 .validation/
+
+# Manim render output
+docs/video/media/
+docs/video/scenes.txt
+docs/video/palette.png

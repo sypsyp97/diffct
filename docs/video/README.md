@@ -8,7 +8,13 @@ python docs/video/make_inputs.py --gpu      # walnut reconstructions; without --
 cd docs/video
 for s in S1Title S2Projection S3Siddon S4Trajectories S5MultiGPU S6Measured S7Helical S8Geometry S9End; do
   manim -qh diffct_intro.py $s
+  echo "file 'media/videos/diffct_intro/1080p60/$s.mp4'" >> scenes.txt
 done
+ffmpeg -f concat -safe 0 -i scenes.txt -c:v libx264 -preset slow -crf 26 -pix_fmt yuv420p -r 30 \
+  -movflags +faststart -an ../assets/diffct_intro.mp4
+ffmpeg -i ../assets/diffct_intro.mp4 -vf "fps=8,scale=800:-1:flags=lanczos,palettegen=max_colors=64:stats_mode=full" palette.png
+ffmpeg -i ../assets/diffct_intro.mp4 -i palette.png \
+  -lavfi "fps=8,scale=800:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=none" ../assets/diffct_intro.gif
 ```
 
 The reconstructions come from the measured walnut in `examples/data/walnut_cone.npz`

@@ -324,9 +324,9 @@ class S5MultiGPU(Scene):
 
         # Measured CGLS iteration time, 128^3, 360 views, A100 64 GB (Leonardo Booster).
         head = T(r"one CGLS iteration, $128^3$ volume, 360 views, A100 64 GB", 38, SUB).move_to(UP * 2.2)
-        rows = [("1 GPU", 30.07, ""), ("4 GPUs, 1 node", 8.09, r"\quad 3.7\texttimes"),
-                ("8 GPUs, 2 nodes", 5.54, r"\quad 5.4\texttimes")]
-        scale = 8.0 / 30.07
+        rows = [("1 GPU", 30.078, ""), ("4 GPUs, 1 node", 8.082, r"\quad 3.7\texttimes"),
+                ("8 GPUs, 2 nodes", 5.591, r"\quad 5.4\texttimes")]
+        scale = 8.0 / 30.078
         bars = VGroup()
         for k, (name, ms, speed) in enumerate(rows):
             y = 0.9 - 1.45 * k
