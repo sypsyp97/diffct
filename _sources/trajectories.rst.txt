@@ -1,12 +1,12 @@
-Trajectories, coordinates and gradients
-=======================================
+Trajectories and Geometry
+=========================
 
-Geometry is data
-----------------
+Trajectory format
+-----------------
 
-``Projector`` takes one row per view in each trajectory tensor. It does not select
-an algorithm based on a trajectory name. The helpers create those tensors; measured
-or calibrated poses can be passed directly with the same layout.
+``Projector`` takes one row per view in each trajectory tensor. The beam type
+selects the tuple layout. The helpers in ``diffct`` create these tensors. You can
+also pass measured or calibrated poses in the same layout.
 
 .. list-table::
    :header-rows: 1
@@ -24,32 +24,30 @@ or calibrated poses can be passed directly with the same layout.
      - ``(src_pos, det_center, det_u, det_v)``, each ``(N, 3)``
      - ``(D, H, W)`` / ``(N, U, V)``
 
-Coordinates are Cartesian ``(x, y[, z])``; volume indexing is ``[y, x]`` or
-``[z, y, x]``. The origin is the volume centre. Use one consistent length unit
-for positions, voxel spacing and detector spacing. A voxel centre along an axis
-of size ``S`` is ``(i + 0.5 - S / 2) * voxel_spacing``. Voxel spacing is a single
-positive isotropic scalar, not an ``(x, y, z)`` tuple.
+Coordinates are Cartesian ``(x, y[, z])``. Volume indexing is ``[y, x]`` for 2D
+and ``[z, y, x]`` for 3D. The origin is the volume centre. Use one length unit
+for positions, voxel spacing and detector spacing. Voxel spacing is a single
+positive scalar.
 
-Detector axes are unit directions, not pixel-step vectors. Cone detector shape
-and spacing use ``(U, V)`` and ``(du, dv)``; a scalar spacing uses the same pitch
-for both axes. Pixel ``(u, v)`` is at:
+Detector axes are unit direction vectors, not pixel-step vectors. The detector
+spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
+Pixel ``(u, v)`` is at:
 
 .. code-block:: text
 
    det_center + (u - (U - 1) / 2) * du * det_u
               + (v - (V - 1) / 2) * dv * det_v
 
-A measured array in ``(views, V, U)`` order must be transposed before use. Confirm
-the physical detector axis directions as well; reshaping alone does not correct
-orientation or a handedness mismatch. Projections are line integrals; attenuation
-values therefore use the reciprocal length unit of the geometry.
+A measured sinogram in ``(views, V, U)`` order must be transposed to
+``(views, U, V)`` before use. Check the physical direction of each detector axis.
+Reshaping does not correct axis orientation.
 
 Custom acquisition example
 --------------------------
 
-This complete example modifies a generated helix with a per-view detector shift.
-For a measured acquisition, replace the four tensors with your calibrated arrays
-in the coordinate system above.
+This example modifies a generated helix with a per-view detector shift. For a
+measured acquisition, replace the four tensors with your calibrated arrays in the
+coordinate system above.
 
 .. code-block:: python
 
@@ -67,27 +65,22 @@ in the coordinate system above.
    sinogram = A.project(volume)  # (90, 96, 64)
 
 All components must be finite floating-point tensors with the same nonzero view
-count. ``ray_dir`` and ``det_u`` are orthogonal for parallel beams; ``det_u`` and
-``det_v`` are orthogonal for cone beams. Fan/cone sources cannot coincide with
-the detector centre or view the detector edge-on. The nearer of source and
-detector centre must be within 1e6 voxel spacings of the origin, and both within
-1e15. These limits protect float32 ray setup; they are not a precision guarantee.
+count. ``ray_dir`` and ``det_u`` must be orthogonal for parallel beams. ``det_u``
+and ``det_v`` must be orthogonal for cone beams. For fan and cone beams, the
+source must not coincide with the detector centre or view the detector edge-on. The nearer of source and
+detector centre must lie within 1e6 voxel spacings of the origin.
 
-Arbitrary rays do not ensure enough angular coverage for an inverse problem.
-Sparse, truncated or incomplete acquisitions can remain ill-posed. Use iterative
-methods with suitable assumptions or regularization. FDK away from a circular
-orbit is a heuristic baseline, not an exact general inverse.
+Arbitrary trajectories do not guarantee enough angular coverage for an inverse
+problem. Use iterative methods with regularization for sparse or incomplete
+acquisitions. The analytical helpers assume a circular orbit (see :doc:`api`).
 
-Geometry optimization
----------------------
+Geometry gradients
+------------------
 
-With fixed geometry (no component requiring gradients), ``Projector`` clones
-its input geometry at construction. Mutating the original tuple later does not
-update the operator: build a new one when fixed poses change.
-
-If any component requires gradients at construction, the operator keeps references
-to the tuple and reads its current values on every call. Set ``requires_grad``
-first. For a direct leaf position tensor, for example:
+Gradients with respect to trajectory tensors are first order only. Set
+``requires_grad=True`` on each tensor before you construct ``Projector``. The
+projector keeps references to the tensors and reads their current values on each
+call. For example:
 
 .. code-block:: python
 
@@ -100,20 +93,19 @@ first. For a direct leaf position tensor, for example:
    loss.backward()
    print(learnable_center.grad.shape)  # (90, 3)
 
-This uses the same target geometry, so a zero gradient is expected. For an actual
-calibration loop, see ``examples/geometry_calibration.py``. If poses are derived
-from learnable angles or offsets, rebuild the derived tensors and ``Projector``
-inside each optimization step to get a fresh PyTorch graph.
+This loss uses the same target geometry, so the gradient is zero. For a real
+calibration loop, see ``examples/geometry_calibration.py``.
 
-Geometry validation happens only at construction. Parameterize rotations and
-offsets so updates preserve unit axes, orthogonality and non-degeneracy. First-order
-geometry derivatives follow the cell-constant model. At exact voxel edges or
-corners the returned one-sided derivative can disagree with central finite
-differences. Slightly perturb symmetric test geometries (for example,
-``start_angle=0.1``) when checking finite differences.
+If poses come from learnable angles or offsets, rebuild the derived tensors and
+the ``Projector`` inside each optimization step. Parameterize rotations so that
+axes stay unit length and orthogonal. Geometry checks run only at construction.
 
-Second derivatives with respect to geometry raise an error. Second derivatives
-with respect to image/sinogram tensors are available with fixed geometry. Detector
-and voxel spacing are scalar settings, not learnable tensor parameters. Distributed
-geometry gradients are already summed by the operator; see :doc:`distributed`
-for loss scaling and collective-call requirements.
+Limits:
+
+- Second derivatives with respect to geometry raise an error.
+- Second derivatives with respect to the volume or sinogram are available with
+  fixed geometry.
+- Detector and voxel spacing are scalar settings, not differentiable parameters.
+- Geometry derivatives are piecewise: at exact voxel edges or corners they are one-sided.
+- Distributed geometry gradients are summed by the operator. See :doc:`multi_gpu`
+  for loss scaling.

@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="结果验证" href="validation.html"><link rel="prev" title="Measured Walnut" href="walnut_example.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Migrating from diffct 1.x to 2.0" href="migration.html"><link rel="prev" title="Measured Walnut" href="walnut_example.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
         <title>API Reference - diffct 2.0.0</title>
@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -252,16 +251,6 @@
         <article role="main" id="furo-main-content">
           <section id="api-reference">
 <h1>API Reference<a class="headerlink" href="#api-reference" title="Link to this heading">¶</a></h1>
-<p>The <cite>diffct</cite> package is organised into focused modules that can be combined to build differentiable CT pipelines:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">diffct.projectors</span></code> – PyTorch <code class="docutils literal notranslate"><span class="pre">autograd.Function</span></code> implementations for forward and backward projectors</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">diffct.geometry</span></code> – helpers to generate detector/source trajectories for 2D and 3D scans</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">diffct.analytical</span></code> – analytical FBP / FDK building blocks (ramp filter, cosine weights, Parker weights, voxel-driven backprojection wrappers)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">diffct.kernels</span></code> – CUDA kernel primitives (Siddon forward / adjoint / FBP gather) for advanced users</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">diffct.utils</span></code> – CUDA device management and tensor bridge utilities</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">diffct.constants</span></code> – low-level configuration values for advanced tuning</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">diffct.differentiable</span></code> – deprecated compatibility shim that re-exports the public API</p></li>
-</ul>
 <section id="high-level-projector">
 <h2>High-level Projector<a class="headerlink" href="#high-level-projector" title="Link to this heading">¶</a></h2>
 <dl class="py class">
@@ -313,15 +302,14 @@ this rank’s contiguous view slice. The result stays on <code class="docutils l
 
 </dd></dl>
 
-<p>See <a class="reference internal" href="distributed.html"><span class="doc">Multiple GPUs and nodes</span></a> for local GPU view splitting and multi-node launch
-instructions, and <a class="reference internal" href="trajectories.html"><span class="doc">Trajectories, coordinates and gradients</span></a> for geometry gradients and coordinate
-conventions. <code class="docutils literal notranslate"><span class="pre">Projector</span></code> lives in <code class="docutils literal notranslate"><span class="pre">diffct.operators</span></code> and is re-exported here.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> takes trajectory tensors as described in <a class="reference internal" href="trajectories.html"><span class="doc">Trajectories and Geometry</span></a>. For
+multiple GPUs and nodes, see <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a>.</p>
 </section>
-<section id="core-projector-functions">
-<h2>Core Projector Functions<a class="headerlink" href="#core-projector-functions" title="Link to this heading">¶</a></h2>
-<p>These advanced <code class="docutils literal notranslate"><span class="pre">autograd.Function</span></code> wrappers take explicit trajectory tensors.
-Use the <code class="docutils literal notranslate"><span class="pre">forward</span></code> signatures below as the argument order for <code class="docutils literal notranslate"><span class="pre">.apply(...)</span></code>;
-new applications should prefer <code class="docutils literal notranslate"><span class="pre">Projector</span></code> for validation and device staging.</p>
+<section id="low-level-functions">
+<h2>Low-level Functions<a class="headerlink" href="#low-level-functions" title="Link to this heading">¶</a></h2>
+<p>These <code class="docutils literal notranslate"><span class="pre">autograd.Function</span></code> wrappers take explicit trajectory tensors. Use the
+<code class="docutils literal notranslate"><span class="pre">forward</span></code> signature as the argument order for <code class="docutils literal notranslate"><span class="pre">.apply(...)</span></code>. For new code,
+prefer <code class="docutils literal notranslate"><span class="pre">Projector</span></code>, which checks inputs and manages devices.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.ParallelProjectorFunction">
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.</span></span><span class="sig-name descname"><span class="pre">ParallelProjectorFunction</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/projectors.html#ParallelProjectorFunction"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.ParallelProjectorFunction" title="Link to this definition">¶</a></dt>
@@ -1326,23 +1314,18 @@ where angles has shape (n_views,) and output has shape (n_views, 2).</p></li>
 </section>
 <section id="analytical-reconstruction-helpers">
 <h2>Analytical Reconstruction Helpers<a class="headerlink" href="#analytical-reconstruction-helpers" title="Link to this heading">¶</a></h2>
-<p>These helpers build the per-view pre-weights, angle-integration weights,
-filter, and backprojection pieces of an analytical FBP / FDK pipeline.
-The weighted-backprojection helpers use dedicated CUDA gather kernels, not
-the differentiable matched-adjoint path. Do not assume end-to-end autograd
-through an analytical reconstruction. Geometry-dependent helpers accept
-the same per-view <code class="docutils literal notranslate"><span class="pre">(src_pos,</span> <span class="pre">det_center,</span> <span class="pre">det_u_vec[,</span> <span class="pre">det_v_vec])</span></code> arrays
-that the projector / backprojector Functions consume. Analytical FBP/FDK
-still has acquisition-specific assumptions; arbitrary geometry does not
-make an analytical reconstruction exact for a non-circular scan.</p>
-<p>Fan/cone backprojection accepts a keyword-only <code class="docutils literal notranslate"><span class="pre">isocenter</span></code> coordinate
-vector in physical units. With <code class="docutils literal notranslate"><span class="pre">None</span></code> (default), it is inferred by
-intersecting source lines along detector normals in least squares. This
-preserves amplitude when a circular orbit and object are translated
-together. Supply it explicitly for non-circular or ambiguous geometry,
-including single-view inputs. The three analytical backprojectors require
-at least two detector bins per interpolated axis, including the cone
-detector’s v axis.</p>
+<p>These helpers build the pre-weights, angular weights, filter and weighted
+backprojection of an analytical FBP or FDK pipeline. The weighted backprojection
+helpers do not support autograd through <code class="docutils literal notranslate"><span class="pre">Projector</span></code>. The returned images are
+already scaled.</p>
+<p>Analytical FBP and FDK assume an acquisition model. A non-circular trajectory
+does not make the result exact. The helpers accept the same per-view
+<code class="docutils literal notranslate"><span class="pre">(src_pos,</span> <span class="pre">det_center,</span> <span class="pre">det_u[,</span> <span class="pre">det_v])</span></code> arrays as <code class="docutils literal notranslate"><span class="pre">Projector</span></code>.</p>
+<p>Fan and cone backprojection accept a keyword-only <code class="docutils literal notranslate"><span class="pre">isocenter</span></code> vector in physical
+units. With <code class="docutils literal notranslate"><span class="pre">None</span></code> (default), it is estimated from the detector normals. Give it
+explicitly for non-circular or ambiguous geometry, including a single view. The
+three weighted backprojection helpers need at least two detector bins along each
+interpolated axis, including the cone detector’s v axis.</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="diffct.analytical.detector_coordinates_1d">
 <span class="sig-prename descclassname"><span class="pre">diffct.analytical.</span></span><span class="sig-name descname"><span class="pre">detector_coordinates_1d</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">num_detectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/analytical.html#detector_coordinates_1d"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.analytical.detector_coordinates_1d" title="Link to this definition">¶</a></dt>
@@ -1479,240 +1462,49 @@ outside its circular-acquisition assumptions.</p>
 </section>
 <section id="ramp-filter-options">
 <h2>Ramp Filter Options<a class="headerlink" href="#ramp-filter-options" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code> is a generic 1D ramp filter used by every analytical
-reconstruction example. Its call signature is:</p>
+<p><code class="docutils literal notranslate"><span class="pre">ramp_filter_1d</span></code> is the filter used by the analytical examples. Its signature is:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ramp_filter_1d</span><span class="p">(</span><span class="n">sinogram_tensor</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">sample_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
                <span class="n">pad_factor</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">use_rfft</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>The filter is the FFT of a finite discrete Ram-Lak impulse response,
-scaled for angular frequency. It retains a small positive finite-length
-DC response instead of forcing the DC bin to zero, reducing low-frequency
-bias. For the unwindowed filter, <code class="docutils literal notranslate"><span class="pre">pad_factor</span> <span class="pre">&gt;=</span> <span class="pre">2</span></code> gives linear
-convolution over the retained detector samples.</p>
 <dl class="simple">
-<dt><code class="docutils literal notranslate"><span class="pre">sample_spacing</span></code></dt><dd><p>Physical detector-cell spacing along <code class="docutils literal notranslate"><span class="pre">dim</span></code> (e.g. <code class="docutils literal notranslate"><span class="pre">du</span></code> for the
-cone-beam case). The filter is rescaled by <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">/</span> <span class="pre">sample_spacing</span></code>
-internally so the output is in physical units and the
-reconstruction amplitude stays calibrated when detector pitch
-changes. Pass <code class="docutils literal notranslate"><span class="pre">1.0</span></code> to reproduce sample-unit behaviour.</p>
+<dt><code class="docutils literal notranslate"><span class="pre">sample_spacing</span></code></dt><dd><p>Physical detector-cell spacing along <code class="docutils literal notranslate"><span class="pre">dim</span></code>, for example <code class="docutils literal notranslate"><span class="pre">du</span></code> for cone beam.
+The output is in physical units. Pass <code class="docutils literal notranslate"><span class="pre">1.0</span></code> to work in sample units.</p>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">pad_factor</span></code></dt><dd><p>Zero-pad the signal to <code class="docutils literal notranslate"><span class="pre">pad_factor</span> <span class="pre">*</span> <span class="pre">N</span></code> samples along <code class="docutils literal notranslate"><span class="pre">dim</span></code>
-before the FFT. Common values:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">1</span></code> (default): no padding, fastest but prone to circular
-convolution wrap-around at the detector edges.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">2</span></code>: recommended for cone-beam FDK, good trade-off.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">4</span></code>: stricter padding for objects close to the detector edge.</p></li>
-</ul>
+<dt><code class="docutils literal notranslate"><span class="pre">pad_factor</span></code></dt><dd><p>Zero-pads the signal to <code class="docutils literal notranslate"><span class="pre">pad_factor</span> <span class="pre">*</span> <span class="pre">N</span></code> samples along <code class="docutils literal notranslate"><span class="pre">dim</span></code>. Use <code class="docutils literal notranslate"><span class="pre">2</span></code> for
+cone-beam FDK. Use <code class="docutils literal notranslate"><span class="pre">4</span></code> when objects lie close to the detector edge.</p>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">window</span></code></dt><dd><p>Frequency-domain apodization multiplied onto the bare Ram-Lak ramp:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">None</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;ram-lak&quot;</span></code>: unwindowed Ram-Lak, sharpest, highest noise.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;hann&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;hanning&quot;</span></code>: Hann window, strong high-frequency suppression.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;hamming&quot;</span></code>: slightly milder than Hann.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;cosine&quot;</span></code>: half-cosine rolloff.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;shepp-logan&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">sinc</span></code> rolloff, classical choice.</p></li>
-</ul>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">use_rfft</span></code></dt><dd><p>Use <code class="docutils literal notranslate"><span class="pre">torch.fft.rfft</span></code> / <code class="docutils literal notranslate"><span class="pre">irfft</span></code> when the input is real. Defaults
-to <code class="docutils literal notranslate"><span class="pre">True</span></code>; set to <code class="docutils literal notranslate"><span class="pre">False</span></code> only if you need the complex FFT path.</p>
+<dt><code class="docutils literal notranslate"><span class="pre">use_rfft</span></code></dt><dd><p>Uses the real FFT for real inputs. Set <code class="docutils literal notranslate"><span class="pre">False</span></code> only to force the complex FFT
+path.</p>
 </dd>
 </dl>
-</section>
-<section id="analytical-fbp-fdk-architecture">
-<h2>Analytical FBP / FDK architecture<a class="headerlink" href="#analytical-fbp-fdk-architecture" title="Link to this heading">¶</a></h2>
-<p>Each of the three analytical backprojection helpers
-(<code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code>, <code class="docutils literal notranslate"><span class="pre">fan_weighted_backproject</span></code>,
-<code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code>) dispatches to a dedicated voxel-driven
-gather kernel, separate from the Siddon-based ray-driven scatter
-kernels that drive autograd. The autograd kernels are the pure
-adjoints <code class="docutils literal notranslate"><span class="pre">P^T</span></code> of the forward projectors (no distance weighting,
-no magnification scale), so the autograd classes form self-consistent
-forward / backward adjoint pairs. The analytical helpers on top apply
-the appropriate FBP / FDK distance weighting and the analytical
-scale so the returned image is already amplitude-calibrated.</p>
-<p>Scale factors applied inside the analytical helpers:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code> multiplies by <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi)</span></code>
-(Fourier-convention constant; parallel beam has no source and no
-magnification so there is no <code class="docutils literal notranslate"><span class="pre">(sid/U)^2</span></code> weight).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">fan_weighted_backproject</span></code> applies a per-voxel <code class="docutils literal notranslate"><span class="pre">(sid_n</span> <span class="pre">/</span> <span class="pre">U_n)^2</span></code>
-weight inside the gather kernel and a <code class="docutils literal notranslate"><span class="pre">sdd_mean</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid_mean)</span></code>
-scale on top.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject</span></code> applies a per-voxel <code class="docutils literal notranslate"><span class="pre">(sid_n</span> <span class="pre">/</span> <span class="pre">U_n)^2</span></code>
-weight inside the gather kernel and a <code class="docutils literal notranslate"><span class="pre">sdd_mean</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid_mean)</span></code>
-scale on top.</p></li>
-</ul>
-<p><code class="docutils literal notranslate"><span class="pre">sid_n</span></code> and <code class="docutils literal notranslate"><span class="pre">U_n</span></code> are measured in the per-view detector-normal
-direction. For a canonical circular orbit <code class="docutils literal notranslate"><span class="pre">sid_n</span></code> reduces to the
-classical scalar <code class="docutils literal notranslate"><span class="pre">sid</span></code>, and <code class="docutils literal notranslate"><span class="pre">U_n</span></code> to the classical
-<code class="docutils literal notranslate"><span class="pre">sid</span> <span class="pre">+</span> <span class="pre">x</span> <span class="pre">*</span> <span class="pre">sin(beta)</span> <span class="pre">-</span> <span class="pre">y</span> <span class="pre">*</span> <span class="pre">cos(beta)</span></code>. For non-circular trajectories
-(spiral, saddle, random) the helpers keep working by computing the
-per-view quantities directly from the trajectory arrays; the result
-is the standard heuristic generalisation of FDK beyond the circle.</p>
-</section>
-<section id="utilities">
-<h2>Utilities<a class="headerlink" href="#utilities" title="Link to this heading">¶</a></h2>
-<dl class="py class">
-<dt class="sig sig-object py" id="diffct.utils.DeviceManager">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.utils.</span></span><span class="sig-name descname"><span class="pre">DeviceManager</span></span><a class="reference internal" href="_modules/diffct/utils.html#DeviceManager"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.utils.DeviceManager" title="Link to this definition">¶</a></dt>
-<dd><p>Utilities for managing PyTorch tensor devices.</p>
-<dl class="py method">
-<dt class="sig sig-object py" id="diffct.utils.DeviceManager.ensure_device">
-<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">ensure_device</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tensor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/utils.html#DeviceManager.ensure_device"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.utils.DeviceManager.ensure_device" title="Link to this definition">¶</a></dt>
-<dd><p>Ensure a tensor resides on a given device.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>tensor</strong> (<em>torch.Tensor</em>) – Tensor to move.</p></li>
-<li><p><strong>device</strong> (<em>torch.device</em>) – Desired device.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>Tensor on the specified device. Unchanged if already on it.</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.Tensor</p>
-</dd>
-</dl>
-<p class="rubric">Examples</p>
-<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span>
-<span class="gp">... </span>    <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]),</span>
-<span class="gp">... </span>    <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s1">'cuda'</span><span class="p">)</span>
-<span class="gp">... </span><span class="p">)</span>
-<span class="go">tensor([1, 2, 3], device='cuda:0')</span>
-</pre></div>
+<p>The <code class="docutils literal notranslate"><span class="pre">window</span></code> argument selects a window applied to the Ram-Lak ramp:</p>
+<div class="table-wrapper docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p><code class="docutils literal notranslate"><span class="pre">window</span></code></p></th>
+<th class="head"><p>Effect</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">None</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;ram-lak&quot;</span></code></p></td>
+<td><p>No window. Sharpest, with the most noise.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;cosine&quot;</span></code></p></td>
+<td><p>Half-cosine roll-off.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;shepp-logan&quot;</span></code></p></td>
+<td><p>Sinc roll-off. Classical choice.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;hamming&quot;</span></code></p></td>
+<td><p>Milder than Hann.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;hann&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;hanning&quot;</span></code></p></td>
+<td><p>Strongest high-frequency suppression.</p></td>
+</tr>
+</tbody>
+</table>
 </div>
-</dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="diffct.utils.DeviceManager.get_device">
-<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">get_device</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tensor</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/utils.html#DeviceManager.get_device"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.utils.DeviceManager.get_device" title="Link to this definition">¶</a></dt>
-<dd><p>Get the device of a PyTorch tensor.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>tensor</strong> (<em>torch.Tensor</em>) – Tensor whose device to determine.</p>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>Device of the tensor or CPU if unavailable.</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.device</p>
-</dd>
-</dl>
-<p class="rubric">Examples</p>
-<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">DeviceManager</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]))</span>
-<span class="go">device(type='cpu')</span>
-</pre></div>
-</div>
-</dd></dl>
-
-</dd></dl>
-
-<dl class="py class">
-<dt class="sig sig-object py" id="diffct.utils.TorchCUDABridge">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.utils.</span></span><span class="sig-name descname"><span class="pre">TorchCUDABridge</span></span><a class="reference internal" href="_modules/diffct/utils.html#TorchCUDABridge"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.utils.TorchCUDABridge" title="Link to this definition">¶</a></dt>
-<dd><p>Bridge between PyTorch tensors and Numba CUDA arrays.</p>
-<dl class="py method">
-<dt class="sig sig-object py" id="diffct.utils.TorchCUDABridge.tensor_to_cuda_array">
-<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">tensor_to_cuda_array</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tensor</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/utils.html#TorchCUDABridge.tensor_to_cuda_array"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.utils.TorchCUDABridge.tensor_to_cuda_array" title="Link to this definition">¶</a></dt>
-<dd><p>Convert a PyTorch CUDA tensor to a Numba CUDA DeviceNDArray.</p>
-<p>Provides a zero-copy view of a detached PyTorch tensor as a Numba CUDA array,
-avoiding CPU data transfers. The returned array shares memory with the
-original tensor.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>tensor</strong> (<em>torch.Tensor</em>) – PyTorch tensor on a CUDA device.</p>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>Numba CUDA array view sharing memory with <cite>tensor</cite>.</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>numba.cuda.cudadrv.devicearray.DeviceNDArray</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><p><strong>ValueError</strong> – If <cite>tensor</cite> is not on a CUDA device.</p>
-</dd>
-</dl>
-<p class="rubric">Examples</p>
-<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">'cuda'</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">arr</span> <span class="o">=</span> <span class="n">TorchCUDABridge</span><span class="o">.</span><span class="n">tensor_to_cuda_array</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
-</pre></div>
-</div>
-</dd></dl>
-
-</dd></dl>
-
-<p>Additional helper functions (prefixed with an underscore) remain available for advanced integrations that require direct control over CUDA streams.</p>
-</section>
-<section id="constants">
-<h2>Constants<a class="headerlink" href="#constants" title="Link to this heading">¶</a></h2>
-<dl class="py data">
-<dt class="sig sig-object py" id="diffct.constants._DTYPE">
-<span class="sig-prename descclassname"><span class="pre">diffct.constants.</span></span><span class="sig-name descname"><span class="pre">_DTYPE</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">&lt;class</span> <span class="pre">'numpy.float32'&gt;</span></span><a class="headerlink" href="#diffct.constants._DTYPE" title="Link to this definition">¶</a></dt>
-<dd><p>Default data type for numerical computations (numpy.float32).</p>
-</dd></dl>
-
-<dl class="py data">
-<dt class="sig sig-object py" id="diffct.constants._TPB_2D">
-<span class="sig-prename descclassname"><span class="pre">diffct.constants.</span></span><span class="sig-name descname"><span class="pre">_TPB_2D</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">(16,</span> <span class="pre">16)</span></span><a class="headerlink" href="#diffct.constants._TPB_2D" title="Link to this definition">¶</a></dt>
-<dd><p>(16, 16) = 256 threads.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>CUDA threads-per-block for 2D kernels (parallel/fan beam)</p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py data">
-<dt class="sig sig-object py" id="diffct.constants._TPB_3D">
-<span class="sig-prename descclassname"><span class="pre">diffct.constants.</span></span><span class="sig-name descname"><span class="pre">_TPB_3D</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">(8,</span> <span class="pre">8,</span> <span class="pre">8)</span></span><a class="headerlink" href="#diffct.constants._TPB_3D" title="Link to this definition">¶</a></dt>
-<dd><p>(8, 8, 8) = 512 threads.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>CUDA threads-per-block for 3D kernels (cone beam)</p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py data">
-<dt class="sig sig-object py" id="diffct.constants._FASTMATH_DECORATOR">
-<span class="sig-prename descclassname"><span class="pre">diffct.constants.</span></span><span class="sig-name descname"><span class="pre">_FASTMATH_DECORATOR</span></span><a class="headerlink" href="#diffct.constants._FASTMATH_DECORATOR" title="Link to this definition">¶</a></dt>
-<dd><p>Numba CUDA JIT decorator with fastmath enabled for forward kernels.</p>
-</dd></dl>
-
-<dl class="py data">
-<dt class="sig sig-object py" id="diffct.constants._INF">
-<span class="sig-prename descclassname"><span class="pre">diffct.constants.</span></span><span class="sig-name descname"><span class="pre">_INF</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">np.float32(inf)</span></span><a class="headerlink" href="#diffct.constants._INF" title="Link to this definition">¶</a></dt>
-<dd><p>Floating-point infinity in default data type.</p>
-</dd></dl>
-
-<dl class="py data">
-<dt class="sig sig-object py" id="diffct.constants._EPSILON">
-<span class="sig-prename descclassname"><span class="pre">diffct.constants.</span></span><span class="sig-name descname"><span class="pre">_EPSILON</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">np.float32(1e-06)</span></span><a class="headerlink" href="#diffct.constants._EPSILON" title="Link to this definition">¶</a></dt>
-<dd><p>Small epsilon value for numerical comparisons to avoid division by zero.</p>
-</dd></dl>
-
-<p>These values mirror the defaults used by the CUDA kernels. They are exposed for power users who need to fine-tune launch parameters or numeric tolerances; most applications should rely on the defaults.</p>
-</section>
-<section id="backward-compatibility">
-<h2>Backward Compatibility<a class="headerlink" href="#backward-compatibility" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">diffct.differentiable</span></code> re-exports the 2.0 API; it does not restore
-the circular-only scalar-angle signatures. See <a class="reference internal" href="migration.html"><span class="doc">Migrating from diffct 1.x to 2.0</span></a>. New projects
-should import <code class="docutils literal notranslate"><span class="pre">Projector</span></code> from <code class="docutils literal notranslate"><span class="pre">diffct</span></code>.</p>
-</section>
-<section id="usage-notes">
-<h2>Usage Notes<a class="headerlink" href="#usage-notes" title="Link to this heading">¶</a></h2>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> requires image/sinogram inputs on CUDA and returns float32 results
-on the input device. Geometry tensors can be on CPU and are staged internally.</p></li>
-<li><p>Geometry helper functions build the <code class="docutils literal notranslate"><span class="pre">ray_dir</span></code>, <code class="docutils literal notranslate"><span class="pre">det_origin</span></code>, and detector orientation vectors expected by the projector operators.</p></li>
-<li><p>Image/sinogram gradients support second derivatives with fixed geometry.
-Geometry gradients are first-order only; set <code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code> before
-constructing <code class="docutils literal notranslate"><span class="pre">Projector</span></code>. Scalar spacing settings are not differentiable.</p></li>
-<li><p>Ensure tensors are contiguous and use consistent dtype (<code class="docutils literal notranslate"><span class="pre">torch.float32</span></code>) for maximum kernel performance.</p></li>
-</ul>
 </section>
 </section>
 
@@ -1721,12 +1513,12 @@ constructing <code class="docutils literal notranslate"><span class="pre">Projec
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="validation.html">
+          <a class="next-page" href="migration.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">结果验证</div>
+                <div class="title">Migrating from diffct 1.x to 2.0</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
@@ -1781,7 +1573,7 @@ constructing <code class="docutils literal notranslate"><span class="pre">Projec
 </li>
 </ul>
 </li>
-<li><a class="reference internal" href="#core-projector-functions">Core Projector Functions</a><ul>
+<li><a class="reference internal" href="#low-level-functions">Low-level Functions</a><ul>
 <li><a class="reference internal" href="#diffct.ParallelProjectorFunction"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction</span></code></a><ul>
 <li><a class="reference internal" href="#diffct.ParallelProjectorFunction.backward"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction.backward()</span></code></a></li>
 <li><a class="reference internal" href="#diffct.ParallelProjectorFunction.forward"><code class="docutils literal notranslate"><span class="pre">ParallelProjectorFunction.forward()</span></code></a></li>
@@ -1842,30 +1634,6 @@ constructing <code class="docutils literal notranslate"><span class="pre">Projec
 </ul>
 </li>
 <li><a class="reference internal" href="#ramp-filter-options">Ramp Filter Options</a></li>
-<li><a class="reference internal" href="#analytical-fbp-fdk-architecture">Analytical FBP / FDK architecture</a></li>
-<li><a class="reference internal" href="#utilities">Utilities</a><ul>
-<li><a class="reference internal" href="#diffct.utils.DeviceManager"><code class="docutils literal notranslate"><span class="pre">DeviceManager</span></code></a><ul>
-<li><a class="reference internal" href="#diffct.utils.DeviceManager.ensure_device"><code class="docutils literal notranslate"><span class="pre">DeviceManager.ensure_device()</span></code></a></li>
-<li><a class="reference internal" href="#diffct.utils.DeviceManager.get_device"><code class="docutils literal notranslate"><span class="pre">DeviceManager.get_device()</span></code></a></li>
-</ul>
-</li>
-<li><a class="reference internal" href="#diffct.utils.TorchCUDABridge"><code class="docutils literal notranslate"><span class="pre">TorchCUDABridge</span></code></a><ul>
-<li><a class="reference internal" href="#diffct.utils.TorchCUDABridge.tensor_to_cuda_array"><code class="docutils literal notranslate"><span class="pre">TorchCUDABridge.tensor_to_cuda_array()</span></code></a></li>
-</ul>
-</li>
-</ul>
-</li>
-<li><a class="reference internal" href="#constants">Constants</a><ul>
-<li><a class="reference internal" href="#diffct.constants._DTYPE"><code class="docutils literal notranslate"><span class="pre">_DTYPE</span></code></a></li>
-<li><a class="reference internal" href="#diffct.constants._TPB_2D"><code class="docutils literal notranslate"><span class="pre">_TPB_2D</span></code></a></li>
-<li><a class="reference internal" href="#diffct.constants._TPB_3D"><code class="docutils literal notranslate"><span class="pre">_TPB_3D</span></code></a></li>
-<li><a class="reference internal" href="#diffct.constants._FASTMATH_DECORATOR"><code class="docutils literal notranslate"><span class="pre">_FASTMATH_DECORATOR</span></code></a></li>
-<li><a class="reference internal" href="#diffct.constants._INF"><code class="docutils literal notranslate"><span class="pre">_INF</span></code></a></li>
-<li><a class="reference internal" href="#diffct.constants._EPSILON"><code class="docutils literal notranslate"><span class="pre">_EPSILON</span></code></a></li>
-</ul>
-</li>
-<li><a class="reference internal" href="#backward-compatibility">Backward Compatibility</a></li>
-<li><a class="reference internal" href="#usage-notes">Usage Notes</a></li>
 </ul>
 </li>
 </ul>

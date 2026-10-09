@@ -191,9 +191,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul>
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -205,7 +204,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -241,27 +240,13 @@
           
 <section class="genindex-section">
   <h1 id="index">Index</h1>
-  <div class="genindex-jumpbox"><a href="#_"><strong>_</strong></a> | <a href="#A"><strong>A</strong></a> | <a href="#B"><strong>B</strong></a> | <a href="#C"><strong>C</strong></a> | <a href="#D"><strong>D</strong></a> | <a href="#E"><strong>E</strong></a> | <a href="#F"><strong>F</strong></a> | <a href="#G"><strong>G</strong></a> | <a href="#P"><strong>P</strong></a> | <a href="#R"><strong>R</strong></a> | <a href="#S"><strong>S</strong></a> | <a href="#T"><strong>T</strong></a></div>
+  <div class="genindex-jumpbox"><a href="#_"><strong>_</strong></a> | <a href="#A"><strong>A</strong></a> | <a href="#B"><strong>B</strong></a> | <a href="#C"><strong>C</strong></a> | <a href="#D"><strong>D</strong></a> | <a href="#F"><strong>F</strong></a> | <a href="#P"><strong>P</strong></a> | <a href="#R"><strong>R</strong></a> | <a href="#S"><strong>S</strong></a></div>
 </section>
 <section id="_" class="genindex-section">
   <h2>_</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api.html#diffct.Projector.__call__">__call__() (diffct.Projector method)</a>
-</li>
-        <li><a href="api.html#diffct.constants._DTYPE">_DTYPE (in module diffct.constants)</a>
-</li>
-        <li><a href="api.html#diffct.constants._EPSILON">_EPSILON (in module diffct.constants)</a>
-</li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api.html#diffct.constants._FASTMATH_DECORATOR">_FASTMATH_DECORATOR (in module diffct.constants)</a>
-</li>
-        <li><a href="api.html#diffct.constants._INF">_INF (in module diffct.constants)</a>
-</li>
-        <li><a href="api.html#diffct.constants._TPB_2D">_TPB_2D (in module diffct.constants)</a>
-</li>
-        <li><a href="api.html#diffct.constants._TPB_3D">_TPB_3D (in module diffct.constants)</a>
 </li>
     </ul></td>
   </tr></table>
@@ -338,20 +323,6 @@
         <li><a href="api.html#diffct.analytical.detector_coordinates_1d">detector_coordinates_1d() (in module diffct.analytical)</a>
 </li>
     </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api.html#diffct.utils.DeviceManager">DeviceManager (class in diffct.utils)</a>
-</li>
-    </ul></td>
-  </tr></table>
-</section>
-
-<section id="E" class="genindex-section">
-  <h2>E</h2>
-  <table style="width: 100%" class="indextable genindextable"><tr>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api.html#diffct.utils.DeviceManager.ensure_device">ensure_device() (diffct.utils.DeviceManager static method)</a>
-</li>
-    </ul></td>
   </tr></table>
 </section>
 
@@ -381,16 +352,6 @@
           <li><a href="api.html#diffct.ParallelProjectorFunction.forward">(diffct.ParallelProjectorFunction static method)</a>
 </li>
         </ul></li>
-    </ul></td>
-  </tr></table>
-</section>
-
-<section id="G" class="genindex-section">
-  <h2>G</h2>
-  <table style="width: 100%" class="indextable genindextable"><tr>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api.html#diffct.utils.DeviceManager.get_device">get_device() (diffct.utils.DeviceManager static method)</a>
-</li>
     </ul></td>
   </tr></table>
 </section>
@@ -446,20 +407,6 @@
         <li><a href="api.html#diffct.geometry.sinusoidal_trajectory_3d">sinusoidal_trajectory_3d() (in module diffct.geometry)</a>
 </li>
         <li><a href="api.html#diffct.geometry.spiral_trajectory_3d">spiral_trajectory_3d() (in module diffct.geometry)</a>
-</li>
-    </ul></td>
-  </tr></table>
-</section>
-
-<section id="T" class="genindex-section">
-  <h2>T</h2>
-  <table style="width: 100%" class="indextable genindextable"><tr>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api.html#diffct.utils.TorchCUDABridge.tensor_to_cuda_array">tensor_to_cuda_array() (diffct.utils.TorchCUDABridge static method)</a>
-</li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api.html#diffct.utils.TorchCUDABridge">TorchCUDABridge (class in diffct.utils)</a>
 </li>
     </ul></td>
   </tr></table>

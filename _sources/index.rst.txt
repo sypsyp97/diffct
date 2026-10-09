@@ -1,26 +1,21 @@
 diffct: Differentiable CT Operators
 ===================================
 
-diffct provides CUDA forward projectors and matched adjoints for 2D parallel,
-2D fan and 3D cone beams, with per-view acquisition geometry and PyTorch autograd.
-Use the same ``Projector`` interface for circular scans, generated non-circular
-trajectories and calibrated source/detector poses.
+diffct provides differentiable CUDA projectors and matched adjoints for computed
+tomography (CT) in PyTorch. It supports 2D parallel and fan beams and 3D cone
+beams. Each view can follow any trajectory, and autograd gives gradients for the
+volume and for trajectory tensors. Views can be split across several GPUs.
 
-.. important::
+Code written for diffct 1.x must be updated; see :doc:`migration`.
 
-   diffct 2.0 replaces the circular-orbit API of 1.x. See :doc:`migration`
-   before you update code written for 1.x.
+Install
+-------
 
-What the operator supports
---------------------------
+.. code-block:: bash
 
-- Cell-constant Siddon forward projection and its matched adjoint.
-- Image and sinogram gradients, including second derivatives with fixed geometry.
-- First-order gradients for trajectory tensors used in geometry calibration.
-- View splitting across local GPUs or initialized distributed process groups.
-  Each GPU still needs a full volume; distributed projections are rank-local.
-- Separate analytical FBP/FDK helpers. The adjoint is not an inverse, and accepting
-  a non-circular trajectory does not make FDK exact for that acquisition.
+   python -m pip install "diffct[cu12]"
+
+Use ``diffct[cu13]`` for CUDA 13.
 
 Start here
 ----------
@@ -30,11 +25,10 @@ Start here
 
    getting_started
    trajectories
-   distributed
-   migration
+   multi_gpu
    examples
    api
-   validation
+   migration
 
 Citation and license
 --------------------

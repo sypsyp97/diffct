@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul>
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -252,26 +251,17 @@
         <article role="main" id="furo-main-content">
           <section id="diffct-differentiable-ct-operators">
 <h1>diffct: Differentiable CT Operators<a class="headerlink" href="#diffct-differentiable-ct-operators" title="Link to this heading">¶</a></h1>
-<p>diffct provides CUDA forward projectors and matched adjoints for 2D parallel,
-2D fan and 3D cone beams, with per-view acquisition geometry and PyTorch autograd.
-Use the same <code class="docutils literal notranslate"><span class="pre">Projector</span></code> interface for circular scans, generated non-circular
-trajectories and calibrated source/detector poses.</p>
-<div class="admonition important">
-<p class="admonition-title">Important</p>
-<p>diffct 2.0 replaces the circular-orbit API of 1.x. See <a class="reference internal" href="migration.html"><span class="doc">Migrating from diffct 1.x to 2.0</span></a>
-before you update code written for 1.x.</p>
+<p>diffct provides differentiable CUDA projectors and matched adjoints for computed
+tomography (CT) in PyTorch. It supports 2D parallel and fan beams and 3D cone
+beams. Each view can follow any trajectory, and autograd gives gradients for the
+volume and for trajectory tensors. Views can be split across several GPUs.</p>
+<p>Code written for diffct 1.x must be updated; see <a class="reference internal" href="migration.html"><span class="doc">Migrating from diffct 1.x to 2.0</span></a>.</p>
+<section id="install">
+<h2>Install<a class="headerlink" href="#install" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"diffct[cu12]"</span>
+</pre></div>
 </div>
-<section id="what-the-operator-supports">
-<h2>What the operator supports<a class="headerlink" href="#what-the-operator-supports" title="Link to this heading">¶</a></h2>
-<ul class="simple">
-<li><p>Cell-constant Siddon forward projection and its matched adjoint.</p></li>
-<li><p>Image and sinogram gradients, including second derivatives with fixed geometry.</p></li>
-<li><p>First-order gradients for trajectory tensors used in geometry calibration.</p></li>
-<li><p>View splitting across local GPUs or initialized distributed process groups.
-Each GPU still needs a full volume; distributed projections are rank-local.</p></li>
-<li><p>Separate analytical FBP/FDK helpers. The adjoint is not an inverse, and accepting
-a non-circular trajectory does not make FDK exact for that acquisition.</p></li>
-</ul>
+<p>Use <code class="docutils literal notranslate"><span class="pre">diffct[cu13]</span></code> for CUDA 13.</p>
 </section>
 <section id="start-here">
 <h2>Start here<a class="headerlink" href="#start-here" title="Link to this heading">¶</a></h2>
@@ -282,30 +272,20 @@ a non-circular trajectory does not make FDK exact for that acquisition.</p></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started.html#minimal-forward-adjoint-gradient-example">Minimal forward / adjoint / gradient example</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started.html#choose-a-workflow">Choose a workflow</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started.html#troubleshooting">Troubleshooting</a></li>
-<li class="toctree-l2"><a class="reference internal" href="getting_started.html#build-these-docs-without-a-gpu">Build these docs without a GPU</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="trajectories.html#geometry-is-data">Geometry is data</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="trajectories.html#trajectory-format">Trajectory format</a></li>
 <li class="toctree-l2"><a class="reference internal" href="trajectories.html#custom-acquisition-example">Custom acquisition example</a></li>
-<li class="toctree-l2"><a class="reference internal" href="trajectories.html#geometry-optimization">Geometry optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="trajectories.html#geometry-gradients">Geometry gradients</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="distributed.html#one-process-multiple-gpus">One process, multiple GPUs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="distributed.html#one-gpu-per-process">One GPU per process</a></li>
-<li class="toctree-l2"><a class="reference internal" href="distributed.html#multiple-nodes-under-slurm">Multiple nodes under Slurm</a></li>
-<li class="toctree-l2"><a class="reference internal" href="distributed.html#two-node-checks-without-a-slurm-launcher">Two-node checks without a Slurm launcher</a></li>
-<li class="toctree-l2"><a class="reference internal" href="distributed.html#numeric-checks">Numeric checks</a></li>
-<li class="toctree-l2"><a class="reference internal" href="distributed.html#correctness-and-acceleration">Correctness and acceleration</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="migration.html#api-and-shape-reference">API and shape reference</a></li>
-<li class="toctree-l2"><a class="reference internal" href="migration.html#minimal-migration-example">Minimal migration example</a></li>
-<li class="toctree-l2"><a class="reference internal" href="migration.html#moving-from-circular-only-main">Moving from circular-only main</a></li>
-<li class="toctree-l2"><a class="reference internal" href="migration.html#fixed-versus-learnable-geometry">Fixed versus learnable geometry</a></li>
-<li class="toctree-l2"><a class="reference internal" href="migration.html#verification">Verification</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#one-process-several-gpus">One process, several GPUs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#one-process-per-gpu">One process per GPU</a></li>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#what-each-rank-holds">What each rank holds</a></li>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#loss-scaling">Loss scaling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#iterative-reconstruction-with-several-gpus">Iterative reconstruction with several GPUs</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="examples.html">Examples</a><ul>
@@ -320,22 +300,17 @@ a non-circular trajectory does not make FDK exact for that acquisition.</p></li>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="api.html#high-level-projector">High-level Projector</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#core-projector-functions">Core Projector Functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#low-level-functions">Low-level Functions</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#geometry-helpers">Geometry Helpers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#analytical-reconstruction-helpers">Analytical Reconstruction Helpers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#ramp-filter-options">Ramp Filter Options</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#analytical-fbp-fdk-architecture">Analytical FBP / FDK architecture</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#utilities">Utilities</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#constants">Constants</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#backward-compatibility">Backward Compatibility</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api.html#usage-notes">Usage Notes</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="validation.html#leonardo-booster-2026-10-08">当前代码：Leonardo Booster(2026-10-08)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="validation.html#alex-2026-09-29">初版代码：Alex(2026-09-29)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="validation.html#id5">复现命令</a></li>
-<li class="toctree-l2"><a class="reference internal" href="validation.html#id6">解析重建修复复验（2026-10-09）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="migration.html#api-and-shape-reference">API and shape reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="migration.html#minimal-migration-example">Minimal migration example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="migration.html#moving-from-circular-only-main">Moving from circular-only main</a></li>
+<li class="toctree-l2"><a class="reference internal" href="migration.html#fixed-versus-learnable-geometry">Fixed versus learnable geometry</a></li>
 </ul>
 </li>
 </ul>
@@ -396,7 +371,7 @@ The project uses the
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">diffct: Differentiable CT Operators</a><ul>
-<li><a class="reference internal" href="#what-the-operator-supports">What the operator supports</a></li>
+<li><a class="reference internal" href="#install">Install</a></li>
 <li><a class="reference internal" href="#start-here">Start here</a></li>
 <li><a class="reference internal" href="#citation-and-license">Citation and license</a></li>
 </ul>

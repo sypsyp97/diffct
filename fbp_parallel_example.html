@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -252,38 +251,36 @@
         <article role="main" id="furo-main-content">
           <section id="parallel-beam-filtered-backprojection-fbp">
 <h1>Parallel Beam Filtered Backprojection (FBP)<a class="headerlink" href="#parallel-beam-filtered-backprojection-fbp" title="Link to this heading">¶</a></h1>
-<p>This page describes the maintained <code class="docutils literal notranslate"><span class="pre">examples/analytical_reconstruction.py</span></code>
-pipeline. See <a class="reference internal" href="api.html"><span class="doc">API Reference</span></a> for filter options and helper signatures.</p>
+<p>This page describes the <code class="docutils literal notranslate"><span class="pre">examples/analytical_reconstruction.py</span></code> pipeline. For
+filter options and helper signatures, see <a class="reference internal" href="api.html"><span class="doc">API Reference</span></a>.</p>
 <section id="run-it">
 <h2>Run it<a class="headerlink" href="#run-it" title="Link to this heading">¶</a></h2>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/analytical_reconstruction.py<span class="w"> </span>--size<span class="w"> </span><span class="m">64</span><span class="w"> </span>--window<span class="w"> </span>shepp-logan
 python<span class="w"> </span>examples/analytical_reconstruction.py<span class="w"> </span>--size<span class="w"> </span><span class="m">128</span><span class="w"> </span>--figure<span class="w"> </span>analytical.png
 </pre></div>
 </div>
-<p>The script runs all three beam types on one CUDA GPU and reports PSNR against
-the synthetic phantom. <code class="docutils literal notranslate"><span class="pre">--figure</span></code> additionally requires Matplotlib.</p>
+<p>The script runs parallel, fan and cone reconstruction on one CUDA GPU and prints
+PSNR against the synthetic phantom. <code class="docutils literal notranslate"><span class="pre">--figure</span></code> requires Matplotlib. <code class="docutils literal notranslate"><span class="pre">--window</span></code>
+accepts <code class="docutils literal notranslate"><span class="pre">ram-lak</span></code>, <code class="docutils literal notranslate"><span class="pre">shepp-logan</span></code>, <code class="docutils literal notranslate"><span class="pre">cosine</span></code>, <code class="docutils literal notranslate"><span class="pre">hamming</span></code> or <code class="docutils literal notranslate"><span class="pre">hann</span></code>.</p>
 </section>
 <section id="pipeline">
 <h2>Pipeline<a class="headerlink" href="#pipeline" title="Link to this heading">¶</a></h2>
-<p>The maintained example uses a half-turn circular parallel-beam scan with 360
-views. The detector has <code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">*</span> <span class="pre">size</span></code> cells and pitch 0.5 in voxel units.</p>
+<p>The example uses a 180-degree parallel-beam scan with 360 views. The detector has
+<code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">*</span> <span class="pre">size</span></code> cells and a pitch of 0.5 voxels.</p>
 <ol class="arabic simple">
-<li><p>Generate a phantom slice and project it with <code class="docutils literal notranslate"><span class="pre">Projector(beam=&quot;parallel&quot;)</span></code>.</p></li>
+<li><p>Project a phantom slice with <code class="docutils literal notranslate"><span class="pre">Projector(beam=&quot;parallel&quot;)</span></code>.</p></li>
 <li><p>Filter along the detector dimension (<code class="docutils literal notranslate"><span class="pre">dim=1</span></code>) with
 <code class="docutils literal notranslate"><span class="pre">ramp_filter_1d(...,</span> <span class="pre">sample_spacing=pitch,</span> <span class="pre">pad_factor=2)</span></code>.</p></li>
 <li><p>Multiply by <code class="docutils literal notranslate"><span class="pre">angular_integration_weights(half_turn,</span>
 <span class="pre">redundant_full_scan=False)</span></code>.</p></li>
-<li><p>Call <code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code> with the trajectory on the sinogram’s
-CUDA device. This helper includes its analytical normalization.</p></li>
+<li><p>Call <code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject</span></code> on the sinogram’s CUDA device.</p></li>
 </ol>
-<p>The analytical weighted gather is separate from the cell-constant Siddon adjoint
-used by <code class="docutils literal notranslate"><span class="pre">Projector.backproject()</span></code>. Do not substitute the raw adjoint and add an
-extra <code class="docutils literal notranslate"><span class="pre">pi</span> <span class="pre">/</span> <span class="pre">number_of_views</span></code> factor: the maintained pipeline already applies
-angular integration weights and the helper’s analytical normalization. These
-CUDA gather helpers do not provide the same autograd path as <code class="docutils literal notranslate"><span class="pre">Projector</span></code>.</p>
+<p>The analytical helpers are not the <code class="docutils literal notranslate"><span class="pre">Projector.backproject()</span></code> adjoint. Do not
+use the adjoint in this pipeline, and do not add extra scale factors. The helpers
+apply their own normalization.</p>
 </section>
-<section id="maintained-source">
-<h2>Maintained source<a class="headerlink" href="#maintained-source" title="Link to this heading">¶</a></h2>
+<section id="source">
+<h2>Source<a class="headerlink" href="#source" title="Link to this heading">¶</a></h2>
 <div class="literal-block-wrapper docutils container" id="id1">
 <div class="code-block-caption"><span class="caption-text">Parallel FBP, fan FBP and cone FDK</span><a class="headerlink" href="#id1" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos"> 1</span><span class="sd">"""Analytical reconstruction: parallel-beam FBP, fan-beam FBP and cone-beam FDK.</span>
@@ -432,7 +429,7 @@ CUDA gather helpers do not provide the same autograd path as <code class="docuti
 <li><a class="reference internal" href="#">Parallel Beam Filtered Backprojection (FBP)</a><ul>
 <li><a class="reference internal" href="#run-it">Run it</a></li>
 <li><a class="reference internal" href="#pipeline">Pipeline</a></li>
-<li><a class="reference internal" href="#maintained-source">Maintained source</a></li>
+<li><a class="reference internal" href="#source">Source</a></li>
 </ul>
 </li>
 </ul>

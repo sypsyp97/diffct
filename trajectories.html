@@ -3,10 +3,10 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Multiple GPUs and nodes" href="distributed.html"><link rel="prev" title="Getting Started" href="getting_started.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Multiple GPUs and Nodes" href="multi_gpu.html"><link rel="prev" title="Getting Started" href="getting_started.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>Trajectories, coordinates and gradients - diffct 2.0.0</title>
+        <title>Trajectories and Geometry - diffct 2.0.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -250,13 +249,13 @@
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          <section id="trajectories-coordinates-and-gradients">
-<h1>Trajectories, coordinates and gradients<a class="headerlink" href="#trajectories-coordinates-and-gradients" title="Link to this heading">¶</a></h1>
-<section id="geometry-is-data">
-<h2>Geometry is data<a class="headerlink" href="#geometry-is-data" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> takes one row per view in each trajectory tensor. It does not select
-an algorithm based on a trajectory name. The helpers create those tensors; measured
-or calibrated poses can be passed directly with the same layout.</p>
+          <section id="trajectories-and-geometry">
+<h1>Trajectories and Geometry<a class="headerlink" href="#trajectories-and-geometry" title="Link to this heading">¶</a></h1>
+<section id="trajectory-format">
+<h2>Trajectory format<a class="headerlink" href="#trajectory-format" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> takes one row per view in each trajectory tensor. The beam type
+selects the tuple layout. The helpers in <code class="docutils literal notranslate"><span class="pre">diffct</span></code> create these tensors. You can
+also pass measured or calibrated poses in the same layout.</p>
 <div class="table-wrapper docutils container">
 <table class="docutils align-default">
 <thead>
@@ -281,28 +280,26 @@ or calibrated poses can be passed directly with the same layout.</p>
 </tbody>
 </table>
 </div>
-<p>Coordinates are Cartesian <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y[,</span> <span class="pre">z])</span></code>; volume indexing is <code class="docutils literal notranslate"><span class="pre">[y,</span> <span class="pre">x]</span></code> or
-<code class="docutils literal notranslate"><span class="pre">[z,</span> <span class="pre">y,</span> <span class="pre">x]</span></code>. The origin is the volume centre. Use one consistent length unit
-for positions, voxel spacing and detector spacing. A voxel centre along an axis
-of size <code class="docutils literal notranslate"><span class="pre">S</span></code> is <code class="docutils literal notranslate"><span class="pre">(i</span> <span class="pre">+</span> <span class="pre">0.5</span> <span class="pre">-</span> <span class="pre">S</span> <span class="pre">/</span> <span class="pre">2)</span> <span class="pre">*</span> <span class="pre">voxel_spacing</span></code>. Voxel spacing is a single
-positive isotropic scalar, not an <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z)</span></code> tuple.</p>
-<p>Detector axes are unit directions, not pixel-step vectors. Cone detector shape
-and spacing use <code class="docutils literal notranslate"><span class="pre">(U,</span> <span class="pre">V)</span></code> and <code class="docutils literal notranslate"><span class="pre">(du,</span> <span class="pre">dv)</span></code>; a scalar spacing uses the same pitch
-for both axes. Pixel <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v)</span></code> is at:</p>
+<p>Coordinates are Cartesian <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y[,</span> <span class="pre">z])</span></code>. Volume indexing is <code class="docutils literal notranslate"><span class="pre">[y,</span> <span class="pre">x]</span></code> for 2D
+and <code class="docutils literal notranslate"><span class="pre">[z,</span> <span class="pre">y,</span> <span class="pre">x]</span></code> for 3D. The origin is the volume centre. Use one length unit
+for positions, voxel spacing and detector spacing. Voxel spacing is a single
+positive scalar.</p>
+<p>Detector axes are unit direction vectors, not pixel-step vectors. The detector
+spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
+Pixel <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v)</span></code> is at:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>det_center + (u - (U - 1) / 2) * du * det_u
            + (v - (V - 1) / 2) * dv * det_v
 </pre></div>
 </div>
-<p>A measured array in <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">V,</span> <span class="pre">U)</span></code> order must be transposed before use. Confirm
-the physical detector axis directions as well; reshaping alone does not correct
-orientation or a handedness mismatch. Projections are line integrals; attenuation
-values therefore use the reciprocal length unit of the geometry.</p>
+<p>A measured sinogram in <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">V,</span> <span class="pre">U)</span></code> order must be transposed to
+<code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V)</span></code> before use. Check the physical direction of each detector axis.
+Reshaping does not correct axis orientation.</p>
 </section>
 <section id="custom-acquisition-example">
 <h2>Custom acquisition example<a class="headerlink" href="#custom-acquisition-example" title="Link to this heading">¶</a></h2>
-<p>This complete example modifies a generated helix with a per-view detector shift.
-For a measured acquisition, replace the four tensors with your calibrated arrays
-in the coordinate system above.</p>
+<p>This example modifies a generated helix with a per-view detector shift. For a
+measured acquisition, replace the four tensors with your calibrated arrays in the
+coordinate system above.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">Projector</span><span class="p">,</span> <span class="n">spiral_trajectory_3d</span>
 
@@ -318,24 +315,20 @@ in the coordinate system above.</p>
 </pre></div>
 </div>
 <p>All components must be finite floating-point tensors with the same nonzero view
-count. <code class="docutils literal notranslate"><span class="pre">ray_dir</span></code> and <code class="docutils literal notranslate"><span class="pre">det_u</span></code> are orthogonal for parallel beams; <code class="docutils literal notranslate"><span class="pre">det_u</span></code> and
-<code class="docutils literal notranslate"><span class="pre">det_v</span></code> are orthogonal for cone beams. Fan/cone sources cannot coincide with
-the detector centre or view the detector edge-on. The nearer of source and
-detector centre must be within 1e6 voxel spacings of the origin, and both within
-1e15. These limits protect float32 ray setup; they are not a precision guarantee.</p>
-<p>Arbitrary rays do not ensure enough angular coverage for an inverse problem.
-Sparse, truncated or incomplete acquisitions can remain ill-posed. Use iterative
-methods with suitable assumptions or regularization. FDK away from a circular
-orbit is a heuristic baseline, not an exact general inverse.</p>
+count. <code class="docutils literal notranslate"><span class="pre">ray_dir</span></code> and <code class="docutils literal notranslate"><span class="pre">det_u</span></code> must be orthogonal for parallel beams. <code class="docutils literal notranslate"><span class="pre">det_u</span></code>
+and <code class="docutils literal notranslate"><span class="pre">det_v</span></code> must be orthogonal for cone beams. For fan and cone beams, the
+source must not coincide with the detector centre or view the detector edge-on. The nearer of source and
+detector centre must lie within 1e6 voxel spacings of the origin.</p>
+<p>Arbitrary trajectories do not guarantee enough angular coverage for an inverse
+problem. Use iterative methods with regularization for sparse or incomplete
+acquisitions. The analytical helpers assume a circular orbit (see <a class="reference internal" href="api.html"><span class="doc">API Reference</span></a>).</p>
 </section>
-<section id="geometry-optimization">
-<h2>Geometry optimization<a class="headerlink" href="#geometry-optimization" title="Link to this heading">¶</a></h2>
-<p>With fixed geometry (no component requiring gradients), <code class="docutils literal notranslate"><span class="pre">Projector</span></code> clones
-its input geometry at construction. Mutating the original tuple later does not
-update the operator: build a new one when fixed poses change.</p>
-<p>If any component requires gradients at construction, the operator keeps references
-to the tuple and reads its current values on every call. Set <code class="docutils literal notranslate"><span class="pre">requires_grad</span></code>
-first. For a direct leaf position tensor, for example:</p>
+<section id="geometry-gradients">
+<h2>Geometry gradients<a class="headerlink" href="#geometry-gradients" title="Link to this heading">¶</a></h2>
+<p>Gradients with respect to trajectory tensors are first order only. Set
+<code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code> on each tensor before you construct <code class="docutils literal notranslate"><span class="pre">Projector</span></code>. The
+projector keeps references to the tensors and reads their current values on each
+call. For example:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Continue from the custom acquisition above.</span>
 <span class="n">target</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
 <span class="n">learnable_center</span> <span class="o">=</span> <span class="n">center</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">()</span>
@@ -346,21 +339,21 @@ first. For a direct leaf position tensor, for example:</p>
 <span class="nb">print</span><span class="p">(</span><span class="n">learnable_center</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>  <span class="c1"># (90, 3)</span>
 </pre></div>
 </div>
-<p>This uses the same target geometry, so a zero gradient is expected. For an actual
-calibration loop, see <code class="docutils literal notranslate"><span class="pre">examples/geometry_calibration.py</span></code>. If poses are derived
-from learnable angles or offsets, rebuild the derived tensors and <code class="docutils literal notranslate"><span class="pre">Projector</span></code>
-inside each optimization step to get a fresh PyTorch graph.</p>
-<p>Geometry validation happens only at construction. Parameterize rotations and
-offsets so updates preserve unit axes, orthogonality and non-degeneracy. First-order
-geometry derivatives follow the cell-constant model. At exact voxel edges or
-corners the returned one-sided derivative can disagree with central finite
-differences. Slightly perturb symmetric test geometries (for example,
-<code class="docutils literal notranslate"><span class="pre">start_angle=0.1</span></code>) when checking finite differences.</p>
-<p>Second derivatives with respect to geometry raise an error. Second derivatives
-with respect to image/sinogram tensors are available with fixed geometry. Detector
-and voxel spacing are scalar settings, not learnable tensor parameters. Distributed
-geometry gradients are already summed by the operator; see <a class="reference internal" href="distributed.html"><span class="doc">Multiple GPUs and nodes</span></a>
-for loss scaling and collective-call requirements.</p>
+<p>This loss uses the same target geometry, so the gradient is zero. For a real
+calibration loop, see <code class="docutils literal notranslate"><span class="pre">examples/geometry_calibration.py</span></code>.</p>
+<p>If poses come from learnable angles or offsets, rebuild the derived tensors and
+the <code class="docutils literal notranslate"><span class="pre">Projector</span></code> inside each optimization step. Parameterize rotations so that
+axes stay unit length and orthogonal. Geometry checks run only at construction.</p>
+<p>Limits:</p>
+<ul class="simple">
+<li><p>Second derivatives with respect to geometry raise an error.</p></li>
+<li><p>Second derivatives with respect to the volume or sinogram are available with
+fixed geometry.</p></li>
+<li><p>Detector and voxel spacing are scalar settings, not differentiable parameters.</p></li>
+<li><p>Geometry derivatives are piecewise: at exact voxel edges or corners they are one-sided.</p></li>
+<li><p>Distributed geometry gradients are summed by the operator. See <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a>
+for loss scaling.</p></li>
+</ul>
 </section>
 </section>
 
@@ -369,12 +362,12 @@ for loss scaling and collective-call requirements.</p>
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="distributed.html">
+          <a class="next-page" href="multi_gpu.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Multiple GPUs and nodes</div>
+                <div class="title">Multiple GPUs and Nodes</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
@@ -419,10 +412,10 @@ for loss scaling and collective-call requirements.</p>
         <div class="toc-tree-container">
           <div class="toc-tree">
             <ul>
-<li><a class="reference internal" href="#">Trajectories, coordinates and gradients</a><ul>
-<li><a class="reference internal" href="#geometry-is-data">Geometry is data</a></li>
+<li><a class="reference internal" href="#">Trajectories and Geometry</a><ul>
+<li><a class="reference internal" href="#trajectory-format">Trajectory format</a></li>
 <li><a class="reference internal" href="#custom-acquisition-example">Custom acquisition example</a></li>
-<li><a class="reference internal" href="#geometry-optimization">Geometry optimization</a></li>
+<li><a class="reference internal" href="#geometry-gradients">Geometry gradients</a></li>
 </ul>
 </li>
 </ul>

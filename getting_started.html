@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Trajectories, coordinates and gradients" href="trajectories.html"><link rel="prev" title="diffct: Differentiable CT Operators" href="index.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Trajectories and Geometry" href="trajectories.html"><link rel="prev" title="diffct: Differentiable CT Operators" href="index.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
         <title>Getting Started - diffct 2.0.0</title>
@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -254,20 +253,16 @@
 <h1>Getting Started<a class="headerlink" href="#getting-started" title="Link to this heading">¶</a></h1>
 <section id="install">
 <h2>Install<a class="headerlink" href="#install" title="Link to this heading">¶</a></h2>
-<p>Projection and backprojection require an NVIDIA CUDA GPU. Geometry construction
-and some validation tests can run on CPU; there is no CPU projection backend.
-Install a CUDA-enabled PyTorch build appropriate for your driver first, then:</p>
+<p>diffct needs an NVIDIA CUDA GPU for projection and backprojection. Geometry
+construction runs on CPU. Install a CUDA-enabled PyTorch build that matches your
+driver first, then:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"diffct[cu12]"</span>
 python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"</span>
 <span class="c1"># from a source checkout: python examples/quickstart.py</span>
 </pre></div>
 </div>
-<p>Use <code class="docutils literal notranslate"><span class="pre">diffct[cu13]</span></code> for a compatible CUDA 13 stack. Keep NVVM and NVJitLink
-compatible with the CUDA libraries loaded by PyTorch. <code class="docutils literal notranslate"><span class="pre">torch.cuda.is_available()</span></code>
-only checks PyTorch’s device access; the quickstart additionally compiles and
-executes the Numba kernels. The first call includes JIT compilation overhead.
-The <a class="reference internal" href="validation.html"><span class="doc">结果验证</span></a> page records previously tested environments and results;
-these are not a guarantee for every CUDA/Python combination.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">diffct[cu13]</span></code> for CUDA 13. The NVVM and NVJitLink packages must match the
+CUDA libraries that PyTorch loads.</p>
 </section>
 <section id="minimal-forward-adjoint-gradient-example">
 <h2>Minimal forward / adjoint / gradient example<a class="headerlink" href="#minimal-forward-adjoint-gradient-example" title="Link to this heading">¶</a></h2>
@@ -289,47 +284,32 @@ these are not a guarantee for every CUDA/Python combination.</p>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> defaults to <code class="docutils literal notranslate"><span class="pre">beam=&quot;cone&quot;</span></code>. Set <code class="docutils literal notranslate"><span class="pre">beam=&quot;parallel&quot;</span></code> or
-<code class="docutils literal notranslate"><span class="pre">beam=&quot;fan&quot;</span></code> explicitly for 2D data. Inputs must be floating-point CUDA tensors
-with exactly the configured shape, without batch/channel dimensions. Computation
-and outputs are float32. Fixed geometry can be supplied on CPU; the operator
-stages and caches each GPU’s geometry shard.</p>
+<code class="docutils literal notranslate"><span class="pre">beam=&quot;fan&quot;</span></code> for 2D data. Inputs must be floating-point CUDA tensors with
+exactly the configured volume or sinogram shape, without batch or channel
+dimensions. Use contiguous tensors. Outputs are float32. Trajectory tensors can
+stay on CPU.</p>
 </section>
 <section id="choose-a-workflow">
 <h2>Choose a workflow<a class="headerlink" href="#choose-a-workflow" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p>A custom or non-circular scan: <a class="reference internal" href="trajectories.html"><span class="doc">Trajectories, coordinates and gradients</span></a> covers coordinates, detector
-ordering and geometry gradients.</p></li>
+<li><p>A custom or non-circular scan: see <a class="reference internal" href="trajectories.html"><span class="doc">Trajectories and Geometry</span></a>.</p></li>
 <li><p>An iterative reconstruction: run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/iterative_reconstruction.py</span>
-<span class="pre">--trajectory</span> <span class="pre">helical</span></code>. See <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a> for the supported methods.</p></li>
-<li><p>Multiple GPUs or nodes: read <a class="reference internal" href="distributed.html"><span class="doc">Multiple GPUs and nodes</span></a> before using local shards or
-differentiating losses. Extra GPUs do not pool memory for the volume.</p></li>
-<li><p>An existing circular-only installation: follow <a class="reference internal" href="migration.html"><span class="doc">Migrating from diffct 1.x to 2.0</span></a>; the old
-scalar-angle signatures and separable-footprint backends are not drop-in APIs.</p></li>
+<span class="pre">--trajectory</span> <span class="pre">helical</span></code>. See <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a>.</p></li>
+<li><p>Several GPUs or nodes: see <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a>.</p></li>
+<li><p>Code written for diffct 1.x: see <a class="reference internal" href="migration.html"><span class="doc">Migrating from diffct 1.x to 2.0</span></a>.</p></li>
 </ul>
 </section>
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><strong>CUDA is unavailable:</strong> check the selected Python environment, PyTorch CUDA
-build, GPU allocation and driver. Installing diffct does not provision a GPU.</p></li>
-<li><p><strong>Kernel compilation fails:</strong> check Numba CUDA, NVVM and NVJitLink versions as
-a set, rather than upgrading one CUDA component independently.</p></li>
+<li><p><strong>CUDA is unavailable:</strong> check that the active Python environment has a CUDA
+build of PyTorch and that the GPU is visible to the process.</p></li>
+<li><p><strong>Kernel compilation fails:</strong> use Numba CUDA, NVVM and NVJitLink versions that
+match each other. Do not upgrade only one of them.</p></li>
 <li><p><strong>Shape error:</strong> use <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> for cone volumes and <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V)</span></code> for
-their sinograms. In distributed mode, use <code class="docutils literal notranslate"><span class="pre">A.projection_shape</span></code> and
+cone sinograms. In distributed mode, use <code class="docutils literal notranslate"><span class="pre">A.projection_shape</span></code> and
 <code class="docutils literal notranslate"><span class="pre">A.view_slice</span></code> rather than the global view count.</p></li>
-<li><p><strong>Invalid geometry:</strong> axes must be unit vectors with the orthogonality and
-non-degeneracy constraints described in <a class="reference internal" href="trajectories.html"><span class="doc">Trajectories, coordinates and gradients</span></a>.</p></li>
 </ul>
-</section>
-<section id="build-these-docs-without-a-gpu">
-<h2>Build these docs without a GPU<a class="headerlink" href="#build-these-docs-without-a-gpu" title="Link to this heading">¶</a></h2>
-<p>The documentation build mocks the CUDA stack, so it needs no GPU. From the
-repository root:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/requirements.txt
-python<span class="w"> </span>-m<span class="w"> </span>sphinx<span class="w"> </span>-W<span class="w"> </span>--keep-going<span class="w"> </span>-b<span class="w"> </span>html<span class="w"> </span>docs/source<span class="w"> </span>docs/build/html
-</pre></div>
-</div>
-<p>Open <code class="docutils literal notranslate"><span class="pre">docs/build/html/index.html</span></code> to review this checkout’s documentation.</p>
 </section>
 </section>
 
@@ -343,7 +323,7 @@ python<span class="w"> </span>-m<span class="w"> </span>sphinx<span class="w"> <
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Trajectories, coordinates and gradients</div>
+                <div class="title">Trajectories and Geometry</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
@@ -393,7 +373,6 @@ python<span class="w"> </span>-m<span class="w"> </span>sphinx<span class="w"> <
 <li><a class="reference internal" href="#minimal-forward-adjoint-gradient-example">Minimal forward / adjoint / gradient example</a></li>
 <li><a class="reference internal" href="#choose-a-workflow">Choose a workflow</a></li>
 <li><a class="reference internal" href="#troubleshooting">Troubleshooting</a></li>
-<li><a class="reference internal" href="#build-these-docs-without-a-gpu">Build these docs without a GPU</a></li>
 </ul>
 </li>
 </ul>

@@ -4,9 +4,9 @@ Getting Started
 Install
 -------
 
-Projection and backprojection require an NVIDIA CUDA GPU. Geometry construction
-and some validation tests can run on CPU; there is no CPU projection backend.
-Install a CUDA-enabled PyTorch build appropriate for your driver first, then:
+diffct needs an NVIDIA CUDA GPU for projection and backprojection. Geometry
+construction runs on CPU. Install a CUDA-enabled PyTorch build that matches your
+driver first, then:
 
 .. code-block:: bash
 
@@ -14,12 +14,8 @@ Install a CUDA-enabled PyTorch build appropriate for your driver first, then:
    python -c "import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"
    # from a source checkout: python examples/quickstart.py
 
-Use ``diffct[cu13]`` for a compatible CUDA 13 stack. Keep NVVM and NVJitLink
-compatible with the CUDA libraries loaded by PyTorch. ``torch.cuda.is_available()``
-only checks PyTorch's device access; the quickstart additionally compiles and
-executes the Numba kernels. The first call includes JIT compilation overhead.
-The :doc:`validation` page records previously tested environments and results;
-these are not a guarantee for every CUDA/Python combination.
+Use ``diffct[cu13]`` for CUDA 13. The NVVM and NVJitLink packages must match the
+CUDA libraries that PyTorch loads.
 
 Minimal forward / adjoint / gradient example
 --------------------------------------------
@@ -43,45 +39,27 @@ Minimal forward / adjoint / gradient example
    print(measurements.shape, estimate.grad.shape)
 
 ``Projector`` defaults to ``beam="cone"``. Set ``beam="parallel"`` or
-``beam="fan"`` explicitly for 2D data. Inputs must be floating-point CUDA tensors
-with exactly the configured shape, without batch/channel dimensions. Computation
-and outputs are float32. Fixed geometry can be supplied on CPU; the operator
-stages and caches each GPU's geometry shard.
+``beam="fan"`` for 2D data. Inputs must be floating-point CUDA tensors with
+exactly the configured volume or sinogram shape, without batch or channel
+dimensions. Use contiguous tensors. Outputs are float32. Trajectory tensors can
+stay on CPU.
 
 Choose a workflow
 -----------------
 
-- A custom or non-circular scan: :doc:`trajectories` covers coordinates, detector
-  ordering and geometry gradients.
+- A custom or non-circular scan: see :doc:`trajectories`.
 - An iterative reconstruction: run ``python examples/iterative_reconstruction.py
-  --trajectory helical``. See :doc:`examples` for the supported methods.
-- Multiple GPUs or nodes: read :doc:`distributed` before using local shards or
-  differentiating losses. Extra GPUs do not pool memory for the volume.
-- An existing circular-only installation: follow :doc:`migration`; the old
-  scalar-angle signatures and separable-footprint backends are not drop-in APIs.
+  --trajectory helical``. See :doc:`examples`.
+- Several GPUs or nodes: see :doc:`multi_gpu`.
+- Code written for diffct 1.x: see :doc:`migration`.
 
 Troubleshooting
 ---------------
 
-- **CUDA is unavailable:** check the selected Python environment, PyTorch CUDA
-  build, GPU allocation and driver. Installing diffct does not provision a GPU.
-- **Kernel compilation fails:** check Numba CUDA, NVVM and NVJitLink versions as
-  a set, rather than upgrading one CUDA component independently.
+- **CUDA is unavailable:** check that the active Python environment has a CUDA
+  build of PyTorch and that the GPU is visible to the process.
+- **Kernel compilation fails:** use Numba CUDA, NVVM and NVJitLink versions that
+  match each other. Do not upgrade only one of them.
 - **Shape error:** use ``(D, H, W)`` for cone volumes and ``(views, U, V)`` for
-  their sinograms. In distributed mode, use ``A.projection_shape`` and
+  cone sinograms. In distributed mode, use ``A.projection_shape`` and
   ``A.view_slice`` rather than the global view count.
-- **Invalid geometry:** axes must be unit vectors with the orthogonality and
-  non-degeneracy constraints described in :doc:`trajectories`.
-
-Build these docs without a GPU
-------------------------------
-
-The documentation build mocks the CUDA stack, so it needs no GPU. From the
-repository root:
-
-.. code-block:: bash
-
-   python -m pip install -r docs/requirements.txt
-   python -m sphinx -W --keep-going -b html docs/source docs/build/html
-
-Open ``docs/build/html/index.html`` to review this checkout's documentation.

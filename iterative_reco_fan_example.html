@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -252,197 +251,56 @@
         <article role="main" id="furo-main-content">
           <section id="fan-beam-iterative-reconstruction">
 <h1>Fan Beam Iterative Reconstruction<a class="headerlink" href="#fan-beam-iterative-reconstruction" title="Link to this heading">¶</a></h1>
-<p>This example demonstrates 2D fan beam iterative reconstruction using the differentiable <cite>FanProjectorFunction</cite> and <cite>FanBackprojectorFunction</cite> from <cite>diffct</cite>. The maintained iterative example is <code class="docutils literal notranslate"><span class="pre">examples/iterative_reconstruction.py</span></code>, which reconstructs a 3D cone beam scan on any trajectory with CGLS, SIRT and TV; the 2D derivation on this page still applies to the 2D <code class="docutils literal notranslate"><span class="pre">Projector</span></code> beams.</p>
-<section id="overview">
-<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
-<p>Fan beam iterative reconstruction extends the optimization approach to the more realistic fan beam geometry. This example shows how to:</p>
-<ul class="simple">
-<li><p>Formulate fan beam CT reconstruction as an optimization problem</p></li>
-<li><p>Handle geometric complexities of divergent ray geometry</p></li>
-<li><p>Apply gradient-based optimization with fan beam operators</p></li>
-<li><p>Monitor convergence and reconstruction quality</p></li>
-</ul>
+<p>This page shows a 2D fan-beam reconstruction loop with <code class="docutils literal notranslate"><span class="pre">diffct.Projector</span></code>. The
+maintained iterative script is <code class="docutils literal notranslate"><span class="pre">examples/iterative_reconstruction.py</span></code>, which
+reconstructs 3D cone-beam scans. See <a class="reference internal" href="iterative_reco_cone_example.html"><span class="doc">Cone Beam Iterative Reconstruction</span></a>.</p>
+<section id="objective">
+<h2>Objective<a class="headerlink" href="#objective" title="Link to this heading">¶</a></h2>
+<p>The loop minimizes a least-squares data term over a nonnegative image <code class="docutils literal notranslate"><span class="pre">x</span></code>,
+where <code class="docutils literal notranslate"><span class="pre">A</span></code> is the fan-beam projector and <code class="docutils literal notranslate"><span class="pre">y</span></code> is the measured sinogram:</p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[\hat{x} = \arg\min_{x \ge 0} \tfrac{1}{2} \lVert A x - y \rVert_2^2\]</div>
+</div>
+<p>Autograd computes the gradient, which uses the adjoint <code class="docutils literal notranslate"><span class="pre">A^T</span></code>. Adam updates the
+image.</p>
 </section>
-<section id="mathematical-background">
-<h2>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading">¶</a></h2>
-<p><strong>Fan Beam Iterative Formulation</strong></p>
-<p>The fan beam reconstruction problem is formulated as:</p>
-<div class="math-wrapper docutils container">
-<div class="math notranslate nohighlight">
-\[\hat{f} = \arg\min_f \|A_{\text{fan}}(f) - p\|_2^2 + \lambda R(f)\]</div>
-</div>
-<p>where <span class="math notranslate nohighlight">\(A_{\text{fan}}\)</span> is the fan beam forward projection operator accounting for divergent ray geometry.</p>
-<p><strong>Fan Beam Forward Model</strong></p>
-<p>The fan beam projection operator maps 2D image <span class="math notranslate nohighlight">\(f(x,y)\)</span> to sinogram <span class="math notranslate nohighlight">\(p(\beta, u)\)</span>:</p>
-<div class="math-wrapper docutils container">
-<div class="math notranslate nohighlight">
-\[p(\beta, u) = \int_{\text{ray}} f(x,y) \, dl\]</div>
-</div>
-<p>where integration follows the ray from point source to detector element <span class="math notranslate nohighlight">\(u\)</span> at source angle <span class="math notranslate nohighlight">\(\beta\)</span>.</p>
-<p><strong>Gradient Computation</strong></p>
-<p>The gradient involves the fan beam backprojection operator (adjoint):</p>
-<div class="math-wrapper docutils container">
-<div class="math notranslate nohighlight">
-\[\frac{\partial L}{\partial f} = 2A_{\text{fan}}^T(A_{\text{fan}}(f) - p_{\text{measured}})\]</div>
-</div>
-<p>where <span class="math notranslate nohighlight">\(A_{\text{fan}}^T\)</span> is the fan beam backprojection operator.</p>
-<p><strong>Geometric Considerations</strong></p>
-<p>Fan beam geometry introduces complexities compared to parallel beam:</p>
-<ul class="simple">
-<li><p><strong>Ray Divergence</strong>: Non-parallel rays affect sampling density and conditioning</p></li>
-<li><p><strong>Magnification Effects</strong>: Variable magnification across the field of view</p></li>
-<li><p><strong>Non-uniform Resolution</strong>: Spatial resolution varies with distance from rotation center</p></li>
-<li><p><strong>Geometric Distortion</strong>: Requires careful handling of coordinate transformations</p></li>
-</ul>
-<p><strong>Implementation Steps</strong></p>
-<ol class="arabic simple">
-<li><p><strong>Geometry Setup</strong>: Configure fan beam parameters (SID, SDD) using helpers such as <code class="docutils literal notranslate"><span class="pre">diffct.geometry.circular_trajectory_2d_fan</span></code></p></li>
-<li><p><strong>Problem Formulation</strong>: Define parameterized image and fan beam forward model</p></li>
-<li><p><strong>Loss Computation</strong>: Calculate L2 distance using <cite>FanProjectorFunction</cite></p></li>
-<li><p><strong>Gradient Computation</strong>: Use automatic differentiation through fan beam operators</p></li>
-<li><p><strong>Optimization</strong>: Apply Adam optimizer with appropriate learning rate</p></li>
-<li><p><strong>Convergence Monitoring</strong>: Track reconstruction quality and loss evolution</p></li>
-</ol>
-<p><strong>Model Architecture</strong></p>
-<p>The fan beam reconstruction model consists of:</p>
-<ul class="simple">
-<li><p><strong>Parameterized Image</strong>: Learnable 2D tensor representing the unknown image</p></li>
-<li><p><strong>Fan Beam Forward Model</strong>: <cite>FanProjectorFunction</cite> with geometric parameters</p></li>
-<li><p><strong>Loss Function</strong>: Mean squared error between predicted and measured sinograms</p></li>
-</ul>
-<p><strong>Convergence Characteristics</strong></p>
-<p>Fan beam reconstruction typically exhibits:</p>
-<ol class="arabic simple">
-<li><p><strong>Initial Convergence</strong> (0-100 iterations): Rapid loss decrease, basic structure</p></li>
-<li><p><strong>Detail Refinement</strong> (100-500 iterations): Fine features develop, slower progress</p></li>
-<li><p><strong>Final Convergence</strong> (500+ iterations): Minimal improvement, convergence plateau</p></li>
-</ol>
-<p><strong>Challenges and Solutions</strong></p>
-<ul class="simple">
-<li><p><strong>Conditioning</strong>: Fan beam system matrix may have different conditioning properties</p></li>
-<li><p><strong>Geometric Artifacts</strong>: Proper weighting and filtering help reduce artifacts</p></li>
-<li><p><strong>Parameter Tuning</strong>: Learning rate may need adjustment for optimal convergence</p></li>
-<li><p><strong>Memory Usage</strong>: Similar to parallel beam but with additional geometric computations</p></li>
-</ul>
-<div class="literal-block-wrapper docutils container" id="id1">
-<div class="code-block-caption"><span class="caption-text">Iterative Reconstruction Example (3D cone beam, any trajectory)</span><a class="headerlink" href="#id1" title="Link to this code">¶</a></div>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos">  1</span><span class="sd">"""Iterative cone-beam reconstruction of a 3D phantom on any trajectory.</span>
-<span class="linenos">  2</span>
-<span class="linenos">  3</span><span class="sd">Runs CGLS, SIRT and TV-regularized nonnegative least squares (Adam through</span>
-<span class="linenos">  4</span><span class="sd">autograd), and FDK as a baseline when the full sinogram is on one GPU. The same</span>
-<span class="linenos">  5</span><span class="sd">script runs on one GPU, on several GPUs in one process, or on several processes</span>
-<span class="linenos">  6</span><span class="sd">and nodes:</span>
-<span class="linenos">  7</span>
-<span class="linenos">  8</span><span class="sd">    python examples/iterative_reconstruction.py --trajectory helical</span>
-<span class="linenos">  9</span><span class="sd">    python examples/iterative_reconstruction.py --devices 0 1 2 3</span>
-<span class="linenos"> 10</span><span class="sd">    torchrun --nproc-per-node=4 examples/iterative_reconstruction.py</span>
-<span class="linenos"> 11</span><span class="sd">    (multiple nodes: see examples/slurm/multi_node.sbatch)</span>
-<span class="linenos"> 12</span>
-<span class="linenos"> 13</span><span class="sd">The phantom is the 3D Shepp-Logan by default. ``--phantom`` loads a ``(size,)*3``</span>
-<span class="linenos"> 14</span><span class="sd">volume with values in [0, 1] instead, for example the walnut volume written by</span>
-<span class="linenos"> 15</span><span class="sd">``walnut_reconstruction.py --save-volume``.</span>
-<span class="linenos"> 16</span><span class="sd">"""</span>
-<span class="linenos"> 17</span>
-<span class="linenos"> 18</span><span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
-<span class="linenos"> 19</span><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
-<span class="linenos"> 20</span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="linenos"> 21</span>
-<span class="linenos"> 22</span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<span class="linenos"> 23</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-<span class="linenos"> 24</span>
-<span class="linenos"> 25</span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">Projector</span>
-<span class="linenos"> 26</span><span class="kn">from</span><span class="w"> </span><span class="nn">_common</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span><span class="n">TRAJECTORIES</span><span class="p">,</span> <span class="n">Scan</span><span class="p">,</span> <span class="n">cgls</span><span class="p">,</span> <span class="n">fdk</span><span class="p">,</span> <span class="n">init_process</span><span class="p">,</span> <span class="n">psnr</span><span class="p">,</span> <span class="n">save_slices</span><span class="p">,</span>
-<span class="linenos"> 27</span>                     <span class="n">shepp_logan_3d</span><span class="p">,</span> <span class="n">sirt</span><span class="p">,</span> <span class="n">synchronize</span><span class="p">,</span> <span class="n">tv_reconstruction</span><span class="p">)</span>
-<span class="linenos"> 28</span>
-<span class="linenos"> 29</span><span class="n">ALGORITHMS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"cgls"</span><span class="p">:</span> <span class="n">cgls</span><span class="p">,</span> <span class="s2">"sirt"</span><span class="p">:</span> <span class="n">sirt</span><span class="p">,</span> <span class="s2">"tv"</span><span class="p">:</span> <span class="n">tv_reconstruction</span><span class="p">}</span>
-<span class="linenos"> 30</span><span class="c1"># CGLS converges fastest; SIRT and Adam need more, cheaper-to-tune steps.</span>
-<span class="linenos"> 31</span><span class="n">DEFAULT_ITERATIONS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"cgls"</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span> <span class="s2">"sirt"</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span> <span class="s2">"tv"</span><span class="p">:</span> <span class="mi">200</span><span class="p">}</span>
-<span class="linenos"> 32</span>
-<span class="linenos"> 33</span>
-<span class="linenos"> 34</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
-<span class="linenos"> 35</span>    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="vm">__doc__</span><span class="p">,</span> <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">)</span>
-<span class="linenos"> 36</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--size"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"volume edge length in voxels"</span><span class="p">)</span>
-<span class="linenos"> 37</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--views"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">360</span><span class="p">)</span>
-<span class="linenos"> 38</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--trajectory"</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="n">TRAJECTORIES</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"helical"</span><span class="p">)</span>
-<span class="linenos"> 39</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--algorithms"</span><span class="p">,</span> <span class="n">nargs</span><span class="o">=</span><span class="s2">"+"</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">ALGORITHMS</span><span class="p">),</span> <span class="n">default</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">ALGORITHMS</span><span class="p">))</span>
-<span class="linenos"> 40</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--iterations"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"override the per-algorithm default "</span>
-<span class="linenos"> 41</span>                        <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">DEFAULT_ITERATIONS</span><span class="p">))</span>
-<span class="linenos"> 42</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--devices"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">nargs</span><span class="o">=</span><span class="s2">"+"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"GPUs for one process (not with torchrun)"</span><span class="p">)</span>
-<span class="linenos"> 43</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--tv-weight"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"TV penalty weight for the tv algorithm"</span><span class="p">)</span>
-<span class="linenos"> 44</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--noise"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"Gaussian noise, relative to the largest projection"</span><span class="p">)</span>
-<span class="linenos"> 45</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--figure"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="n">Path</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"save central slices to this PNG"</span><span class="p">)</span>
-<span class="linenos"> 46</span>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--phantom"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="n">Path</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"(size,)*3 .npy volume in [0, 1] instead of Shepp-Logan"</span><span class="p">)</span>
-<span class="linenos"> 47</span>    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
-<span class="linenos"> 48</span>
-<span class="linenos"> 49</span>    <span class="n">distributed</span><span class="p">,</span> <span class="n">device</span> <span class="o">=</span> <span class="n">init_process</span><span class="p">()</span>
-<span class="linenos"> 50</span>    <span class="k">if</span> <span class="n">distributed</span> <span class="ow">and</span> <span class="n">args</span><span class="o">.</span><span class="n">devices</span><span class="p">:</span>
-<span class="linenos"> 51</span>        <span class="n">parser</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"use either torchrun or --devices, not both"</span><span class="p">)</span>
-<span class="linenos"> 52</span>    <span class="n">scan</span> <span class="o">=</span> <span class="n">Scan</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">views</span><span class="p">)</span>
-<span class="linenos"> 53</span>    <span class="n">trajectory</span> <span class="o">=</span> <span class="n">scan</span><span class="o">.</span><span class="n">trajectory</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">trajectory</span><span class="p">)</span>
-<span class="linenos"> 54</span>    <span class="c1"># One Projector serves every mode: devices=... splits views over local GPUs,</span>
-<span class="linenos"> 55</span>    <span class="c1"># distributed=True splits them over torchrun ranks.</span>
-<span class="linenos"> 56</span>    <span class="n">operator</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">size</span><span class="p">,)</span> <span class="o">*</span> <span class="mi">3</span><span class="p">,</span> <span class="n">scan</span><span class="o">.</span><span class="n">detector</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="n">scan</span><span class="o">.</span><span class="n">pitch</span><span class="p">,</span>
-<span class="linenos"> 57</span>                         <span class="n">devices</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">devices</span><span class="p">,</span> <span class="n">distributed</span><span class="o">=</span><span class="n">distributed</span><span class="p">)</span>
-<span class="linenos"> 58</span>    <span class="n">rank0</span> <span class="o">=</span> <span class="n">operator</span><span class="o">.</span><span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span>
-<span class="linenos"> 59</span>    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">phantom</span><span class="p">:</span>
-<span class="linenos"> 60</span>        <span class="n">volume</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">phantom</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-<span class="linenos"> 61</span>        <span class="k">if</span> <span class="n">volume</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">size</span><span class="p">,)</span> <span class="o">*</span> <span class="mi">3</span> <span class="ow">or</span> <span class="ow">not</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">volume</span><span class="o">.</span><span class="n">min</span><span class="p">()</span> <span class="ow">and</span> <span class="n">volume</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">):</span>
-<span class="linenos"> 62</span>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">phantom</span><span class="si">}</span><span class="s2"> must hold a </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">size</span><span class="si">}</span><span class="s2">^3 volume with values in [0, 1]"</span><span class="p">)</span>
-<span class="linenos"> 63</span>        <span class="n">truth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
-<span class="linenos"> 64</span>    <span class="k">else</span><span class="p">:</span>
-<span class="linenos"> 65</span>        <span class="n">truth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">shepp_logan_3d</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">size</span><span class="p">))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
-<span class="linenos"> 66</span>    <span class="n">phantom_name</span> <span class="o">=</span> <span class="n">args</span><span class="o">.</span><span class="n">phantom</span><span class="o">.</span><span class="n">stem</span> <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">phantom</span> <span class="k">else</span> <span class="s2">"Shepp-Logan"</span>
-<span class="linenos"> 67</span>
-<span class="linenos"> 68</span>    <span class="n">measurements</span> <span class="o">=</span> <span class="n">operator</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">truth</span><span class="p">)</span>  <span class="c1"># this rank's views</span>
-<span class="linenos"> 69</span>    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">noise</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-<span class="linenos"> 70</span>        <span class="c1"># Same noise for every launch mode: global peak, noise drawn for all views.</span>
-<span class="linenos"> 71</span>        <span class="n">peak</span> <span class="o">=</span> <span class="n">measurements</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
-<span class="linenos"> 72</span>        <span class="k">if</span> <span class="n">distributed</span><span class="p">:</span>
-<span class="linenos"> 73</span>            <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">(</span><span class="n">peak</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">ReduceOp</span><span class="o">.</span><span class="n">MAX</span><span class="p">)</span>
-<span class="linenos"> 74</span>        <span class="n">generator</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Generator</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">1234</span><span class="p">)</span>
-<span class="linenos"> 75</span>        <span class="n">noise</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">((</span><span class="n">args</span><span class="o">.</span><span class="n">views</span><span class="p">,</span> <span class="o">*</span><span class="n">scan</span><span class="o">.</span><span class="n">detector</span><span class="p">),</span> <span class="n">generator</span><span class="o">=</span><span class="n">generator</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-<span class="linenos"> 76</span>        <span class="n">measurements</span> <span class="o">=</span> <span class="n">measurements</span> <span class="o">+</span> <span class="n">args</span><span class="o">.</span><span class="n">noise</span> <span class="o">*</span> <span class="n">peak</span> <span class="o">*</span> <span class="n">noise</span><span class="p">[</span><span class="n">operator</span><span class="o">.</span><span class="n">view_slice</span><span class="p">]</span>
-<span class="linenos"> 77</span>
-<span class="linenos"> 78</span>    <span class="k">if</span> <span class="n">rank0</span><span class="p">:</span>
-<span class="linenos"> 79</span>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">trajectory</span><span class="si">}</span><span class="s2"> trajectory, </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">size</span><span class="si">}</span><span class="s2">^3 volume, </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">views</span><span class="si">}</span><span class="s2"> views, "</span>
-<span class="linenos"> 80</span>              <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">operator</span><span class="o">.</span><span class="n">world_size</span><span class="si">}</span><span class="s2"> process(es), devices per process: </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">devices</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="p">[</span><span class="n">device</span><span class="o">.</span><span class="n">index</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="linenos"> 81</span>    <span class="n">panels</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">"phantom</span><span class="se">\n</span><span class="s2">ground truth"</span><span class="p">,</span> <span class="n">truth</span><span class="p">)]</span>
-<span class="linenos"> 82</span>    <span class="k">if</span> <span class="ow">not</span> <span class="n">distributed</span><span class="p">:</span>
-<span class="linenos"> 83</span>        <span class="n">fdk</span><span class="p">(</span><span class="n">scan</span><span class="p">,</span> <span class="n">measurements</span><span class="p">,</span> <span class="n">trajectory</span><span class="p">)</span>  <span class="c1"># compile kernels and warm up</span>
-<span class="linenos"> 84</span>        <span class="n">synchronize</span><span class="p">(</span><span class="n">distributed</span><span class="p">)</span>
-<span class="linenos"> 85</span>        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
-<span class="linenos"> 86</span>        <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">fdk</span><span class="p">(</span><span class="n">scan</span><span class="p">,</span> <span class="n">measurements</span><span class="p">,</span> <span class="n">trajectory</span><span class="p">)</span>
-<span class="linenos"> 87</span>        <span class="n">synchronize</span><span class="p">(</span><span class="n">distributed</span><span class="p">)</span>
-<span class="linenos"> 88</span>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  fdk   </span><span class="si">{</span><span class="mf">1e3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="p">)</span><span class="si">:</span><span class="s2">8.1f</span><span class="si">}</span><span class="s2"> ms            PSNR </span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">reconstruction</span><span class="p">,</span><span class="w"> </span><span class="n">truth</span><span class="p">)</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">)</span>
-<span class="linenos"> 89</span>        <span class="n">panels</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="sa">f</span><span class="s2">"FDK</span><span class="se">\n</span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">reconstruction</span><span class="p">,</span><span class="w"> </span><span class="n">truth</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">,</span> <span class="n">reconstruction</span><span class="p">))</span>
-<span class="linenos"> 90</span>
-<span class="linenos"> 91</span>    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">args</span><span class="o">.</span><span class="n">algorithms</span><span class="p">:</span>
-<span class="linenos"> 92</span>        <span class="n">iterations</span> <span class="o">=</span> <span class="n">args</span><span class="o">.</span><span class="n">iterations</span> <span class="ow">or</span> <span class="n">DEFAULT_ITERATIONS</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
-<span class="linenos"> 93</span>        <span class="n">options</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"weight"</span><span class="p">:</span> <span class="n">args</span><span class="o">.</span><span class="n">tv_weight</span><span class="p">}</span> <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">"tv"</span> <span class="k">else</span> <span class="p">{}</span>
-<span class="linenos"> 94</span>        <span class="n">ALGORITHMS</span><span class="p">[</span><span class="n">name</span><span class="p">](</span><span class="n">operator</span><span class="p">,</span> <span class="n">measurements</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>  <span class="c1"># compile kernels and warm up</span>
-<span class="linenos"> 95</span>        <span class="n">synchronize</span><span class="p">(</span><span class="n">distributed</span><span class="p">)</span>
-<span class="linenos"> 96</span>        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
-<span class="linenos"> 97</span>        <span class="n">reconstruction</span> <span class="o">=</span> <span class="n">ALGORITHMS</span><span class="p">[</span><span class="n">name</span><span class="p">](</span><span class="n">operator</span><span class="p">,</span> <span class="n">measurements</span><span class="p">,</span> <span class="n">iterations</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>
-<span class="linenos"> 98</span>        <span class="n">synchronize</span><span class="p">(</span><span class="n">distributed</span><span class="p">)</span>
-<span class="linenos"> 99</span>        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
-<span class="linenos">100</span>        <span class="k">if</span> <span class="n">rank0</span><span class="p">:</span>
-<span class="linenos">101</span>            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">name</span><span class="si">:</span><span class="s2">5s</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="mf">1e3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">elapsed</span><span class="si">:</span><span class="s2">8.1f</span><span class="si">}</span><span class="s2"> ms (</span><span class="si">{</span><span class="mf">1e3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">elapsed</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">iterations</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms/it, </span><span class="si">{</span><span class="n">iterations</span><span class="si">}</span><span class="s2"> it)"</span>
-<span class="linenos">102</span>                  <span class="sa">f</span><span class="s2">"  PSNR </span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">reconstruction</span><span class="p">,</span><span class="w"> </span><span class="n">truth</span><span class="p">)</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">)</span>
-<span class="linenos">103</span>        <span class="n">panels</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">iterations</span><span class="si">}</span><span class="s2"> it</span><span class="se">\n</span><span class="si">{</span><span class="n">psnr</span><span class="p">(</span><span class="n">reconstruction</span><span class="p">,</span><span class="w"> </span><span class="n">truth</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> dB"</span><span class="p">,</span> <span class="n">reconstruction</span><span class="p">))</span>
-<span class="linenos">104</span>
-<span class="linenos">105</span>    <span class="k">if</span> <span class="n">rank0</span> <span class="ow">and</span> <span class="n">args</span><span class="o">.</span><span class="n">figure</span><span class="p">:</span>
-<span class="linenos">106</span>        <span class="n">noise</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">", </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">noise</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2"> noise"</span> <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">noise</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">""</span>
-<span class="linenos">107</span>        <span class="n">save_slices</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">figure</span><span class="p">,</span> <span class="n">panels</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">trajectory</span><span class="si">}</span><span class="s2"> cone-beam scan, </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">size</span><span class="si">}</span><span class="s2">³ </span><span class="si">{</span><span class="n">phantom_name</span><span class="si">}{</span><span class="n">noise</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
-<span class="linenos">108</span>                    <span class="n">vmax</span><span class="o">=</span><span class="mf">1.0</span> <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">phantom</span> <span class="k">else</span> <span class="mf">0.4</span><span class="p">,</span> <span class="n">sections</span><span class="o">=</span><span class="p">(</span><span class="s2">"axial"</span><span class="p">,</span> <span class="s2">"coronal"</span><span class="p">))</span>
-<span class="linenos">109</span>    <span class="k">if</span> <span class="n">distributed</span><span class="p">:</span>
-<span class="linenos">110</span>        <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">destroy_process_group</span><span class="p">()</span>
-<span class="linenos">111</span>
-<span class="linenos">112</span>
-<span class="linenos">113</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
-<span class="linenos">114</span>    <span class="n">main</span><span class="p">()</span>
+<section id="code">
+<h2>Code<a class="headerlink" href="#code" title="Link to this heading">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">Projector</span><span class="p">,</span> <span class="n">circular_trajectory_2d_fan</span>
+
+<span class="n">n</span><span class="p">,</span> <span class="n">n_views</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">360</span>
+<span class="n">sid</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">pitch</span> <span class="o">=</span> <span class="mf">2.5</span> <span class="o">*</span> <span class="n">n</span><span class="p">,</span> <span class="mf">4.0</span> <span class="o">*</span> <span class="n">n</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">n</span><span class="p">,</span> <span class="mf">0.8</span>
+<span class="n">trajectory</span> <span class="o">=</span> <span class="n">circular_trajectory_2d_fan</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">sid</span><span class="p">,</span> <span class="n">sdd</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+<span class="n">A</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">n_det</span><span class="p">,</span> <span class="n">beam</span><span class="o">=</span><span class="s2">"fan"</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="n">pitch</span><span class="p">)</span>
+
+<span class="n">truth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+<span class="n">truth</span><span class="p">[</span><span class="mi">40</span><span class="p">:</span><span class="mi">88</span><span class="p">,</span> <span class="mi">40</span><span class="p">:</span><span class="mi">88</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
+<span class="n">measured</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">truth</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+
+<span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">([</span><span class="n">image</span><span class="p">],</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">200</span><span class="p">):</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">A</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">image</span><span class="p">)</span> <span class="o">-</span> <span class="n">measured</span><span class="p">)</span><span class="o">.</span><span class="n">square</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">image</span><span class="o">.</span><span class="n">clamp_</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
 </div>
-</div>
+</section>
+<section id="notes">
+<h2>Notes<a class="headerlink" href="#notes" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Fan-beam geometry is divergent. Use <code class="docutils literal notranslate"><span class="pre">sid</span></code> and <code class="docutils literal notranslate"><span class="pre">sdd</span></code> that match your
+acquisition.</p></li>
+<li><p>The learning rate and iteration count are starting values. Tune them for your
+data.</p></li>
+<li><p>For a custom fan trajectory, pass the <code class="docutils literal notranslate"><span class="pre">(src_pos,</span> <span class="pre">det_center,</span> <span class="pre">det_u)</span></code> tensors
+to <code class="docutils literal notranslate"><span class="pre">Projector</span></code> with <code class="docutils literal notranslate"><span class="pre">beam=&quot;fan&quot;</span></code>.</p></li>
+</ul>
 </section>
 </section>
 
@@ -502,8 +360,9 @@
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Fan Beam Iterative Reconstruction</a><ul>
-<li><a class="reference internal" href="#overview">Overview</a></li>
-<li><a class="reference internal" href="#mathematical-background">Mathematical Background</a></li>
+<li><a class="reference internal" href="#objective">Objective</a></li>
+<li><a class="reference internal" href="#code">Code</a></li>
+<li><a class="reference internal" href="#notes">Notes</a></li>
 </ul>
 </li>
 </ul>

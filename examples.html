@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Parallel Beam Filtered Backprojection (FBP)" href="fbp_parallel_example.html"><link rel="prev" title="Migrating from diffct 1.x to 2.0" href="migration.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Parallel Beam Filtered Backprojection (FBP)" href="fbp_parallel_example.html"><link rel="prev" title="Multiple GPUs and Nodes" href="multi_gpu.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
         <title>Examples - diffct 2.0.0</title>
@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 current has-children current-page"><a class="current reference internal" href="#">Examples</a><input aria-label="Toggle navigation of Examples" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -252,24 +251,23 @@
         <article role="main" id="furo-main-content">
           <section id="examples">
 <h1>Examples<a class="headerlink" href="#examples" title="Link to this heading">¶</a></h1>
-<p>These pages explain the example scripts in <code class="docutils literal notranslate"><span class="pre">examples/</span></code> of the repository: what each script computes, the pipeline it uses and how to run it.</p>
+<p>The scripts in the repository <code class="docutils literal notranslate"><span class="pre">examples/</span></code> directory show how to use
+<code class="docutils literal notranslate"><span class="pre">diffct</span></code>. Run them from the repository root.</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">analytical_reconstruction.py</span></code>: parallel-beam FBP, fan-beam FBP and cone-beam FDK, with a choice of ramp-filter window (used by the analytical pages below)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">iterative_reconstruction.py</span></code>: 3D cone-beam CGLS, SIRT and TV reconstruction on any trajectory (circular, helical, saddle, sinusoidal), on one GPU, several GPUs or several nodes (used by the iterative pages below)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">walnut_reconstruction.py</span></code>: FDK, SIRT, CGLS and TV reconstruction of a measured walnut scan</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">quickstart.py</span></code>: <code class="docutils literal notranslate"><span class="pre">Projector</span></code> basics for parallel, fan and cone beams, including the adjoint check and gradients</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">geometry_calibration.py</span></code>: recovers per-view angle errors and a detector shift from projections, using geometry gradients</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">benchmark_projector.py</span></code>: checks correctness and measures speed of one GPU against several GPUs</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">plot_trajectory.py</span></code>: plots the trajectory generators (CPU only)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">quickstart.py</span></code>: <code class="docutils literal notranslate"><span class="pre">Projector</span></code> basics for parallel, fan and cone beams, with
+the adjoint check and gradients.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">analytical_reconstruction.py</span></code>: parallel-beam FBP, fan-beam FBP and cone-beam
+FDK, with a choice of ramp-filter window.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">iterative_reconstruction.py</span></code>: 3D cone-beam CGLS, SIRT and TV reconstruction
+on circular, helical, saddle or sinusoidal trajectories.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">walnut_reconstruction.py</span></code>: FDK, SIRT, CGLS and TV reconstruction of a measured
+walnut scan.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">geometry_calibration.py</span></code>: recovers per-view angle errors and a detector shift
+from projections, using geometry gradients.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">benchmark_projector.py</span></code>: compares one GPU with several GPUs.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">plot_trajectory.py</span></code>: plots the trajectory generators (CPU only).</p></li>
 </ul>
-<p>See <code class="docutils literal notranslate"><span class="pre">examples/README.md</span></code> in the repository for the launch modes and measured results.</p>
-<p>The examples are organized into two main categories:</p>
-<p><strong>Analytical Reconstruction Methods</strong>
-- Filtered backprojection (FBP) algorithms for direct reconstruction
-- Standard analytical approaches used in clinical and research settings</p>
-<p><strong>Iterative Reconstruction Methods</strong>
-- Gradient-based optimization approaches using differentiable operators
-- Advanced reconstruction techniques with regularization capabilities</p>
+<p>See <code class="docutils literal notranslate"><span class="pre">examples/README.md</span></code> in the repository for all launch modes.</p>
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Analytical Reconstruction</span></p>
 <ul>
@@ -308,14 +306,14 @@
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="migration.html">
+          <a class="prev-page" href="multi_gpu.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Migrating from diffct 1.x to 2.0</div>
+                <div class="title">Multiple GPUs and Nodes</div>
                 
               </div>
             </a>

@@ -193,9 +193,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories, coordinates and gradients</a></li>
-<li class="toctree-l1"><a class="reference internal" href="distributed.html">Multiple GPUs and nodes</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
@@ -207,7 +206,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="validation.html">结果验证</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating from diffct 1.x to 2.0</a></li>
 </ul>
 
 </div>
@@ -252,36 +251,38 @@
         <article role="main" id="furo-main-content">
           <section id="measured-walnut">
 <h1>Measured Walnut<a class="headerlink" href="#measured-walnut" title="Link to this heading">¶</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">examples/walnut_reconstruction.py</span></code> reconstructs a real walnut from 240
-measured cone-beam projections on a full circular orbit (Meaney 2022, Zenodo
-6986012, CC BY 4.0; see <code class="docutils literal notranslate"><span class="pre">examples/data/NOTICE</span></code>). The scan geometry goes to
-<code class="docutils literal notranslate"><span class="pre">Projector</span></code> as explicit per-view tensors, the same way as a calibrated
+<p><code class="docutils literal notranslate"><span class="pre">examples/walnut_reconstruction.py</span></code> reconstructs a measured walnut from 240
+cone-beam projections on a full circular orbit. The data are from Meaney 2022
+(Zenodo 6986012, CC BY 4.0; see <code class="docutils literal notranslate"><span class="pre">examples/data/NOTICE</span></code>). The scan geometry is
+passed to <code class="docutils literal notranslate"><span class="pre">Projector</span></code> as explicit per-view tensors, the same way as a calibrated
 trajectory.</p>
 <section id="run-it">
 <h2>Run it<a class="headerlink" href="#run-it" title="Link to this heading">¶</a></h2>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/walnut_reconstruction.py<span class="w"> </span>--figure<span class="w"> </span>walnut.png
+python<span class="w"> </span>examples/walnut_reconstruction.py<span class="w"> </span>--size<span class="w"> </span><span class="m">512</span><span class="w"> </span>--devices<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="m">3</span>
 </pre></div>
 </div>
-<p>The figure shows axial and coronal centre slices of a 256³ volume: FDK with a
-Hann window, SIRT (200 iterations), CGLS (20) and TV-regularized least squares
-(300 Adam steps, weight 0.3).</p>
+<p>The figure shows axial and coronal centre slices. The reconstructions are:</p>
+<ul class="simple">
+<li><p>FDK with a Hann window.</p></li>
+<li><p>SIRT (200 iterations).</p></li>
+<li><p>CGLS (20 iterations).</p></li>
+<li><p>TV-regularized least squares (300 Adam steps, weight 0.3).</p></li>
+</ul>
+<p>Use <code class="docutils literal notranslate"><span class="pre">--algorithms</span></code> with no values to run FDK only. Use <code class="docutils literal notranslate"><span class="pre">--window</span></code> to change the
+FDK filter.</p>
 <img alt="Measured walnut: FDK, SIRT, CGLS and TV reconstructions" src="_images/walnut_measured.png" />
 </section>
 <section id="simulated-helical-scan">
 <h2>Simulated helical scan<a class="headerlink" href="#simulated-helical-scan" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">--save-volume</span></code> stores the FDK volume scaled to [0, 1]. Use it as the ground
-truth for a simulated helical scan with 720 views and 1% noise:</p>
+<p><code class="docutils literal notranslate"><span class="pre">--save-volume</span></code> stores the FDK volume scaled to [0, 1]. Use it as the phantom for
+a simulated helical scan:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/walnut_reconstruction.py<span class="w"> </span>--algorithms<span class="w"> </span>--save-volume<span class="w"> </span>walnut256.npy
 python<span class="w"> </span>examples/iterative_reconstruction.py<span class="w"> </span>--size<span class="w"> </span><span class="m">256</span><span class="w"> </span>--views<span class="w"> </span><span class="m">720</span><span class="w"> </span>--trajectory<span class="w"> </span>helical<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--noise<span class="w"> </span><span class="m">0</span>.01<span class="w"> </span>--phantom<span class="w"> </span>walnut256.npy<span class="w"> </span>--figure<span class="w"> </span>helical.png
 </pre></div>
 </div>
-<p>PSNR against the walnut volume: FDK 26.67 dB, CGLS (30 iterations) 34.13 dB,
-SIRT (200) 34.52 dB, TV (200, weight 1.0) 37.77 dB.</p>
 <img alt="Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions" src="_images/walnut_helical.png" />
-<p>Each figure has a provenance record (command, commit, GPU, timings, PSNR and
-data checksum) in <code class="docutils literal notranslate"><span class="pre">docs/assets/walnut_measured.json</span></code> and
-<code class="docutils literal notranslate"><span class="pre">docs/assets/walnut_helical.json</span></code>.</p>
 </section>
 </section>
 
