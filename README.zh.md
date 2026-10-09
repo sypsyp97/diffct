@@ -34,6 +34,8 @@
   <a href="#引用">引用</a>
 </p>
 
+> **安装**请带 CUDA extra，在 PyTorch 之后运行 `pip install "diffct[cu12]"` 或 `pip install "diffct[cu13]"`。只运行 `pip install diffct` 需要系统已装 CUDA Toolkit。
+>
 > **2.0 版**用逐视角轨迹取代了 1.x 的圆轨迹接口。为 1.x 写的代码需要修改，见[迁移说明](docs/MIGRATION.md)。
 > Apple Silicon 请使用 [Linda-Sophie Schneider 的 MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
 
@@ -50,11 +52,14 @@
 
 ## 安装
 
-需要 CUDA GPU 和 PyTorch。请先按你的 CUDA 版本安装 PyTorch。
+需要 NVIDIA GPU。先按你的 CUDA 版本安装 PyTorch，再按同一 CUDA 大版本安装 diffct：
 
 ```bash
-pip install "diffct[cu12]"    # CUDA 13 用 [cu13]；先按 CUDA 版本安装 PyTorch
+pip install "diffct[cu12]"    # PyTorch 为 CUDA 12 构建
+pip install "diffct[cu13]"    # PyTorch 为 CUDA 13 构建
 ```
+
+extra 会装上 Numba CUDA 编译内核所需的 CUDA 编译库。只运行 `pip install diffct` 不会装这些库，仅适用于系统已装 CUDA Toolkit 的情况。
 
 从源码安装（含示例）：
 
@@ -156,7 +161,7 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 ## 示例
 
-`quickstart.py`、`analytical_reconstruction.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式、分布式损失规则和全部实测结果见 [examples/README.md](examples/README.md)。
+`quickstart.py`、`analytical_reconstruction.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
 
 ## 文档
 

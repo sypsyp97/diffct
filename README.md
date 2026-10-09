@@ -1,6 +1,6 @@
 <h1 align="center">diffct</h1>
 
-<p align="center">English · <a href="README.zh.md">简体中文</a></p>
+<p align="center">English · <a href="https://github.com/sypsyp97/diffct/blob/main/README.zh.md">简体中文</a></p>
 
 <p align="center">
   Differentiable CUDA projectors for CT: arbitrary trajectories, multi-GPU, multi-node, geometry gradients.
@@ -12,15 +12,15 @@
   <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=docs&style=flat-square" alt="Documentation"></a>
   <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/ci.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
-  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
 </p>
 
 <p align="center">
-  <a href="docs/assets/diffct_intro.mp4">Intro video (MP4)</a> ·
+  <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">Intro video (MP4)</a> ·
   <a href="https://www.preprints.org/manuscript/202605.1446/v1">Technical report</a> ·
   <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
 </p>
@@ -34,7 +34,9 @@
   <a href="#citation">Citation</a>
 </p>
 
-> **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](docs/MIGRATION.md).
+> **Install** with the CUDA extra, `pip install "diffct[cu12]"` or `pip install "diffct[cu13]"`, after PyTorch. A plain `pip install diffct` needs a system CUDA Toolkit.
+>
+> **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
 > For Apple Silicon, use the [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
 ## Why diffct
@@ -46,15 +48,18 @@ To our knowledge, diffct is the only open-source GPU CT library that combines ar
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun and NCCL. Views are partitioned and the volume is replicated. Speedup depends on workload and communication costs.
 - **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak, shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP and FDK backprojection.
 
-Capabilities, limits and isocenter rules: [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits).
+Capabilities, limits and isocenter rules: [docs/REFERENCE.md](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#capabilities-and-limits).
 
 ## Install
 
-You need a CUDA GPU and PyTorch. Install PyTorch for your CUDA version first.
+You need an NVIDIA GPU. Install PyTorch for your CUDA version first. Then install diffct with the extra for the same CUDA major version:
 
 ```bash
-pip install "diffct[cu12]"    # [cu13] for CUDA 13; install PyTorch for your CUDA first
+pip install "diffct[cu12]"    # PyTorch built for CUDA 12
+pip install "diffct[cu13]"    # PyTorch built for CUDA 13
 ```
+
+The extra installs the CUDA compiler libraries that Numba CUDA needs to compile the kernels. A plain `pip install diffct` does not install them. Use it only if a CUDA Toolkit is already installed on the system.
 
 From source, with the examples:
 
@@ -98,11 +103,11 @@ loss = 0.5 * (A.project(x) - sinogram).square().sum()
 loss.backward()                     # x.grad = A^T (A x - y)
 ```
 
-**Custom or calibrated trajectories.** Pass calibrated tensors directly instead of a generator; no circular fit is needed. See [REFERENCE](docs/REFERENCE.md#custom-or-calibrated-trajectories).
+**Custom or calibrated trajectories.** Pass calibrated tensors directly instead of a generator; no circular fit is needed. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#custom-or-calibrated-trajectories).
 
-**Geometry gradients.** Set `requires_grad=True` on trajectory tensors before you build `Projector`. See [REFERENCE](docs/REFERENCE.md#geometry-gradients).
+**Geometry gradients.** Set `requires_grad=True` on trajectory tensors before you build `Projector`. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#geometry-gradients).
 
-**Several GPUs and nodes.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun for one or more nodes. See [REFERENCE](docs/REFERENCE.md#several-gpus-and-nodes) and [DISTRIBUTED.md](docs/DISTRIBUTED.md).
+**Several GPUs and nodes.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun for one or more nodes. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#several-gpus-and-nodes) and [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md).
 
 ```python
 A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
@@ -112,8 +117,8 @@ A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, dev
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png">
-    <img src="docs/assets/scaling_light.png" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 64^3 and 128^3">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 64^3 and 128^3">
   </picture>
 </p>
 
@@ -123,7 +128,7 @@ A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, dev
 | Adjoint (backprojection) | 20.66 ms | 5.89 ms (3.5×) | 4.62 ms (4.5×) |
 | CGLS iteration | 30.08 ms | 8.08 ms (3.7×) | 5.59 ms (5.4×) |
 
-Circular trajectory, 360 views, detector (2n, 1.5n) cells at pitch 1.25, A100 64 GB GPUs. Small volumes scale less: at 64³, one CGLS iteration takes 4.63 ms on 1 GPU, 1.57 ms on 4 and 1.56 ms on 8. Raw data: [docs/assets/scaling.json](docs/assets/scaling.json).
+Circular trajectory, 360 views, detector (2n, 1.5n) cells at pitch 1.25, A100 64 GB GPUs. Small volumes scale less: at 64³, one CGLS iteration takes 4.63 ms on 1 GPU, 1.57 ms on 4 and 1.56 ms on 8. Raw data: [docs/assets/scaling.json](https://github.com/sypsyp97/diffct/blob/main/docs/assets/scaling.json).
 
 To measure one against several GPUs on your machine (default scan of the script, not the table setup):
 
@@ -136,7 +141,7 @@ python examples/benchmark_projector.py --devices 0 1
 **Measured walnut.** 240 measured views, circular cone beam, 256³: FDK (Hann window), SIRT (200 iterations), CGLS (20), TV (300, weight 0.3); axial and coronal centre slices.
 
 <p align="center">
-  <img src="docs/assets/walnut_measured.png" width="100%" alt="Measured walnut: FDK, SIRT, CGLS and TV reconstructions">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_measured.png" width="100%" alt="Measured walnut: FDK, SIRT, CGLS and TV reconstructions">
 </p>
 
 ```bash
@@ -146,7 +151,7 @@ python examples/walnut_reconstruction.py --figure out.png
 **Simulated helical scan of the walnut.** The FDK walnut volume as ground truth, 720 views, 1% noise, 256³. PSNR: FDK 26.67 dB, CGLS (30 iterations) 34.13 dB, SIRT (200) 34.52 dB, TV (200, weight 1.0) 37.77 dB.
 
 <p align="center">
-  <img src="docs/assets/walnut_helical.png" width="100%" alt="Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_helical.png" width="100%" alt="Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions">
 </p>
 
 ```bash
@@ -154,22 +159,22 @@ python examples/walnut_reconstruction.py --algorithms --save-volume walnut256.np
 python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory helical --noise 0.01 --phantom walnut256.npy --figure out.png
 ```
 
-Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](examples/data/NOTICE).
+Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](https://github.com/sypsyp97/diffct/blob/main/examples/data/NOTICE).
 
 ## Examples
 
-`quickstart.py`, `analytical_reconstruction.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes, distributed-loss rules and measured results are in [examples/README.md](examples/README.md).
+`quickstart.py`, `analytical_reconstruction.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [Trajectory guide](docs/source/trajectories.rst) | Trajectory tuples and `Projector` usage |
-| [docs/REFERENCE.md](docs/REFERENCE.md) | Capabilities and limits, custom trajectories, geometry gradients, multi-GPU details, geometry and units |
-| [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | Execution/memory choices, distributed loss rules, Slurm and cross-node checks |
-| [docs/MIGRATION.md](docs/MIGRATION.md) | Moving from the circular-only API |
-| [docs/video/README.md](docs/video/README.md) | How the intro video is rendered |
-| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [Trajectory guide](https://github.com/sypsyp97/diffct/blob/main/docs/source/trajectories.rst) | Trajectory tuples and `Projector` usage |
+| [docs/REFERENCE.md](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md) | Capabilities and limits, custom trajectories, geometry gradients, multi-GPU details, geometry and units |
+| [docs/DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md) | Execution/memory choices, distributed loss rules, Slurm and cross-node checks |
+| [docs/MIGRATION.md](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md) | Moving from the circular-only API |
+| [docs/video/README.md](https://github.com/sypsyp97/diffct/blob/main/docs/video/README.md) | How the intro video is rendered |
+| [CHANGELOG.md](https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md) | Release history |
 
 Run the test suite on a CUDA host with `python -m pytest tests/ -q`.
 
@@ -201,7 +206,7 @@ If you use this library in your research, please cite the software and the techn
 
 ## License and acknowledgements
 
-Apache 2.0, see [LICENSE](LICENSE). The project draws on
+Apache 2.0, see [LICENSE](https://github.com/sypsyp97/diffct/blob/main/LICENSE). The project draws on
 [PYRO-NN](https://github.com/csyben/PYRO-NN) and
 [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT).
-Issues and pull requests are welcome. The walnut data are CC BY 4.0 (Meaney 2022); see [NOTICE](NOTICE).
+Issues and pull requests are welcome. The walnut data are CC BY 4.0 (Meaney 2022); see [NOTICE](https://github.com/sypsyp97/diffct/blob/main/NOTICE).

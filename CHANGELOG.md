@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-10-09
+
+### Fixed
+
+- The exit-time cleanup from 2.0.1 set numba-cuda's pending-deallocation
+  ratio to infinity. numba-cuda converts ``capacity * ratio`` to ``int``, so
+  each deallocation queued during shutdown raised ``ValueError`` or
+  ``OverflowError``. The exit code stayed 0, but stderr showed the error. The
+  ratio is now finite and large. Pending CUDA module unloads are still not
+  flushed at exit.
+
+### Documentation
+
+- The install instructions state that ``pip install diffct`` without a CUDA
+  extra needs a system CUDA Toolkit. Use ``diffct[cu12]`` or ``diffct[cu13]``.
+- README images and links use absolute URLs, so they also work on PyPI.
+
 ## [2.0.1] - 2026-10-09
 
 ### Fixed

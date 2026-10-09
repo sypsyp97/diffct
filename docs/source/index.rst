@@ -15,7 +15,9 @@ Install
 
    python -m pip install "diffct[cu12]"
 
-Use ``diffct[cu13]`` for CUDA 13.
+Use ``diffct[cu13]`` for CUDA 13. The extra installs the CUDA compiler libraries
+that Numba CUDA needs. A plain ``pip install diffct`` does not install them; use it
+only if a CUDA Toolkit is already installed on the system.
 
 Start here
 ----------

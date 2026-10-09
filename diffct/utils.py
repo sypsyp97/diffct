@@ -196,11 +196,15 @@ def _keep_cuda_modules_at_exit():
     GPUs, a flush during interpreter shutdown can unload the same library twice
     and corrupt the heap, so the process crashes after all work is done. The
     process exit releases these resources anyway.
+
+    The byte limit is ``int(capacity * CUDA_DEALLOCS_RATIO)``, and the module
+    queue has a capacity of 0. An infinite ratio makes that ``int()`` call raise
+    (NaN or infinity), so the ratio must stay finite.
     """
     from numba.cuda.core import config as cuda_config
 
     cuda_config.CUDA_DEALLOCS_COUNT = sys.maxsize
-    cuda_config.CUDA_DEALLOCS_RATIO = float("inf")
+    cuda_config.CUDA_DEALLOCS_RATIO = float(sys.maxsize)
 
 
 class _ExitOrderAnchor:
