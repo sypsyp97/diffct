@@ -52,6 +52,11 @@
 | 重建 | 分片常数 Siddon 模型的匹配伴随，以及独立的 FBP/FDK 辅助函数 | `backproject()` 不是逆算子；FDK 是近似方法，不因支持任意轨迹而成为精确重建 |
 | 内存 | 按视角分配到 GPU 或 rank | 每张参与计算的 GPU 都需要完整体数据；单进程多卡还会在输入设备汇集完整正弦图 |
 
+解析扇束／锥束反投影默认从源位置和探测器法向推断物理等中心。非圆轨迹
+或无法唯一推断的几何（包括单个视角）应显式传入 `isocenter=(x, y)` 或
+`(x, y, z)`。解析插值要求探测器每个轴至少有两个 bin。有限离散 Ram-Lak
+未加窗时使用 `pad_factor>=2` 可得到线性卷积。
+
 实测结果及其适用范围见 [验证记录](docs/VALIDATION.md)，不代表任意扫描或硬件的保证。
 
 ## 安装
@@ -214,6 +219,9 @@ python examples/iterative_reconstruction.py --trajectory helical --noise 0.01 --
 ```
 
 **解析重建。** Shepp-Logan 窗。PSNR：平行束 FBP 38.1 dB，扇束 FBP 34.9 dB，锥束 FDK 34.1 dB。
+
+此图使用旧的频域采样 ramp。有限离散 Ram-Lak 修正后的 raw 误差及 PSNR
+对照见[验证记录](docs/VALIDATION.md#解析重建修复复验2026-10-09)。
 
 <p align="center">
   <img src="docs/assets/analytical.png" width="100%" alt="平行束 FBP、扇束 FBP 和锥束 FDK 的重建结果">

@@ -353,17 +353,20 @@ def _fan_2d_fbp_backproject_kernel(
     d_sino, n_views, n_det,
     d_image, Nx, Ny,
     det_spacing, d_src_pos, d_det_center, d_det_u_vec,
-    cx, cy, voxel_spacing
+    cx, cy, voxel_spacing, iso_x, iso_y
 ):
     """Voxel-driven fan-beam FBP backprojection gather (arbitrary trajectory).
 
     For each pixel ``(ix, iy)`` loops over views and accumulates a linearly
-    interpolated filtered-sinogram sample weighted by ``(|S_v|/U_n)^2``,
+    interpolated filtered-sinogram sample weighted by ``(sid_n/U_n)^2``,
     where ``U_n`` is the signed distance from the source ``S_v`` to the
     pixel along the detector normal.
     """
     ix, iy = cuda.grid(2)
     if ix >= Nx or iy >= Ny:
+        return
+    if n_det < 2:
+        d_image[iy, ix] = _ZERO
         return
 
     # Sample at voxel centres, matching the cell-constant Siddon projector.
@@ -407,10 +410,8 @@ def _fan_2d_fbp_backproject_kernel(
             continue
         mag = sdd_n / U_n
 
-        # Source-to-origin distance projected on the detector normal.
-        # Principled generalisation of ``sid`` for arbitrary fan
-        # trajectories; reduces to the classical sid for circular orbits.
-        sid_n = -sx * nx - sy * ny
+        # Source-to-isocenter distance, independent of coordinate origin.
+        sid_n = (iso_x - sx) * nx + (iso_y - sy) * ny
         if sid_n <= _EPSILON:
             continue
 

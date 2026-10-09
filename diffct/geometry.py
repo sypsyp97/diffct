@@ -524,33 +524,18 @@ def custom_trajectory_3d(n_views, sid, sdd,
         raise ValueError(f"source_path_fn must return tensor of shape ({n_views}, 3), "
                         f"got {src_pos.shape}")
 
-    # Preallocate remaining position matrices
-    det_center = torch.zeros((n_views, 3), device=device, dtype=dtype)
-    det_u_vec = torch.zeros((n_views, 3), device=device, dtype=dtype)
-    det_v_vec = torch.zeros((n_views, 3), device=device, dtype=dtype)
-
-    # For each view, compute detector position and orientation
-    for i in range(n_views):
-        # Vector from isocenter to source
-        src_vec = src_pos[i]
-        src_vec_norm = torch.norm(src_vec)
-        src_unit = src_vec / src_vec_norm
-
-        # Detector center is opposite to source
-        det_center[i] = -src_unit * (sdd - src_vec_norm)
-
-        # Detector u-direction: perpendicular to source direction in xy-plane
-        # If source is along z-axis, use x-direction
-        if torch.abs(src_vec[0]) < 1e-6 and torch.abs(src_vec[1]) < 1e-6:
-            det_u_vec[i] = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype)
-        else:
-            # Perpendicular in xy-plane
-            u_unnorm = torch.tensor([-src_vec[1], src_vec[0], 0.0], device=device, dtype=dtype)
-            det_u_vec[i] = u_unnorm / torch.norm(u_unnorm)
-
-        # Detector v-direction: cross product of src_unit and det_u
-        det_v_vec[i] = torch.cross(src_unit, det_u_vec[i])
-        det_v_vec[i] = det_v_vec[i] / torch.norm(det_v_vec[i])
+    # Keep the entire frame in the source-path autograd graph. Constructing
+    # tensors from scalar tensors detaches them; rewriting view slices in
+    # place also invalidates tensors saved by cross/norm for backward.
+    src_unit = src_pos / torch.linalg.vector_norm(src_pos, dim=1, keepdim=True)
+    det_center = src_pos - sdd * src_unit
+    u_unnorm = torch.stack((-src_pos[:, 1], src_pos[:, 0],
+                            torch.zeros_like(src_pos[:, 0])), dim=1)
+    along_z = (src_pos[:, :2].abs() < 1e-6).all(dim=1, keepdim=True)
+    u_unnorm = torch.where(along_z, src_pos.new_tensor([1.0, 0.0, 0.0]), u_unnorm)
+    det_u_vec = u_unnorm / torch.linalg.vector_norm(u_unnorm, dim=1, keepdim=True)
+    det_v_vec = torch.cross(src_unit, det_u_vec, dim=1)
+    det_v_vec = det_v_vec / torch.linalg.vector_norm(det_v_vec, dim=1, keepdim=True)
 
     return src_pos, det_center, det_u_vec, det_v_vec
 

@@ -3,10 +3,12 @@
 Covers:
     * every documented window name at the direct ``_ramp_window`` layer
       (DC=1, Nyquist value, monotonicity),
-    * the full ``ramp_filter_1d`` end-to-end for shape, DC annihilation,
+    * the full ``ramp_filter_1d`` end-to-end for shape, finite DC response,
       rfft vs complex-fft parity, and ``sample_spacing`` scaling,
     * a high-frequency attenuation sanity check on a step input.
 """
+
+import math
 
 import pytest
 import torch
@@ -57,11 +59,47 @@ def test_ramp_filter_shape_matches_input():
     assert y.shape == x.shape
 
 
-def test_ramp_filter_kills_dc():
-    # pad_factor=1 so zero-padding doesn't turn the constant into a step.
-    x = torch.ones(16, 128)
-    y = ramp_filter_1d(x, dim=1, pad_factor=1, window="hann")
-    assert y.abs().max().item() < 1e-3, y.abs().max().item()
+def test_ramp_filter_finite_dc_response():
+    # A finite Ram-Lak kernel has a small positive DC response. Forcing it
+    # to zero biases finite, zero-extended projections.
+    n = 128
+    odd = torch.arange(1, n // 2, 2, dtype=torch.float64)
+    expected = math.pi / 2 - 4 / math.pi * (1 / odd.square()).sum()
+    y = ramp_filter_1d(torch.ones(2, n, dtype=torch.float64), window="hann")
+    torch.testing.assert_close(y, torch.full_like(y, expected), rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("n", [15, 16])
+@pytest.mark.parametrize("use_rfft", [False, True])
+@pytest.mark.parametrize("pad_factor", [2, 3])
+def test_ramp_matches_independent_linear_convolution(n, use_rfft, pad_factor):
+    x = torch.linspace(-0.4, 0.9, n, dtype=torch.float64)
+    # h[0] = pi/2; h[odd] = -2/(pi*k^2), h[nonzero even] = 0.
+    expected = torch.zeros_like(x)
+    for i in range(n):
+        for j in range(n):
+            lag = i - j
+            coefficient = math.pi / 2 if lag == 0 else (
+                -2 / (math.pi * lag**2) if lag % 2 else 0.0
+            )
+            expected[i] += x[j] * coefficient / 0.7
+    actual = ramp_filter_1d(x, sample_spacing=0.7, pad_factor=pad_factor,
+                            use_rfft=use_rfft)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=1e-12)
+
+
+def test_ramp_gaussian_matches_continuous_fourier_integral():
+    sigma = 6.0
+    u = torch.arange(-64, 64, dtype=torch.float64)
+    projection = math.sqrt(2 * math.pi) * sigma * torch.exp(-u.square() / (2 * sigma**2))
+    # Independent continuous integral: no discrete kernel or FFT in reference.
+    omega = torch.linspace(0, 8 / sigma, 20001, dtype=torch.float64)
+    integrand = (omega * torch.exp(-sigma**2 * omega.square() / 2))[:, None]
+    reference = 2 * sigma**2 * torch.trapezoid(
+        integrand * torch.cos(omega[:, None] * u[None, :]), omega, dim=0,
+    )
+    actual = ramp_filter_1d(projection, pad_factor=2)
+    assert torch.sqrt((actual - reference).square().mean()).item() < 1e-6
 
 
 @pytest.mark.parametrize("window", _WINDOWS)

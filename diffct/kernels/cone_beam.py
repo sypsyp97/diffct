@@ -447,7 +447,7 @@ def _cone_3d_fdk_backproject_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-    cx, cy, cz, voxel_spacing
+    cx, cy, cz, voxel_spacing, iso_x, iso_y, iso_z
 ):
     """Voxel-driven FDK backprojection gather (arbitrary trajectory).
 
@@ -455,7 +455,8 @@ def _cone_3d_fdk_backproject_kernel(
     bilinearly-interpolated sinogram sample weighted by ``(sid_v/U_n)^2``,
     where:
 
-      * ``sid_v = |S_v|`` is the per-view source-to-origin distance,
+      * ``sid_v = (isocenter - S_v) . n_v`` is the source-to-isocenter
+        distance along the detector normal,
       * ``U_n = (P - S_v) . n_v`` is the signed distance from the source
         to the voxel along the detector normal ``n_v = u_v x v_v``.
 
@@ -470,6 +471,9 @@ def _cone_3d_fdk_backproject_kernel(
     """
     iz, iy, ix = cuda.grid(3)
     if ix >= Nx or iy >= Ny or iz >= Nz:
+        return
+    if n_u < 2 or n_v < 2:
+        d_vol[ix, iy, iz] = _ZERO
         return
 
     # Voxel position in voxel-unit, origin-centred coordinates.
@@ -542,15 +546,8 @@ def _cone_3d_fdk_backproject_kernel(
         if sdd_n <= _EPSILON:
             continue
 
-        # Source-to-origin distance projected on the detector normal.
-        # This is the correct generalisation of the circular-orbit "sid"
-        # that appears in the (sid/U)^2 FDK weight. For a circular orbit
-        # it reduces to the constant ``sid`` (because |S| equals -S.n
-        # when n points from S toward the origin along the rotation
-        # axis). For non-circular trajectories it is the per-view
-        # source-to-iso projection, which is the principled heuristic
-        # when extending FDK beyond the circle.
-        sid_n = -sx * nx - sy * ny - sz * nz
+        # Source-to-isocenter distance, independent of coordinate origin.
+        sid_n = (iso_x - sx) * nx + (iso_y - sy) * ny + (iso_z - sz) * nz
         if sid_n <= _EPSILON:
             continue
 

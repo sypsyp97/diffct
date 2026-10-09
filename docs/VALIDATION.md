@@ -152,3 +152,53 @@ python -m torch.distributed.run --standalone --nproc-per-node=2 \
 
 跨节点命令见 [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/codex/arbitrary-trajectory-multigpu/docs/DISTRIBUTED.md)。单节点 NCCL 结果不能代替
 跨节点实测。
+
+## 解析重建修复复验（2026-10-09）
+
+本次以分支最新的 `70f2ad9` 为源码基线，在本地工作区修复四个实现缺陷，
+并将直接采样 `|omega|` 的 ramp 改为有限离散 Ram-Lak。保留了最新分支
+的探测器居中、体素中心采样和几何梯度实现。
+
+Windows RTX 4070 SUPER、Torch `2.13.0+cu132`、Numba `0.67.0`、
+NumPy `2.4.6` 上运行 `python -m pytest tests/ -q`：**274 通过、12 跳过**。
+跳过项需要至少两张 GPU；本轮未重跑多卡／NCCL。
+
+- Parker 的整圈判断改为依据采集角度；大于最小短扫描的采集范围使用
+  相应的平滑冗余权重。240°、330°、350° 的每个探测器权重积分均为 pi。
+- 扇束／锥束使用物理等中心距离计算权重，不再依赖坐标原点。圆轨迹
+  自动推断等中心，非圆或无法唯一推断的几何可显式传入 `isocenter`。
+  回归覆盖短扫描、整圈、两种体素间距和自动／显式等中心。
+- `custom_trajectory_3d` 的 detector-u／v 均通过单视角和多视角的 float64
+  gradcheck；z 轴特殊方向和真实 CUDA `Projector` 的源路径反向传播也通过。
+- 三个解析入口拒绝少于两个 bin 的插值轴，kernel 另有边界保护。原始
+  kernel 函数体用 NumPy 边界检查复现平行束、扇束、锥束单列、单行和
+  单 bin 的 `IndexError`；修复后的相同边界检查通过。
+- 离散 ramp 与独立直接卷积相符，覆盖奇偶 FFT 长度、两条 FFT 路径和
+  物理间距缩放；保留了有限长度核的小正 DC 响应。
+
+| 定量对照 | 修复前 | 修复后 |
+| --- | ---: | ---: |
+| 330° 单位圆盘中心值，固定新 ramp，仅改变 Parker | 1.83067 | 0.999931 |
+| 350° 单位圆盘中心值，同上 | 1.94161 | 0.999931 |
+| 扇束／锥束平移半个源半径后的幅值比 | 1.125000 | 1.000000 |
+| Gaussian 滤波投影与连续 Fourier 积分的 RMSE | 0.00377992 | 2.66667e-8 |
+| README 默认平行束示例的整幅 raw RMSE | 0.0158799 | 0.0140252 |
+| README 默认扇束示例的整幅 raw RMSE | 0.0244073 | 0.0229670 |
+| README 默认锥束示例的整幅 raw RMSE | 0.0241882 | 0.0230687 |
+
+圆盘对照使用解析射线积分，720 个视角，256 个 bin，探测器间距 0.1，
+SID/SDD 为 20/40，圆盘半径 4，未加窗。Gaussian 是 sigma=6、128 个
+探测器样本、`pad_factor=2` 的**滤波投影**对照，不是整幅重建 RMSE。
+
+README 默认示例保持 128²／128³、360 个视角、原探测器配置、
+Shepp-Logan 窗及两倍 padding。平均灰度误差分别从 -0.00745、-0.00823、
+-0.00494 降至 -0.000067、-0.000459、-0.000074。raw RMSE 三种束型均改善，
+但截断负值后的 PSNR 没有一致改善：平行束 38.10→38.11 dB，扇束
+34.92→34.48 dB，锥束 34.10→33.96 dB。旧滤波的负灰度偏差会被非负截断
+部分掩盖。图像颗粒不能据此视为已解决；抗混叠和边缘分辨率仍需单独对照。
+
+原始失败日志、最新完整回归日志和定量结果保存在本地
+`.validation/analytical-fixes-red.log`、`.validation/analytical-fixes-latest-full.log`
+和 `.validation/analytical-fixes-metrics.json`。回归测试在
+`tests/test_analytical_regressions.py`、`tests/test_geometry_autograd.py`、
+`tests/test_weights.py` 和 `tests/test_ramp_filter_windows.py`。

@@ -352,6 +352,9 @@ def _parallel_2d_fbp_backproject_kernel(
     ix, iy = cuda.grid(2)
     if ix >= Nx or iy >= Ny:
         return
+    if n_det < 2:
+        d_image[iy, ix] = _ZERO
+        return
 
     # Sample at voxel centres, matching the cell-constant Siddon projector.
     x_v = np.float32(ix) + _HALF - cx

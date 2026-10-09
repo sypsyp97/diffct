@@ -76,6 +76,12 @@
 | Reconstruction | Matched adjoint plus separate FBP/FDK helpers | `backproject()` is not an inverse; FDK remains approximate and does not become exact for arbitrary scans |
 | Memory | Views split across GPUs/ranks | Every participating GPU needs a full volume; local multi-GPU also gathers the full sinogram on the input device |
 
+Analytical fan/cone backprojection infers the physical isocenter from source
+lines along detector normals. For non-circular or ambiguous geometry (including
+a single view), supply `isocenter=(x, y)` or `(x, y, z)`. Analytical interpolation
+requires at least two detector bins per axis. The finite discrete Ram-Lak filter
+uses `pad_factor>=2` for linear convolution when unwindowed.
+
 ## Install
 
 You need a CUDA GPU and PyTorch. Install PyTorch for your CUDA version first.
@@ -251,6 +257,10 @@ python examples/iterative_reconstruction.py --trajectory helical --noise 0.01 --
 
 **Analytical reconstruction.** Shepp-Logan window. PSNR: parallel FBP 38.1 dB,
 fan FBP 34.9 dB, cone FDK 34.1 dB.
+
+This gallery was rendered with the earlier frequency-sampled ramp. The finite
+Ram-Lak correction and current raw-error comparisons are recorded in
+[docs/VALIDATION.md](docs/VALIDATION.md#解析重建修复复验2026-10-09).
 
 <p align="center">
   <img src="docs/assets/analytical.png" width="100%" alt="Parallel FBP, fan FBP and cone FDK reconstructions">

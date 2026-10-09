@@ -10,6 +10,7 @@ kernels, and FBP/FDK gather kernels.
 
 import math
 
+import pytest
 import torch
 
 from diffct import (
@@ -118,3 +119,22 @@ def test_parker_short_scan_range_is_bounded():
     pw = parker_weights(angles, n_det, spacing, sdd)
     assert pw.min() >= 0.0
     assert pw.max() <= 1.0 + 1e-5
+
+
+@pytest.mark.parametrize("coverage_degrees", [240, 330, 350])
+def test_parker_overscan_integrates_each_detector_to_pi(coverage_degrees):
+    # The fan width must not turn a 330/350 degree acquisition into a full scan.
+    angles = torch.linspace(0.3, 0.3 + math.radians(coverage_degrees), 2049)
+    weights = parker_weights(angles, 64, 1.0, 80.0)
+    d_beta = angular_integration_weights(angles, redundant_full_scan=False)
+    integrated = (weights * d_beta[:, None]).sum(dim=0)
+    torch.testing.assert_close(integrated, torch.full_like(integrated, math.pi),
+                               rtol=0, atol=2e-5)
+    assert weights[0].max() < 1e-6
+    assert weights[-1].max() < 1e-6
+
+
+def test_parker_narrow_fan_full_scan_is_one():
+    angles = torch.arange(360) * (2 * math.pi / 360)
+    weights = parker_weights(angles, 2, 0.01, 800.0)
+    torch.testing.assert_close(weights, torch.ones_like(weights))

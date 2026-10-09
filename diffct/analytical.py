@@ -202,30 +202,37 @@ def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset
     gamma = torch.atan(u / sdd)  # (n_det,)
     gamma_max = float(gamma.abs().max().item())
 
-    scan_range = float((angles.max() - angles.min()).item()) + 2.0 * gamma_max
-    if scan_range >= 2.0 * math.pi - 1e-6:
+    angles_sorted = torch.sort(angles).values
+    scan_range = float((angles_sorted[-1] - angles_sorted[0]).item())
+    step = float(torch.median(angles_sorted[1:] - angles_sorted[:-1]).item())
+    # Full-scan detection depends on acquired angles, not detector fan width.
+    # Allow one missing endpoint interval for endpoint-excluded full scans.
+    if scan_range >= 2.0 * math.pi - 1.5 * step - max(1e-6, 0.05 * step):
         # Already a full scan — no Parker needed.
         return torch.ones((n_ang, num_detectors), device=device, dtype=angles.dtype)
 
-    beta = angles - angles.min()  # shift so beta in [0, scan_range - 2*gamma_max]
+    # Generalized Parker taper for pi + 2*gamma_max <= coverage < 2*pi.
+    # The minimum also accommodates an endpoint-excluded minimal short scan.
+    delta = max(gamma_max, 0.5 * (scan_range - math.pi))
+    beta = angles - angles.min()
     beta = beta.view(-1, 1)
     gamma_b = gamma.view(1, -1)
 
     w = torch.ones_like(beta.expand(n_ang, num_detectors))
 
-    # Region 1: 0 <= beta < 2*(gamma_max - gamma)
-    r1 = beta < 2.0 * (gamma_max - gamma_b)
-    arg1 = (math.pi * 0.25) * beta / (gamma_max - gamma_b + 1e-12)
+    # Region 1: 0 <= beta < 2*(delta - gamma)
+    r1 = beta < 2.0 * (delta - gamma_b)
+    arg1 = (math.pi * 0.25) * beta / (delta - gamma_b + 1e-12)
     w = torch.where(r1, torch.sin(arg1) ** 2, w)
 
-    # Region 3: pi - 2*gamma <= beta <= pi + 2*gamma_max
+    # Region 3: pi - 2*gamma <= beta <= pi + 2*delta
     r3 = beta > math.pi - 2.0 * gamma_b
-    arg3 = (math.pi * 0.25) * (math.pi + 2.0 * gamma_max - beta) / (gamma_max + gamma_b + 1e-12)
+    arg3 = (math.pi * 0.25) * (math.pi + 2.0 * delta - beta) / (delta + gamma_b + 1e-12)
     w = torch.where(r3, torch.sin(arg3) ** 2, w)
 
     # Outside scan range: zero (shouldn't happen for well-formed inputs).
     w = torch.where(beta < 0, torch.zeros_like(w), w)
-    w = torch.where(beta > math.pi + 2.0 * gamma_max, torch.zeros_like(w), w)
+    w = torch.where(beta > math.pi + 2.0 * delta, torch.zeros_like(w), w)
     return w
 
 
@@ -268,7 +275,15 @@ def _ramp_window(name, freqs):
 
 def ramp_filter_1d(sinogram_tensor, dim=-1, sample_spacing=1.0, pad_factor=1,
                    window=None, use_rfft=True):
-    """Apply a 1D ramp filter along ``dim`` using FFT.
+    """Apply a finite discrete Ram-Lak filter along ``dim`` using FFT.
+
+    The angular-frequency impulse response is ``h[0] = pi/2``,
+    ``h[k] = -2/(pi*k**2)`` for odd ``k``, and zero for nonzero even
+    ``k`` (Kak and Slaney, chapter 3, equation 61, scaled by ``2*pi``).
+    Transforming this finite kernel preserves its small positive DC
+    response and avoids the low-frequency bias of directly sampling
+    ``abs(omega)``. ``pad_factor >= 2`` gives linear convolution over the
+    retained samples for an unwindowed filter.
 
     Parameters
     ----------
@@ -310,19 +325,25 @@ def ramp_filter_1d(sinogram_tensor, dim=-1, sample_spacing=1.0, pad_factor=1,
         x = sinogram_tensor
 
     scale = 1.0 / float(sample_spacing)
+    # Wrapped signed lags give a symmetric kernel for even and odd FFT sizes.
+    lags = torch.arange(n_pad, device=x.device)
+    lags = torch.minimum(lags, n_pad - lags)
+    impulse = torch.zeros(n_pad, device=x.device, dtype=x.real.dtype)
+    impulse[0] = math.pi / 2.0
+    odd = lags % 2 == 1
+    impulse[odd] = -2.0 / (math.pi * lags[odd].to(impulse.dtype).square())
 
     if use_rfft and torch.is_floating_point(x):
         freqs = torch.fft.rfftfreq(n_pad, device=x.device, dtype=x.dtype)
-        ramp = torch.abs(2.0 * torch.pi * freqs) * _ramp_window(window, freqs) * scale
+        ramp = torch.fft.rfft(impulse).real * _ramp_window(window, freqs) * scale
         shape = [1] * x.ndim
         shape[dim_pos] = ramp.shape[0]
         ramp = ramp.reshape(shape)
         x_fft = torch.fft.rfft(x, dim=dim_pos)
         x_filtered = torch.fft.irfft(x_fft * ramp, n=n_pad, dim=dim_pos)
     else:
-        freqs = torch.fft.fftfreq(n_pad, device=x.device, dtype=torch.float32)
-        freqs = freqs.to(dtype=x.real.dtype if x.is_complex() else x.dtype)
-        ramp = torch.abs(2.0 * torch.pi * freqs) * _ramp_window(window, freqs) * scale
+        freqs = torch.fft.fftfreq(n_pad, device=x.device, dtype=x.real.dtype)
+        ramp = torch.fft.fft(impulse).real * _ramp_window(window, freqs) * scale
         shape = [1] * x.ndim
         shape[dim_pos] = ramp.shape[0]
         ramp = ramp.reshape(shape)
@@ -356,6 +377,8 @@ def parallel_weighted_backproject(sinogram, ray_dir, det_origin, det_u_vec,
     Assumes the input sinogram has already been ramp-filtered with
     ``ramp_filter_1d`` and weighted by ``angular_integration_weights``.
     """
+    if sinogram.shape[1] < 2:
+        raise ValueError("Analytical backprojection requires at least two detector bins")
     device = DeviceManager.get_device(sinogram)
     sinogram = _as_contig_f32(sinogram, device)
     ray_dir = _as_contig_f32(ray_dir, device)
@@ -387,25 +410,45 @@ def parallel_weighted_backproject(sinogram, ray_dir, det_origin, det_u_vec,
     return reco * (1.0 / (2.0 * math.pi))
 
 
-def _fan_mean_sid_sdd(src_pos, det_center, det_u_vec):
-    """Mean source-to-iso and source-to-detector distances measured along
-    the per-view detector normal. For a circular fan orbit this reduces
-    to the classical scalar ``sid`` / ``sdd``; for non-circular
-    trajectories it is the principled mean used to build the analytical
-    ``sdd/(2*pi*sid)`` FBP scale factor."""
-    # Detector normal in 2D: rotate u_vec by 90 degrees, then flip so it
-    # points from the source toward the detector.
-    n = torch.stack([-det_u_vec[:, 1], det_u_vec[:, 0]], dim=1)
+def _analytical_geometry(src_pos, det_center, n, isocenter):
+    """Resolve an orbit's physical isocenter and detector-normal distances."""
+    n = n / torch.linalg.vector_norm(n, dim=1, keepdim=True).clamp(min=1e-9)
     cs = det_center - src_pos
     align = (cs * n).sum(dim=1, keepdim=True)
     n = torch.where(align < 0, -n, n)
-    sid_n = (-src_pos * n).sum(dim=1)
-    sdd_n = ((det_center - src_pos) * n).sum(dim=1)
-    return float(sid_n.clamp(min=1e-6).mean().item()), float(sdd_n.clamp(min=1e-6).mean().item())
+
+    if isocenter is None:
+        # Intersect source lines along detector normals in least squares.
+        # Centering first makes the fit translation invariant even for a short
+        # arc. CPU float64 supports rank-revealing solves on every CUDA device.
+        source = src_pos.detach().to(device="cpu", dtype=torch.float64)
+        normal = n.detach().to(device="cpu", dtype=torch.float64)
+        normal = normal / torch.linalg.vector_norm(normal, dim=1, keepdim=True)
+        reference = source.mean(dim=0)
+        perpendicular = torch.eye(source.shape[1], dtype=source.dtype) - (
+            normal[:, :, None] * normal[:, None, :]
+        )
+        rhs = (perpendicular @ (source - reference)[:, :, None]).sum(dim=0)
+        # Rank tolerance must reflect the input geometry's precision, not the
+        # solve dtype; float32 roundoff must not create a spurious intersection.
+        fit = torch.linalg.lstsq(perpendicular.sum(dim=0), rhs,
+                                  rcond=torch.finfo(src_pos.dtype).eps * source.shape[1])
+        if int(fit.rank) < source.shape[1]:
+            raise ValueError("Cannot infer isocenter from these views; supply isocenter explicitly")
+        isocenter = reference + fit.solution[:, 0]
+    isocenter = torch.as_tensor(isocenter, device=src_pos.device, dtype=src_pos.dtype)
+    if isocenter.shape != (src_pos.shape[1],) or not torch.isfinite(isocenter).all():
+        raise ValueError("isocenter must be a finite coordinate vector matching the trajectory")
+    sid_n = ((isocenter - src_pos) * n).sum(dim=1)
+    sdd_n = (cs * n).sum(dim=1)
+    if not (torch.isfinite(sid_n).all() and torch.isfinite(sdd_n).all()
+            and (sid_n > 1e-6).all() and (sdd_n > 1e-6).all()):
+        raise ValueError("Source-to-isocenter and source-to-detector distances must be positive")
+    return isocenter, float(sid_n.mean().item()), float(sdd_n.mean().item())
 
 
 def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
-                             detector_spacing, H, W, voxel_spacing=1.0):
+                             detector_spacing, H, W, voxel_spacing=1.0, *, isocenter=None):
     """Voxel-driven fan-beam FBP backprojection with analytical constant.
 
     Runs the dedicated fan-beam FBP gather kernel (one thread per output
@@ -414,13 +457,22 @@ def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
     ``sdd_mean / (2 * pi * sid_mean)`` so a unit-density disk reconstructs
     to amplitude 1. Both means are measured in the direction of the
     detector normal per view, so the helper reduces to the classical
-    ``sdd/(2*pi*sid)`` on a circular orbit.
+    ``sdd/(2*pi*sid)`` on a circular orbit. ``isocenter`` is a physical
+    coordinate pair; by default it is inferred from the source lines along
+    detector normals. Supply it explicitly for an ambiguous or non-circular
+    acquisition. Analytical FBP remains acquisition-specific.
     """
+    if sinogram.shape[1] < 2:
+        raise ValueError("Analytical backprojection requires at least two detector bins")
     device = DeviceManager.get_device(sinogram)
     sinogram = _as_contig_f32(sinogram, device)
     src_pos = _as_contig_f32(src_pos, device)
     det_center = _as_contig_f32(det_center, device)
     det_u_vec = _as_contig_f32(det_u_vec, device)
+    normal = torch.stack((-det_u_vec[:, 1], det_u_vec[:, 0]), dim=1)
+    isocenter, sid_mean, sdd_mean = _analytical_geometry(
+        src_pos, det_center, normal, isocenter,
+    )
 
     n_views, n_det = sinogram.shape
     Ny, Nx = H, W
@@ -442,27 +494,16 @@ def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
         d_sino, n_views, n_det, d_reco, Nx, Ny,
         _DTYPE(detector_spacing), d_src_pos, d_det_center, d_det_u_vec,
         cx, cy, _DTYPE(voxel_spacing),
+        _DTYPE(isocenter[0].item() / voxel_spacing),
+        _DTYPE(isocenter[1].item() / voxel_spacing),
     )
 
-    sid_mean, sdd_mean = _fan_mean_sid_sdd(src_pos, det_center, det_u_vec)
     scale = sdd_mean / (2.0 * math.pi * sid_mean)
     return reco * scale
 
 
-def _cone_mean_sid_sdd(src_pos, det_center, det_u_vec, det_v_vec):
-    """3D version of ``_fan_mean_sid_sdd`` using ``n = u x v``."""
-    n = torch.cross(det_u_vec, det_v_vec, dim=1)
-    n = n / torch.linalg.vector_norm(n, dim=1, keepdim=True).clamp(min=1e-9)
-    cs = det_center - src_pos
-    align = (cs * n).sum(dim=1, keepdim=True)
-    n = torch.where(align < 0, -n, n)
-    sid_n = (-src_pos * n).sum(dim=1)
-    sdd_n = ((det_center - src_pos) * n).sum(dim=1)
-    return float(sid_n.clamp(min=1e-6).mean().item()), float(sdd_n.clamp(min=1e-6).mean().item())
-
-
 def cone_weighted_backproject(sinogram, src_pos, det_center, det_u_vec, det_v_vec,
-                              D, H, W, du, dv, voxel_spacing=1.0):
+                              D, H, W, du, dv, voxel_spacing=1.0, *, isocenter=None):
     """Voxel-driven cone-beam FDK backprojection with analytical constant.
 
     Runs the dedicated cone-beam FDK gather kernel (one thread per output
@@ -471,13 +512,23 @@ def cone_weighted_backproject(sinogram, src_pos, det_center, det_u_vec, det_v_ve
     so a unit-density sphere reconstructs to amplitude 1. Both means are
     taken in the per-view detector-normal direction, so the helper
     reduces to the classical ``sdd/(2*pi*sid)`` on a circular orbit.
+    ``isocenter`` is a physical coordinate triple, inferred from source
+    lines along detector normals by default. Supply it explicitly for an
+    ambiguous or non-circular acquisition. FDK remains an approximation
+    outside its circular-acquisition assumptions.
     """
+    if min(sinogram.shape[1:]) < 2:
+        raise ValueError("Analytical backprojection requires at least two detector bins on each axis")
     device = DeviceManager.get_device(sinogram)
     sinogram = _as_contig_f32(sinogram, device)
     src_pos = _as_contig_f32(src_pos, device)
     det_center = _as_contig_f32(det_center, device)
     det_u_vec = _as_contig_f32(det_u_vec, device)
     det_v_vec = _as_contig_f32(det_v_vec, device)
+    normal = torch.cross(det_u_vec, det_v_vec, dim=1)
+    isocenter, sid_mean, sdd_mean = _analytical_geometry(
+        src_pos, det_center, normal, isocenter,
+    )
 
     n_views, n_u, n_v = sinogram.shape
     Nx, Ny, Nz = W, H, D
@@ -505,11 +556,11 @@ def cone_weighted_backproject(sinogram, src_pos, det_center, det_u_vec, det_v_ve
         _DTYPE(du), _DTYPE(dv),
         d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
         cx, cy, cz, _DTYPE(voxel_spacing),
+        _DTYPE(isocenter[0].item() / voxel_spacing),
+        _DTYPE(isocenter[1].item() / voxel_spacing),
+        _DTYPE(isocenter[2].item() / voxel_spacing),
     )
 
-    sid_mean, sdd_mean = _cone_mean_sid_sdd(
-        src_pos, det_center, det_u_vec, det_v_vec
-    )
     scale = sdd_mean / (2.0 * math.pi * sid_mean)
 
     # Convert back to (D, H, W) layout for the user.

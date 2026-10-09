@@ -102,10 +102,19 @@ filter, and backprojection pieces of an analytical FBP / FDK pipeline.
 The weighted-backprojection helpers use dedicated CUDA gather kernels, not
 the differentiable matched-adjoint path. Do not assume end-to-end autograd
 through an analytical reconstruction. Geometry-dependent helpers accept
-per-view trajectories:
-it takes the same ``(src_pos, det_center, det_u_vec[, det_v_vec])``
-arrays that the projector / backprojector Functions consume, so the
-same code path works for circular and non-circular trajectories.
+the same per-view ``(src_pos, det_center, det_u_vec[, det_v_vec])`` arrays
+that the projector / backprojector Functions consume. Analytical FBP/FDK
+still has acquisition-specific assumptions; arbitrary geometry does not
+make an analytical reconstruction exact for a non-circular scan.
+
+Fan/cone backprojection accepts a keyword-only ``isocenter`` coordinate
+vector in physical units. With ``None`` (default), it is inferred by
+intersecting source lines along detector normals in least squares. This
+preserves amplitude when a circular orbit and object are translated
+together. Supply it explicitly for non-circular or ambiguous geometry,
+including single-view inputs. The three analytical backprojectors require
+at least two detector bins per interpolated axis, including the cone
+detector's v axis.
 
 .. autofunction:: detector_coordinates_1d
 
@@ -134,6 +143,12 @@ reconstruction example. Its call signature is::
 
     ramp_filter_1d(sinogram_tensor, dim=-1, sample_spacing=1.0,
                    pad_factor=1, window=None, use_rfft=True)
+
+The filter is the FFT of a finite discrete Ram-Lak impulse response,
+scaled for angular frequency. It retains a small positive finite-length
+DC response instead of forcing the DC bin to zero, reducing low-frequency
+bias. For the unwindowed filter, ``pad_factor >= 2`` gives linear
+convolution over the retained detector samples.
 
 ``sample_spacing``
     Physical detector-cell spacing along ``dim`` (e.g. ``du`` for the
