@@ -6,7 +6,7 @@
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Getting Started" href="getting_started.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>diffct 2.0.1</title>
+        <title>diffct 2.0.2</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -162,7 +162,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="#"><div class="brand">diffct 2.0.1</div></a>
+      <a href="#"><div class="brand">diffct 2.0.2</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -183,7 +183,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="#">
   
-  <span class="sidebar-brand-text">diffct 2.0.1</span>
+  <span class="sidebar-brand-text">diffct 2.0.2</span>
   
 </a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -261,7 +261,9 @@ volume and for trajectory tensors. Views can be split across several GPUs.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"diffct[cu12]"</span>
 </pre></div>
 </div>
-<p>Use <code class="docutils literal notranslate"><span class="pre">diffct[cu13]</span></code> for CUDA 13.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">diffct[cu13]</span></code> for CUDA 13. The extra installs the CUDA compiler libraries
+that Numba CUDA needs. A plain <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">diffct</span></code> does not install them; use it
+only if a CUDA Toolkit is already installed on the system.</p>
 </section>
 <section id="start-here">
 <h2>Start here<a class="headerlink" href="#start-here" title="Link to this heading">¶</a></h2>
@@ -385,7 +387,7 @@ The project uses the
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=f5cff4aa"></script>
+</div><script src="_static/documentation_options.js?v=c2377ec0"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>
