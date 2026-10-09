@@ -11,7 +11,7 @@ test suite stays fast.
 Run everything:
 
 ```bash
-/c/Users/sun/miniconda3/envs/cuda12/python.exe -m pytest tests/benchmarks/ \
+python -m pytest tests/benchmarks/ \
     --benchmark-only --benchmark-columns=min,mean,median,stddev,rounds
 ```
 

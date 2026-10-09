@@ -1,16 +1,6 @@
 API Reference
 =============
 
-The `diffct` package is organised into focused modules that can be combined to build differentiable CT pipelines:
-
-- ``diffct.projectors`` – PyTorch ``autograd.Function`` implementations for forward and backward projectors
-- ``diffct.geometry`` – helpers to generate detector/source trajectories for 2D and 3D scans
-- ``diffct.analytical`` – analytical FBP / FDK building blocks (ramp filter, cosine weights, Parker weights, voxel-driven backprojection wrappers)
-- ``diffct.kernels`` – CUDA kernel primitives (Siddon forward / adjoint / FBP gather) for advanced users
-- ``diffct.utils`` – CUDA device management and tensor bridge utilities
-- ``diffct.constants`` – low-level configuration values for advanced tuning
-- ``diffct.differentiable`` – deprecated compatibility shim that re-exports the public API
-
 High-level Projector
 --------------------
 
@@ -20,16 +10,15 @@ High-level Projector
    :members:
    :special-members: __call__
 
-See :doc:`distributed` for local GPU view splitting and multi-node launch
-instructions, and :doc:`trajectories` for geometry gradients and coordinate
-conventions. ``Projector`` lives in ``diffct.operators`` and is re-exported here.
+``Projector`` takes trajectory tensors as described in :doc:`trajectories`. For
+multiple GPUs and nodes, see :doc:`multi_gpu`.
 
-Core Projector Functions
-------------------------
+Low-level Functions
+-------------------
 
-These advanced ``autograd.Function`` wrappers take explicit trajectory tensors.
-Use the ``forward`` signatures below as the argument order for ``.apply(...)``;
-new applications should prefer ``Projector`` for validation and device staging.
+These ``autograd.Function`` wrappers take explicit trajectory tensors. Use the
+``forward`` signature as the argument order for ``.apply(...)``. For new code,
+prefer ``Projector``, which checks inputs and manages devices.
 
 .. currentmodule:: diffct
 
@@ -97,24 +86,20 @@ Analytical Reconstruction Helpers
 
 .. currentmodule:: diffct.analytical
 
-These helpers build the per-view pre-weights, angle-integration weights,
-filter, and backprojection pieces of an analytical FBP / FDK pipeline.
-The weighted-backprojection helpers use dedicated CUDA gather kernels, not
-the differentiable matched-adjoint path. Do not assume end-to-end autograd
-through an analytical reconstruction. Geometry-dependent helpers accept
-the same per-view ``(src_pos, det_center, det_u_vec[, det_v_vec])`` arrays
-that the projector / backprojector Functions consume. Analytical FBP/FDK
-still has acquisition-specific assumptions; arbitrary geometry does not
-make an analytical reconstruction exact for a non-circular scan.
+These helpers build the pre-weights, angular weights, filter and weighted
+backprojection of an analytical FBP or FDK pipeline. The weighted backprojection
+helpers do not support autograd through ``Projector``. The returned images are
+already scaled.
 
-Fan/cone backprojection accepts a keyword-only ``isocenter`` coordinate
-vector in physical units. With ``None`` (default), it is inferred by
-intersecting source lines along detector normals in least squares. This
-preserves amplitude when a circular orbit and object are translated
-together. Supply it explicitly for non-circular or ambiguous geometry,
-including single-view inputs. The three analytical backprojectors require
-at least two detector bins per interpolated axis, including the cone
-detector's v axis.
+Analytical FBP and FDK assume an acquisition model. A non-circular trajectory
+does not make the result exact. The helpers accept the same per-view
+``(src_pos, det_center, det_u[, det_v])`` arrays as ``Projector``.
+
+Fan and cone backprojection accept a keyword-only ``isocenter`` vector in physical
+units. With ``None`` (default), it is estimated from the detector normals. Give it
+explicitly for non-circular or ambiguous geometry, including a single view. The
+three weighted backprojection helpers need at least two detector bins along each
+interpolated axis, including the cone detector's v axis.
 
 .. autofunction:: detector_coordinates_1d
 
@@ -134,129 +119,40 @@ detector's v axis.
 
 .. autofunction:: cone_weighted_backproject
 
-
 Ramp Filter Options
 -------------------
 
-``ramp_filter_1d`` is a generic 1D ramp filter used by every analytical
-reconstruction example. Its call signature is::
+``ramp_filter_1d`` is the filter used by the analytical examples. Its signature is::
 
     ramp_filter_1d(sinogram_tensor, dim=-1, sample_spacing=1.0,
                    pad_factor=1, window=None, use_rfft=True)
 
-The filter is the FFT of a finite discrete Ram-Lak impulse response,
-scaled for angular frequency. It retains a small positive finite-length
-DC response instead of forcing the DC bin to zero, reducing low-frequency
-bias. For the unwindowed filter, ``pad_factor >= 2`` gives linear
-convolution over the retained detector samples.
-
 ``sample_spacing``
-    Physical detector-cell spacing along ``dim`` (e.g. ``du`` for the
-    cone-beam case). The filter is rescaled by ``1 / sample_spacing``
-    internally so the output is in physical units and the
-    reconstruction amplitude stays calibrated when detector pitch
-    changes. Pass ``1.0`` to reproduce sample-unit behaviour.
+    Physical detector-cell spacing along ``dim``, for example ``du`` for cone beam.
+    The output is in physical units. Pass ``1.0`` to work in sample units.
 
 ``pad_factor``
-    Zero-pad the signal to ``pad_factor * N`` samples along ``dim``
-    before the FFT. Common values:
-
-    - ``1`` (default): no padding, fastest but prone to circular
-      convolution wrap-around at the detector edges.
-    - ``2``: recommended for cone-beam FDK, good trade-off.
-    - ``4``: stricter padding for objects close to the detector edge.
-
-``window``
-    Frequency-domain apodization multiplied onto the bare Ram-Lak ramp:
-
-    - ``None`` or ``"ram-lak"``: unwindowed Ram-Lak, sharpest, highest noise.
-    - ``"hann"`` / ``"hanning"``: Hann window, strong high-frequency suppression.
-    - ``"hamming"``: slightly milder than Hann.
-    - ``"cosine"``: half-cosine rolloff.
-    - ``"shepp-logan"``: ``sinc`` rolloff, classical choice.
+    Zero-pads the signal to ``pad_factor * N`` samples along ``dim``. Use ``2`` for
+    cone-beam FDK. Use ``4`` when objects lie close to the detector edge.
 
 ``use_rfft``
-    Use ``torch.fft.rfft`` / ``irfft`` when the input is real. Defaults
-    to ``True``; set to ``False`` only if you need the complex FFT path.
+    Uses the real FFT for real inputs. Set ``False`` only to force the complex FFT
+    path.
 
+The ``window`` argument selects a window applied to the Ram-Lak ramp:
 
-Analytical FBP / FDK architecture
----------------------------------
+.. list-table::
+   :header-rows: 1
 
-Each of the three analytical backprojection helpers
-(``parallel_weighted_backproject``, ``fan_weighted_backproject``,
-``cone_weighted_backproject``) dispatches to a dedicated voxel-driven
-gather kernel, separate from the Siddon-based ray-driven scatter
-kernels that drive autograd. The autograd kernels are the pure
-adjoints ``P^T`` of the forward projectors (no distance weighting,
-no magnification scale), so the autograd classes form self-consistent
-forward / backward adjoint pairs. The analytical helpers on top apply
-the appropriate FBP / FDK distance weighting and the analytical
-scale so the returned image is already amplitude-calibrated.
-
-Scale factors applied inside the analytical helpers:
-
-- ``parallel_weighted_backproject`` multiplies by ``1 / (2 * pi)``
-  (Fourier-convention constant; parallel beam has no source and no
-  magnification so there is no ``(sid/U)^2`` weight).
-- ``fan_weighted_backproject`` applies a per-voxel ``(sid_n / U_n)^2``
-  weight inside the gather kernel and a ``sdd_mean / (2 * pi * sid_mean)``
-  scale on top.
-- ``cone_weighted_backproject`` applies a per-voxel ``(sid_n / U_n)^2``
-  weight inside the gather kernel and a ``sdd_mean / (2 * pi * sid_mean)``
-  scale on top.
-
-``sid_n`` and ``U_n`` are measured in the per-view detector-normal
-direction. For a canonical circular orbit ``sid_n`` reduces to the
-classical scalar ``sid``, and ``U_n`` to the classical
-``sid + x * sin(beta) - y * cos(beta)``. For non-circular trajectories
-(spiral, saddle, random) the helpers keep working by computing the
-per-view quantities directly from the trajectory arrays; the result
-is the standard heuristic generalisation of FDK beyond the circle.
-
-Utilities
----------
-
-.. currentmodule:: diffct.utils
-
-.. autoclass:: DeviceManager
-   :members:
-
-.. autoclass:: TorchCUDABridge
-   :members:
-
-Additional helper functions (prefixed with an underscore) remain available for advanced integrations that require direct control over CUDA streams.
-
-Constants
----------
-
-.. currentmodule:: diffct.constants
-
-.. autodata:: _DTYPE
-.. autodata:: _TPB_2D
-.. autodata:: _TPB_3D
-.. autodata:: _FASTMATH_DECORATOR
-.. autodata:: _INF
-.. autodata:: _EPSILON
-
-These values mirror the defaults used by the CUDA kernels. They are exposed for power users who need to fine-tune launch parameters or numeric tolerances; most applications should rely on the defaults.
-
-Backward Compatibility
-----------------------
-
-.. currentmodule:: diffct.differentiable
-
-``diffct.differentiable`` re-exports the 2.0 API; it does not restore
-the circular-only scalar-angle signatures. See :doc:`migration`. New projects
-should import ``Projector`` from ``diffct``.
-
-Usage Notes
------------
-
-- ``Projector`` requires image/sinogram inputs on CUDA and returns float32 results
-  on the input device. Geometry tensors can be on CPU and are staged internally.
-- Geometry helper functions build the ``ray_dir``, ``det_origin``, and detector orientation vectors expected by the projector operators.
-- Image/sinogram gradients support second derivatives with fixed geometry.
-  Geometry gradients are first-order only; set ``requires_grad=True`` before
-  constructing ``Projector``. Scalar spacing settings are not differentiable.
-- Ensure tensors are contiguous and use consistent dtype (``torch.float32``) for maximum kernel performance.
+   * - ``window``
+     - Effect
+   * - ``None`` or ``"ram-lak"``
+     - No window. Sharpest, with the most noise.
+   * - ``"cosine"``
+     - Half-cosine roll-off.
+   * - ``"shepp-logan"``
+     - Sinc roll-off. Classical choice.
+   * - ``"hamming"``
+     - Milder than Hann.
+   * - ``"hann"`` or ``"hanning"``
+     - Strongest high-frequency suppression.

@@ -1,90 +1,55 @@
 Fan Beam Iterative Reconstruction
 =================================
 
-This example demonstrates 2D fan beam iterative reconstruction using the differentiable `FanProjectorFunction` and `FanBackprojectorFunction` from `diffct`. The maintained iterative example is ``examples/iterative_reconstruction.py``, which reconstructs a 3D cone beam scan on any trajectory with CGLS, SIRT and TV; the 2D derivation on this page still applies to the 2D ``Projector`` beams.
+This page shows a 2D fan-beam reconstruction loop with ``diffct.Projector``. The
+maintained iterative script is ``examples/iterative_reconstruction.py``, which
+reconstructs 3D cone-beam scans. See :doc:`iterative_reco_cone_example`.
 
-Overview
---------
+Objective
+---------
 
-Fan beam iterative reconstruction extends the optimization approach to the more realistic fan beam geometry. This example shows how to:
-
-- Formulate fan beam CT reconstruction as an optimization problem
-- Handle geometric complexities of divergent ray geometry
-- Apply gradient-based optimization with fan beam operators
-- Monitor convergence and reconstruction quality
-
-Mathematical Background
------------------------
-
-**Fan Beam Iterative Formulation**
-
-The fan beam reconstruction problem is formulated as:
+The loop minimizes a least-squares data term over a nonnegative image ``x``,
+where ``A`` is the fan-beam projector and ``y`` is the measured sinogram:
 
 .. math::
-   \hat{f} = \arg\min_f \|A_{\text{fan}}(f) - p\|_2^2 + \lambda R(f)
+   \hat{x} = \arg\min_{x \ge 0} \tfrac{1}{2} \lVert A x - y \rVert_2^2
 
-where :math:`A_{\text{fan}}` is the fan beam forward projection operator accounting for divergent ray geometry.
+Autograd computes the gradient, which uses the adjoint ``A^T``. Adam updates the
+image.
 
-**Fan Beam Forward Model**
+Code
+----
 
-The fan beam projection operator maps 2D image :math:`f(x,y)` to sinogram :math:`p(\beta, u)`:
+.. code-block:: python
 
-.. math::
-   p(\beta, u) = \int_{\text{ray}} f(x,y) \, dl
+   import torch
+   from diffct import Projector, circular_trajectory_2d_fan
 
-where integration follows the ray from point source to detector element :math:`u` at source angle :math:`\beta`.
+   n, n_views = 128, 360
+   sid, sdd, n_det, pitch = 2.5 * n, 4.0 * n, 3 * n, 0.8
+   trajectory = circular_trajectory_2d_fan(n_views, sid, sdd, device="cuda")
+   A = Projector(trajectory, (n, n), n_det, beam="fan", detector_spacing=pitch)
 
-**Gradient Computation**
+   truth = torch.zeros((n, n), device="cuda")
+   truth[40:88, 40:88] = 1.0
+   measured = A.project(truth).detach()
 
-The gradient involves the fan beam backprojection operator (adjoint):
+   image = torch.zeros((n, n), device="cuda", requires_grad=True)
+   optimizer = torch.optim.Adam([image], lr=1e-2)
+   for step in range(200):
+       optimizer.zero_grad()
+       loss = 0.5 * (A.project(image) - measured).square().sum()
+       loss.backward()
+       optimizer.step()
+       with torch.no_grad():
+           image.clamp_(min=0)
 
-.. math::
-   \frac{\partial L}{\partial f} = 2A_{\text{fan}}^T(A_{\text{fan}}(f) - p_{\text{measured}})
+Notes
+-----
 
-where :math:`A_{\text{fan}}^T` is the fan beam backprojection operator.
-
-**Geometric Considerations**
-
-Fan beam geometry introduces complexities compared to parallel beam:
-
-- **Ray Divergence**: Non-parallel rays affect sampling density and conditioning
-- **Magnification Effects**: Variable magnification across the field of view
-- **Non-uniform Resolution**: Spatial resolution varies with distance from rotation center
-- **Geometric Distortion**: Requires careful handling of coordinate transformations
-
-**Implementation Steps**
-
-1. **Geometry Setup**: Configure fan beam parameters (SID, SDD) using helpers such as ``diffct.geometry.circular_trajectory_2d_fan``
-2. **Problem Formulation**: Define parameterized image and fan beam forward model
-3. **Loss Computation**: Calculate L2 distance using `FanProjectorFunction`
-4. **Gradient Computation**: Use automatic differentiation through fan beam operators
-5. **Optimization**: Apply Adam optimizer with appropriate learning rate
-6. **Convergence Monitoring**: Track reconstruction quality and loss evolution
-
-**Model Architecture**
-
-The fan beam reconstruction model consists of:
-
-- **Parameterized Image**: Learnable 2D tensor representing the unknown image
-- **Fan Beam Forward Model**: `FanProjectorFunction` with geometric parameters
-- **Loss Function**: Mean squared error between predicted and measured sinograms
-
-**Convergence Characteristics**
-
-Fan beam reconstruction typically exhibits:
-
-1. **Initial Convergence** (0-100 iterations): Rapid loss decrease, basic structure
-2. **Detail Refinement** (100-500 iterations): Fine features develop, slower progress
-3. **Final Convergence** (500+ iterations): Minimal improvement, convergence plateau
-
-**Challenges and Solutions**
-
-- **Conditioning**: Fan beam system matrix may have different conditioning properties
-- **Geometric Artifacts**: Proper weighting and filtering help reduce artifacts
-- **Parameter Tuning**: Learning rate may need adjustment for optimal convergence
-- **Memory Usage**: Similar to parallel beam but with additional geometric computations
-
-.. literalinclude:: ../../examples/iterative_reconstruction.py
-   :language: python
-   :linenos:
-   :caption: Iterative Reconstruction Example (3D cone beam, any trajectory)
+- Fan-beam geometry is divergent. Use ``sid`` and ``sdd`` that match your
+  acquisition.
+- The learning rate and iteration count are starting values. Tune them for your
+  data.
+- For a custom fan trajectory, pass the ``(src_pos, det_center, det_u)`` tensors
+  to ``Projector`` with ``beam="fan"``.

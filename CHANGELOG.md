@@ -28,7 +28,7 @@ per-view trajectories. It breaks the 1.x interface; see
 - Install extras ``diffct[cu12]`` and ``diffct[cu13]`` pull in the matching
   numba-cuda CUDA bindings, so one ``pip install`` gives a working import.
 - Measured walnut example (``examples/walnut_reconstruction.py``), intro video
-  and README figures with provenance records in ``docs/assets``.
+  and README figures.
 - Geometry gradients. Trajectory tensors may require gradients; ``Projector``
   and the low-level Function classes return gradients for source, detector
   centre and detector axes (parallel: ray direction, detector origin and

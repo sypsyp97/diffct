@@ -164,24 +164,10 @@ sbatch examples/slurm/multi_node.sbatch examples/iterative_reconstruction.py --s
 Set the account, partition and GPU request in `examples/slurm/multi_node.sbatch`
 for your cluster, and set `GPUS_PER_NODE` to the number of GPUs on each node.
 
-Alex requires explicit multi-node authorization and a matching `a100multi` or
-`a40multi` QoS. Its multi-node allocations reserve all eight GPUs on each node;
-use `--gres=gpu:a100:8 --qos=a100multi` when allocating, and
-`--nproc-per-node=8` with one launcher per node to use them. The ordinary Alex
-and tinygpu partitions have `MaxNodes=1`. Alex's FAU allocation does not permit
-multi-node jobs; a separate NHR project is required. See the
-[official Alex multi-node instructions](https://doc.nhr.fau.de/clusters/alex/#multi-node-job-available-on-demand-for-nhr-projects).
-
-Cross-node runs are validated on Leonardo Booster with two nodes and four
-A100 GPUs per node: one torchrun launcher per node, `--nproc-per-node=4`, and
-the c10d rendezvous shown above. See [VALIDATION.md](https://github.com/sypsyp97/diffct/blob/main/docs/VALIDATION.md).
-
 Use the Python environment and GPU resource flags appropriate to the allocation.
-Launch all ranks within one cluster allocation. Running between two
-independent clusters requires working inter-cluster NCCL networking and is not
-implied by validating two nodes within a cluster.
+Launch all ranks within one cluster allocation.
 
-## Two-node checks without a Slurm launcher
+## Two nodes without a Slurm launcher
 
 Use the same checkout and CUDA Python environment on both allocated nodes.
 On each node, set the first node's reachable hostname, the local GPU count,
@@ -210,43 +196,3 @@ python -m torch.distributed.run --nnodes=2 --nproc-per-node="$GPUS_PER_NODE" \
 The two-node example defaults to two GPUs per node; set `GPUS_PER_NODE` to the
 number allocated on each node. The reports are written by rank 0.
 
-## Numeric checks
-
-```bash
-python -m pytest tests/test_projector_api.py -q
-python -m torch.distributed.run --standalone --nproc-per-node=2 \
-    tests/distributed_projector_check.py --require-cuda \
-    --expected-world-size=2 --output result.json
-```
-
-Use the same two-node launch above with the check script and
-`--require-cross-node` to verify cross-node execution. This flag requires at
-least two distinct hostnames. The JSON records every rank's actual host, GPU,
-environment and numeric errors. These checks execute the production operator
-with NCCL and CUDA kernels and fail when the required hardware is unavailable.
-
-## Correctness and acceleration
-
-The result-based benchmark first checks single-GPU ray lengths against an
-independent CPU float64 calculation for uniform boxes. It then compares
-single- and multiple-GPU projections, backprojections and image gradients.
-The cone trajectory is helical. Timings include per-call transfers, gathering,
-autograd and distributed reductions, after kernel warmup:
-
-```bash
-python examples/benchmark_projector.py --devices 0 1 --output local-benchmark.json
-python -m torch.distributed.run --standalone --nproc-per-node=2 \
-    examples/benchmark_projector.py --output nccl-benchmark.json
-```
-
-The default size sweep uses 64 and 128 cubed volumes and 512 views. Each report
-contains repeated timings and the measured speedup over one GPU. The benchmark
-requires the complete gradient iteration to run faster for each requested
-workload; it exits nonzero if numeric checks or the acceleration threshold fail.
-Use `--sizes`, `--views`, and `--repeats` for your actual workload. Tiny problems
-can be dominated by transfer and launch overhead, so test the acquisition size
-you intend to run rather than assuming a fixed speedup from GPU count.
-
-See [measured results](https://github.com/sypsyp97/diffct/blob/main/docs/VALIDATION.md). On two A100s the single-process
-`devices` mode was slower than one GPU for 64 cubed; the NCCL mode accelerated
-every tested size. The default benchmark keeps that failure visible.

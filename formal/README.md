@@ -44,7 +44,7 @@ All finite domains and numerical tolerances are in the check files.
 Numba's [simulator documentation](https://nvidia.github.io/numba-cuda/user/simulator.html) describes its execution and limitations.
 The simulator executes Python kernel bodies—its arithmetic and scheduling do not establish the behavior of compiled GPU code.
 This suite does not verify CUDA type inference, LLVM fastmath, streams, multi-GPU execution, geometry gradients, or PyTorch autograd wrappers.
-The existing GPU validation remains necessary for those paths; see [VALIDATION.md](../docs/VALIDATION.md).
+The GPU test suite in `tests/` covers those paths on a CUDA machine.
 
 ## Installation
 

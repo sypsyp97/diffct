@@ -45,7 +45,6 @@
 - **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
 - **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或每卡一个进程并用 torchrun 与 NCCL。视角分片，体数据复制。加速比取决于工作负载和通信开销。
 - **解析辅助函数。** `diffct.analytical` 提供斜坡滤波器（ram-lak、shepp-logan、cosine、hamming、hann）、扇束、锥束和 Parker 权重，以及 FBP 与 FDK 反投影。
-- **已验证。** FDK 与 ASTRA 2.5.0 `FDK_CUDA` 的 PSNR 相差在 0.3 dB 以内；几何梯度与独立的 float64 参考结果相差约 1e-6。[A100 验证记录](docs/VALIDATION.md)报告 229 个通过的 pytest 测试。详见 [REFERENCE](docs/REFERENCE.md#validation-summary)（英文）。
 
 功能边界、限制和等中心规则见 [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits)（英文）。
 
@@ -122,7 +121,7 @@ A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, dev
 | 伴随（反投影） | 20.66 ms | 5.89 ms（3.5×） | 4.62 ms（4.5×） |
 | CGLS 迭代 | 30.08 ms | 8.08 ms（3.7×） | 5.59 ms（5.4×） |
 
-圆轨迹，360 个视角，探测器 (2n, 1.5n) 个单元、pitch 1.25，Leonardo Booster 上的 A100 64 GB。小体积加速比较低：64³ 时，一次 CGLS 迭代在 1 卡、4 卡和 8 卡上分别为 4.63 ms、1.57 ms 和 1.56 ms。原始数据见 [docs/assets/scaling.json](docs/assets/scaling.json)。
+圆轨迹，360 个视角，探测器 (2n, 1.5n) 个单元、pitch 1.25，A100 64 GB GPU。小体积加速比较低：64³ 时，一次 CGLS 迭代在 1 卡、4 卡和 8 卡上分别为 4.63 ms、1.57 ms 和 1.56 ms。原始数据见 [docs/assets/scaling.json](docs/assets/scaling.json)。
 
 在本机比较单卡与多卡（脚本自带的默认扫描，不是上表的配置）：
 
@@ -166,7 +165,6 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 | [轨迹指南](docs/source/trajectories.rst) | 轨迹元组和 `Projector` 用法 |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | 功能边界、自定义轨迹、几何梯度、多卡细节、几何与单位（英文） |
 | [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | 执行与内存选择、分布式损失规则、Slurm 和跨节点检查 |
-| [docs/VALIDATION.md](docs/VALIDATION.md) | 测试命令、验证细节和每项检查的边界 |
 | [docs/MIGRATION.md](docs/MIGRATION.md) | 从仅支持圆轨迹的 API 迁移 |
 | [docs/video/README.md](docs/video/README.md) | 动图视频的渲染方式 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
