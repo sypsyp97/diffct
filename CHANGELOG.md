@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ratio to infinity. numba-cuda converts ``capacity * ratio`` to ``int``, so
   each deallocation queued during shutdown raised ``ValueError`` or
   ``OverflowError``. The exit code stayed 0, but stderr showed the error. The
-  ratio is now finite and large. Pending CUDA module unloads are still not
-  flushed at exit.
+  exit hook now disables numba-cuda's pending-deallocation queues instead of
+  changing the limits, so no queue is flushed at exit and no error is raised.
+  The hook no longer imports ``numba.cuda.core.config``, which older
+  numba-cuda releases do not have.
 
 ### Documentation
 

@@ -10,7 +10,6 @@ import contextlib
 import functools
 import inspect
 import math
-import sys
 import weakref
 import numpy as np
 import torch
@@ -191,20 +190,20 @@ def _on_device_of(name):
 def _keep_cuda_modules_at_exit():
     """Stop numba-cuda from unloading CUDA modules while the interpreter exits.
 
-    numba-cuda queues module unloads and flushes the queue once it holds more
-    than ``CUDA_DEALLOCS_COUNT`` items. After kernels were loaded on several
-    GPUs, a flush during interpreter shutdown can unload the same library twice
-    and corrupt the heap, so the process crashes after all work is done. The
-    process exit releases these resources anyway.
+    numba-cuda queues module unloads and other deallocations, and flushes a
+    queue once it passes a count or byte limit. After kernels were loaded on
+    several GPUs, a flush during interpreter shutdown can unload the same
+    library twice and corrupt the heap, so the process crashes after all work
+    is done. The process exit releases these resources anyway.
 
-    The byte limit is ``int(capacity * CUDA_DEALLOCS_RATIO)``, and the module
-    queue has a capacity of 0. An infinite ratio makes that ``int()`` call raise
-    (NaN or infinity), so the ratio must stay finite.
+    Raising the limits is not enough: the byte limit is
+    ``int(capacity * CUDA_DEALLOCS_RATIO)``, and queues with no capacity set
+    have a limit of 0 bytes for any finite ratio. numba-cuda skips the flush
+    while a queue is disabled, so disable every queue for the rest of the exit.
     """
-    from numba.cuda.core import config as cuda_config
+    from numba.cuda.cudadrv.driver import _PendingDeallocs
 
-    cuda_config.CUDA_DEALLOCS_COUNT = sys.maxsize
-    cuda_config.CUDA_DEALLOCS_RATIO = float(sys.maxsize)
+    _PendingDeallocs.is_disabled = property(lambda self: True)
 
 
 class _ExitOrderAnchor:
