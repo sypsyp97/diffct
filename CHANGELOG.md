@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   weighted backprojections run in the CUDA context of their input. Before,
   inputs on another GPU than the current device could use the wrong context
   and stream.
+- A process that ran diffct kernels on several GPUs no longer crashes at
+  interpreter exit: numba-cuda's flush of pending CUDA module unloads during
+  shutdown is skipped, and process exit releases the modules.
 - ``custom_trajectory_3d`` and ``custom_trajectory_2d_fan`` raise
   ``ValueError`` for a source at the isocenter or a non-finite source,
   instead of returning NaN geometry. The figure-8 example in the
