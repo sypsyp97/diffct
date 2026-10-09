@@ -5,10 +5,13 @@ PyTorch-CUDA bridging, stream caching, trigonometric table generation,
 memory layout validation, and CUDA grid computation.
 """
 
+import atexit
 import contextlib
 import functools
 import inspect
 import math
+import sys
+import weakref
 import numpy as np
 import torch
 from numba import cuda
@@ -183,6 +186,32 @@ def _on_device_of(name):
                 return fn(*args, **kwargs)
         return wrapper
     return decorate
+
+
+def _keep_cuda_modules_at_exit():
+    """Stop numba-cuda from unloading CUDA modules while the interpreter exits.
+
+    numba-cuda queues module unloads and flushes the queue once it holds more
+    than ``CUDA_DEALLOCS_COUNT`` items. After kernels were loaded on several
+    GPUs, a flush during interpreter shutdown can unload the same library twice
+    and corrupt the heap, so the process crashes after all work is done. The
+    process exit releases these resources anyway.
+    """
+    from numba.cuda.core import config as cuda_config
+
+    cuda_config.CUDA_DEALLOCS_COUNT = sys.maxsize
+    cuda_config.CUDA_DEALLOCS_RATIO = float("inf")
+
+
+class _ExitOrderAnchor:
+    pass
+
+
+# weakref.finalize registers its atexit hook with its first finalizer. Create one
+# now, so that the handler below is registered later and runs before it.
+_EXIT_ORDER_ANCHOR = _ExitOrderAnchor()
+weakref.finalize(_EXIT_ORDER_ANCHOR, lambda: None)
+atexit.register(_keep_cuda_modules_at_exit)
 
 
 # ============================================================================
