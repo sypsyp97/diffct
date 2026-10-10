@@ -189,7 +189,7 @@ def test_schedule_default_and_report_start_without_execution_or_cuda():
 
 
 def test_METADATA_foreign_output_device_budget_is_admitted_before_any_store_io_or_kernel():
-    """Synthetic inventory admission only; no second GPU execution is claimed."""
+    """Synthetic native-allocator inventory only; no GPU execution is claimed."""
     case = _schedule_case("parallel", views=5)
     calls, inventory = [], []
 
@@ -218,6 +218,7 @@ def test_METADATA_foreign_output_device_budget_is_admitted_before_any_store_io_o
     output = MetadataStore(case.sino_shape, "cuda:1")
     with mock.patch.object(torch.cuda, "is_available", return_value=True), \
             mock.patch.object(torch.cuda, "device_count", return_value=2), \
+            mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"), \
             mock.patch.object(operators, "_memory_budget", side_effect=budget), _CopyTrace(case) as trace:
         projector = _scheduled_projector(case, devices=[0], volume_chunk_shape=(2, 3), view_chunk_size=1)
         with _rejection("memory|budget|fit|minimum|limit"):
