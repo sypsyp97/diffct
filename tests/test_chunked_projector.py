@@ -1112,7 +1112,7 @@ def test_full_path_surface_parameter_on_noncompute_gpu_gradient_and_memory():
                                 requires_grad=True)
         curved = _surface(case, strength)
 
-        def surface(u, v):
+        def surface(u, v, curved=curved, strength=strength):
             return curved(u.to(strength.device), v.to(strength.device))
 
         # Compile kernels and initialize both devices before measuring tensors.
