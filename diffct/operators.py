@@ -8,6 +8,8 @@ from numba import cuda
 
 from .projectors import (
     _geometry_vjp,
+    _surface_backproject,
+    _surface_project,
     ConeBackprojectorFunction,
     ConeProjectorFunction,
     FanBackprojectorFunction,
@@ -53,7 +55,7 @@ def _detector_spacing(value, beam):
     return (pitch, pitch)
 
 
-def _validate_trajectory(trajectory, beam):
+def _validate_trajectory(trajectory, beam, *, detector_surface=False):
     dimensions = 3 if beam == "cone" else 2
     count = 4 if beam == "cone" else 3
     if not isinstance(trajectory, (tuple, list)) or len(trajectory) != count:
@@ -89,7 +91,7 @@ def _validate_trajectory(trajectory, beam):
         dots = torch.sum(first * second.to(first.device), dim=1)
         if torch.any(torch.abs(dots) > 1e-4).item():
             raise ValueError("trajectory direction axes must be orthogonal")
-    if beam in ("fan", "cone"):
+    if beam in ("fan", "cone") and not detector_surface:
         # float64 avoids overflow of half-precision input and dtype mismatches in cross().
         source = geometry[0].double()
         principal = geometry[1].to(source.device, torch.float64) - source
@@ -175,11 +177,16 @@ class _ProjectorAutograd(torch.autograd.Function):
         ctx.mode = mode
         ctx.input_device = tensor.device
         ctx.input_dtype = tensor.dtype
-        ctx.save_for_backward(tensor if geometry else None, *geometry)
+        needs_geometry = any(component.requires_grad for component in geometry) or (
+            projector._distributed and projector.world_size > 1
+            and projector._geometry_trainable
+        )
+        ctx.save_for_backward(tensor if needs_geometry else None, *geometry)
         return projector._run(
             tensor,
             is_project=mode != "backproject",
             reduce_cotangent=mode == "project_reduced",
+            geometry=geometry if geometry else None,
         )
 
     @staticmethod
@@ -200,7 +207,9 @@ class _ProjectorAutograd(torch.autograd.Function):
             if not ctx.needs_input_grad[0]:
                 grad_input = None
         geometry_grads = (None,) * len(geometry)
-        if any(ctx.needs_input_grad[3:]) or (collective and geometry):
+        if any(ctx.needs_input_grad[3:]) or (
+            collective and projector._geometry_trainable
+        ):
             # Every mode is <cotangent, A_local(geometry) volume> for some pair.
             if ctx.mode == "project":
                 volume, cotangent = tensor, grad_output
@@ -231,7 +240,7 @@ class _GeometryGradAutograd(torch.autograd.Function):
 
 
 class Projector:
-    """Project CUDA volumes along fixed parallel, fan, or cone trajectories.
+    """Project CUDA volumes along parallel, fan, or cone trajectories.
 
     A parallel trajectory is ``(ray_dir, det_origin, det_u)`` and a fan
     trajectory is ``(src_pos, det_center, det_u)``; each component has shape
@@ -245,6 +254,15 @@ class Projector:
     Second derivatives are available for volumes and sinograms, not for the
     geometry.
 
+    ``detector_surface(u, v)`` optionally supplies local ``(u, v, n)`` offsets
+    for every pixel. It receives centred physical float64 grids on CPU and
+    returns a floating-point tensor shaped ``(*detector_shape, 3)`` or
+    ``(views, *detector_shape, 3)``. Cone normals are ``cross(det_u, det_v)``;
+    2D normals are ``(det_u_y, -det_u_x)`` with zero middle offsets. Offsets
+    may be on CPU or CUDA. The callback is sampled and validated on every call,
+    with first-order gradients for captured PyTorch parameters. Omitting it
+    preserves the flat detector.
+
     Volumes use ``(H, W)`` for parallel and fan beams and ``(D, H, W)`` for
     cone beams. Sinograms use ``(views, detectors)`` or ``(views, U, V)``.
     Results are float32 and returned to the input tensor's CUDA device. Local
@@ -257,7 +275,7 @@ class Projector:
 
     def __init__(self, trajectory, volume_shape, detector_shape, *, beam="cone",
                  detector_spacing=1.0, voxel_spacing=1.0, devices=None,
-                 distributed=False, process_group=None):
+                 distributed=False, process_group=None, detector_surface=None):
         if beam not in ("parallel", "fan", "cone"):
             raise ValueError("beam must be 'parallel', 'fan', or 'cone'")
         self.beam = beam
@@ -272,11 +290,23 @@ class Projector:
 
         self.detector_spacing = _detector_spacing(detector_spacing, beam)
         self.voxel_spacing = _positive_float(voxel_spacing, "voxel_spacing")
-        self._trajectory, n_views = _validate_trajectory(trajectory, beam)
+        if detector_surface is not None and not callable(detector_surface):
+            raise TypeError("detector_surface must be callable or None")
+        self.detector_surface = detector_surface
+        self._trajectory, n_views = _validate_trajectory(
+            trajectory, beam, detector_surface=detector_surface is not None
+        )
+        self._n_views = n_views
         self._learnable = (
             tuple(trajectory) if any(c.requires_grad for c in trajectory) else ()
         )
-        if beam in ("fan", "cone"):
+        surface_trainable = False
+        if detector_surface is not None:
+            with torch.enable_grad():
+                _, surface_offsets = self._sample_surface()
+                surface_trainable = surface_offsets.requires_grad
+        self._geometry_trainable = bool(self._learnable) or surface_trainable
+        if beam in ("fan", "cone") and detector_surface is None:
             # The kernels set up each ray in float32 from the endpoint nearer the
             # volume centre, which is the origin.
             distances = torch.stack([
@@ -322,14 +352,14 @@ class Projector:
                 torch.device("cuda", torch.cuda.current_device())
                 if backend == "nccl" else torch.device("cpu")
             )
-            flag = 1 if self._learnable else 0
+            flag = 1 if self._geometry_trainable else 0
             bounds = torch.tensor([flag, -flag], device=device)
             torch.distributed.all_reduce(
                 bounds, op=torch.distributed.ReduceOp.MAX, group=process_group
             )
             if bounds[0].item() != -bounds[1].item():
                 raise ValueError(
-                    "all ranks must agree on whether the trajectory requires gradients"
+                    "all ranks must agree on whether the geometry requires gradients"
                 )
         self.view_slice = _balanced_slice(n_views, self.rank, self.world_size)
         self.projection_shape = (
@@ -337,7 +367,14 @@ class Projector:
             *self.detector_shape,
         )
 
-    def _geometry_for(self, device, global_slice):
+    def _geometry_for(self, device, global_slice, geometry=None):
+        if geometry is not None:
+            return tuple(
+                component.detach()[global_slice]
+                .to(device=device, dtype=torch.float32)
+                .contiguous()
+                for component in geometry
+            )
         if self._learnable:
             # Learnable geometry changes between calls, so it is staged every time.
             return tuple(
@@ -366,7 +403,7 @@ class Projector:
             component.record_stream(stream)
         return geometry
 
-    def _run(self, tensor, is_project, reduce_cotangent=False):
+    def _run(self, tensor, is_project, reduce_cotangent=False, geometry=None):
         if not isinstance(tensor, torch.Tensor):
             raise TypeError("input must be a torch.Tensor")
         expected_shape = self.volume_shape if is_project else self.projection_shape
@@ -404,7 +441,7 @@ class Projector:
                 staged_input = source.to(
                     device=device, dtype=torch.float32, non_blocking=True
                 ).contiguous()
-                staged_geometry = self._geometry_for(device, global_slice)
+                staged_geometry = self._geometry_for(device, global_slice, geometry)
             staged.append((device, staged_input, staged_geometry))
 
         # Keep all outputs alive until every device has launched its shard.
@@ -465,14 +502,15 @@ class Projector:
                 self.view_slice.start + local_slice.stop,
             )
             with torch.cuda.device(device), cuda.gpus[device.index]:
+                local_geometry = tuple(
+                    component.detach()[global_slice].to(device=device, dtype=torch.float32)
+                    for component in geometry
+                )
                 parts = _geometry_vjp(
                     self.beam,
                     volume.detach().to(device=device),
                     cotangent.detach()[local_slice].to(device=device),
-                    tuple(
-                        component.detach()[global_slice].to(device=device, dtype=torch.float32)
-                        for component in geometry
-                    ),
+                    local_geometry,
                     spacing,
                     self.voxel_spacing,
                 )
@@ -492,6 +530,11 @@ class Projector:
         )
 
     def _project_raw(self, volume, geometry):
+        if self.detector_surface is not None:
+            return _surface_project(
+                self.beam, volume, geometry, self.detector_shape,
+                self.detector_spacing, self.voxel_spacing,
+            )
         if self.beam == "parallel":
             return ParallelProjectorFunction.apply(
                 volume, *geometry, self.detector_shape[0],
@@ -508,6 +551,11 @@ class Projector:
         )
 
     def _backproject_raw(self, sinogram, geometry):
+        if self.detector_surface is not None:
+            return _surface_backproject(
+                self.beam, sinogram, geometry, self.volume_shape,
+                self.detector_spacing, self.voxel_spacing,
+            )
         if self.beam == "parallel":
             return ParallelBackprojectorFunction.apply(
                 sinogram, *geometry, self.detector_spacing[0],
@@ -538,7 +586,8 @@ class Projector:
         The output shape is ``projection_shape``; in distributed mode it holds
         this rank's contiguous view slice. The result stays on ``volume.device``.
         """
-        return _ProjectorAutograd.apply(volume, self, "project", *self._learnable)
+        geometry = self._effective_geometry()
+        return _ProjectorAutograd.apply(volume, self, "project", *geometry)
 
     def backproject(self, sinogram):
         """Backproject a floating-point CUDA sinogram.
@@ -548,8 +597,124 @@ class Projector:
         ``sinogram.device``; distributed mode SUM-reduces it to every rank, so
         divide a replicated-output loss by ``world_size``.
         """
-        return _ProjectorAutograd.apply(sinogram, self, "backproject", *self._learnable)
+        geometry = self._effective_geometry()
+        return _ProjectorAutograd.apply(sinogram, self, "backproject", *geometry)
 
     def __call__(self, volume):
         """Alias for :meth:`project`."""
         return self.project(volume)
+
+    def _effective_geometry(self):
+        if self.detector_surface is None:
+            return self._learnable
+        return self._sample_surface()[0]
+
+    def _sample_surface(self):
+        """Return effective per-view source/direction and sampled pixel points."""
+        if self.beam == "cone":
+            n_u, n_v = self.detector_shape
+            du, dv = self.detector_spacing
+            u_axis = (torch.arange(n_u, dtype=torch.float64, device="cpu") + 0.5 - n_u / 2) * du
+            v_axis = (torch.arange(n_v, dtype=torch.float64, device="cpu") + 0.5 - n_v / 2) * dv
+            u, v = torch.meshgrid(u_axis, v_axis, indexing="ij")
+        else:
+            (n_u,) = self.detector_shape
+            (du,) = self.detector_spacing
+            u = (torch.arange(n_u, dtype=torch.float64, device="cpu") + 0.5 - n_u / 2) * du
+            v = torch.zeros_like(u)
+
+        offsets = self.detector_surface(u, v)
+        if not isinstance(offsets, torch.Tensor):
+            raise TypeError("detector_surface must return a floating-point tensor")
+        if not torch.is_floating_point(offsets):
+            raise TypeError("detector_surface must return a floating-point tensor")
+        detector_rank = len(self.detector_shape)
+        shared_shape = (*self.detector_shape, 3)
+        per_view_shape = (self._n_views, *shared_shape)
+        if tuple(offsets.shape) not in (shared_shape, per_view_shape):
+            raise ValueError(
+                f"detector_surface output must have shape {shared_shape} or {per_view_shape}"
+            )
+        if not torch.isfinite(offsets).all().item():
+            raise ValueError("detector_surface offsets must be finite")
+        if self.beam != "cone" and torch.any(offsets[..., 1] != 0).item():
+            raise ValueError("2D detector_surface middle offsets must be zero")
+
+        per_view = offsets.ndim == detector_rank + 2
+        local = offsets if per_view else offsets.unsqueeze(0)
+        trajectory = self._learnable if self._learnable else self._trajectory
+        if self.beam == "parallel":
+            direction, center, det_u = trajectory
+        else:
+            source, center = trajectory[:2]
+            det_u = trajectory[2]
+            det_v = trajectory[3] if self.beam == "cone" else None
+
+        def frame(component):
+            return component.to(
+                device=offsets.device,
+                dtype=torch.promote_types(torch.float32, component.dtype),
+            ).reshape(
+                (component.shape[0],) + (1,) * detector_rank + (component.shape[1],)
+            )
+
+        center = frame(center)
+        det_u = frame(det_u)
+        local_u = local[..., 0].unsqueeze(-1)
+        local_n = local[..., 2].unsqueeze(-1)
+        points = center + local_u * det_u
+        if self.beam == "cone":
+            det_v = frame(det_v)
+            normal_dtype = torch.promote_types(det_u.dtype, det_v.dtype)
+            normal = torch.linalg.cross(
+                det_u.to(dtype=normal_dtype),
+                det_v.to(dtype=normal_dtype),
+                dim=-1,
+            )
+            points = points + local[..., 1].unsqueeze(-1) * det_v + local_n * normal
+        else:
+            normal = torch.stack((det_u[..., 1], -det_u[..., 0]), dim=-1)
+            points = points + local_n * normal
+
+        if not torch.isfinite(points).all().item() or not torch.isfinite(
+            points.detach().to(dtype=torch.float32)
+        ).all().item():
+            raise ValueError("detector_surface world points must be finite in float32")
+
+        if self.beam == "parallel":
+            direction = direction.to(device=points.device)
+            if not torch.isfinite(direction).all().item() or not torch.isfinite(
+                direction.detach().to(dtype=torch.float32)
+            ).all().item():
+                raise ValueError("trajectory ray directions must be finite in float32")
+            effective = direction, points
+        else:
+            source = frame(source).reshape(source.shape[0], -1, source.shape[1])[:, 0]
+            effective = source, points
+            if not torch.isfinite(source).all().item() or not torch.isfinite(
+                source.detach().to(dtype=torch.float32)
+            ).all().item():
+                raise ValueError("detector surface sources must be finite in float32")
+            source_points = source.to(dtype=torch.float64).unsqueeze(1)
+            endpoint_points = points.reshape(points.shape[0], -1, points.shape[-1]).double()
+            source_distance = torch.linalg.vector_norm(source_points, dim=-1)
+            endpoint_distance = torch.linalg.vector_norm(endpoint_points, dim=-1)
+            distances = torch.cat((source_distance, endpoint_distance), dim=1) / self.voxel_spacing
+            nearest = torch.minimum(source_distance, endpoint_distance) / self.voxel_spacing
+            staged_coincident = torch.all(
+                endpoint_points.to(dtype=torch.float32)
+                == source_points.to(dtype=torch.float32), dim=-1
+            )
+            if torch.any(staged_coincident).item():
+                raise ValueError("source and detector surface pixels must differ")
+            if torch.any(nearest > 1e6).item():
+                raise ValueError(
+                    "the source or a detector pixel must lie within 1e6 voxels "
+                    "of the volume center in every view"
+                )
+            if torch.any(distances > 1e15).item():
+                raise ValueError(
+                    "the source and detector surface pixels must lie within 1e15 voxels "
+                    "of the volume center"
+                )
+        return effective, offsets

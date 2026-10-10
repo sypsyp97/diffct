@@ -31,7 +31,7 @@ positive scalar.
 
 Detector axes are unit direction vectors, not pixel-step vectors. The detector
 spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
-Pixel ``(u, v)`` is at:
+With the default flat detector, pixel ``(u, v)`` is at:
 
 .. code-block:: text
 
@@ -73,6 +73,45 @@ detector centre must lie within 1e6 voxel spacings of the origin.
 Arbitrary trajectories do not guarantee enough angular coverage for an inverse
 problem. Use iterative methods with regularization for sparse or incomplete
 acquisitions. The analytical helpers assume a circular orbit (see :doc:`api`).
+
+Parameterized detector surfaces
+-------------------------------
+
+``Projector(..., detector_surface=surface)`` uses a callback to place each pixel
+on an arc, cylinder or another parameterized surface. For cone beams it receives
+physical float64 ``u, v`` grids on CPU with shape ``(U, V)`` and ``ij`` indexing. It returns local
+``(u, v, n)`` offsets shaped ``(U, V, 3)`` or ``(views, U, V, 3)``. The world point is:
+
+.. code-block:: text
+
+   center + offset_u * det_u + offset_v * det_v
+          + offset_n * cross(det_u, det_v)
+
+For 2D beams, ``u, v`` have shape ``(U,)`` and ``v`` is zero. Return ``(U, 3)``
+or ``(views, U, 3)`` with zero middle offsets; the normal is
+``(det_u_y, -det_u_x)``. A cylindrical surface can be written as:
+
+.. code-block:: python
+
+   radius = torch.tensor(128.0, requires_grad=True)
+
+   def cylinder(u, v):
+       u, v = u.to(radius.device), v.to(radius.device)
+       angle = u / radius
+       return torch.stack((radius * angle.sin(), v,
+                           radius * (angle.cos() - 1)), dim=-1)
+
+   C = Projector(trajectory, (32, 32, 32), (96, 64),
+                 detector_spacing=(0.8, 1.0), detector_surface=cylinder)
+
+For this generated frame the normal points away from the source; negative
+normal offsets and a radius equal to ``sdd`` centre the cylinder on the source.
+
+The callback is sampled afresh on each call, and its captured parameters receive
+first-order gradients. Every sample must be a finite floating-point tensor of
+the documented shape; fan/cone pixels cannot coincide with the source.
+``project`` and ``backproject`` retain their matched Siddon model. Analytical
+FBP/FDK and weighting helpers continue to assume flat detectors.
 
 Geometry gradients
 ------------------

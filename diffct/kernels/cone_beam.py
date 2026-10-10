@@ -30,7 +30,7 @@ def _cone_3d_forward_kernel(
     d_vol, Nx, Ny, Nz,
     d_sino, n_views, n_u, n_v,
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-    cx, cy, cz, voxel_spacing
+    cx, cy, cz, voxel_spacing, d_detector_positions=None,
 ):
     """Compute the 3D cone-beam forward projection with arbitrary source-detector trajectories.
 
@@ -93,27 +93,32 @@ def _cone_3d_forward_kernel(
     src_y = d_src_pos[iview, 1] / voxel_spacing
     src_z = d_src_pos[iview, 2] / voxel_spacing
 
-    # Read detector center and orientation vectors
-    det_cx = d_det_center[iview, 0] / voxel_spacing
-    det_cy = d_det_center[iview, 1] / voxel_spacing
-    det_cz = d_det_center[iview, 2] / voxel_spacing
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        # Read detector center and orientation vectors
+        det_cx = d_det_center[iview, 0] / voxel_spacing
+        det_cy = d_det_center[iview, 1] / voxel_spacing
+        det_cz = d_det_center[iview, 2] / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iview, 0]
-    u_vec_y = d_det_u_vec[iview, 1]
-    u_vec_z = d_det_u_vec[iview, 2]
+        u_vec_x = d_det_u_vec[iview, 0]
+        u_vec_y = d_det_u_vec[iview, 1]
+        u_vec_z = d_det_u_vec[iview, 2]
 
-    v_vec_x = d_det_v_vec[iview, 0]
-    v_vec_y = d_det_v_vec[iview, 1]
-    v_vec_z = d_det_v_vec[iview, 2]
+        v_vec_x = d_det_v_vec[iview, 0]
+        v_vec_y = d_det_v_vec[iview, 1]
+        v_vec_z = d_det_v_vec[iview, 2]
 
-    # Calculate detector element offset from center
-    u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
-    v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
+        # Calculate detector element offset from center
+        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
+        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
 
-    # Calculate 3D detector element position using center + u*u_vec + v*v_vec
-    det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
-    det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
-    det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+        # Calculate 3D detector element position using center + u*u_vec + v*v_vec
+        det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+        det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+        det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+    else:
+        det_x = d_detector_positions[iview, iu, iv, 0] / voxel_spacing
+        det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
+        det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
@@ -238,7 +243,7 @@ def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-    cx, cy, cz, voxel_spacing
+    cx, cy, cz, voxel_spacing, d_detector_positions=None,
 ):
     """Compute the 3D cone-beam backprojection with arbitrary source-detector trajectories.
 
@@ -305,27 +310,32 @@ def _cone_3d_backward_kernel(
     src_y = d_src_pos[iview, 1] / voxel_spacing
     src_z = d_src_pos[iview, 2] / voxel_spacing
 
-    # Read detector center and orientation vectors
-    det_cx = d_det_center[iview, 0] / voxel_spacing
-    det_cy = d_det_center[iview, 1] / voxel_spacing
-    det_cz = d_det_center[iview, 2] / voxel_spacing
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        # Read detector center and orientation vectors
+        det_cx = d_det_center[iview, 0] / voxel_spacing
+        det_cy = d_det_center[iview, 1] / voxel_spacing
+        det_cz = d_det_center[iview, 2] / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iview, 0]
-    u_vec_y = d_det_u_vec[iview, 1]
-    u_vec_z = d_det_u_vec[iview, 2]
+        u_vec_x = d_det_u_vec[iview, 0]
+        u_vec_y = d_det_u_vec[iview, 1]
+        u_vec_z = d_det_u_vec[iview, 2]
 
-    v_vec_x = d_det_v_vec[iview, 0]
-    v_vec_y = d_det_v_vec[iview, 1]
-    v_vec_z = d_det_v_vec[iview, 2]
+        v_vec_x = d_det_v_vec[iview, 0]
+        v_vec_y = d_det_v_vec[iview, 1]
+        v_vec_z = d_det_v_vec[iview, 2]
 
-    # Calculate detector element offset from center
-    u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
-    v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
+        # Calculate detector element offset from center
+        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
+        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
 
-    # Calculate 3D detector element position using center + u*u_vec + v*v_vec
-    det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
-    det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
-    det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+        # Calculate 3D detector element position using center + u*u_vec + v*v_vec
+        det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+        det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+        det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+    else:
+        det_x = d_detector_positions[iview, iu, iv, 0] / voxel_spacing
+        det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
+        det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
 
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space

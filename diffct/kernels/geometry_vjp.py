@@ -58,6 +58,7 @@ def _fan_2d_geometry_vjp_kernel(
     det_spacing, d_src_pos, d_det_center, d_det_u_vec,
     cx, cy, voxel_spacing,
     d_grad_src, d_grad_det_center, d_grad_det_u,
+    d_detector_positions=None, d_grad_detector_positions=None,
 ):
     """Accumulate fan-beam geometry gradients of ``<grad_sino, A x>`` per view."""
     iang, idet = cuda.grid(2)
@@ -71,14 +72,18 @@ def _fan_2d_geometry_vjp_kernel(
     # the entry and the exit (-1 = segment end at the source or detector).
     src_x = d_src_pos[iang, 0] / voxel_spacing
     src_y = d_src_pos[iang, 1] / voxel_spacing
-    det_cx = d_det_center[iang, 0] / voxel_spacing
-    det_cy = d_det_center[iang, 1] / voxel_spacing
-    u_vec_x = d_det_u_vec[iang, 0]
-    u_vec_y = d_det_u_vec[iang, 1]
-    u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
-    u_offset = u_phys / voxel_spacing
-    det_x = det_cx + u_offset * u_vec_x
-    det_y = det_cy + u_offset * u_vec_y
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        det_cx = d_det_center[iang, 0] / voxel_spacing
+        det_cy = d_det_center[iang, 1] / voxel_spacing
+        u_vec_x = d_det_u_vec[iang, 0]
+        u_vec_y = d_det_u_vec[iang, 1]
+        u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
+        u_offset = u_phys / voxel_spacing
+        det_x = det_cx + u_offset * u_vec_x
+        det_y = det_cy + u_offset * u_vec_y
+    else:
+        det_x = d_detector_positions[iang, idet, 0] / voxel_spacing
+        det_y = d_detector_positions[iang, idet, 1] / voxel_spacing
 
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
@@ -203,10 +208,14 @@ def _fan_2d_geometry_vjp_kernel(
 
     cuda.atomic.add(d_grad_src, (iang, 0), g * ga_x)
     cuda.atomic.add(d_grad_src, (iang, 1), g * ga_y)
-    cuda.atomic.add(d_grad_det_center, (iang, 0), g * gb_x)
-    cuda.atomic.add(d_grad_det_center, (iang, 1), g * gb_y)
-    cuda.atomic.add(d_grad_det_u, (iang, 0), g * u_phys * gb_x)
-    cuda.atomic.add(d_grad_det_u, (iang, 1), g * u_phys * gb_y)
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        cuda.atomic.add(d_grad_det_center, (iang, 0), g * gb_x)
+        cuda.atomic.add(d_grad_det_center, (iang, 1), g * gb_y)
+        cuda.atomic.add(d_grad_det_u, (iang, 0), g * u_phys * gb_x)
+        cuda.atomic.add(d_grad_det_u, (iang, 1), g * u_phys * gb_y)
+    else:
+        d_grad_detector_positions[iang, idet, 0] = g * gb_x
+        d_grad_detector_positions[iang, idet, 1] = g * gb_y
 
 
 @_FASTMATH_DECORATOR
@@ -216,6 +225,7 @@ def _cone_3d_geometry_vjp_kernel(
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
     cx, cy, cz, voxel_spacing,
     d_grad_src, d_grad_det_center, d_grad_det_u, d_grad_det_v,
+    d_detector_positions=None, d_grad_detector_positions=None,
 ):
     """Accumulate cone-beam geometry gradients of ``<grad_sino, A x>`` per view."""
     iv, iu, iview = cuda.grid(3)
@@ -228,22 +238,27 @@ def _cone_3d_geometry_vjp_kernel(
     src_x = d_src_pos[iview, 0] / voxel_spacing
     src_y = d_src_pos[iview, 1] / voxel_spacing
     src_z = d_src_pos[iview, 2] / voxel_spacing
-    det_cx = d_det_center[iview, 0] / voxel_spacing
-    det_cy = d_det_center[iview, 1] / voxel_spacing
-    det_cz = d_det_center[iview, 2] / voxel_spacing
-    u_vec_x = d_det_u_vec[iview, 0]
-    u_vec_y = d_det_u_vec[iview, 1]
-    u_vec_z = d_det_u_vec[iview, 2]
-    v_vec_x = d_det_v_vec[iview, 0]
-    v_vec_y = d_det_v_vec[iview, 1]
-    v_vec_z = d_det_v_vec[iview, 2]
-    u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
-    v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
-    u_offset = u_phys / voxel_spacing
-    v_offset = v_phys / voxel_spacing
-    det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
-    det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
-    det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        det_cx = d_det_center[iview, 0] / voxel_spacing
+        det_cy = d_det_center[iview, 1] / voxel_spacing
+        det_cz = d_det_center[iview, 2] / voxel_spacing
+        u_vec_x = d_det_u_vec[iview, 0]
+        u_vec_y = d_det_u_vec[iview, 1]
+        u_vec_z = d_det_u_vec[iview, 2]
+        v_vec_x = d_det_v_vec[iview, 0]
+        v_vec_y = d_det_v_vec[iview, 1]
+        v_vec_z = d_det_v_vec[iview, 2]
+        u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
+        v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
+        u_offset = u_phys / voxel_spacing
+        v_offset = v_phys / voxel_spacing
+        det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+        det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+        det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+    else:
+        det_x = d_detector_positions[iview, iu, iv, 0] / voxel_spacing
+        det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
+        det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
 
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
@@ -406,15 +421,20 @@ def _cone_3d_geometry_vjp_kernel(
     cuda.atomic.add(d_grad_src, (iview, 0), g * ga_x)
     cuda.atomic.add(d_grad_src, (iview, 1), g * ga_y)
     cuda.atomic.add(d_grad_src, (iview, 2), g * ga_z)
-    cuda.atomic.add(d_grad_det_center, (iview, 0), g * gb_x)
-    cuda.atomic.add(d_grad_det_center, (iview, 1), g * gb_y)
-    cuda.atomic.add(d_grad_det_center, (iview, 2), g * gb_z)
-    cuda.atomic.add(d_grad_det_u, (iview, 0), g * u_phys * gb_x)
-    cuda.atomic.add(d_grad_det_u, (iview, 1), g * u_phys * gb_y)
-    cuda.atomic.add(d_grad_det_u, (iview, 2), g * u_phys * gb_z)
-    cuda.atomic.add(d_grad_det_v, (iview, 0), g * v_phys * gb_x)
-    cuda.atomic.add(d_grad_det_v, (iview, 1), g * v_phys * gb_y)
-    cuda.atomic.add(d_grad_det_v, (iview, 2), g * v_phys * gb_z)
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        cuda.atomic.add(d_grad_det_center, (iview, 0), g * gb_x)
+        cuda.atomic.add(d_grad_det_center, (iview, 1), g * gb_y)
+        cuda.atomic.add(d_grad_det_center, (iview, 2), g * gb_z)
+        cuda.atomic.add(d_grad_det_u, (iview, 0), g * u_phys * gb_x)
+        cuda.atomic.add(d_grad_det_u, (iview, 1), g * u_phys * gb_y)
+        cuda.atomic.add(d_grad_det_u, (iview, 2), g * u_phys * gb_z)
+        cuda.atomic.add(d_grad_det_v, (iview, 0), g * v_phys * gb_x)
+        cuda.atomic.add(d_grad_det_v, (iview, 1), g * v_phys * gb_y)
+        cuda.atomic.add(d_grad_det_v, (iview, 2), g * v_phys * gb_z)
+    else:
+        d_grad_detector_positions[iview, iu, iv, 0] = g * gb_x
+        d_grad_detector_positions[iview, iu, iv, 1] = g * gb_y
+        d_grad_detector_positions[iview, iu, iv, 2] = g * gb_z
 
 
 @_FASTMATH_DECORATOR
@@ -424,6 +444,7 @@ def _parallel_2d_geometry_vjp_kernel(
     det_spacing, d_ray_dir, d_det_origin, d_det_u_vec,
     cx, cy, voxel_spacing,
     d_grad_ray_dir, d_grad_det_origin, d_grad_det_u,
+    d_detector_positions=None, d_grad_detector_positions=None,
 ):
     """Accumulate parallel-beam geometry gradients of ``<grad_sino, A x>`` per view.
 
@@ -442,14 +463,18 @@ def _parallel_2d_geometry_vjp_kernel(
     # entry and exit faces.
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
-    det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
-    det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
-    u_vec_x = np.float64(d_det_u_vec[iang, 0])
-    u_vec_y = np.float64(d_det_u_vec[iang, 1])
     u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
-    u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
-    pnt_x = det_ox + u_offset * u_vec_x
-    pnt_y = det_oy + u_offset * u_vec_y
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
+        det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
+        u_vec_x = np.float64(d_det_u_vec[iang, 0])
+        u_vec_y = np.float64(d_det_u_vec[iang, 1])
+        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+        pnt_x = det_ox + u_offset * u_vec_x
+        pnt_y = det_oy + u_offset * u_vec_y
+    else:
+        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / voxel_spacing
+        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / voxel_spacing
 
     t_min, t_max = -_BIG, _BIG
     ent_axis = -1
@@ -556,7 +581,11 @@ def _parallel_2d_geometry_vjp_kernel(
 
     cuda.atomic.add(d_grad_ray_dir, (iang, 0), g * gr_x)
     cuda.atomic.add(d_grad_ray_dir, (iang, 1), g * gr_y)
-    cuda.atomic.add(d_grad_det_origin, (iang, 0), g * gp_x)
-    cuda.atomic.add(d_grad_det_origin, (iang, 1), g * gp_y)
-    cuda.atomic.add(d_grad_det_u, (iang, 0), g * u_phys * gp_x)
-    cuda.atomic.add(d_grad_det_u, (iang, 1), g * u_phys * gp_y)
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        cuda.atomic.add(d_grad_det_origin, (iang, 0), g * gp_x)
+        cuda.atomic.add(d_grad_det_origin, (iang, 1), g * gp_y)
+        cuda.atomic.add(d_grad_det_u, (iang, 0), g * u_phys * gp_x)
+        cuda.atomic.add(d_grad_det_u, (iang, 1), g * u_phys * gp_y)
+    else:
+        d_grad_detector_positions[iang, idet, 0] = g * gp_x
+        d_grad_detector_positions[iang, idet, 1] = g * gp_y

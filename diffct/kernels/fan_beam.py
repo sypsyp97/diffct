@@ -30,7 +30,7 @@ def _fan_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
     det_spacing, d_src_pos, d_det_center, d_det_u_vec,
-    cx, cy, voxel_spacing
+    cx, cy, voxel_spacing, d_detector_positions=None,
 ):
     """Compute the 2D fan beam forward projection with arbitrary source-detector trajectories.
 
@@ -82,19 +82,23 @@ def _fan_2d_forward_kernel(
     src_x = d_src_pos[iang, 0] / voxel_spacing
     src_y = d_src_pos[iang, 1] / voxel_spacing
 
-    # Read detector center and orientation vector
-    det_cx = d_det_center[iang, 0] / voxel_spacing
-    det_cy = d_det_center[iang, 1] / voxel_spacing
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        # Read detector center and orientation vector
+        det_cx = d_det_center[iang, 0] / voxel_spacing
+        det_cy = d_det_center[iang, 1] / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iang, 0]
-    u_vec_y = d_det_u_vec[iang, 1]
+        u_vec_x = d_det_u_vec[iang, 0]
+        u_vec_y = d_det_u_vec[iang, 1]
 
-    # Calculate detector element offset from center
-    u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+        # Calculate detector element offset from center
+        u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
-    # Calculate 2D detector element position using center + u*u_vec
-    det_x = det_cx + u_offset * u_vec_x
-    det_y = det_cy + u_offset * u_vec_y
+        # Calculate 2D detector element position using center + u*u_vec
+        det_x = det_cx + u_offset * u_vec_x
+        det_y = det_cy + u_offset * u_vec_y
+    else:
+        det_x = d_detector_positions[iang, idet, 0] / voxel_spacing
+        det_y = d_detector_positions[iang, idet, 1] / voxel_spacing
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element
@@ -192,7 +196,7 @@ def _fan_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
     det_spacing, d_src_pos, d_det_center, d_det_u_vec,
-    cx, cy, voxel_spacing
+    cx, cy, voxel_spacing, d_detector_positions=None,
 ):
     """Compute the 2D fan beam backprojection with arbitrary source-detector trajectories.
 
@@ -248,19 +252,23 @@ def _fan_2d_backward_kernel(
     src_x = d_src_pos[iang, 0] / voxel_spacing
     src_y = d_src_pos[iang, 1] / voxel_spacing
 
-    # Read detector center and orientation vector
-    det_cx = d_det_center[iang, 0] / voxel_spacing
-    det_cy = d_det_center[iang, 1] / voxel_spacing
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        # Read detector center and orientation vector
+        det_cx = d_det_center[iang, 0] / voxel_spacing
+        det_cy = d_det_center[iang, 1] / voxel_spacing
 
-    u_vec_x = d_det_u_vec[iang, 0]
-    u_vec_y = d_det_u_vec[iang, 1]
+        u_vec_x = d_det_u_vec[iang, 0]
+        u_vec_y = d_det_u_vec[iang, 1]
 
-    # Calculate detector element offset from center
-    u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
+        # Calculate detector element offset from center
+        u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
 
-    # Calculate 2D detector element position using center + u*u_vec
-    det_x = det_cx + u_offset * u_vec_x
-    det_y = det_cy + u_offset * u_vec_y
+        # Calculate 2D detector element position using center + u*u_vec
+        det_x = det_cx + u_offset * u_vec_x
+        det_y = det_cy + u_offset * u_vec_y
+    else:
+        det_x = d_detector_positions[iang, idet, 0] / voxel_spacing
+        det_y = d_detector_positions[iang, idet, 1] / voxel_spacing
 
     # === RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element

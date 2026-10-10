@@ -4,13 +4,13 @@
 
 | Area | Supported here | Important limit |
 |---|---|---|
-| Acquisition | 2D parallel/fan and 3D cone beams; per-view source/detector geometry | Flat detectors with unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
-| Autograd | Volume/sinogram gradients and second derivatives; first-order geometry gradients | Geometry second derivatives raise an error; validity checks run at construction |
+| Acquisition | 2D parallel/fan and 3D cone beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
+| Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives raise an error; surface samples are checked on every call |
 | Execution | CUDA, one-process multi-GPU, or distributed ranks across nodes | Kernels and outputs are float32; CPU geometry is allowed, CPU projection is not |
 | Reconstruction | Matched adjoint plus separate FBP/FDK helpers | `backproject()` is not an inverse; FDK remains approximate and does not become exact for arbitrary scans |
 | Memory | Views split across GPUs/ranks | Every participating GPU needs a full volume; local multi-GPU also gathers the full sinogram on the input device |
 
-Analytical fan/cone backprojection infers the physical isocenter from source
+Analytical helpers use flat detectors. Analytical fan/cone backprojection infers the physical isocenter from source
 lines along detector normals. For non-circular or ambiguous geometry (including
 a single view), supply `isocenter=(x, y)` or `(x, y, z)`. Analytical interpolation
 requires at least two detector bins per axis. The finite discrete Ram-Lak filter
@@ -43,6 +43,68 @@ axes are unit directions, not pixel-sized vectors. See
 The `custom_trajectory_3d` helper instead derives a detector pose from a source
 path looking toward the origin; use explicit tuples when detector poses are
 independently calibrated.
+
+## Parameterized detector surfaces
+
+Pass `detector_surface=surface` to `Projector` to determine each pixel's world
+position from a local parameterized surface. The same Siddon kernels compute
+`project()` and its matched `backproject()` using these positions.
+Omitting this argument keeps the existing flat detector.
+
+For example, a source-centred cylindrical detector curves along its horizontal axis:
+
+```python
+import torch
+from diffct import Projector, spiral_trajectory_3d
+
+trajectory = spiral_trajectory_3d(
+    90, sid=80.0, sdd=128.0, z_range=10.0, n_turns=1.0, device="cpu")
+radius = torch.tensor(128.0, requires_grad=True)
+
+def cylinder(u, v):
+    u, v = u.to(radius.device), v.to(radius.device)
+    angle = u / radius
+    return torch.stack((radius * angle.sin(), v,
+                        radius * (angle.cos() - 1)), dim=-1)
+
+A = Projector(trajectory, (32, 32, 32), (96, 64),
+              detector_spacing=(0.8, 1.0), detector_surface=cylinder)
+volume = torch.ones(A.volume_shape, device="cuda")
+sinogram = A.project(volume)                 # (90, 96, 64)
+sinogram.square().sum().backward()           # radius.grad
+adjoint = A.backproject(sinogram.detach())
+```
+
+The callback receives centred physical float64 parameter grids on CPU:
+`u[i] = (i + 0.5 - U / 2) * du` and
+`v[j] = (j + 0.5 - V / 2) * dv`, with `ij` indexing.
+It returns a finite floating-point PyTorch tensor of local `(u, v, n)` offsets,
+with shape `(U, V, 3)` shared by all views, or `(views, U, V, 3)` for a separate
+surface in each view. It may return offsets on CPU or CUDA; move the grids to
+your parameters' device inside the callback when needed. The world position is
+`center + offset_u * det_u + offset_v * det_v + offset_n * cross(det_u, det_v)`.
+The normal's sign follows the supplied frame. In the generated frame above it
+points away from the source, so the example uses negative normal offsets and
+an initial radius equal to the source-to-detector distance.
+`torch.stack((u, v, torch.zeros_like(u)), -1)` gives a flat surface.
+
+For fan and parallel beams the inputs have shape `(U,)`, `v` is zero, and the
+return shape is `(U, 3)` or `(views, U, 3)`. The middle offset must be zero.
+The local normal is `(det_u_y, -det_u_x)`. Fan rays connect each source to its
+pixel; parallel rays pass through each pixel along the view's `ray_dir`.
+
+Surface callbacks are evaluated afresh on each call, so captured PyTorch
+parameters can change and receive first-order gradients. The existing rule for
+trajectory tensors still applies: fixed tensors are cloned, while tensors that
+require gradients are read live. Second derivatives through the geometry are
+unsupported. Surfaces must return the documented shape and finite coordinates
+on every call; a source must not coincide with any pixel.
+
+Explicit positions cost two float32 coordinates per 2D pixel or three per
+cone pixel, plus gradients when needed. Sources and ray directions remain
+per-view tensors. Views are sharded with the same multi-GPU and distributed
+rules as flat detectors. FBP/FDK and analytical weighting helpers retain their
+flat-detector assumptions.
 
 ## Geometry gradients
 
@@ -121,12 +183,14 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`
   (`det_origin` for parallel beams), the same convention as `main`. For cone
   beams, add the analogous offset along `det_v` using its own pitch.
-- Projections are line integrals in the length unit of the geometry. `Projector`
-  rejects views where the source equals the detector centre, or the detector is
-  edge-on to the source.
+- Projections are line integrals in the length unit of the geometry. For flat
+  detectors, `Projector` rejects views where the source equals the detector
+  centre, or the detector is edge-on to the source. Surface detectors check the
+  actual pixel positions instead.
 - The kernels work in float32. In fan and cone beams, the source or the
   detector centre must be within 1e6 voxels of the volume centre in each view;
-  both must be within 1e15 voxels. Geometry may be on CPU or CUDA, but volumes
+  both must be within 1e15 voxels. For surfaces these bounds apply to every
+  source/pixel pair. Geometry may be on CPU or CUDA, but volumes
   and sinograms passed to the operator must be floating-point CUDA tensors.
   Ray positions are accurate to about 6e-8 times that nearer distance.
 
@@ -138,6 +202,7 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   to a volume axis, a source on a voxel face plane, and equal detector pitches.
   For finite-difference checks, rotate the trajectory slightly, for example with
   `start_angle=0.1`.
-- Geometry checks run only at construction. Optimize angles and offsets, not raw
-  axis vectors, so the geometry stays valid.
+- Trajectory frame checks run at construction; surface positions are also
+  checked on every call. Optimize angles and offsets, not raw axis vectors, so
+  the geometry stays valid.
 

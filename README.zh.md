@@ -44,6 +44,7 @@
 据我们所知，diffct 是唯一同时具备以下四点的开源 GPU CT 库：任意逐视角轨迹、对体数据的自动求导、对采集几何的一阶梯度，以及内置的多卡和多节点执行。我们在 2026 年 10 月与 LEAP、TIGRE、ASTRA/tomosipo、DiffDRR 等库做了对比。
 
 - **任意轨迹。** 每个视角有各自的源点、探测器中心和探测器轴；圆轨迹、螺旋、鞍形、正弦、随机和标定扫描使用同一套代码。`requires_grad=True` 的轨迹张量可获得用于标定的几何梯度。
+- **曲面探测器。** 用 `detector_surface(u, v)` 定义每个像素的位置，原生支持弧形、柱面及其他参数化曲面；投影与匹配反投影支持曲面参数的一阶梯度。见[曲面接口](docs/REFERENCE.md#parameterized-detector-surfaces)（英文）。
 - **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
 - **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或每卡一个进程并用 torchrun 与 NCCL。视角分片，体数据复制。加速比取决于工作负载和通信开销。
 - **解析辅助函数。** `diffct.analytical` 提供斜坡滤波器（ram-lak、shepp-logan、cosine、hamming、hann）、扇束、锥束和 Parker 权重，以及 FBP 与 FDK 反投影。
