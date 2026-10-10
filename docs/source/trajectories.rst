@@ -114,8 +114,8 @@ or ``(views, U, 3)`` with zero middle offsets; the normal is
 For this generated frame the normal points away from the source; negative
 normal offsets and a radius equal to ``sdd`` centre the cylinder on the source.
 
-The callback is sampled afresh on each call, and its captured parameters receive
-first-order gradients. Every sample must be a finite floating-point tensor of
+The callback is sampled at construction and afresh on each operation, and its
+captured parameters receive first-order gradients. Every sample must be a finite floating-point tensor of
 the documented shape; fan/cone pixels cannot coincide with the source.
 ``project`` and ``backproject`` retain their matched Siddon model, with one ray
 per pixel and no detector-area integration. They operate directly on the native
@@ -132,8 +132,9 @@ Geometry gradients
 
 Gradients with respect to trajectory tensors are first order only. Set
 ``requires_grad=True`` on each tensor before you construct ``Projector``. The
-projector keeps references to the tensors and reads their current values on each
-call. For example:
+projector keeps references to all trajectory components when any component
+requires gradients, and reads their current values on each call. If none require
+gradients, it clones the entire trajectory. For example:
 
 .. code-block:: python
 
@@ -151,13 +152,14 @@ calibration loop, see ``examples/geometry_calibration.py``.
 
 If poses come from learnable angles or offsets, rebuild the derived tensors and
 the ``Projector`` inside each optimization step. Parameterize rotations so that
-axes stay unit length and orthogonal. Geometry checks run only at construction.
+axes stay unit length and orthogonal. Trajectory frame checks run only at
+construction; sampled surface positions are also checked on every operation.
 
 Limits:
 
 - Second derivatives with respect to geometry raise an error.
-- Second derivatives with respect to the volume or sinogram are available with
-  fixed geometry.
+- Second derivatives with respect to the volume or sinogram are available,
+  including when trajectory or surface parameters require gradients.
 - Detector and voxel spacing are scalar settings, not differentiable parameters.
 - Geometry derivatives are piecewise: at exact voxel edges or corners they are one-sided.
 - Distributed geometry gradients are summed by the operator. See :doc:`multi_gpu`

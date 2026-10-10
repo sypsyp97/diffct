@@ -99,12 +99,13 @@ return shape is `(U, 3)` or `(views, U, 3)`. The middle offset must be zero.
 The local normal is `(det_u_y, -det_u_x)`. Fan rays connect each source to its
 pixel; parallel rays pass through each pixel along the view's `ray_dir`.
 
-Surface callbacks are evaluated afresh on each call, so captured PyTorch
-parameters can change and receive first-order gradients. The existing rule for
-trajectory tensors still applies: fixed tensors are cloned, while tensors that
-require gradients are read live. Second derivatives through the geometry are
-unsupported. Surfaces must return the documented shape and finite coordinates
-on every call; a source must not coincide with any pixel.
+Surface callbacks are evaluated at construction and afresh on each operation,
+so captured PyTorch parameters can change and receive first-order gradients.
+The existing trajectory rule still applies: if no component requires gradients,
+the entire trajectory is cloned. Otherwise all components are read live, with
+gradients for the differentiable components. Second derivatives through the
+geometry are unsupported. Surfaces must return the documented shape and finite
+coordinates on every call; a source must not coincide with any pixel.
 
 Explicit positions cost two float32 coordinates per 2D pixel or three per
 cone pixel, plus gradients when needed. Sources and ray directions remain
