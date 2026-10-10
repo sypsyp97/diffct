@@ -7,22 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-10
+
 ### Added
 
-- Automatic CPU-backed spatial tiles and view batches for native `Projector`
-  projection, matched backprojection, data autograd/Hessians and first-order
-  geometry gradients. CUDA inputs retain the full-volume path when its estimated
-  working set fits. Optional `volume_chunk_shape` and `view_chunk_size` override
-  automatic limits; full CPU arrays are not staged on CUDA.
-- A CPU-backed CGLS example and independent chunk-boundary, CUDA memory and
-  formal partition/translation/adjoint checks.
 - `Projector(..., detector_surface=surface)` samples local parameterized surfaces
   into per-pixel world positions for native parallel, fan and cone projection
   and matched backprojection. Shared or per-view surfaces can contain trainable
   PyTorch parameters. Flat detectors remain the default; analytical helpers
   retain their flat-detector assumptions.
-- Independent CUDA regression tests and CPU formal verification for detector
+- CUDA regression tests and CPU formal verification for detector
   surfaces, including bounded production-kernel checks against cell intersections.
+- Automatic CPU-backed spatial tiles and view batches for native `Projector`
+  projection, matched backprojection, data autograd/Hessians and first-order
+  geometry gradients. CUDA inputs retain the full-volume path when its estimated
+  working set fits. Optional `volume_chunk_shape` and `view_chunk_size` override
+  automatic limits; full CPU arrays are not staged on CUDA. Several local
+  devices compute their view batches concurrently.
+- A CPU-backed CGLS example and chunk-boundary, CUDA memory and
+  formal partition/translation/adjoint checks.
+
+### Fixed
+
+- The exit-time cleanup hook returns early under the CUDA simulator
+  (``NUMBA_ENABLE_CUDASIM=1``). Before, each simulator process printed an
+  ``ImportError`` for ``_PendingDeallocs`` at exit. The simulator loads no
+  CUDA modules, so it needs no cleanup.
 
 ## [2.0.2] - 2026-10-09
 

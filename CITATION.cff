@@ -13,8 +13,8 @@ authors:
     given-names: Yipeng
     email: yipeng.sun@fau.de
     alias: sypsyp97
-version: 2.0.2
-date-released: "2026-10-09"
+version: 2.1.0
+date-released: "2026-10-10"
 license: Apache-2.0
 repository-code: "https://github.com/sypsyp97/diffct"
 url: "https://sypsyp97.github.io/diffct/"

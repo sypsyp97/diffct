@@ -129,7 +129,8 @@ sinogram.square().mean().backward()          # CPU volume.grad
 
 Run `python examples/chunked_reconstruction.py` for CPU-backed CGLS and measured
 CUDA allocation. Chunking preserves the Siddon model, with float32 summation
-differences; smaller blocks can increase transfer and launch overhead.
+differences; smaller blocks can increase transfer and launch overhead. Full
+arrays and iterative state still need enough host RAM.
 
 ## Performance
 
