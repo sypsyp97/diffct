@@ -222,7 +222,7 @@ jobs:
               runpy.run_path(str(examples / name), run_name='ci_import')
               print(f'Imported {name}')
           PY
-          for example in analytical_reconstruction benchmark_projector chunked_reconstruction geometry_calibration iterative_reconstruction walnut_reconstruction plot_trajectory; do
+          for example in analytical_reconstruction benchmark_projector benchmark_execution chunked_reconstruction disk_reconstruction geometry_calibration iterative_reconstruction walnut_reconstruction plot_trajectory; do
             python "$GITHUB_WORKSPACE/examples/$example.py" --help
           done
           python "$GITHUB_WORKSPACE/examples/data/preprocess_walnut.py" --help

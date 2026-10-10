@@ -8,7 +8,7 @@
 | Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives raise an error; surface samples are checked on every call |
 | Execution | CUDA computation with CPU or CUDA data; one-process multi-GPU or distributed ranks | Outputs are float32 on the input device; CPU data uses streamed CUDA tiles |
 | Reconstruction | Matched adjoint plus separate FBP/FDK helpers | `backproject()` is not an inverse; FDK remains approximate and does not become exact for arbitrary scans |
-| Memory | Automatic spatial tiles and view batches; views split across GPUs/ranks | Full arrays and gradients still need host RAM for out-of-core execution; caller-owned CUDA inputs/outputs still occupy their full size |
+| Memory | Automatic spatial/view/pixel blocks, bounded transfers, numerical tensor/file stores and rank-owned volume slabs | Tensor autograd still holds complete inputs/outputs/gradients; disk solvers must keep their vector operations blockwise |
 
 Analytical helpers use flat detectors. Analytical fan/cone backprojection infers the physical isocenter from source
 lines along detector normals. For non-circular or ambiguous geometry (including
@@ -79,7 +79,38 @@ For a runnable circular cone example with native projection, matched
 backprojection and gradient checks, run `python examples/curved_detector.py`
 from the repository root.
 
-The callback receives centred physical float64 parameter grids on CPU:
+For bounded surface geometry, make parameters explicit:
+
+```python
+from diffct import ParameterizedSurface
+
+def sample(u, v, view_indices, r):
+    # u,v are a GLOBAL physical pixel rectangle; view_indices are global IDs.
+    return torch.stack((r * torch.sin(u / r), v,
+                        r * (torch.cos(u / r) - 1)), -1)
+
+surface = ParameterizedSurface(sample, parameters=(radius,))
+A = Projector(trajectory, (32, 32, 32), (96, 64),
+              detector_spacing=(0.8, 1.0), detector_surface=surface,
+              view_chunk_size=8, detector_chunk_shape=(32, 32))
+sinogram = A.project(torch.ones(A.volume_shape, device="cpu"))
+sinogram.square().sum().backward()  # radius.grad, using bounded pixel VJPs
+```
+
+The sampler returns `(*pixel_shape,3)` or
+`(len(view_indices),*pixel_shape,3)` local offsets. Grids, IDs and explicit
+parameter snapshots are on CPU, preserving parameter dtypes; gradients return
+to the original parameter device/dtype. All mutable geometry tensors must be
+explicit parameters. Other captured configuration must be immutable and the
+sampler must be pure. Per-view coupling uses global IDs or explicit parameters,
+including parameters for views outside the executing batch. Each forward
+captures the sampler and one set of frame/parameter snapshots; backward uses
+those values after mutation or replacement. World points and pixel VJPs are
+generated locally; shared parameter gradients are reduced before communication.
+The local frame and 2D constraints below apply to both surface interfaces.
+Allocations inside user samplers remain the caller's responsibility.
+
+The legacy two-argument callback receives complete centred physical float64 grids on CPU:
 `u[i] = (i + 0.5 - U / 2) * du` and
 `v[j] = (j + 0.5 - V / 2) * dv`, with `ij` indexing.
 It returns a finite floating-point PyTorch tensor of local `(u, v, n)` offsets,
@@ -100,7 +131,8 @@ return shape is `(U, 3)` or `(views, U, 3)`. The middle offset must be zero.
 The local normal is `(det_u_y, -det_u_x)`. Fan rays connect each source to its
 pixel; parallel rays pass through each pixel along the view's `ray_dir`.
 
-Surface callbacks are evaluated at construction and afresh on each operation,
+Legacy callbacks retain their complete host geometry footprint and are evaluated
+at construction and afresh on each operation,
 so captured PyTorch parameters can change and receive first-order gradients.
 The existing trajectory rule still applies: if no component requires gradients,
 the entire trajectory is cloned. Otherwise all components are read live, with
@@ -122,6 +154,24 @@ the core operator.
 
 ## Chunked execution
 
+Backprojection keeps each native GPU tile accumulator across all contributing
+view/pixel batches, then downloads the completed tile. Projection and geometry
+VJPs reuse contiguous native layouts. Automatic scheduling compares spatial,
+view and bounded-window orders, slabs and blocks, using copy estimates and
+short real pilots. `last_execution_stats` separates actual copy payloads from
+pilot work and estimated candidate costs. Manual `schedule` choices support
+reproducible comparisons. Pinned slots, host fragments and local geometry have
+memory ceilings independent of GPU capacity.
+
+When complete arrays exceed RAM, use `TensorStore`, `NpyStore` or a structural
+block backend with `project_into`/`backproject_into`. These methods overwrite
+caller-provided float32 output blocks, return the output object and do not build
+autograd graphs. Known read-only and aliased outputs are rejected before
+execution; hidden custom-store aliases are the caller's responsibility.
+The disk CGLS example updates `x,s,p,r,q` blockwise and saves rank-local
+completed-iteration checkpoints. It does not materialize complete residuals
+or volumes. See [the full memory guide](https://sypsyp97.github.io/diffct/chunking.html).
+
 `Projector` accepts floating CPU data by default. Projection and matched
 backprojection execute on CUDA while the full volume, sinogram and returned
 data gradients remain on the input device. Keep these arrays on CPU when they
@@ -140,14 +190,16 @@ driver/allocator memory to this estimate; use explicit limits when setting a
 process ceiling on those versions.
 
 Manual overrides are `volume_chunk_shape=(H, W)` for 2D or `(D, H, W)` for cone
-beams, and `view_chunk_size=<positive integer>`. Spatial limits force streaming;
+beams, `view_chunk_size=<positive integer>` and `detector_chunk_shape=(U,)`
+or `(U,V)`. Spatial or detector limits force streaming;
 a view limit alone also forces streamed batches. The automatic view batch is
 capped at 32 and can shrink to fit its geometry/projection buffers. Oversized
 spatial limits are clipped at the volume edge; nondivisible tails retain their
 global voxel positions. Explicit limits are not automatically made smaller.
 
-Streamed detector-surface callbacks must return CPU offsets, so complete
-per-view world positions are never expanded on CUDA. CUDA callbacks remain
+Legacy streamed detector-surface callbacks must return CPU offsets and retain
+their full CPU callback footprint. Explicit `ParameterizedSurface` instead
+samples local view/pixel batches. CUDA legacy callbacks remain
 supported when an automatic CUDA full-volume path fits. CPU geometry snapshots
 keep data and first-order geometry backward consistent with the forward call,
 including later parameter changes. Geometry second derivatives remain
@@ -191,13 +243,15 @@ Choose the execution mode by how you want to hold the projections:
 |---|---|---|
 | One GPU | Default `Projector(...)` | Full sinogram on the input device |
 | One process, several GPUs | `devices=[0, 1, ...]` | Views computed on several GPUs, then full sinogram gathered on the input device |
-| One GPU per process, one or more nodes | `distributed=True` after process-group initialization | Rank-local sinogram with shape `A.projection_shape`, indexed by `A.view_slice` |
+| Distributed views | `distributed=True, partition="views"` after initialization | Rank-local sinogram with shape `A.projection_shape`, indexed by `A.view_slice`; replicated volume |
+| Distributed space | `distributed=True, partition="space"` after initialization | Replicated ray batches; rank-owned volume with local shape `A.volume_shape` and global ownership `A.volume_slice` |
 
 CPU-backed arrays use bounded spatial tiles and view batches on each GPU.
 CUDA inputs/outputs occupy their complete size on the caller's device, and a
 fitting full-volume path may replicate the volume across GPUs. GPU memory is
-not pooled. Distributed mode keeps projections sharded, while backprojection
-sums and replicates the full volume on the input device, including CPU.
+not pooled. Views mode keeps projections sharded, while backprojection sums
+and replicates the volume on the input device. Space mode holds local slabs,
+SUMs their forward ray contributions and returns local backprojection only.
 
 **One process, several GPUs:**
 
@@ -214,9 +268,11 @@ sbatch examples/slurm/multi_node.sbatch examples/iterative_reconstruction.py --t
 
 With `distributed=True`, every rank must make the same `project`, `backproject`
 and backward calls, even on ranks with zero views. Use each rank's local
-projection loss with SUM semantics; the operator sums image and geometry
+projection loss with SUM semantics in views mode; the operator sums image and geometry
 gradients across ranks. Divide a loss on replicated backprojection output by
-`world_size`. Do not add a DDP gradient reduction on top of the operator.
+`world_size`. In space mode, divide replicated projection losses by `world_size`
+and sum owned backprojection losses. Do not add a DDP gradient reduction on
+top of the operator.
 Initialization, loss examples, Slurm details and the cross-node
 check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
 

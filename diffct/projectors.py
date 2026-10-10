@@ -39,116 +39,115 @@ def _empty_detector_positions(device, beam):
     return tensor, TorchCUDABridge.tensor_to_cuda_array(tensor)
 
 
-def _surface_project(beam, volume, geometry, detector_shape, detector_spacing, voxel_spacing):
-    """Run a native ray projector with one detector endpoint per pixel."""
-    device = volume.device
+def _prepare_volume(beam, volume):
+    """Prepare one contiguous native HW/WHD tile for repeated ray launches."""
+    volume = volume.detach().to(dtype=torch.float32).contiguous()
+    if beam == "cone":
+        _validate_3d_memory_layout(volume, expected_order="DHW")
+        return volume.permute(2, 1, 0).contiguous()
+    return volume
+
+
+def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing,
+                       voxel_spacing, *, backproject, after_launch=None):
+    """Dispatch the existing matched kernels into caller-owned native buffers."""
+    device = native_volume.device
     with _cuda_context(device):
-        volume = volume.to(device=device, dtype=torch.float32).contiguous()
-        source, positions = geometry
-        source = source.to(device=device, dtype=torch.float32).contiguous()
-        positions = positions.to(device=device, dtype=torch.float32).contiguous()
-        d_source = TorchCUDABridge.tensor_to_cuda_array(source)
-        d_positions = TorchCUDABridge.tensor_to_cuda_array(positions)
+        geom = [component.detach().to(device=device, dtype=torch.float32).contiguous()
+                for component in geometry]
+        d_geom = [TorchCUDABridge.tensor_to_cuda_array(component) for component in geom]
+        if len(geom) == 2:
+            d_positions = d_geom[1]
+            d_geom = [d_geom[0]] * (4 if beam == "cone" else 3)
+        else:
+            empty_positions, d_positions = _empty_detector_positions(device, beam)
+        d_volume = TorchCUDABridge.tensor_to_cuda_array(native_volume)
+        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         stream = _get_numba_external_stream_for(torch.cuda.current_stream(device))
         if beam == "cone":
-            n_u, n_v = detector_shape
-            D, H, W = volume.shape
-            sino = torch.zeros((source.shape[0], n_u, n_v), dtype=torch.float32, device=device)
-            volume_perm = volume.permute(2, 1, 0).contiguous()
-            d_vol = TorchCUDABridge.tensor_to_cuda_array(volume_perm)
-            d_sino = TorchCUDABridge.tensor_to_cuda_array(sino)
-            grid, tpb = _grid_3d(n_v, n_u, source.shape[0])
+            W, H, D = native_volume.shape
+            n_views, n_u, n_v = sinogram.shape
             du, dv = detector_spacing
-            _cone_3d_forward_kernel[grid, tpb, stream](
-                d_vol, W, H, D, d_sino, source.shape[0], n_u, n_v,
-                _DTYPE(du), _DTYPE(dv), d_source, d_source, d_source, d_source,
+            grid, tpb = _grid_3d(n_v, n_u, n_views)
+            arguments = (
+                (d_sino, n_views, n_u, n_v, d_volume, W, H, D)
+                if backproject else
+                (d_volume, W, H, D, d_sino, n_views, n_u, n_v)
+            )
+            kernel = _cone_3d_backward_kernel if backproject else _cone_3d_forward_kernel
+            kernel[grid, tpb, stream](
+                *arguments, _DTYPE(du), _DTYPE(dv), *d_geom,
                 _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
                 _DTYPE(voxel_spacing), d_positions,
             )
-            return sino
-
-        Ny, Nx = volume.shape
-        n_det = detector_shape[0]
-        sino = torch.zeros((source.shape[0], n_det), dtype=torch.float32, device=device)
-        d_image = TorchCUDABridge.tensor_to_cuda_array(volume)
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sino)
-        grid, tpb = _grid_2d(source.shape[0], n_det)
-        spacing = _DTYPE(detector_spacing[0])
-        if beam == "parallel":
-            _parallel_2d_forward_kernel[grid, tpb, stream](
-                d_image, Nx, Ny, d_sino, source.shape[0], n_det,
-                spacing, d_source, d_source, d_source,
-                _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5), _DTYPE(voxel_spacing), d_positions,
-            )
         else:
-            _fan_2d_forward_kernel[grid, tpb, stream](
-                d_image, Nx, Ny, d_sino, source.shape[0], n_det,
-                spacing, d_source, d_source, d_source,
-                _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5), _DTYPE(voxel_spacing), d_positions,
+            H, W = native_volume.shape
+            n_views, n_det = sinogram.shape
+            spacing = detector_spacing[0] if isinstance(detector_spacing, (tuple, list)) else detector_spacing
+            grid, tpb = _grid_2d(n_views, n_det)
+            arguments = (
+                (d_sino, n_views, n_det, d_volume, W, H)
+                if backproject else
+                (d_volume, W, H, d_sino, n_views, n_det)
             )
-        return sino
+            if beam == "parallel":
+                kernel = _parallel_2d_backward_kernel if backproject else _parallel_2d_forward_kernel
+            else:
+                kernel = _fan_2d_backward_kernel if backproject else _fan_2d_forward_kernel
+            kernel[grid, tpb, stream](
+                *arguments, _DTYPE(spacing), *d_geom,
+                _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(voxel_spacing), d_positions,
+            )
+        if after_launch is not None:
+            after_launch()
+
+
+def _project_into(beam, prepared_volume, geometry, detector_spacing, voxel_spacing, out, *, after_launch=None):
+    """Overwrite every active ray, including misses, in a reusable output view."""
+    _launch_ray_kernel(beam, prepared_volume, out, geometry, detector_spacing,
+                       voxel_spacing, backproject=False, after_launch=after_launch)
+    return out
+
+
+def _backproject_into(beam, sinogram, geometry, detector_spacing, voxel_spacing, accumulator, *, after_launch=None):
+    """Add one ray batch into an initialized contiguous native accumulator."""
+    sinogram = sinogram.detach().to(device=accumulator.device, dtype=torch.float32).contiguous()
+    _launch_ray_kernel(beam, accumulator, sinogram, geometry, detector_spacing,
+                       voxel_spacing, backproject=True, after_launch=after_launch)
+    return accumulator
+
+
+def _surface_project(beam, volume, geometry, detector_shape, detector_spacing, voxel_spacing):
+    """Run a native ray projector with one detector endpoint per pixel."""
+    with _cuda_context(volume.device):
+        prepared = _prepare_volume(beam, volume)
+        sino = torch.empty((geometry[0].shape[0], *detector_shape),
+                           dtype=torch.float32, device=volume.device)
+        return _project_into(beam, prepared, geometry, detector_spacing, voxel_spacing, sino)
 
 
 def _surface_backproject(beam, sinogram, geometry, volume_shape, detector_spacing, voxel_spacing):
     """Run the matched native adjoint with one detector endpoint per pixel."""
-    device = sinogram.device
-    with _cuda_context(device):
-        sinogram = sinogram.to(device=device, dtype=torch.float32).contiguous()
-        source, positions = geometry
-        source = source.to(device=device, dtype=torch.float32).contiguous()
-        positions = positions.to(device=device, dtype=torch.float32).contiguous()
-        d_source = TorchCUDABridge.tensor_to_cuda_array(source)
-        d_positions = TorchCUDABridge.tensor_to_cuda_array(positions)
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        stream = _get_numba_external_stream_for(torch.cuda.current_stream(device))
-        if beam == "cone":
-            D, H, W = volume_shape
-            n_views, n_u, n_v = sinogram.shape
-            volume = torch.zeros((W, H, D), dtype=torch.float32, device=device)
-            d_vol = TorchCUDABridge.tensor_to_cuda_array(volume)
-            grid, tpb = _grid_3d(n_v, n_u, n_views)
-            du, dv = detector_spacing
-            _cone_3d_backward_kernel[grid, tpb, stream](
-                d_sino, n_views, n_u, n_v, d_vol, W, H, D,
-                _DTYPE(du), _DTYPE(dv), d_source, d_source, d_source, d_source,
-                _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
-                _DTYPE(voxel_spacing), d_positions,
-            )
-            return volume.permute(2, 1, 0).contiguous()
-
-        H, W = volume_shape
-        n_views, n_det = sinogram.shape
-        volume = torch.zeros((H, W), dtype=torch.float32, device=device)
-        d_volume = TorchCUDABridge.tensor_to_cuda_array(volume)
-        grid, tpb = _grid_2d(n_views, n_det)
-        spacing = _DTYPE(detector_spacing[0])
-        if beam == "parallel":
-            _parallel_2d_backward_kernel[grid, tpb, stream](
-                d_sino, n_views, n_det, d_volume, W, H, spacing,
-                d_source, d_source, d_source, _DTYPE(W * 0.5), _DTYPE(H * 0.5),
-                _DTYPE(voxel_spacing), d_positions,
-            )
-        else:
-            _fan_2d_backward_kernel[grid, tpb, stream](
-                d_sino, n_views, n_det, d_volume, W, H, spacing,
-                d_source, d_source, d_source, _DTYPE(W * 0.5), _DTYPE(H * 0.5),
-                _DTYPE(voxel_spacing), d_positions,
-            )
-        return volume
+    with _cuda_context(sinogram.device):
+        native_shape = volume_shape[::-1] if beam == "cone" else volume_shape
+        volume = torch.zeros(native_shape, dtype=torch.float32, device=sinogram.device)
+        _backproject_into(beam, sinogram, geometry, detector_spacing, voxel_spacing, volume)
+        return volume.permute(2, 1, 0).contiguous() if beam == "cone" else volume
 
 
 # ============================================================================
 # Geometry gradients
 # ============================================================================
 
-def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spacing):
+def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spacing,
+                  *, prepared_volume=None):
     """Return d<grad_sino, A(geometry) volume>/d(geometry), one tensor per component.
 
     ``detector_spacing`` is a scalar for 2D beams and ``(du, dv)`` for cone
     beams. Results take the dtype and device of each geometry component.
     """
-    device = volume.device
-    vol = volume.detach().to(device=device, dtype=torch.float32).contiguous()
+    vol = _prepare_volume(beam, volume) if prepared_volume is None else prepared_volume
+    device = vol.device
     cot = grad_sino.detach().to(device=device, dtype=torch.float32).contiguous()
     geom = [g.detach().to(device=device, dtype=torch.float32).contiguous() for g in geometry]
     grads = [torch.zeros_like(g) for g in geom]
@@ -163,12 +162,12 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
     else:
         _empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_grad_positions = d_positions
-    numba_stream = _get_numba_external_stream_for(torch.cuda.current_stream())
+    numba_stream = _get_numba_external_stream_for(torch.cuda.current_stream(device))
     if beam == "cone":
-        D, H, W = vol.shape
+        W, H, D = vol.shape
         n_views, n_u, n_v = cot.shape
         du, dv = detector_spacing
-        d_vol = TorchCUDABridge.tensor_to_cuda_array(vol.permute(2, 1, 0).contiguous())
+        d_vol = TorchCUDABridge.tensor_to_cuda_array(vol)
         grid, tpb = _grid_3d(n_v, n_u, n_views)
         _cone_3d_geometry_vjp_kernel[grid, tpb, numba_stream](
             d_vol, W, H, D, TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_u, n_v,
@@ -309,26 +308,10 @@ class ParallelProjectorFunction(torch.autograd.Function):
         Ny, Nx = image.shape
         n_views = ray_dir.shape[0]
 
-        # Allocate output tensor on the same device
-        sinogram = torch.zeros((n_views, num_detectors), dtype=image.dtype, device=device)
-
-        # Get Numba CUDA array views for kernel
-        d_image = TorchCUDABridge.tensor_to_cuda_array(image)
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
-        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, num_detectors)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        empty_positions, d_empty_positions = _empty_detector_positions(device, "parallel")
-        _parallel_2d_forward_kernel[grid, tpb, numba_stream](
-            d_image, Nx, Ny, d_sino, n_views, num_detectors,
-            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr,
-            cx, cy, _DTYPE(voxel_spacing), d_empty_positions,
+        sinogram = torch.empty((n_views, num_detectors), dtype=image.dtype, device=device)
+        _project_into(
+            "parallel", _prepare_volume("parallel", image),
+            (ray_dir, det_origin, det_u_vec), detector_spacing, voxel_spacing, sinogram,
         )
 
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
@@ -442,26 +425,10 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         n_views, n_det = sinogram.shape
         Ny, Nx = H, W
 
-        # Allocate output tensor on the same device
         reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
-
-        # Get Numba CUDA array views for kernel
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
-        d_ray_dir_arr = TorchCUDABridge.tensor_to_cuda_array(ray_dir)
-        d_det_origin_arr = TorchCUDABridge.tensor_to_cuda_array(det_origin)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, n_det)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        empty_positions, d_empty_positions = _empty_detector_positions(device, "parallel")
-        _parallel_2d_backward_kernel[grid, tpb, numba_stream](
-            d_sino, n_views, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_ray_dir_arr, d_det_origin_arr, d_det_u_vec_arr,
-            cx, cy, _DTYPE(voxel_spacing), d_empty_positions,
+        _backproject_into(
+            "parallel", sinogram, (ray_dir, det_origin, det_u_vec),
+            detector_spacing, voxel_spacing, reco,
         )
 
         ctx.intermediate = (H, W, detector_spacing, sinogram.shape[0], sinogram.shape[1], voxel_spacing)
@@ -572,24 +539,10 @@ class FanProjectorFunction(torch.autograd.Function):
         Ny, Nx = image.shape
         n_views = src_pos.shape[0]
 
-        sinogram = torch.zeros((n_views, num_detectors), dtype=image.dtype, device=device)
-
-        d_image = TorchCUDABridge.tensor_to_cuda_array(image)
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, num_detectors)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        empty_positions, d_empty_positions = _empty_detector_positions(device, "fan")
-        _fan_2d_forward_kernel[grid, tpb, numba_stream](
-            d_image, Nx, Ny, d_sino, n_views, num_detectors,
-            _DTYPE(detector_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
-            cx, cy, _DTYPE(voxel_spacing), d_empty_positions
+        sinogram = torch.empty((n_views, num_detectors), dtype=image.dtype, device=device)
+        _project_into(
+            "fan", _prepare_volume("fan", image), (src_pos, det_center, det_u_vec),
+            detector_spacing, voxel_spacing, sinogram,
         )
 
         ctx.intermediate = (num_detectors, detector_spacing, Ny, Nx, voxel_spacing)
@@ -704,23 +657,9 @@ class FanBackprojectorFunction(torch.autograd.Function):
         Ny, Nx = H, W
 
         reco = torch.zeros((Ny, Nx), dtype=sinogram.dtype, device=device)
-
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_reco = TorchCUDABridge.tensor_to_cuda_array(reco)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-
-        grid, tpb = _grid_2d(n_views, n_det)
-        cx, cy = _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        empty_positions, d_empty_positions = _empty_detector_positions(device, "fan")
-        _fan_2d_backward_kernel[grid, tpb, numba_stream](
-            d_sino, n_views, n_det, d_reco, Nx, Ny,
-            _DTYPE(detector_spacing), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr,
-            cx, cy, _DTYPE(voxel_spacing), d_empty_positions
+        _backproject_into(
+            "fan", sinogram, (src_pos, det_center, det_u_vec),
+            detector_spacing, voxel_spacing, reco,
         )
 
         ctx.intermediate = (H, W, detector_spacing, n_views, n_det, voxel_spacing)
@@ -842,29 +781,10 @@ class ConeProjectorFunction(torch.autograd.Function):
         D, H, W = volume.shape
         n_views = src_pos.shape[0]
 
-        # Validate memory layout to prevent coordinate system inconsistencies
-        _validate_3d_memory_layout(volume, expected_order='DHW')
-
-        sino = torch.zeros((n_views, det_u, det_v), dtype=volume.dtype, device=device)
-
-        volume_perm = volume.permute(2, 1, 0).contiguous()
-        d_vol = TorchCUDABridge.tensor_to_cuda_array(volume_perm)
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sino)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
-
-        grid, tpb = _grid_3d(det_v, det_u, n_views)
-        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        empty_positions, d_empty_positions = _empty_detector_positions(device, "cone")
-        _cone_3d_forward_kernel[grid, tpb, numba_stream](
-            d_vol, W, H, D, d_sino, n_views, det_u, det_v,
-            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
-            cx, cy, cz, _DTYPE(voxel_spacing), d_empty_positions
+        sino = torch.empty((n_views, det_u, det_v), dtype=volume.dtype, device=device)
+        _project_into(
+            "cone", _prepare_volume("cone", volume),
+            (src_pos, det_center, det_u_vec, det_v_vec), (du, dv), voxel_spacing, sino,
         )
 
         ctx.intermediate = (D, H, W, det_u, det_v, du, dv, voxel_spacing)
@@ -995,24 +915,9 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         _validate_3d_memory_layout(sinogram, expected_order='VHW')
 
         vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
-
-        d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
-        d_reco = TorchCUDABridge.tensor_to_cuda_array(vol_perm)
-        d_src_pos_arr = TorchCUDABridge.tensor_to_cuda_array(src_pos)
-        d_det_center_arr = TorchCUDABridge.tensor_to_cuda_array(det_center)
-        d_det_u_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_u_vec)
-        d_det_v_vec_arr = TorchCUDABridge.tensor_to_cuda_array(det_v_vec)
-
-        grid, tpb = _grid_3d(n_v, n_u, n_views)
-        cx, cy, cz = _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5)
-
-        pt_stream = torch.cuda.current_stream()
-        numba_stream = _get_numba_external_stream_for(pt_stream)
-        empty_positions, d_empty_positions = _empty_detector_positions(device, "cone")
-        _cone_3d_backward_kernel[grid, tpb, numba_stream](
-            d_sino, n_views, n_u, n_v, d_reco, W, H, D,
-            _DTYPE(du), _DTYPE(dv), d_src_pos_arr, d_det_center_arr, d_det_u_vec_arr, d_det_v_vec_arr,
-            cx, cy, cz, _DTYPE(voxel_spacing), d_empty_positions
+        _backproject_into(
+            "cone", sinogram, (src_pos, det_center, det_u_vec, det_v_vec),
+            (du, dv), voxel_spacing, vol_perm,
         )
 
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv, voxel_spacing)

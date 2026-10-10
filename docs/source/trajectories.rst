@@ -83,7 +83,8 @@ acquisitions. The analytical helpers assume a circular orbit (see :doc:`api`).
 Parameterized detector surfaces
 -------------------------------
 
-``Projector(..., detector_surface=surface)`` uses a callback to place each pixel
+``Projector(..., detector_surface=surface)`` places each pixel
+on a native curve. The legacy two-argument callback places pixels
 on an arc, cylinder or another parameterized surface. For cone beams it receives
 physical float64 ``u, v`` grids on CPU with shape ``(U, V)`` and ``ij`` indexing. It returns local
 ``(u, v, n)`` offsets shaped ``(U, V, 3)`` or ``(views, U, V, 3)``. Here ``views``
@@ -122,9 +123,42 @@ per pixel and no detector-area integration. They operate directly on the native
 curved grid without resampling. Run ``python examples/curved_detector.py`` for a
 complete circular cone example, also shown in :doc:`examples`.
 
-Streamed operations require CPU offsets. CUDA offsets remain supported when
+Legacy streamed operations require CPU offsets and retain complete host
+callback geometry. CUDA offsets remain supported when
 the automatic CUDA full-volume path fits. See :doc:`chunking` for large-volume
 execution and memory requirements.
+
+For bounded view/pixel sampling, pass explicit tensor parameters:
+
+.. code-block:: python
+
+   from diffct import ParameterizedSurface
+
+   def sample(u, v, view_indices, r):
+       return torch.stack((r * torch.sin(u / r), v,
+                           r * (torch.cos(u / r) - 1)), dim=-1)
+
+   surface = ParameterizedSurface(sample, parameters=(radius,))
+   C = Projector(trajectory, (32, 32, 32), (96, 64),
+                 detector_spacing=(0.8, 1.0), detector_surface=surface,
+                 view_chunk_size=8, detector_chunk_shape=(32, 32))
+
+``u,v`` are a rectangle of global physical pixel centres; ``view_indices``
+contains global view IDs. Return ``(*pixel_shape,3)`` shared offsets or
+``(len(view_indices),*pixel_shape,3)`` batched offsets. In 2D the middle
+component remains zero. Streamed grids, IDs and explicit parameter snapshots
+are CPU tensors; parameter dtypes and original gradient devices are preserved.
+Offsets and world points are validated on every executing batch.
+
+The sampler is pure. Mutable geometry tensors must be explicit parameters;
+other captured configuration must be immutable. Coupling across views uses
+global IDs or explicit parameters, including values for omitted views. Each
+forward captures the sampler and one set of frame/parameter values. Backward
+recomputes local geometry from those snapshots and reduces pixel cotangents to
+parameter gradients before communication. It retains first-order geometry
+gradients and data Hessians. Explicit parameter snapshots scale with parameter
+count; allocations inside user samplers remain caller-controlled. Do not cache
+mutable callback values across calls.
 
 Analytical FBP/FDK and weighting helpers continue to assume flat detectors and
 do not accept the callback. Reusing a flat-detector FDK requires matching-ray

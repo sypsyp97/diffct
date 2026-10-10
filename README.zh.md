@@ -44,10 +44,10 @@
 据我们所知，diffct 是唯一同时具备以下四点的开源 GPU CT 库：任意逐视角轨迹、对体数据的自动求导、对采集几何的一阶梯度，以及内置的多卡和多节点执行。我们在 2026 年 10 月与 LEAP、TIGRE、ASTRA/tomosipo、DiffDRR 等库做了对比。
 
 - **任意轨迹。** 每个视角有各自的源点、探测器中心和探测器轴；圆轨迹、螺旋、鞍形、正弦、随机和标定扫描使用同一套代码。`requires_grad=True` 的轨迹张量可获得用于标定的几何梯度。
-- **曲面探测器。** 用 `detector_surface(u, v)` 定义每个像素的位置，原生支持弧形、柱面及其他参数化曲面；投影与匹配反投影支持曲面参数的一阶梯度。见[曲面接口](docs/REFERENCE.md#parameterized-detector-surfaces)（英文）。
+- **曲面探测器。** `ParameterizedSurface` 接收全局像素坐标、视角编号和显式参数，按批次生成弧形、柱面及其他曲面；原有 `detector_surface(u, v)` 回调仍可用。投影与匹配反投影支持曲面参数的一阶梯度。见[曲面接口](docs/REFERENCE.md#parameterized-detector-surfaces)（英文）。
 - **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
-- **大体积。** CPU 体数据和正弦图默认按空间块、视角批次送入 CUDA；完整数组和数据梯度留在 CPU。块大小按可用显存选择，也可手动覆盖。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
-- **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或每卡一个进程并用 torchrun 与 NCCL。视角分片；CPU 体数据留在主机内存，各 GPU 计算分块，分布式各 rank 保留完整体数据副本。加速比取决于工作负载和通信开销。
+- **大体积。** 默认按空间、视角和探测器像素分块，反投影块在 GPU 上累加完再传回，传输缓冲有独立容量上限。数值接口 `project_into`/`backproject_into` 可写入调用方的张量或磁盘存储；张量 autograd 接口仍保留完整输入、输出和梯度。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
+- **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或用 torchrun 与 NCCL。默认 `partition="views"` 分片视角并复制体数据；`partition="space"` 让每个 rank 固定拥有一部分体积，合并射线贡献。加速比取决于工作负载和通信开销。
 - **解析辅助函数。** `diffct.analytical` 提供斜坡滤波器（ram-lak、shepp-logan、cosine、hamming、hann）、扇束、锥束和 Parker 权重，以及 FBP 与 FDK 反投影。
 
 功能边界、限制和等中心规则见 [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits)（英文）。
@@ -126,7 +126,10 @@ sinogram.square().mean().backward()          # volume.grad 在 CPU
 
 运行 `python examples/chunked_reconstruction.py` 可演示 CPU 数据上的 CGLS
 并测量 CUDA 张量分配峰值。分块保持同一 Siddon 模型，但浮点求和顺序会变化；
-更小的块可能增加传输和内核启动开销。完整数组及迭代状态仍需足够的主机内存。
+更小的块可能增加传输和内核启动开销。张量数组及迭代状态仍需足够的主机内存。
+超过主机内存时，运行 `python examples/disk_reconstruction.py --output disk-run`
+使用磁盘状态和分片检查点；torchrun 下加 `--partition space` 固定各 rank 的体积归属。
+运行 `python examples/benchmark_execution.py` 可比较调度、分块形状和实际传输量。
 
 ## 性能
 
@@ -180,7 +183,7 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 ## 示例
 
-`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`analytical_reconstruction.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
+`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`analytical_reconstruction.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
 
 ## 文档
 

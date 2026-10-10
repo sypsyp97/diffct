@@ -17,9 +17,28 @@ multiple GPUs and nodes, see :doc:`multi_gpu`.
 matched backprojection. See :ref:`detector-surfaces` for its coordinate and
 shape contract, and :doc:`examples` for a runnable cylindrical detector.
 
-CPU data automatically uses streamed CUDA execution. ``volume_chunk_shape``
-and ``view_chunk_size`` optionally override spatial and view limits; see
-:doc:`chunking` for memory, geometry and autograd requirements.
+CPU data automatically uses streamed CUDA execution. ``volume_chunk_shape``,
+``view_chunk_size`` and ``detector_chunk_shape`` specify optional limits;
+``schedule`` allows operation-specific comparisons. ``partition="space"``
+assigns rank-local volume slabs. See :doc:`chunking` for memory, storage,
+geometry and autograd requirements, and :doc:`multi_gpu` for ownership.
+
+Block stores and batched surfaces
+------------------------------------------------------------
+
+.. autoclass:: TensorStore
+   :members:
+
+.. autoclass:: NpyStore
+   :members:
+
+.. autoclass:: ParameterizedSurface
+   :members:
+
+``project_into`` and ``backproject_into`` use caller-owned numerical outputs.
+``ParameterizedSurface`` exposes mutable geometry as explicit tensor
+parameters and samples bounded global view/pixel rectangles. Legacy two-argument
+surface callbacks remain available. See :ref:`detector-surfaces`.
 
 Low-level Functions
 -------------------

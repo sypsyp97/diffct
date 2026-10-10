@@ -487,7 +487,7 @@ def test_real_tiles_and_default_32_view_batches_in_both_directions():
     case = _case("cone", views=35)
     case.shape = (5, 7, 9)
     chunk = (2, 3, 4)
-    projector = _projector(case, volume_chunk_shape=chunk)
+    projector = _projector(case, volume_chunk_shape=chunk, schedule="spatial")
     image, sino = _data(case, device="cpu")
     with _Launches() as launches, _StagingGuard(case, chunk, 32):
         launches.phase = "project"
@@ -520,7 +520,7 @@ def _memory_trial(shape, views):
     chunk, batch = (24, 24, 24), 3
     strength = torch.tensor(.21, dtype=torch.float64, requires_grad=True)
     projector = _projector(case, _surface(case, strength, per_view=True),
-                           volume_chunk_shape=chunk, view_chunk_size=batch)
+                           volume_chunk_shape=chunk, view_chunk_size=batch, schedule="spatial")
     image = torch.ones(shape, dtype=torch.float64, requires_grad=True)
     sino = torch.linspace(-.4, .8, math.prod(case.sino_shape), dtype=torch.float64).reshape(case.sino_shape)
     sino.requires_grad_()
@@ -675,28 +675,37 @@ def _chosen_shape(records, beam, device=None):
     shapes = [record[-2][::-1] if beam == "cone" else record[-2]
               for record in records if device is None or record[3] == device]
     assert shapes
-    return tuple(max(axis) for axis in zip(*shapes))
+    return max(shapes, key=math.prod)
 
 
-def _halving_shapes(shape):
-    """Allowed largest-axis halving states; permit either integer rounding."""
-    seen, pending = {shape}, [shape]
-    while pending:
-        current = pending.pop()
-        largest = max(current)
-        if largest == 1:
-            continue
-        for axis, size in enumerate(current):
-            if size != largest:
-                continue
-            for half in {max(1, size // 2), (size + 1) // 2}:
-                changed = list(current)
-                changed[axis] = half
-                changed = tuple(changed)
-                if changed not in seen:
-                    seen.add(changed)
-                    pending.append(changed)
-    return seen
+def _assert_automatic_plans(records, case, reports, budget, devices=None):
+    """Match actual launches to bounded reported candidates, including pilots."""
+    final = []
+    for phase, report in reports.items():
+        observed = [record for record in records if record[0] == phase]
+        assert observed and 0 < report["estimated_gpu_bytes"] <= report["gpu_budget_bytes"] <= budget
+        candidates = [report, *report["pilot"]]
+        for candidate in candidates:
+            assert len(candidate["chunk_shape"]) == len(case.shape)
+            assert all(0 < part <= size for part, size in zip(candidate["chunk_shape"], case.shape))
+            assert 0 < candidate["view_chunk_size"] <= min(32, case.views)
+            assert len(candidate["detector_chunk_shape"]) == len(case.detector)
+            assert all(0 < part <= size for part, size in zip(candidate["detector_chunk_shape"], case.detector))
+        for _, beam, _, device, volume, rays in observed:
+            shape = volume[::-1] if beam == "cone" else volume
+            assert beam == case.beam and shape != case.shape
+            assert math.prod(shape) * 4 <= budget
+            assert any(all(a <= b for a, b in zip(shape, candidate["chunk_shape"]))
+                       and 0 < rays[0] <= candidate["view_chunk_size"]
+                       and all(0 < a <= b for a, b in zip(rays[1:], candidate["detector_chunk_shape"]))
+                       for candidate in candidates), (shape, rays, candidates)
+            if devices is not None:
+                assert device in devices
+        pilot_count = sum(candidate["kernel_launches"] for candidate in report["pilot"])
+        assert len(observed) == pilot_count + report["kernel_launches"]
+        final.extend(observed[pilot_count:])
+    assert final
+    return final
 
 
 def _chords(case, offsets):
@@ -788,21 +797,24 @@ def test_fitting_default_cuda_keeps_full_path_and_view_only_override_streams(bea
 @pytest.mark.cuda
 @cuda_required
 @pytest.mark.parametrize("input_device", ["cpu", "cuda"])
-def test_constrained_automatic_budget_halves_largest_axis_and_matches_oracle(input_device):
+def test_constrained_automatic_budget_bounds_slab_and_block_candidates_and_matches_oracle(input_device):
     case = _case("cone", views=5)
     case.shape = (17, 19, 23)
     projector = _projector(case, _surface(case, per_view=True))
     image, sino = _data(case, device=input_device)
     matrix = _matrix(case, _offsets(case, per_view=True))
     device, free = torch.cuda.current_device(), 64 * 1024
+    reports = {}
     with _memory_inventory({device: free}), _Launches() as launches:
         launches.phase = "project"
         projected = projector.project(image)
+        reports["project"] = projector.last_execution_stats
         launches.phase = "adjoint"
         back = projector.backproject(sino)
-    chosen = _chosen_shape(launches.records, case.beam)
+        reports["adjoint"] = projector.last_execution_stats
+    final = _assert_automatic_plans(launches.records, case, reports, free * .75)
+    chosen = _chosen_shape(final, case.beam)
     assert chosen != case.shape, "constrained automatic path staged the full volume"
-    assert chosen in _halving_shapes(case.shape), chosen
     # One float32 tile alone cannot exceed the usable 75-percent budget.
     assert math.prod(chosen) * 4 <= free * .75
     assert projected.device == image.device and back.device == sino.device
@@ -860,7 +872,7 @@ def test_automatic_gpu_surface_constructor_cpu_validation_and_early_stream_rejec
         output = projector.project(image)
     _close(output, _chords(case, _offsets(case, flat=True)))
     assert len(launches.records) == 1
-    with _memory_inventory({device: 4096}), _StagingGuard(case, case.shape, 1), \
+    with _memory_inventory({device: 8192}), _StagingGuard(case, case.shape, 1), \
             pytest.raises((TypeError, ValueError), match="CPU|cpu"):
         projector.project(image)
 
@@ -913,14 +925,17 @@ def test_automatic_two_gpu_common_tile_uses_smallest_asymmetric_budget():
     projector = _projector(case, _surface(case, per_view=True), devices=[1, 0])
     image, sino = _data(case, device="cpu")
     matrix = _matrix(case, _offsets(case, per_view=True))
+    reports = {}
     with _memory_inventory({0: 1024 ** 2, 1: 64 * 1024}), _Launches() as launches:
         launches.phase = "project"
         output = projector.project(image)
+        reports["project"] = projector.last_execution_stats
         launches.phase = "adjoint"
         back = projector.backproject(sino)
-    first, second = (_chosen_shape(launches.records, case.beam, device) for device in (0, 1))
+        reports["adjoint"] = projector.last_execution_stats
+    final = _assert_automatic_plans(launches.records, case, reports, .75 * 64 * 1024, {0, 1})
+    first, second = (_chosen_shape(final, case.beam, device) for device in (0, 1))
     assert first == second and first != case.shape
-    assert first in _halving_shapes(case.shape)
     assert math.prod(first) * 4 <= .75 * 64 * 1024
     _close(output, (matrix @ _numpy(image).ravel()).reshape(case.sino_shape))
     _close(back, (matrix.T @ _numpy(sino).ravel()).reshape(case.shape))
@@ -965,7 +980,9 @@ def _remaining_room_worker(rank):
     assert torch.cuda.max_memory_allocated() <= ceiling
     chosen = _chosen_shape(launches.records, case.beam)
     assert math.prod(chosen) * 4 <= remaining
-    _assert_bounded_launches(launches.records, case, chosen, 32, ("project", "backward"))
+    # Slab/block candidates can differ by axis; the largest actual tile's
+    # product already bounds every native allocation by the remaining room.
+    _assert_bounded_launches(launches.records, case, case.shape, 32, ("project", "backward"))
     assert held[0].item() == held[-1].item() == 41
 
 

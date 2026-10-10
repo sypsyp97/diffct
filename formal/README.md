@@ -37,6 +37,14 @@ The partition proof assumes ordered, complete crossings. The quadrature proof as
 | Cartesian tiles partition every cell and recover exact rational cell centres | BOUNDED: exhaustive rational arithmetic | Model extents 1..3, chunk limits 1..4, 2D/3D grids | Tail clipping and tensor/world order errors in the model | Production slice generator equivalence and all integer sizes |
 | Every tiny-grid block basis gives the independent full forward/adjoint matrix; boundaries and source-inside rays agree | BOUNDED: CUDASIM | Production Siddon kernels on shifted flat/curved blocks and batches of at most two views | Artificial tile boundary ownership, wrong translation/axis order and unmatched block adjoint | PyTorch scheduling, compiled CUDA, allocation bounds and larger domains |
 | Block entry/exit VJP terms sum to independent endpoint/source derivatives | BOUNDED: CUDASIM | Native pixel-position geometry VJP kernels over disjoint blocks | Missing cancellation of artificial boundaries | Frame/callback chain rule, all real-valued geometry and hardware arithmetic |
+| Tagged host/GPU slots preserve completed values across every modeled event interleaving; removing each lifetime dependency exposes a counterexample | BOUNDED: finite state exploration | Idealized upload/compute/download/reuse protocol in `test_execution_protocol.py` | Reading unfinished copies, premature host overwrite or GPU buffer reuse in the model | Production event wiring, actual overlap, allocator ownership and hardware |
+| Independent host ceilings and all retained GPU accumulators satisfy their admitted capacity | PROOF: Z3 integers | Explicit slot, scratch, geometry, snapshot and accumulator assumptions | Omitting a resident buffer from the mathematical memory budget | Actual allocator rounding, arbitrary sampler allocations and implementation estimates |
+| Resident local/rank sums followed by a completed-tile download preserve every contribution, including an empty rank | PROOF: finite symbolic model | Two tiles, two contributing ranks and one empty rank in `test_execution_protocol.py` | Missing contributions or downloading intermediate partials in the model | Compiled kernels, collective ordering and real NCCL |
+| Balanced slabs cover the global volume without overlap, and preserve global cell coordinates | PROOF: Z3 integers / SymPy; BOUNDED: exhaustive intervals | Idealized first-axis ownership, including more ranks than cells | Missing cells, overlapping owners and recentered local slabs in the model | Production metadata agreement and GPU scheduling |
+| Spatial and view partitions have the intended block adjoints and norm ownership | PROOF: finite symbolic model | Three cells/rays, two contributing ranks and one empty rank | Duplicate replicated norms or cotangents, missing spatial contributions | Floating-point reductions and autograd participation |
+| Every rank follows common collective rounds despite differing local work and trainability | BOUNDED: finite protocol model | Zero/uneven tile counts, differing GPU counts and all three-rank trainability combinations | Collectives conditional on local tiles or differentiable inputs in the model | Actual process-group order and error recovery |
+| CGLS keeps q through global qq, alpha and the residual update | BOUNDED: exact rational state exploration | Scalar instance A=3/2, y=4/3; early reuse has a wrong-result counterexample | Premature q overwrite or reuse in the model | General convergence, floating-point arithmetic and source equivalence |
+| CGLS capacity includes x/s/p, r/q and transient dot/pipeline scratch | PROOF: Z3 integers | Independent live regions across projection, norm and update phases; omitting each region has a capacity counterexample | Admitting only a raw volume or omitting solver state/scratch | Allocator rounding, implementation estimates and arbitrary callback memory |
 
 ## Simulator domain
 
@@ -76,6 +84,28 @@ scheduler matches the model or establish GPU-memory bounds. The real CUDA
 tests in `tests/test_chunked_projector.py` separately check dispatch, autograd,
 saved geometry, automatic sizing and peak/staging bounds. Hardware-gated
 two-GPU/NCCL cases require a suitable host.
+
+`test_execution_protocol.py` separately explores every reachable interleaving
+of one to three tagged jobs using one or two composite staging slots. Queued
+copies sample their source when they complete; the model allows safe early
+host reuse after upload and safe GPU reuse after the corresponding consumer.
+Each missing dependency has a concrete failing execution. Z3 admission checks
+assume the stated component sizes, and SymPy checks exact resident sums over
+the finite rank/tile domain. These checks do not establish that the Python
+pipeline, allocator or distributed runtime implements the model. The real
+CUDA schedule and transfer tests independently observe native launches,
+copies, events, storage lifetimes and peak allocations.
+
+The same protocol module models balanced spatial ownership, exact block
+adjoints and norm counting, collective participation, and CGLS state lifetime.
+Its slab enumeration covers sizes zero through nine and one through five
+ranks. Symbolic checks separately cover integer slab boundaries and exact
+coordinate translations. The CGLS lifetime model uses one exact rational
+iteration and explores early q reuse; it does not prove convergence for a
+general system. Memory proofs use distinct named state regions and explicit
+phase lifetimes. Real two-process Gloo tests independently exercise empty and
+uneven ownership, autograd, bounded stores and sharded checkpoints. Physical
+multi-GPU/NCCL tests remain hardware gated.
 
 Numba's [simulator documentation](https://nvidia.github.io/numba-cuda/user/simulator.html) describes its execution and limitations.
 The simulator executes Python kernel bodies—its arithmetic and scheduling do not establish the behavior of compiled GPU code.
