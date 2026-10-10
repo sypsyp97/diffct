@@ -136,6 +136,8 @@ python examples/benchmark_projector.py --devices 0 1
 
 ## 示例图
 
+TV 指带全变分正则的迭代重建，Adam 是优化器。图中分别标注重建方法与优化器。
+
 **实测核桃。** 240 个实测视角，圆形锥束，256³：FDK（Hann 窗）、SIRT（200 次迭代）、CGLS（20 次）、TV（300 次，权重 0.3）；轴向和冠状面中心切片。
 
 <p align="center">

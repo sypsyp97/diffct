@@ -143,7 +143,7 @@ def main():
             ALGORITHMS[name](operator, target, 1, **options)  # compile kernels and warm up
             reconstruction, seconds = timed(lambda: ALGORITHMS[name](operator, target, iterations, **options))
             print(f"  {name:4s} {1e3 * seconds:9.1f} ms ({1e3 * seconds / iterations:7.2f} ms/it, {iterations} it)")
-            label = f"TV + Adam\n{iterations} it, weight {args.tv_weight:g}" if name == "tv" else f"{name.upper()}\n{iterations} it"
+            label = f"TV-regularized\nAdam, {iterations} it, weight {args.tv_weight:g}" if name == "tv" else f"{name.upper()}\n{iterations} it"
             panels.append((label, reconstruction))
 
     if args.figure:

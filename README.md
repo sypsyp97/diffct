@@ -138,6 +138,8 @@ python examples/benchmark_projector.py --devices 0 1
 
 ## Gallery
 
+TV denotes TV-regularized iterative reconstruction; Adam is the optimizer. Figure labels distinguish the method from its optimizer.
+
 **Measured walnut.** 240 measured views, circular cone beam, 256³: FDK (Hann window), SIRT (200 iterations), CGLS (20), TV (300, weight 0.3); axial and coronal centre slices.
 
 <p align="center">

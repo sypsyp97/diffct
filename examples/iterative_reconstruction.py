@@ -100,7 +100,9 @@ def main():
         if rank0:
             print(f"  {name:5s} {1e3 * elapsed:8.1f} ms ({1e3 * elapsed / iterations:6.2f} ms/it, {iterations} it)"
                   f"  PSNR {psnr(reconstruction, truth):6.2f} dB")
-        panels.append((f"{name.upper()}, {iterations} it\n{psnr(reconstruction, truth):.1f} dB", reconstruction))
+        label = (f"TV-regularized\nAdam, {iterations} it; {psnr(reconstruction, truth):.1f} dB"
+                 if name == "tv" else f"{name.upper()}, {iterations} it\n{psnr(reconstruction, truth):.1f} dB")
+        panels.append((label, reconstruction))
 
     if rank0 and args.figure:
         noise = f", {args.noise:.0%} noise" if args.noise > 0 else ""
