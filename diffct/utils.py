@@ -200,7 +200,12 @@ def _keep_cuda_modules_at_exit():
     ``int(capacity * CUDA_DEALLOCS_RATIO)``, and queues with no capacity set
     have a limit of 0 bytes for any finite ratio. numba-cuda skips the flush
     while a queue is disabled, so disable every queue for the rest of the exit.
+    The CUDA simulator loads no modules and has no deallocation queues.
     """
+    from numba.core import config
+
+    if config.ENABLE_CUDASIM:
+        return
     from numba.cuda.cudadrv.driver import _PendingDeallocs
 
     _PendingDeallocs.is_disabled = property(lambda self: True)

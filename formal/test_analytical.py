@@ -60,7 +60,11 @@ def test_PROPERTY_open_angular_weights_nonnegative_and_total(samples):
     weights = A.angular_integration_weights(angles)
     assert torch.all(weights >= 0)
     expected = float(angles.float().max() - angles.float().min())
-    assert float(weights.sum()) == pytest.approx(expected, abs=2e-7)
+    # Gap, adjacent-gap sum, and span rounding cost <= 3*u + u**2
+    # for normal values, where u = eps32/2 and the range <= 1.
+    # Subnormal and float64 sum errors fit in the remaining 2e-7 margin.
+    # Accumulate in float64 to exclude N-term float32 reduction error.
+    assert float(weights.sum(dtype=torch.float64)) == pytest.approx(expected, abs=2e-7, rel=0)
     # Reverse order, including repeated angles: compare aggregate mass per angle.
     reordered = A.angular_integration_weights(angles.flip(0)).flip(0)
     for angle in angles.float().unique():

@@ -14,8 +14,13 @@ Automatic ranks agree on a common memory budget and collective schedule.
 NCCL sums CPU-backed outputs/gradients through bounded CUDA staging buffers.
 View ordering, empty ranks and the loss-scaling rules below still apply.
 
-The current single-process CPU path stages cards serially. Its multi-GPU
-support provides bounded working buffers, with no throughput guarantee.
+In the single-process CPU path, the cards compute their view batches
+concurrently. Each card receives every volume tile, so host transfers limit the
+multi-GPU speedup.
+
+Ranks do not add memory capacity: every rank holds the complete volume and
+iterative state in host RAM. For a large volume, run one process per node with
+`devices=[...]` for its GPUs instead of one process per GPU.
 
 NCCL cannot reduce CPU tensors in your own solver or reporting code. Stage
 scalar reductions on the rank's CUDA device, then copy the scalar back to CPU.

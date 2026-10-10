@@ -49,7 +49,7 @@ try:
 except ImportError:
     pass
 
-__version__ = '2.0.2'
+__version__ = '2.1.0'
 
 __all__ = [
     'Projector',

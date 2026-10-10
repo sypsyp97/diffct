@@ -45,28 +45,27 @@ It bypasses the PyTorch CUDA-tensor bridge. The independent reference intersects
 It does not reproduce the Siddon traversal.
 
 The matrix check enumerates parallel, fan and cone beams, two rectangular grids, two voxel spacings, and every image and sinogram basis vector.
-The chord check enumerates ten named ray cases on those beam/grid/spacing combinations.
-Together these produce 12 matrix cases and 120 chord cases.
+The chord check enumerates named ray cases on those beam/grid/spacing combinations.
 Comparisons use `rtol=3e-5`, `atol=3e-6`; the grazing case also uses a row-dependent image to catch assignment to the wrong voxel row.
 All finite domains and numerical tolerances are in the check files.
 
-`test_detector_surfaces.py` adds 16 exhaustive curved matrix cases, six explicit
-flat-point comparisons and three endpoint VJP cases. The curved domain includes
+`test_detector_surfaces.py` adds exhaustive curved matrix cases, explicit
+flat-point comparisons and endpoint VJP cases. The curved domain includes
 shared and per-view arcs, as well as cone surfaces whose three local offsets
 depend jointly on both detector parameters. The VJP checks perturb every pixel
 coordinate and require unchanged intersected cells and agreement between two
-finite-difference step sizes. Five exact symbolic checks cover the associated
+finite-difference step sizes. Exact symbolic checks cover the associated
 surface and chain-rule models. Shapes, spacings and tolerances are documented
 in the test module.
 
-`test_chunked_projector.py` adds 17 cases: three exact model checks and 14
-bounded checks. The Cartesian partition check enumerates 2D/3D extents 1..3,
+`test_chunked_projector.py` adds exact model checks and bounded checks.
+The Cartesian partition check enumerates 2D/3D extents 1..3,
 limits 1..4 and every cell using spacing 13/10. Production block matrices
 enumerate every image/sinogram basis for grids `(H,W)=(3,4)` and
 `(D,H,W)=(3,2,4)`, three views, three or `(2,2)` detector pixels, spacing 1.3,
-flat asymmetric tiles and per-view curved/coupled one-cell tiles. Three extra
+flat asymmetric tiles and per-view curved/coupled one-cell tiles. Extra
 boundary cases cover internal faces/edges/corners, source-inside rays and
-misses. Three VJP cases sum block source/direction and pixel derivatives;
+misses. VJP cases sum block source/direction and pixel derivatives;
 float64 finite differences use two step sizes and unchanged intersected cells.
 Matrix comparisons use `rtol=4e-5, atol=5e-6`; VJPs use
 `rtol=4e-4, atol=4e-5`.
@@ -113,26 +112,3 @@ No CUDA implementation is replaced by a mock.
 
 Known failures, if found, retain their assertion with a specific strict `xfail` reason.
 An unexpected pass then fails CI, so a repaired defect cannot remain hidden as an expected failure.
-
-## Local acceptance
-
-The command above passed all 202 cases on macOS arm64: 8 PROOF, 184 BOUNDED, and 10 PROPERTY TEST, with no skips or expected failures.
-The run used Numba 0.68.0's bundled simulator; the Linux `numba-cuda` target still requires a CI run.
-Five warnings came from existing pytest benchmark configuration and a deprecated package import.
-
-With the detector-surface checks, local Windows verification passed all 232
-cases: 13 PROOF, 209 BOUNDED and 10 PROPERTY TEST, with no skips or expected
-failures. The run used Python 3.14.6, torch 2.13.0+cu132, Numba 0.67.0 and
-numba-cuda 0.30.4 with `NUMBA_ENABLE_CUDASIM=1` and
-`FORMAL_REQUIRE_CUDASIM=1`. The simulator printed the existing
-`_PendingDeallocs` import error in the CUDA shutdown callback after pytest
-completed with exit code 0; the same warning occurred in the 202-case baseline.
-
-The chunking checks passed all 17 new cases on the same Windows runtime:
-3 PROOF and 14 BOUNDED, with no skips. The full run reported 248 passes and
-one failure in the existing
-`test_PROPERTY_open_angular_weights_nonnegative_and_total`: float32 reduction
-gave `0.9999997615814209`, outside its `1 +/- 2e-7` assertion. The same input
-reproduced on the detector-surface predecessor; summing its returned weights
-in float64 gave `0.9999999981373549`. The analytical implementation and that
-test are unchanged by the chunking feature.
