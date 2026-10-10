@@ -30,7 +30,8 @@ from ..constants import (
 def _parallel_2d_forward_kernel(
     d_image, Nx, Ny,
     d_sino, n_ang, n_det,
-    det_spacing, d_ray_dir, d_det_origin, d_det_u_vec, cx, cy, voxel_spacing
+    det_spacing, d_ray_dir, d_det_origin, d_det_u_vec, cx, cy, voxel_spacing,
+    d_detector_positions=None,
 ):
     """Compute the 2D parallel beam forward projection with arbitrary ray trajectories.
 
@@ -82,19 +83,23 @@ def _parallel_2d_forward_kernel(
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
 
-    # Read detector origin and orientation vector
-    det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
-    det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        # Read detector origin and orientation vector
+        det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
+        det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
 
-    u_vec_x = np.float64(d_det_u_vec[iang, 0])
-    u_vec_y = np.float64(d_det_u_vec[iang, 1])
+        u_vec_x = np.float64(d_det_u_vec[iang, 0])
+        u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
-    # Calculate detector element offset from origin
-    u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+        # Calculate detector element offset from origin
+        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
 
-    # Ray starting point: detector origin + offset along u-direction
-    pnt_x = det_ox + u_offset * u_vec_x
-    pnt_y = det_oy + u_offset * u_vec_y
+        # Ray starting point: detector origin + offset along u-direction
+        pnt_x = det_ox + u_offset * u_vec_x
+        pnt_y = det_oy + u_offset * u_vec_y
+    else:
+        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / voxel_spacing
+        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / voxel_spacing
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
@@ -193,7 +198,8 @@ def _parallel_2d_forward_kernel(
 def _parallel_2d_backward_kernel(
     d_sino, n_ang, n_det,
     d_image, Nx, Ny,
-    det_spacing, d_ray_dir, d_det_origin, d_det_u_vec, cx, cy, voxel_spacing
+    det_spacing, d_ray_dir, d_det_origin, d_det_u_vec, cx, cy, voxel_spacing,
+    d_detector_positions=None,
 ):
     """Compute the 2D parallel beam backprojection with arbitrary ray trajectories.
 
@@ -249,19 +255,23 @@ def _parallel_2d_backward_kernel(
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
 
-    # Read detector origin and orientation vector
-    det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
-    det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
+    if d_detector_positions is None or d_detector_positions.size == 0:
+        # Read detector origin and orientation vector
+        det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
+        det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
 
-    u_vec_x = np.float64(d_det_u_vec[iang, 0])
-    u_vec_y = np.float64(d_det_u_vec[iang, 1])
+        u_vec_x = np.float64(d_det_u_vec[iang, 0])
+        u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
-    # Calculate detector element offset from origin
-    u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+        # Calculate detector element offset from origin
+        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
 
-    # Ray starting point: detector origin + offset along u-direction
-    pnt_x = det_ox + u_offset * u_vec_x
-    pnt_y = det_oy + u_offset * u_vec_y
+        # Ray starting point: detector origin + offset along u-direction
+        pnt_x = det_ox + u_offset * u_vec_x
+        pnt_y = det_oy + u_offset * u_vec_y
+    else:
+        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / voxel_spacing
+        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / voxel_spacing
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
     t_min, t_max = -_BIG, _BIG

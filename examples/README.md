@@ -14,6 +14,18 @@ For the API, shapes, adjoint checks and autograd, run:
 python examples/quickstart.py
 ```
 
+For native curved-detector projection, matched backprojection, an adjoint check
+and volume/surface gradients on a small circular cone scan, run:
+
+```bash
+python examples/curved_detector.py
+```
+
+This example uses the curved operators directly, without resampling or FDK.
+The analytical reconstruction examples continue to use flat detectors. The
+[surface API](../docs/REFERENCE.md#parameterized-detector-surfaces) describes
+the callback coordinates, output shapes and first-order geometry gradients.
+
 For a smaller iterative demonstration on one GPU:
 
 ```bash
@@ -44,6 +56,7 @@ scripts to see their own options.
 | File | What it does | Launch modes |
 | --- | --- | --- |
 | `quickstart.py` | Projector basics for parallel, fan and cone beams: projection, backprojection, adjoint check, image and geometry gradients. | 1 GPU |
+| `curved_detector.py` | Native cylindrical cone detector: projection, matched backprojection, adjoint check and volume/surface gradients. | 1 GPU |
 | `analytical_reconstruction.py` | Parallel-beam FBP, fan-beam FBP and cone-beam FDK. `--window` selects the ramp-filter window. | 1 GPU |
 | `iterative_reconstruction.py` | Cone-beam reconstruction with `--trajectory circular`, `helical`, `saddle` or `sinusoidal`. CGLS, SIRT and TV-regularized nonnegative least squares (Adam through autograd). FDK baseline outside distributed mode. `--noise` adds Gaussian noise. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `geometry_calibration.py` | Recovers per-view angle errors and a detector shift from projections, using geometry gradients. | 1 GPU, `--devices`, torchrun, Slurm multi-node |

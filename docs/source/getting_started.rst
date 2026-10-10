@@ -50,6 +50,8 @@ Choose a workflow
 -----------------
 
 - A custom or non-circular scan: see :doc:`trajectories`.
+- A curved detector: see :ref:`detector-surfaces` and run
+  ``python examples/curved_detector.py`` from a source checkout.
 - An iterative reconstruction: run ``python examples/iterative_reconstruction.py
   --trajectory helical``. See :doc:`examples`.
 - Several GPUs or nodes: see :doc:`multi_gpu`.

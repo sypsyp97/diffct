@@ -28,6 +28,10 @@ The partition proof assumes ordered, complete crossings. The quadrature proof as
 | Cosine weights and trajectory frames satisfy their geometric invariants; custom parallel paths normalize directions and reject one wrong shape | PROPERTY TEST / BOUNDED | CPU cosine helpers and `diffct/geometry.py` generators | Off-centre detector weights, nonunit or nonorthogonal frames, incorrect shape acceptance | All custom paths, geometry VJP kernels, GPU wrappers |
 | Every tiny-grid image/sinogram basis gives matching forward/adjoint matrices and independent cell intersections | BOUNDED: CUDASIM | Actual parallel/fan/cone forward/backward kernels | Wrong traversal, axis ordering, physical scale, unmatched adjoint | All real-valued inputs, hardware atomics and autograd dispatch |
 | Uniform boxes give analytic chords for internal endpoints, distant endpoints, misses and grazing rays | BOUNDED: CUDASIM | Same production Siddon kernels | The source-inside, distant-source and grazing bugs listed in `CHANGELOG.md` 2.0.0 | Larger grids, all trajectories, CUDA fastmath |
+| Local frame maps recover 2D offsets and have the stated 3D cross normal; arcs have unit-speed circular sections and a flat limit | PROOF: SymPy | Mathematical surface coordinate contract in `docs/REFERENCE.md` | Wrong normal convention, offset order or arc parameter units | Complete source equivalence and floating-point sampling |
+| World-point and arc-radius derivatives obey the chain rule, including a moving detector frame | PROOF: SymPy | Mathematical chain rule used by surface autograd | Missing normal/frame contributions in the model | PyTorch graph dispatch and derivatives at voxel edges |
+| Every tiny-grid basis gives the independent curved forward/adjoint matrix; explicit flat points reproduce the default branch | BOUNDED: CUDASIM | Native pixel-position branches of the parallel/fan/cone Siddon kernels | Ignored endpoints, wrong ray/pixel indices, unmatched adjoints | Callback sampling, hardware arithmetic and all trajectories |
+| Every pixel-coordinate VJP agrees with stable independent finite differences | BOUNDED: CUDASIM | Native pixel-position branches of geometry VJP kernels | Wrong endpoint-gradient units or routing | Source/ray-direction VJPs, frame/parameter chain rule, compiled CUDA and autograd |
 
 ## Simulator domain
 
@@ -41,9 +45,20 @@ Together these produce 12 matrix cases and 120 chord cases.
 Comparisons use `rtol=3e-5`, `atol=3e-6`; the grazing case also uses a row-dependent image to catch assignment to the wrong voxel row.
 All finite domains and numerical tolerances are in the check files.
 
+`test_detector_surfaces.py` adds 16 exhaustive curved matrix cases, six explicit
+flat-point comparisons and three endpoint VJP cases. The curved domain includes
+shared and per-view arcs, as well as cone surfaces whose three local offsets
+depend jointly on both detector parameters. The VJP checks perturb every pixel
+coordinate and require unchanged intersected cells and agreement between two
+finite-difference step sizes. Five exact symbolic checks cover the associated
+surface and chain-rule models. Shapes, spacings and tolerances are documented
+in the test module.
+
 Numba's [simulator documentation](https://nvidia.github.io/numba-cuda/user/simulator.html) describes its execution and limitations.
 The simulator executes Python kernel bodies—its arithmetic and scheduling do not establish the behavior of compiled GPU code.
-This suite does not verify CUDA type inference, LLVM fastmath, streams, multi-GPU execution, geometry gradients, or PyTorch autograd wrappers.
+This suite does not verify CUDA type inference, LLVM fastmath, streams,
+multi-GPU execution or PyTorch autograd wrappers. Its bounded pixel VJP checks
+do not establish the full trajectory/surface gradient path.
 The GPU test suite in `tests/` covers those paths on a CUDA machine.
 
 ## Installation
@@ -80,3 +95,11 @@ An unexpected pass then fails CI, so a repaired defect cannot remain hidden as a
 The command above passed all 202 cases on macOS arm64: 8 PROOF, 184 BOUNDED, and 10 PROPERTY TEST, with no skips or expected failures.
 The run used Numba 0.68.0's bundled simulator; the Linux `numba-cuda` target still requires a CI run.
 Five warnings came from existing pytest benchmark configuration and a deprecated package import.
+
+With the detector-surface checks, local Windows verification passed all 232
+cases: 13 PROOF, 209 BOUNDED and 10 PROPERTY TEST, with no skips or expected
+failures. The run used Python 3.14.6, torch 2.13.0+cu132, Numba 0.67.0 and
+numba-cuda 0.30.4 with `NUMBA_ENABLE_CUDASIM=1` and
+`FORMAL_REQUIRE_CUDASIM=1`. The simulator printed the existing
+`_PendingDeallocs` import error in the CUDA shutdown callback after pytest
+completed with exit code 0; the same warning occurred in the 202-case baseline.

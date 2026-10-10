@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Projector(..., detector_surface=surface)` samples local parameterized surfaces
+  into per-pixel world positions for native parallel, fan and cone projection
+  and matched backprojection. Shared or per-view surfaces can contain trainable
+  PyTorch parameters. Flat detectors remain the default; analytical helpers
+  retain their flat-detector assumptions.
+- Independent CUDA regression tests and CPU formal verification for detector
+  surfaces, including bounded production-kernel checks against cell intersections.
+
 ## [2.0.2] - 2026-10-09
 
 ### Fixed

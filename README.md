@@ -44,6 +44,7 @@
 To our knowledge, diffct is the only open-source GPU CT library that combines arbitrary per-view trajectories, autograd through the volume, first-order gradients through the acquisition geometry, and built-in multi-GPU and multi-node execution. We compared it with LEAP, TIGRE, ASTRA/tomosipo, DiffDRR and others in October 2026.
 
 - **Arbitrary trajectories.** Each view has its own source, detector centre and detector axes. Circular, helical, saddle, sinusoidal, random and calibrated scans use the same code. Trajectory tensors with `requires_grad=True` receive geometry gradients for calibration.
+- **Curved detectors.** A `detector_surface(u, v)` callback defines each pixel's position for arc, cylindrical or other parameterized surfaces. Projection and matched backprojection support first-order surface gradients. See [the surface API](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#parameterized-detector-surfaces).
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun and NCCL. Views are partitioned and the volume is replicated. Speedup depends on workload and communication costs.
 - **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak, shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP and FDK backprojection.
@@ -165,7 +166,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 ## Examples
 
-`quickstart.py`, `analytical_reconstruction.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+`quickstart.py`, `curved_detector.py`, `analytical_reconstruction.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 
