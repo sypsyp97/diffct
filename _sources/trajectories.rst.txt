@@ -31,7 +31,7 @@ positive scalar.
 
 Detector axes are unit direction vectors, not pixel-step vectors. The detector
 spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
-Pixel ``(u, v)`` is at:
+With the default flat detector, pixel ``(u, v)`` is at:
 
 .. code-block:: text
 
@@ -66,21 +66,79 @@ coordinate system above.
 
 All components must be finite floating-point tensors with the same nonzero view
 count. ``ray_dir`` and ``det_u`` must be orthogonal for parallel beams. ``det_u``
-and ``det_v`` must be orthogonal for cone beams. For fan and cone beams, the
-source must not coincide with the detector centre or view the detector edge-on. The nearer of source and
-detector centre must lie within 1e6 voxel spacings of the origin.
+and ``det_v`` must be orthogonal for cone beams. With flat fan/cone detectors,
+the source must not coincide with the detector centre or view the detector
+edge-on. The nearer of source and detector centre must lie within 1e6 voxel
+spacings of the origin. Surface detectors instead validate each actual
+source/pixel pair: the endpoints must remain distinct in float32, and the
+nearer endpoint of every ray must lie within 1e6 voxel spacings of the origin.
+Both endpoints must lie within 1e15 voxel spacings.
 
 Arbitrary trajectories do not guarantee enough angular coverage for an inverse
 problem. Use iterative methods with regularization for sparse or incomplete
 acquisitions. The analytical helpers assume a circular orbit (see :doc:`api`).
+
+.. _detector-surfaces:
+
+Parameterized detector surfaces
+-------------------------------
+
+``Projector(..., detector_surface=surface)`` uses a callback to place each pixel
+on an arc, cylinder or another parameterized surface. For cone beams it receives
+physical float64 ``u, v`` grids on CPU with shape ``(U, V)`` and ``ij`` indexing. It returns local
+``(u, v, n)`` offsets shaped ``(U, V, 3)`` or ``(views, U, V, 3)``. Here ``views``
+is the total trajectory view count, also in distributed mode. The world point is:
+
+.. code-block:: text
+
+   center + offset_u * det_u + offset_v * det_v
+          + offset_n * cross(det_u, det_v)
+
+For 2D beams, ``u, v`` have shape ``(U,)`` and ``v`` is zero. Return ``(U, 3)``
+or ``(views, U, 3)`` with zero middle offsets; the normal is
+``(det_u_y, -det_u_x)``. A cylindrical surface can be written as:
+
+.. code-block:: python
+
+   radius = torch.tensor(128.0, requires_grad=True)
+
+   def cylinder(u, v):
+       u, v = u.to(radius.device), v.to(radius.device)
+       angle = u / radius
+       return torch.stack((radius * angle.sin(), v,
+                           radius * (angle.cos() - 1)), dim=-1)
+
+   C = Projector(trajectory, (32, 32, 32), (96, 64),
+                 detector_spacing=(0.8, 1.0), detector_surface=cylinder)
+
+For this generated frame the normal points away from the source; negative
+normal offsets and a radius equal to ``sdd`` centre the cylinder on the source.
+
+The callback is sampled at construction and afresh on each operation, and its
+captured parameters receive first-order gradients. Every sample must be a finite floating-point tensor of
+the documented shape; fan/cone pixels cannot coincide with the source.
+``project`` and ``backproject`` retain their matched Siddon model, with one ray
+per pixel and no detector-area integration. They operate directly on the native
+curved grid without resampling. Run ``python examples/curved_detector.py`` for a
+complete circular cone example, also shown in :doc:`examples`.
+
+Streamed operations require CPU offsets. CUDA offsets remain supported when
+the automatic CUDA full-volume path fits. See :doc:`chunking` for large-volume
+execution and memory requirements.
+
+Analytical FBP/FDK and weighting helpers continue to assume flat detectors and
+do not accept the callback. Reusing a flat-detector FDK requires matching-ray
+resampling of the line integrals onto a covered virtual flat grid; this adds
+interpolation error and is outside the core operator.
 
 Geometry gradients
 ------------------
 
 Gradients with respect to trajectory tensors are first order only. Set
 ``requires_grad=True`` on each tensor before you construct ``Projector``. The
-projector keeps references to the tensors and reads their current values on each
-call. For example:
+projector keeps references to all trajectory components when any component
+requires gradients, and reads their current values on each call. If none require
+gradients, it clones the entire trajectory. For example:
 
 .. code-block:: python
 
@@ -98,13 +156,14 @@ calibration loop, see ``examples/geometry_calibration.py``.
 
 If poses come from learnable angles or offsets, rebuild the derived tensors and
 the ``Projector`` inside each optimization step. Parameterize rotations so that
-axes stay unit length and orthogonal. Geometry checks run only at construction.
+axes stay unit length and orthogonal. Trajectory frame checks run only at
+construction; sampled surface positions are also checked on every operation.
 
 Limits:
 
 - Second derivatives with respect to geometry raise an error.
-- Second derivatives with respect to the volume or sinogram are available with
-  fixed geometry.
+- Second derivatives with respect to the volume or sinogram are available,
+  including when trajectory or surface parameters require gradients.
 - Detector and voxel spacing are scalar settings, not differentiable parameters.
 - Geometry derivatives are piecewise: at exact voxel edges or corners they are one-sided.
 - Distributed geometry gradients are summed by the operator. See :doc:`multi_gpu`

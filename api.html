@@ -194,6 +194,7 @@
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
@@ -255,8 +256,8 @@
 <h2>High-level Projector<a class="headerlink" href="#high-level-projector" title="Link to this heading">¶</a></h2>
 <dl class="py class">
 <dt class="sig sig-object py" id="diffct.Projector">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.</span></span><span class="sig-name descname"><span class="pre">Projector</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">trajectory</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume_shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_shape</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">beam</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cone'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">devices</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distributed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">process_group</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/operators.html#Projector"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.Projector" title="Link to this definition">¶</a></dt>
-<dd><p>Project CUDA volumes along fixed parallel, fan, or cone trajectories.</p>
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.</span></span><span class="sig-name descname"><span class="pre">Projector</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">trajectory</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume_shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_shape</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">beam</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cone'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">devices</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distributed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">process_group</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_surface</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume_chunk_shape</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">view_chunk_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/operators.html#Projector"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.Projector" title="Link to this definition">¶</a></dt>
+<dd><p>Project CPU or CUDA volumes along parallel, fan, or cone trajectories.</p>
 <p>A parallel trajectory is <code class="docutils literal notranslate"><span class="pre">(ray_dir,</span> <span class="pre">det_origin,</span> <span class="pre">det_u)</span></code> and a fan
 trajectory is <code class="docutils literal notranslate"><span class="pre">(src_pos,</span> <span class="pre">det_center,</span> <span class="pre">det_u)</span></code>; each component has shape
 <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">2)</span></code>. A cone trajectory is
@@ -268,9 +269,34 @@ keeps references, reads the current values at every call, and returns
 gradients for those tensors; the checks above run only at construction.
 Second derivatives are available for volumes and sinograms, not for the
 geometry.</p>
+<p><code class="docutils literal notranslate"><span class="pre">detector_surface(u,</span> <span class="pre">v)</span></code> optionally supplies local <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v,</span> <span class="pre">n)</span></code> offsets
+for every pixel. It receives centred physical float64 grids on CPU and
+returns a floating-point tensor shaped <code class="docutils literal notranslate"><span class="pre">(*detector_shape,</span> <span class="pre">3)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">*detector_shape,</span> <span class="pre">3)</span></code>. Cone normals are <code class="docutils literal notranslate"><span class="pre">cross(det_u,</span> <span class="pre">det_v)</span></code>;
+2D normals are <code class="docutils literal notranslate"><span class="pre">(det_u_y,</span> <span class="pre">-det_u_x)</span></code> with zero middle offsets. Offsets
+must be on CPU for streamed execution. CUDA offsets remain supported on a
+fitting full-volume CUDA path. Constructor world validation runs on CPU.
+The callback is sampled and validated on every call,
+with first-order gradients for captured PyTorch parameters. Omitting it
+preserves the flat detector.</p>
 <p>Volumes use <code class="docutils literal notranslate"><span class="pre">(H,</span> <span class="pre">W)</span></code> for parallel and fan beams and <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> for
 cone beams. Sinograms use <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">detectors)</span></code> or <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V)</span></code>.
-Results are float32 and returned to the input tensor’s CUDA device. Local
+Results are float32 and returned to the input tensor’s device. CPU inputs
+stream spatial tiles and view batches through CUDA. CUDA inputs retain the
+full-volume path when its additional working set fits every device;
+otherwise they stream too. <code class="docutils literal notranslate"><span class="pre">volume_chunk_shape</span></code> sets explicit spatial
+limits in tensor order; <code class="docutils literal notranslate"><span class="pre">view_chunk_size</span></code> sets an explicit view limit.
+Either forces streaming. With no overrides, sizing uses live free memory,
+reusable allocator cache and the observable per-process fraction ceiling,
+retaining 25% headroom. It halves the largest spatial axis until buffers
+fit; automatic view batches are at most 32 and shrink if needed. Older
+PyTorch without a public fraction getter cannot account for that ceiling.
+Concurrent external allocations can still cause an allocation error.</p>
+<p>Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
+bounded by the chosen tile and view batch. Caller-owned CUDA data/results
+and CUDA work inside a supplied callback are outside this memory bound.
+CPU multi-device transfers currently serialize device batches, so no
+speedup is guaranteed. Local
 devices split views in list order; distributed mode returns rank-local
 projections and replicated backprojections. Distributed projection losses
 use SUM across ranks; divide replicated backprojection losses by
@@ -285,10 +311,12 @@ gradients.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.Projector.backproject">
 <span class="sig-name descname"><span class="pre">backproject</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/operators.html#Projector.backproject"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.Projector.backproject" title="Link to this definition">¶</a></dt>
-<dd><p>Backproject a floating-point CUDA sinogram.</p>
+<dd><p>Backproject a floating-point CPU/CUDA sinogram with the matched adjoint.</p>
 <p>The input must have shape <code class="docutils literal notranslate"><span class="pre">projection_shape</span></code> and uses <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span>
 <span class="pre">V)</span></code> order for cone beams. The float32 volume is returned to
-<code class="docutils literal notranslate"><span class="pre">sinogram.device</span></code>; distributed mode SUM-reduces it to every rank, so
+<code class="docutils literal notranslate"><span class="pre">sinogram.device</span></code>. CPU data streams through CUDA automatically;
+manual chunk limits override automatic sizing. Execution requires CUDA.
+Distributed mode SUM-reduces it to every rank, so
 divide a replicated-output loss by <code class="docutils literal notranslate"><span class="pre">world_size</span></code>.</p>
 </dd></dl>
 
@@ -303,15 +331,23 @@ operator, so they use the same ranks as the operator.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="diffct.Projector.project">
 <span class="sig-name descname"><span class="pre">project</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">volume</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/operators.html#Projector.project"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.Projector.project" title="Link to this definition">¶</a></dt>
-<dd><p>Project a <code class="docutils literal notranslate"><span class="pre">(H,</span> <span class="pre">W)</span></code> or <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> CUDA tensor to float32.</p>
+<dd><p>Project a floating <code class="docutils literal notranslate"><span class="pre">(H,</span> <span class="pre">W)</span></code> or <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> CPU/CUDA tensor.</p>
 <p>The output shape is <code class="docutils literal notranslate"><span class="pre">projection_shape</span></code>; in distributed mode it holds
-this rank’s contiguous view slice. The result stays on <code class="docutils literal notranslate"><span class="pre">volume.device</span></code>.</p>
+this rank’s contiguous view slice. The float32 result stays on
+<code class="docutils literal notranslate"><span class="pre">volume.device</span></code>. CPU data streams through CUDA automatically; manual
+chunk limits override automatic sizing. Execution requires CUDA.</p>
 </dd></dl>
 
 </dd></dl>
 
 <p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> takes trajectory tensors as described in <a class="reference internal" href="trajectories.html"><span class="doc">Trajectories and Geometry</span></a>. For
 multiple GPUs and nodes, see <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">detector_surface</span></code> defines native pixel positions for both projection and
+matched backprojection. See <a class="reference internal" href="trajectories.html#detector-surfaces"><span class="std std-ref">Parameterized detector surfaces</span></a> for its coordinate and
+shape contract, and <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a> for a runnable cylindrical detector.</p>
+<p>CPU data automatically uses streamed CUDA execution. <code class="docutils literal notranslate"><span class="pre">volume_chunk_shape</span></code>
+and <code class="docutils literal notranslate"><span class="pre">view_chunk_size</span></code> optionally override spatial and view limits; see
+<a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a> for memory, geometry and autograd requirements.</p>
 </section>
 <section id="low-level-functions">
 <h2>Low-level Functions<a class="headerlink" href="#low-level-functions" title="Link to this heading">¶</a></h2>
@@ -1319,8 +1355,12 @@ where angles has shape (n_views,) and output has shape (n_views, 2).</p></li>
 backprojection of an analytical FBP or FDK pipeline. The weighted backprojection
 helpers do not support autograd through <code class="docutils literal notranslate"><span class="pre">Projector</span></code>. The returned images are
 already scaled.</p>
-<p>Analytical FBP and FDK assume an acquisition model. A non-circular trajectory
-does not make the result exact. The helpers accept the same per-view
+<p>Analytical FBP and FDK assume a flat detector and an acquisition model. These
+helpers do not accept <code class="docutils literal notranslate"><span class="pre">detector_surface</span></code>. Native curved data must be resampled
+along matching rays onto a covered virtual flat detector before using these
+flat-detector helpers; resampling adds interpolation error. The native
+<code class="docutils literal notranslate"><span class="pre">Projector</span></code> forward/adjoint pair needs no such conversion. A non-circular
+trajectory does not make the result exact. The helpers accept the same per-view
 <code class="docutils literal notranslate"><span class="pre">(src_pos,</span> <span class="pre">det_center,</span> <span class="pre">det_u[,</span> <span class="pre">det_v])</span></code> arrays as <code class="docutils literal notranslate"><span class="pre">Projector</span></code>.</p>
 <p>Fan and cone backprojection accept a keyword-only <code class="docutils literal notranslate"><span class="pre">isocenter</span></code> vector in physical
 units. With <code class="docutils literal notranslate"><span class="pre">None</span></code> (default), it is estimated from the detector normals. Give it

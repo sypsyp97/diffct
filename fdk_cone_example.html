@@ -194,6 +194,7 @@
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
@@ -264,8 +265,13 @@ PSNR against the synthetic phantom. <code class="docutils literal notranslate"><
 </section>
 <section id="pipeline">
 <h2>Pipeline<a class="headerlink" href="#pipeline" title="Link to this heading">¶</a></h2>
-<p>The example uses a circular cone-beam scan with 360 views. The helper
-<code class="docutils literal notranslate"><span class="pre">examples/_common.py::fdk</span></code> performs these steps:</p>
+<p>The example uses a flat detector and a circular cone-beam scan with 360 views.
+It does not reconstruct native curved-detector data directly. To reuse this
+pipeline for a curved detector, first resample line integrals along matching
+rays onto a covered virtual flat grid. This adds interpolation error; FDK still
+retains its circular cone-beam approximation. For native curved projection and
+matched backprojection, see <a class="reference internal" href="trajectories.html#detector-surfaces"><span class="std std-ref">Parameterized detector surfaces</span></a> and <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a>.</p>
+<p>The helper <code class="docutils literal notranslate"><span class="pre">examples/_common.py::fdk</span></code> performs these steps:</p>
 <ol class="arabic simple">
 <li><p>Project a 3D phantom with <code class="docutils literal notranslate"><span class="pre">Projector</span></code> into a <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V)</span></code> sinogram.</p></li>
 <li><p>Apply <code class="docutils literal notranslate"><span class="pre">cone_cosine_weights</span></code> for the detector geometry.</p></li>

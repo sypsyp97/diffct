@@ -41,15 +41,18 @@ Minimal forward / adjoint / gradient example
    print(measurements.shape, estimate.grad.shape)
 
 ``Projector`` defaults to ``beam="cone"``. Set ``beam="parallel"`` or
-``beam="fan"`` for 2D data. Inputs must be floating-point CUDA tensors with
+``beam="fan"`` for 2D data. Inputs must be floating-point CPU or CUDA tensors with
 exactly the configured volume or sinogram shape, without batch or channel
-dimensions. Use contiguous tensors. Outputs are float32. Trajectory tensors can
-stay on CPU.
+dimensions. Outputs are float32 on the input device. CPU data automatically
+streams through CUDA tiles; see :doc:`chunking`. Trajectory tensors can stay
+on CPU.
 
 Choose a workflow
 -----------------
 
 - A custom or non-circular scan: see :doc:`trajectories`.
+- A curved detector: see :ref:`detector-surfaces` and run
+  ``python examples/curved_detector.py`` from a source checkout.
 - An iterative reconstruction: run ``python examples/iterative_reconstruction.py
   --trajectory helical``. See :doc:`examples`.
 - Several GPUs or nodes: see :doc:`multi_gpu`.

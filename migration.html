@@ -194,6 +194,7 @@
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
@@ -303,9 +304,11 @@ orbit. Use a helper or pass your calibrated tensors directly.</p>
 image-display convention <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">V,</span> <span class="pre">U)</span></code>; transpose imported measurements if
 necessary. In distributed mode, only the leading view dimension is sharded.</p>
 <p>Trajectory tensors may be on CPU or CUDA. Projection and backprojection inputs
-must be floating-point CUDA tensors of exactly the documented shape, without
-batch or channel dimensions. Computation and outputs are float32 even if the
-input is float64; autograd returns input gradients in the input’s dtype.
+must be floating-point CPU or CUDA tensors of exactly the documented shape,
+without batch or channel dimensions. CPU arrays automatically stream through
+CUDA tiles; see <a class="reference external" href="https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution">chunked execution</a>. Computation
+and outputs are float32 even if the input is float64; autograd returns input
+gradients in the input’s device and dtype.
 <code class="docutils literal notranslate"><span class="pre">voxel_spacing</span></code> is one positive scalar (isotropic voxels). <code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code>
 is one positive scalar for 2D, and a scalar or <code class="docutils literal notranslate"><span class="pre">(u_pitch,</span> <span class="pre">v_pitch)</span></code> for cone.</p>
 </section>

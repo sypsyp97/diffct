@@ -194,6 +194,7 @@
   <ul>
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
@@ -254,7 +255,9 @@
 <p>diffct provides differentiable CUDA projectors and matched adjoints for computed
 tomography (CT) in PyTorch. It supports 2D parallel and fan beams and 3D cone
 beams. Each view can follow any trajectory, and autograd gives gradients for the
-volume and for trajectory tensors. Views can be split across several GPUs.</p>
+volume and for trajectory tensors. Detector pixels can follow parameterized
+surfaces, with first-order gradients for their parameters. Views can be split
+across several GPUs.</p>
 <p>Code written for diffct 1.x must be updated; see <a class="reference internal" href="migration.html"><span class="doc">Migrating from diffct 1.x to 2.0</span></a>.</p>
 <section id="install">
 <h2>Install<a class="headerlink" href="#install" title="Link to this heading">¶</a></h2>
@@ -279,7 +282,14 @@ only if a CUDA Toolkit is already installed on the system.</p>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="trajectories.html#trajectory-format">Trajectory format</a></li>
 <li class="toctree-l2"><a class="reference internal" href="trajectories.html#custom-acquisition-example">Custom acquisition example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="trajectories.html#parameterized-detector-surfaces">Parameterized detector surfaces</a></li>
 <li class="toctree-l2"><a class="reference internal" href="trajectories.html#geometry-gradients">Geometry gradients</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="chunking.html#automatic-selection-and-manual-limits">Automatic selection and manual limits</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chunking.html#autograd-curved-detectors-and-several-gpus">Autograd, curved detectors and several GPUs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chunking.html#runnable-iterative-reconstruction">Runnable iterative reconstruction</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a><ul>
@@ -298,6 +308,7 @@ only if a CUDA Toolkit is already installed on the system.</p>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="walnut_example.html">Measured Walnut</a></li>
+<li class="toctree-l2"><a class="reference internal" href="examples.html#native-curved-detector">Native curved detector</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a><ul>

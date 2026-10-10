@@ -1,12 +1,15 @@
 Multiple GPUs and Nodes
 =======================
 
-``Projector`` splits the views across GPUs. Every participating GPU must hold a
-full volume, so extra GPUs do not allow a larger volume. There are two modes:
+``Projector`` splits views across GPUs and automatically streams spatial tiles
+when arrays are CPU-backed or the estimated CUDA working set does not fit.
+For volumes larger than one GPU, keep full arrays on CPU; see :doc:`chunking`.
+There are two modes:
 
 - **One process, several GPUs:** pass ``devices`` to ``Projector``.
 - **One process per GPU:** launch with ``torchrun`` and pass ``distributed=True``.
-  Each rank holds its own view shard and the full volume.
+  Each rank holds its own view shard and the full volume, on CPU for streamed
+  out-of-core execution. GPU working buffers hold bounded tiles and batches.
 
 One process, several GPUs
 -------------------------

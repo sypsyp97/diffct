@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Examples" href="examples.html"><link rel="prev" title="Trajectories and Geometry" href="trajectories.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Examples" href="examples.html"><link rel="prev" title="Large Volumes and Chunked Execution" href="chunking.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
         <title>Multiple GPUs and Nodes - diffct 2.0.2</title>
@@ -194,6 +194,7 @@
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
@@ -251,12 +252,15 @@
         <article role="main" id="furo-main-content">
           <section id="multiple-gpus-and-nodes">
 <h1>Multiple GPUs and Nodes<a class="headerlink" href="#multiple-gpus-and-nodes" title="Link to this heading">¶</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> splits the views across GPUs. Every participating GPU must hold a
-full volume, so extra GPUs do not allow a larger volume. There are two modes:</p>
+<p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> splits views across GPUs and automatically streams spatial tiles
+when arrays are CPU-backed or the estimated CUDA working set does not fit.
+For volumes larger than one GPU, keep full arrays on CPU; see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>.
+There are two modes:</p>
 <ul class="simple">
 <li><p><strong>One process, several GPUs:</strong> pass <code class="docutils literal notranslate"><span class="pre">devices</span></code> to <code class="docutils literal notranslate"><span class="pre">Projector</span></code>.</p></li>
 <li><p><strong>One process per GPU:</strong> launch with <code class="docutils literal notranslate"><span class="pre">torchrun</span></code> and pass <code class="docutils literal notranslate"><span class="pre">distributed=True</span></code>.
-Each rank holds its own view shard and the full volume.</p></li>
+Each rank holds its own view shard and the full volume, on CPU for streamed
+out-of-core execution. GPU working buffers hold bounded tiles and batches.</p></li>
 </ul>
 <section id="one-process-several-gpus">
 <h2>One process, several GPUs<a class="headerlink" href="#one-process-several-gpus" title="Link to this heading">¶</a></h2>
@@ -396,14 +400,14 @@ repository. Set the account, partition and GPU request for your cluster.</p>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="trajectories.html">
+          <a class="prev-page" href="chunking.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Trajectories and Geometry</div>
+                <div class="title">Large Volumes and Chunked Execution</div>
                 
               </div>
             </a>

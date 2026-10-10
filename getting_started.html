@@ -194,6 +194,7 @@
   <ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Getting Started</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="examples.html">Examples</a><input aria-label="Toggle navigation of Examples" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
@@ -286,15 +287,18 @@ CUDA libraries that PyTorch loads.</p>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> defaults to <code class="docutils literal notranslate"><span class="pre">beam=&quot;cone&quot;</span></code>. Set <code class="docutils literal notranslate"><span class="pre">beam=&quot;parallel&quot;</span></code> or
-<code class="docutils literal notranslate"><span class="pre">beam=&quot;fan&quot;</span></code> for 2D data. Inputs must be floating-point CUDA tensors with
+<code class="docutils literal notranslate"><span class="pre">beam=&quot;fan&quot;</span></code> for 2D data. Inputs must be floating-point CPU or CUDA tensors with
 exactly the configured volume or sinogram shape, without batch or channel
-dimensions. Use contiguous tensors. Outputs are float32. Trajectory tensors can
-stay on CPU.</p>
+dimensions. Outputs are float32 on the input device. CPU data automatically
+streams through CUDA tiles; see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>. Trajectory tensors can stay
+on CPU.</p>
 </section>
 <section id="choose-a-workflow">
 <h2>Choose a workflow<a class="headerlink" href="#choose-a-workflow" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>A custom or non-circular scan: see <a class="reference internal" href="trajectories.html"><span class="doc">Trajectories and Geometry</span></a>.</p></li>
+<li><p>A curved detector: see <a class="reference internal" href="trajectories.html#detector-surfaces"><span class="std std-ref">Parameterized detector surfaces</span></a> and run
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/curved_detector.py</span></code> from a source checkout.</p></li>
 <li><p>An iterative reconstruction: run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/iterative_reconstruction.py</span>
 <span class="pre">--trajectory</span> <span class="pre">helical</span></code>. See <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a>.</p></li>
 <li><p>Several GPUs or nodes: see <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a>.</p></li>

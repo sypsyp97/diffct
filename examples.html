@@ -173,7 +173,7 @@
           <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
         </button>
       </div>
-      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
         <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
       </label>
     </div>
@@ -194,6 +194,7 @@
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
 <li class="toctree-l1 current has-children current-page"><a class="current reference internal" href="#">Examples</a><input aria-label="Toggle navigation of Examples" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
@@ -244,7 +245,7 @@
               <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
             </button>
           </div>
-          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
             <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
           </label>
         </div>
@@ -256,6 +257,10 @@
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">quickstart.py</span></code>: <code class="docutils literal notranslate"><span class="pre">Projector</span></code> basics for parallel, fan and cone beams, with
 the adjoint check and gradients.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">curved_detector.py</span></code>: native cylindrical cone detector projection, matched
+backprojection, adjoint check and volume/surface gradients on a circular scan.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chunked_reconstruction.py</span></code>: CPU-backed CGLS with automatic CUDA tiles,
+optional manual limits and measured peak allocation; see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">analytical_reconstruction.py</span></code>: parallel-beam FBP, fan-beam FBP and cone-beam
 FDK, with a choice of ramp-filter window.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">iterative_reconstruction.py</span></code>: 3D cone-beam CGLS, SIRT and TV reconstruction
@@ -290,6 +295,74 @@ from projections, using geometry gradients.</p></li>
 <li class="toctree-l1"><a class="reference internal" href="walnut_example.html">Measured Walnut</a></li>
 </ul>
 </div>
+<section id="native-curved-detector">
+<h2>Native curved detector<a class="headerlink" href="#native-curved-detector" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/curved_detector.py
+</pre></div>
+</div>
+<p>This small CUDA example uses the native curved operators directly, without
+resampling or FDK. See <a class="reference internal" href="trajectories.html#detector-surfaces"><span class="std std-ref">Parameterized detector surfaces</span></a> for the callback contract.</p>
+<div class="literal-block-wrapper docutils container" id="id1">
+<div class="code-block-caption"><span class="caption-text">Native cylindrical detector operators</span><a class="headerlink" href="#id1" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos"> 1</span><span class="sd">"""Native cylindrical detector: projection, matched adjoint and gradients.</span>
+<span class="linenos"> 2</span>
+<span class="linenos"> 3</span><span class="sd">    python examples/curved_detector.py</span>
+<span class="linenos"> 4</span>
+<span class="linenos"> 5</span><span class="sd">Uses a circular cone-beam trajectory and one ray per detector pixel. This</span>
+<span class="linenos"> 6</span><span class="sd">example uses the native curved operators directly; it does not run FDK.</span>
+<span class="linenos"> 7</span><span class="sd">"""</span>
+<span class="linenos"> 8</span>
+<span class="linenos"> 9</span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="linenos">10</span>
+<span class="linenos">11</span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">Projector</span><span class="p">,</span> <span class="n">circular_trajectory_3d</span>
+<span class="linenos">12</span><span class="kn">from</span><span class="w"> </span><span class="nn">_common</span><span class="w"> </span><span class="kn">import</span> <span class="n">shepp_logan_3d</span>
+<span class="linenos">13</span>
+<span class="linenos">14</span>
+<span class="linenos">15</span><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="linenos">16</span>    <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+<span class="linenos">17</span>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"diffct needs a CUDA GPU"</span><span class="p">)</span>
+<span class="linenos">18</span>    <span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="linenos">19</span>    <span class="n">trajectory</span> <span class="o">=</span> <span class="n">circular_trajectory_3d</span><span class="p">(</span><span class="mi">90</span><span class="p">,</span> <span class="n">sid</span><span class="o">=</span><span class="mf">80.0</span><span class="p">,</span> <span class="n">sdd</span><span class="o">=</span><span class="mf">128.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+<span class="linenos">20</span>    <span class="c1"># Radius equals SDD: this cylinder is initially centred on each view's source.</span>
+<span class="linenos">21</span>    <span class="n">radius</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">128.0</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="linenos">22</span>
+<span class="linenos">23</span>    <span class="k">def</span><span class="w"> </span><span class="nf">cylinder</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
+<span class="linenos">24</span>        <span class="n">u</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">radius</span><span class="o">.</span><span class="n">device</span><span class="p">),</span> <span class="n">v</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">radius</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+<span class="linenos">25</span>        <span class="n">angle</span> <span class="o">=</span> <span class="n">u</span> <span class="o">/</span> <span class="n">radius</span>
+<span class="linenos">26</span>        <span class="c1"># The generated detector normal points away from the source.</span>
+<span class="linenos">27</span>        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">((</span><span class="n">radius</span> <span class="o">*</span> <span class="n">angle</span><span class="o">.</span><span class="n">sin</span><span class="p">(),</span> <span class="n">v</span><span class="p">,</span>
+<span class="linenos">28</span>                            <span class="n">radius</span> <span class="o">*</span> <span class="p">(</span><span class="n">angle</span><span class="o">.</span><span class="n">cos</span><span class="p">()</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+<span class="linenos">29</span>
+<span class="linenos">30</span>    <span class="n">operator</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span> <span class="p">(</span><span class="mi">96</span><span class="p">,</span> <span class="mi">64</span><span class="p">),</span>
+<span class="linenos">31</span>                         <span class="n">detector_spacing</span><span class="o">=</span><span class="p">(</span><span class="mf">0.8</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span> <span class="n">detector_surface</span><span class="o">=</span><span class="n">cylinder</span><span class="p">)</span>
+<span class="linenos">32</span>    <span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">shepp_logan_3d</span><span class="p">(</span><span class="mi">32</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">()</span>
+<span class="linenos">33</span>    <span class="n">sinogram</span> <span class="o">=</span> <span class="n">operator</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span>
+<span class="linenos">34</span>    <span class="n">y</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand_like</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+<span class="linenos">35</span>    <span class="n">adjoint</span> <span class="o">=</span> <span class="n">operator</span><span class="o">.</span><span class="n">backproject</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+<span class="linenos">36</span>    <span class="n">lhs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">sinogram</span><span class="o">.</span><span class="n">double</span><span class="p">()</span> <span class="o">*</span> <span class="n">y</span><span class="o">.</span><span class="n">double</span><span class="p">())</span>
+<span class="linenos">37</span>    <span class="n">rhs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">volume</span><span class="o">.</span><span class="n">double</span><span class="p">()</span> <span class="o">*</span> <span class="n">adjoint</span><span class="o">.</span><span class="n">double</span><span class="p">())</span>
+<span class="linenos">38</span>    <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">lhs</span><span class="p">,</span> <span class="n">rhs</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">3e-5</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">3e-5</span><span class="p">)</span>
+<span class="linenos">39</span>
+<span class="linenos">40</span>    <span class="c1"># d(sum(A x))/dx = A^T 1, with the same native curved geometry.</span>
+<span class="linenos">41</span>    <span class="p">(</span><span class="n">volume_gradient</span><span class="p">,)</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span><span class="n">sinogram</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="n">volume</span><span class="p">,</span> <span class="n">retain_graph</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="linenos">42</span>    <span class="n">expected</span> <span class="o">=</span> <span class="n">operator</span><span class="o">.</span><span class="n">backproject</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">sinogram</span><span class="p">))</span>
+<span class="linenos">43</span>    <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">volume_gradient</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">3e-5</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">3e-5</span><span class="p">)</span>
+<span class="linenos">44</span>    <span class="p">(</span><span class="n">radius_gradient</span><span class="p">,)</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span><span class="n">sinogram</span><span class="o">.</span><span class="n">square</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="n">radius</span><span class="p">)</span>
+<span class="linenos">45</span>    <span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">radius_gradient</span><span class="p">)</span> <span class="ow">and</span> <span class="n">radius_gradient</span> <span class="o">!=</span> <span class="mi">0</span>
+<span class="linenos">46</span>
+<span class="linenos">47</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"volume </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">volume</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2"> -&gt; curved sinogram </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">sinogram</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="linenos">48</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"matched adjoint </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">adjoint</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">, "</span>
+<span class="linenos">49</span>          <span class="sa">f</span><span class="s2">"relative mismatch </span><span class="si">{</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">lhs</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">rhs</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nb">abs</span><span class="p">(</span><span class="n">lhs</span><span class="p">))</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.3e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="linenos">50</span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"volume gradient matches native A^T 1; "</span>
+<span class="linenos">51</span>          <span class="sa">f</span><span class="s2">"radius gradient </span><span class="si">{</span><span class="n">radius_gradient</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6g</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="linenos">52</span>
+<span class="linenos">53</span>
+<span class="linenos">54</span><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+<span class="linenos">55</span>    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
 </section>
 
         </article>
@@ -335,8 +408,27 @@ from projections, using geometry gradients.</p></li>
         
       </footer>
     </div>
-    <aside class="toc-drawer no-toc">
+    <aside class="toc-drawer">
       
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Examples</a><ul>
+<li><a class="reference internal" href="#native-curved-detector">Native curved detector</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
       
       
     </aside>

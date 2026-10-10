@@ -4,7 +4,9 @@ diffct: Differentiable CT Operators
 diffct provides differentiable CUDA projectors and matched adjoints for computed
 tomography (CT) in PyTorch. It supports 2D parallel and fan beams and 3D cone
 beams. Each view can follow any trajectory, and autograd gives gradients for the
-volume and for trajectory tensors. Views can be split across several GPUs.
+volume and for trajectory tensors. Detector pixels can follow parameterized
+surfaces, with first-order gradients for their parameters. Views can be split
+across several GPUs.
 
 Code written for diffct 1.x must be updated; see :doc:`migration`.
 
@@ -27,6 +29,7 @@ Start here
 
    getting_started
    trajectories
+   chunking
    multi_gpu
    examples
    api
