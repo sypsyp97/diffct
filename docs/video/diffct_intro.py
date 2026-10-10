@@ -12,32 +12,47 @@ from manim import *
 from scan_diagram import ScanDiagram
 
 HERE = Path(__file__).parent
-BG, INK, SUB, LINE = "#F7F7F2", "#222D29", "#5F6B64", "#C9D0C9"
-GREEN, PALE, WARM = "#28765C", "#E3EBE4", "#A46D45"
+BG, INK, SUB, LINE = "#101820", "#F2EDE3", "#ABB9C6", "#3B5060"
+GREEN, PALE, WARM = "#69C5CD", "#1B2A36", "#E7BA7B"
+SERIES = [GREEN, WARM, "#A8A8D4", "#8AB5E1", "#A8C8AE"]
+GPU_COLORS = [GREEN, "#8AB5E1", WARM, "#A8C8AE"]
+CHAPTERS = ['Any trajectory', 'Autograd', 'Geometry gradients', 'Many GPUs', 'Measured data']
 config.background_color = BG
-MATH_TEMPLATE = TexTemplate()
-MATH_TEMPLATE.add_to_preamble(r"\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}\usepackage{sansmath}\sansmath")
-MathTex.set_default(tex_template=MATH_TEMPLATE)
+
+
+def tex_text(value):
+    # Literal UI copy; TeX owns kerning, word spacing and ligatures, as upstream.
+    escapes = {'&': r'\&', '%': r'\%', '_': r'\_', '#': r'\#', '$': r'\$',
+               '{': r'\{', '}': r'\}', '³': r'\textsuperscript{3}',
+               '·': r'\textperiodcentered{}', '×': r'$\times$', '•': r'$\bullet$'}
+    return ''.join(escapes.get(c, c) for c in value)
 
 
 def T(value, size=28, color=INK):
-    return Text(value, font="Segoe UI", font_size=size, color=color,
-                line_spacing=.6, disable_ligatures=True)
+    lines = [tex_text(line) for line in value.split('\n')]
+    text = lines[0] if len(lines) == 1 else r'\begin{tabular}{@{}l@{}}' + r'\\'.join(lines) + r'\end{tabular}'
+    return Tex(text, font_size=size*1.25, color=color)
 
 
-def code(value, size=22, color=INK):
-    return Text(value, font="Consolas", font_size=size, color=color,
-                line_spacing=.6, disable_ligatures=True)
+def code(value, size=22, color=INK, width=None, height=None):
+    lines = [r'\texttt{' + tex_text(line).replace(' ', r'\ ') + '}' for line in value.split('\n')]
+    text = lines[0] if len(lines) == 1 else r'\begin{tabular}{@{}l@{}}' + r'\\'.join(lines) + r'\end{tabular}'
+    label = Tex(text, font_size=size*1.2, color=color)
+    panel = RoundedRectangle(width=width or label.width+.42, height=height or label.height+.30,
+                             corner_radius=.07, color=LINE, stroke_width=1,
+                             fill_color=PALE, fill_opacity=1).move_to(label)
+    assert label.width+.4 <= panel.width+.001 and label.height+.28 <= panel.height+.001
+    if width is not None:
+        left(label, panel.get_left()[0]+.22)
+    return VGroup(panel, label)
 
 
-def text_lines(lines, size=28, color=SUB):
-    # Shape one paragraph so every row shares a fixed typographic baseline step.
-    paragraph = T('\n'.join(lines), size, color)
-    rows, offset = VGroup(), 0
-    for line in lines:
-        rows.add(VGroup(*paragraph.chars[offset:offset+len(line)]))
-        offset += len(line)+1
-    return rows
+def baseline(mob):
+    return float(np.median([g.get_bottom()[1] for g in mob.family_members_with_points()]))
+
+
+def on_baseline(mob, y):
+    return mob.shift(UP*(y-baseline(mob)))
 
 
 def left(mob, x):
@@ -45,16 +60,16 @@ def left(mob, x):
 
 
 def label_baseline(mob, x, y):
-    # These row labels start with a capital or digit. Descenders elsewhere in
-    # the label must not move its baseline when centering the whole string.
-    return mob.shift(RIGHT*(x-mob.get_center()[0]) + UP*(y-mob.chars[0].get_bottom()[1]))
+    return on_baseline(mob.set_x(x), y)
 
 
 def gray(array, height, vmax=1):
     pixels = (np.clip(np.asarray(array) / vmax, 0, 1) * 255).astype(np.uint8)
     image = ImageMobject(np.repeat(pixels[..., None], 3, axis=-1))
     image.set_resampling_algorithm(RESAMPLING_ALGORITHMS["linear"])
-    return image.scale_to_fit_height(height)
+    image.scale_to_fit_height(height)
+    frame = Rectangle(width=image.width,height=image.height,color=LINE,stroke_width=1).move_to(image)
+    return Group(image,frame)
 
 
 def safe(mob):
@@ -118,17 +133,16 @@ class DiffCTIntro(Scene):
         self.caption = None
 
     def heading(self, number, title):
-        header = [left(T(title,36),-6.25).set_y(3.14),
-                  T(f'{number:02d} / DIFFCT 2.0',20,GREEN).move_to([5.35,3.13,0])]
-        assert header[0].get_right()[0]+.2 < header[1].get_left()[0]
-        for item in header: safe(item)
+        header = [on_baseline(left(T(f'{number:02d}',22,GREEN),-6.25),3.17),
+                  on_baseline(left(T(CHAPTERS[number-1],36),-5.67),3.17)]
         if self.divider is None:
-            self.divider = Line([-6.25,2.72,0],[6.25,2.72,0],color=LINE,stroke_width=1)
+            self.divider = Line([-6.25,-3.77,0],[6.25,-3.77,0],color=LINE,stroke_width=2)
             header.append(self.divider)
+        header.append(Line([-6.25,-3.77,0],[-6.25+12.5*number/5,-3.77,0],color=GREEN,stroke_width=2))
         self.pending.extend(header)
 
     def note(self, value):
-        new = T(value,24,SUB).move_to(DOWN*3.34)
+        new = on_baseline(T(value,24,SUB).set_x(0),-3.34)
         safe(new)
         if self.outgoing:
             self.pending.append(new)
@@ -173,16 +187,24 @@ class DiffCTIntro(Scene):
     def intro(self):
         self.mark('intro_start')
         turn = ValueTracker(0)
-        walnut = self.walnut(6.1, [-3.5, .35, 0], turn)
+        walnut = self.walnut(3.3, [0, .05, 0], turn)
         self.show(walnut, duration=1)
-        name = left(T('diffct', 80), .2).set_y(1.55)
-        version = T('2.0', 28, GREEN).next_to(name, RIGHT, buff=.3).align_to(name, UP)
-        self.show(name, version)
-        self.show(left(T('Differentiable CT,\nbuilt on PyTorch.', 36), .25).set_y(.15))
-        details = text_lines(['Any trajectory', 'Geometry gradients', 'One GPU to many nodes'])
-        left(details, .25).set_y(-1.45)
+        name = T('diffct', 72).move_to([0,2.65,0])
+        version = T('2.0', 24, GREEN).next_to(name, RIGHT, buff=.22).align_to(name, UP)
+        brand = VGroup(name, version)
+        self.show(brand)
+        self.show(T('Differentiable CT, built on PyTorch.', 28).move_to([0, 1.78, 0]))
+        details = VGroup()
+        for i,title in enumerate(CHAPTERS):
+            x = (i-1)*3.65 if i<3 else (i-3.5)*3.65
+            y = -2.23 if i<3 else -2.88
+            chip = RoundedRectangle(width=3.4,height=.48,corner_radius=.06,
+                                    color=LINE,stroke_width=1,fill_color=PALE,fill_opacity=.55).move_to([x,y,0])
+            label = VGroup(T(f'{i+1:02d}',20,GREEN),T(title,20)).arrange(RIGHT,buff=.14).move_to(chip)
+            assert label.width+.2<chip.width
+            details.add(VGroup(chip,label))
         self.show(details)
-        self.show(T('Measured walnut · 3D surface from CT', 20, SUB).move_to([-3.6,-2.8,0]))
+        self.show(T('Measured walnut · 3D surface from CT', 20, SUB).move_to([0,-3.48,0]))
         self.mark('intro_full')
         self.play(turn.animate.set_value(180), run_time=5, rate_func=linear)
         self.reset()
@@ -191,8 +213,13 @@ class DiffCTIntro(Scene):
         self.mark('trajectory_start')
         self.heading(1, 'One object. Any trajectory.')
         kinds = ['Circular','Helical','Saddle','Sinusoidal','Per-view poses']
-        labels = text_lines(kinds)
-        left(labels,1.3).set_y(.85)
+        labels = VGroup()
+        swatches = VGroup()
+        for i, kind in enumerate(kinds):
+            row = on_baseline(left(T(kind,24,SUB),1.3),1.37-i*.56)
+            labels.add(row)
+            swatches.add(Line([.65,row.get_center()[1],0],[1.08,row.get_center()[1],0],
+                              color=SERIES[i],stroke_width=3))
         samples=np.linspace(0,1,121)
         def pose(t):
             a=TAU*t
@@ -214,16 +241,18 @@ class DiffCTIntro(Scene):
             else:
                 source=orbit(kinds[i],phase.get_value())
             discrete=i==4 and a>.999
-            return renderer.draw(points[::3] if discrete else points,source,discrete=discrete)
-        diagram=ImageMobject(diagram_frame()).scale_to_fit_width(6.72).move_to([-2.85,-.1,0])
-        self.show(diagram,labels)
+            return renderer.draw(points[::3] if discrete else points,source,discrete=discrete,
+                                 color=np.array(ManimColor(SERIES[i]).to_rgb())*255)
+        diagram=ImageMobject(diagram_frame()).scale_to_fit_width(6.0).move_to([-3.15,-.1,0])
+        self.show(diagram,labels,swatches)
         diagram.add_updater(lambda image: setattr(image,'pixel_array',np.dstack([
             diagram_frame(),np.full((renderer.height,renderer.width),255,dtype=np.uint8)])))
-        self.show(T('Source  •',20,GREEN).move_to([-5.2,2.4,0]),
-                  T('Flat detector',20,SUB).move_to([-.6,2.4,0]))
+        self.show(T('Source  •',20,WARM).move_to([-4.65,2.12,0]),
+                  T('Flat detector',20,SUB).move_to([-1.65,2.12,0]),
+                  T('Trajectory',20,SUB).move_to([3.15,2.12,0]))
         self.note('Each view has a source, a detector centre and detector axes')
         for i,kind in enumerate(kinds):
-            animations=[labels[i].animate.set_color(GREEN)]
+            animations=[labels[i].animate.set_color(SERIES[i])]
             if i:
                 state['previous']=paths[i-1]
                 state['start']=orbit(kinds[i-1],1)
@@ -233,12 +262,10 @@ class DiffCTIntro(Scene):
             self.play(phase.animate.set_value(1),run_time=2.4,rate_func=linear)
             self.mark('trajectory_'+kind)
         diagram.clear_updaters()
-        api=VGroup(code('traj = (source, centre, u, v)',22),
-                   code('A = Projector(traj,',22,GREEN),
-                   code('    (D, H, W), (U, V))',22,GREEN)).arrange(DOWN,aligned_edge=LEFT,buff=.18)
-        left(api,1.3).set_y(-1.75)
+        api=code('traj = (source, centre, u, v)\nA = Projector(traj,\n    (D, H, W), (U, V))',20,GREEN,width=5.4,height=1.22)
+        api.move_to([3.15,-2.04,0])
         self.show(api)
-        self.show(T('Scan geometry schematic',20,SUB).move_to([-2.95,-2.65,0]))
+        self.show(T('Scan geometry schematic',20,SUB).move_to([-3.15,-2.65,0]))
         self.note('The same Projector interface accepts every list of per-view poses')
         self.wait(2.1)
         self.reset()
@@ -252,14 +279,14 @@ class DiffCTIntro(Scene):
         sino=gray(data['sinogram'],2.7,float(data['sinogram'].max())).stretch_to_fit_width(2.7).move_to([4.45,.75,0])
         self.show(volume,T('Volume x',28).move_to([-4.45,-.95,0]),illustration)
         forward=Arrow([-2.8,1.35,0],[2.8,1.35,0],buff=0,color=GREEN,stroke_width=3)
-        adjoint=Arrow([2.8,.25,0],[-2.8,.25,0],buff=0,color=INK,stroke_width=3)
+        adjoint=Arrow([2.8,.25,0],[-2.8,.25,0],buff=0,color=WARM,stroke_width=3)
         self.play(GrowArrow(forward),FadeIn(code('A.project(x)',22,GREEN).move_to([0,1.8,0])),run_time=.8)
         self.show(sino,T('Sinogram y',28).move_to([4.45,-.95,0]))
         self.note('Siddon ray tracing sums physical path lengths through the volume')
         projection_formula=MathTex(r'y_i=\sum_k x_k\,\ell_{ik}',font_size=36,color=INK).move_to([0,-1.45,0])
         self.show(projection_formula)
         self.wait(1.5)
-        self.play(GrowArrow(adjoint),FadeIn(code('A.backproject(y)',22).move_to([0,-.2,0])),run_time=.8)
+        self.play(GrowArrow(adjoint),FadeIn(code('A.backproject(y)',22,WARM).move_to([0,-.2,0])),run_time=.8)
         self.note('The matched adjoint uses the same ray traversal; it is not an inverse')
         equation=MathTex(r'\langle Ax,y\rangle = \langle x,A^{\mathsf T}y\rangle',font_size=36,color=INK).move_to([0,-1.45,0])
         self.play(Succession(FadeOut(projection_formula),FadeIn(equation)),run_time=.7)
@@ -320,26 +347,27 @@ class DiffCTIntro(Scene):
         self.mark('multigpu_start')
         self.heading(4,'Distribute views, keep the volume')
         self.note('Each GPU holds the full volume; projection views are partitioned')
-        blocks=VGroup(*[Rectangle(width=.25,height=.4,stroke_width=0,fill_color=GREEN,
-                                   fill_opacity=.5+.5*(i%4)/3) for i in range(32)]).arrange(RIGHT,buff=.06).move_to([0,1.85,0])
-        self.show(blocks,T('Projection views',24,SUB).move_to([0,2.36,0]))
+        blocks=VGroup(*[Rectangle(width=.25,height=.4,stroke_width=0,fill_color=GPU_COLORS[(i//4)%4],
+                                   fill_opacity=.85) for i in range(32)]).arrange(RIGHT,buff=.06).move_to([0,1.85,0])
+        views = T('Projection views',24,SUB).move_to([0,2.4,0])
+        self.show(blocks,views)
         nodes=VGroup();gpu_centres=[]
-        for node,x in enumerate([-3.25,3.25]):
+        for node,x in enumerate([-3.15,3.15]):
             gpus=VGroup()
             for gpu in range(4):
-                p=np.array([x+(gpu-1.5)*1.13,-.1,0]);gpu_centres.append(p)
-                frame=RoundedRectangle(width=1.02,height=1.35,corner_radius=.08,color=LINE,stroke_width=1.5,fill_color=PALE,fill_opacity=.45).move_to(p)
+                p=np.array([x+(gpu-1.5)*1.13,.15,0]);gpu_centres.append(p)
+                frame=RoundedRectangle(width=1.02,height=1.35,corner_radius=.08,color=GPU_COLORS[gpu],stroke_width=1.1,fill_color=PALE,fill_opacity=1).move_to(p)
                 label=T(f'GPU {gpu}',20,SUB).move_to(p+UP*.4)
                 # Keep GPU identifiers readable while view blocks enter the card.
-                label.add_background_rectangle(color=interpolate_color(ManimColor(BG),ManimColor(PALE),.45),opacity=1,buff=.025)
+                label.add_background_rectangle(color=PALE,opacity=1,buff=.025)
                 label.set_z_index(2)
                 # Every GPU visibly receives the same volume icon.
-                cube=Cube(side_length=.25,fill_color=GREEN,fill_opacity=.15,stroke_color=GREEN,stroke_width=1)
+                cube=Cube(side_length=.25,fill_color=GPU_COLORS[gpu],fill_opacity=.15,stroke_color=GPU_COLORS[gpu],stroke_width=1)
                 cube.rotate(PI/6,axis=RIGHT).rotate(PI/5,axis=UP).move_to(p+DOWN*.1)
                 gpus.add(VGroup(frame,label,cube))
-            label=T(f'Node {node+1}',28).move_to([x,-1.03,0])
+            label=T(f'Node {node+1}',28).move_to([x,1.23,0])
             nodes.add(VGroup(gpus,label))
-        self.show(nodes[0])
+        self.show(nodes[0][0])
         def move_groups(start,end):
             result=[]
             for g in range(start,end):
@@ -347,15 +375,18 @@ class DiffCTIntro(Scene):
                 target.move_to(gpu_centres[g]+DOWN*.44)
                 result.append(Transform(group,target))
             return result
-        one=code('Projector(..., devices=[0, 1, 2, 3])',22,GREEN).move_to([-3.25,-1.65,0])
-        self.play(*move_groups(0,4),FadeIn(one),run_time=1.4)
+        one=code('Projector(...,\n    devices=[0, 1, 2, 3])',20,GREEN,width=5.4,height=1.12).move_to([-3.15,-1.55,0])
+        self.play(*move_groups(0,4),run_time=1.4)
+        self.show(nodes[0][1],one,duration=.4)
         self.wait(1.1)
-        self.show(nodes[1])
-        link=Line([-1,.0,0],[1,.0,0],color=GREEN,stroke_width=2)
+        self.show(nodes[1][0])
+        link=Line([-.92,.15,0],[.92,.15,0],color=GREEN,stroke_width=2)
         link_label=T('NCCL',20,GREEN).next_to(link,UP,buff=.15)
-        self.play(Create(link),FadeIn(link_label),*move_groups(4,8),run_time=1.4)
-        many=VGroup(code('torchrun ...',22,GREEN),code('Projector(..., distributed=True)',22)).arrange(DOWN,buff=.17).move_to([3.25,-1.75,0])
-        self.show(many)
+        self.play(Create(link),FadeIn(link_label),FadeOut(views),*move_groups(4,8),run_time=1.4)
+        many=code('torchrun ...\nProjector(..., distributed=True)',20,GREEN,width=5.4,height=1.12).move_to([3.15,-1.55,0])
+        assert np.allclose(one[0].get_center(),[-3.15,-1.55,0])
+        assert np.allclose(many[0].get_center(),[3.15,-1.55,0])
+        self.show(nodes[1][1],many)
         self.note('One process with several GPUs, or one process per GPU across nodes')
         self.mark('multigpu_distribution')
         self.wait(2.1)
@@ -423,13 +454,13 @@ class DiffCTIntro(Scene):
             self.outgoing.append(self.divider)
             self.divider=None
         turn=ValueTracker(0)
-        walnut=self.walnut(5.8,[3.7,.2,0],turn)
-        self.show(walnut,left(T('diffct',80),-5.85).set_y(1.65))
-        self.show(left(T('From your geometry\nto your reconstruction.',36,SUB),-5.8).set_y(.32))
-        self.show(left(code('pip install "diffct[cu12]"',22,GREEN),-5.8).set_y(-1.1),
-                  left(T('Install PyTorch first · cu13 extra also available',20,SUB),-5.8).set_y(-1.66))
-        self.show(left(T('sypsyp97.github.io/diffct',24),-5.8).set_y(-2.38),
-                  left(T('github.com/sypsyp97/diffct',24,SUB),-5.8).set_y(-2.87))
+        walnut=self.walnut(3.3,[0,.05,0],turn)
+        self.show(walnut,T('diffct',72).move_to([0,2.65,0]))
+        self.show(T('From your geometry to your reconstruction.',28,SUB).move_to([0,1.78,0]))
+        self.show(code('pip install "diffct[cu12]"',22,GREEN).move_to([0,-1.8,0]),
+                  T('Install PyTorch first · cu13 extra also available',20,SUB).move_to([0,-2.36,0]))
+        self.show(T('sypsyp97.github.io/diffct',24).move_to([0,-2.94,0]),
+                  T('github.com/sypsyp97/diffct',24,SUB).move_to([0,-3.43,0]))
         self.mark('ending_full')
         self.play(turn.animate.set_value(180),run_time=5.5,rate_func=linear)
         walnut.clear_updaters()

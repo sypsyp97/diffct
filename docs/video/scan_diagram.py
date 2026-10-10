@@ -6,10 +6,10 @@ increases toward the viewer. No front/back decision is made from object centres.
 import numpy as np
 from PIL import Image
 
-BG = np.array([247.,247.,242.])
-GREEN = np.array([40.,118.,92.])
-GREY = np.array([95.,107.,100.])
-LIGHT = np.array([201.,208.,201.])
+BG = np.array([16.,24.,32.])
+GREEN = np.array([105.,197.,205.])
+GREY = np.array([171.,185.,198.])
+LIGHT = np.array([59.,80.,96.])
 
 
 class ScanDiagram:
@@ -77,14 +77,14 @@ class ScanDiagram:
         inside=(u>=0)&(v>=0)&(w>=0)
         self.paint(sl,u*a[2]+v*b[2]+w*c[2],inside.astype(float),LIGHT,opacity)
 
-    def dot(self, point, radius=.045):
+    def dot(self, point, radius=.045, color=GREEN):
         p=self.project(point);r=radius*self.width/(2*self.extent[0]);patch=self.patch(p[None],r+1)
         if patch is None:return
         sl,x,y=patch;distance=np.hypot(x-p[0],y-p[1])
         depth=p[2]+np.sqrt(np.maximum(radius**2-(distance*2*self.extent[0]/self.width)**2,0))
-        self.paint(sl,depth,np.clip(r+.5-distance,0,1),GREEN)
+        self.paint(sl,depth,np.clip(r+.5-distance,0,1),color)
 
-    def draw(self, points, source, discrete=False, strength=1):
+    def draw(self, points, source, discrete=False, strength=1, color=GREEN):
         self.clear()
         corners=[np.array([x,y,z]) for x in (-1,1) for y in (-1,1) for z in (-1,1)]
         for i,a in enumerate(corners):
@@ -97,7 +97,7 @@ class ScanDiagram:
         # Detector face, lines and walnut participate in the same depth test.
         self.triangle(cs[[0,1,2]],opacity=.28*strength)
         self.triangle(cs[[0,2,3]],opacity=.28*strength)
-        for q in cs:self.line(source,q,width=1.25,opacity=.44*strength)
+        for q in cs:self.line(source,q,color=color,width=1.25,opacity=.44*strength)
         edge_bias=self.basis[2]*.015  # one raster-pixel depth bias avoids coplanar edge z-fighting
         for a,b in zip(cs,np.roll(cs,-1,axis=0)):self.line(a+edge_bias,b+edge_bias,GREY,width=1.8,opacity=strength)
         for axis in (u,v):
@@ -108,8 +108,8 @@ class ScanDiagram:
                 wing=tip-.10*axis+side*.04*np.cross(radial,axis)
                 self.line(tip+bias,wing+bias,GREY,width=2,opacity=strength)
         if discrete:
-            for p in points:self.dot(p)
+            for p in points:self.dot(p,color=color)
         else:
-            for a,b in zip(points,points[1:]):self.line(a,b,width=2.7,opacity=.95*strength)
-        self.dot(source,.067)
+            for a,b in zip(points,points[1:]):self.line(a,b,color=color,width=2.7,opacity=.95*strength)
+        self.dot(source,.067,color=np.array([231.,186.,123.]))
         return np.clip(self.rgb,0,255).astype(np.uint8)

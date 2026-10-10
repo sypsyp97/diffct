@@ -1,7 +1,9 @@
 # diffct 2.0 introduction
 
-The film preserves the upstream feature story while using a restrained light
-palette, readable sans-serif type and green emphasis. The measured walnut is
+The film preserves the upstream dark, serif presentation: LaTeX typography,
+numbered chapters, a thin progress rule, framed CT images and monospace code
+cards. The revised palette is blue-black, warm ivory, cyan and amber, with muted
+blue/lavender/sage for trajectory and GPU identification. The measured walnut is
 present throughout: a rotating 3D CT surface opens/closes the film, the scan rig
 orbits that surface, and the final comparison shows eight reconstruction slices.
 
@@ -86,14 +88,26 @@ reconstruction displays and the surface-rendering transformations described abov
 ## Review refinements
 
 - Chapter transitions fade the outgoing composition away before introducing the
-  next one. Titles and formulas never overlap or splice together; the divider
-  persists. Captions and replacement equations also exit before the next enters.
+  next one. Titles and formulas never overlap or splice together; the progress
+  track persists. Captions and replacement equations also exit before the next enters.
   Trajectory curves and source positions interpolate between scan types.
-- Ordinary text uses Segoe UI with a consistent 20 / 24 / 28 / 36 point hierarchy
-  and an 80 point wordmark. Lists are shaped as paragraphs with equal baseline
-  spacing. Code uses Consolas at 22 points; ordinary labels do not use TeX.
-- Projection, adjoint identity, loss, gradient and angular error use LaTeX
-  with sans-serif math to fit the surrounding text.
+- Text returns to upstream's `Tex` and `MathTex` rendering rather than Pango
+  `Text`. The original Latin Modern serif/monospace family handles kerning and
+  ligatures in LaTeX. The scene's 20 / 24 / 28 / 36 typography scale maps to
+  25 / 30 / 35 / 45 TeX points; code cards use 24 or 26.4 points. List, table and caption
+  rows share baselines using the upstream baseline helper. Code spaces are
+  explicitly preserved in TeX. No per-character tracking or system font fallback
+  is used. This also avoids the old small-size Pango spacing path documented in
+  [Manim's 0.22 release notes](https://docs.manim.community/en/stable/changelog/0.22.0-changelog.html).
+- Opening and ending share a centered title, subtitle and walnut, with identical
+  positions and type sizes. The opening chapter map uses the upstream centered
+  three-plus-two arrangement. Trajectory content follows equal-width columns.
+  GPU nodes use mirrored centers and equal-size two-line code cards. Node titles
+  enter after the blocks arrive, so the moving views do not cross visible text;
+  the view heading exits when its blocks have finished distributing.
+- The opening restores the five-chapter overview, the scan rig keeps an amber
+  source marker, and trajectory/GPU colors identify the active path or partition.
+  Projection and adjoint use cyan and amber with a shared serif formula style.
 - TV is labelled **TV-regularized**, with **Adam** on the optimizer/iteration line.
   All four methods share the same title color and typography. The comparison
   remains on screen through attribution and then transitions to the ending;
