@@ -16,11 +16,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/diffct_intro.gif?v=e0092c4" width="100%" alt="diffct 动图：投影、正弦图、轨迹、多卡切分、重建和几何标定">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/edf7c52227ec2cc14c988918faa7313f8ee0fe03/docs/assets/diffct_intro.gif" width="100%" alt="diffct 动图：投影、正弦图、轨迹、多卡切分、重建和几何标定">
 </p>
 
 <p align="center">
-  <a href="docs/assets/diffct_intro.mp4?v=e0092c4">完整视频（MP4）</a> ·
+  <a href="https://github.com/sypsyp97/diffct/blob/edf7c52227ec2cc14c988918faa7313f8ee0fe03/docs/assets/diffct_intro.mp4">完整视频（MP4）</a> ·
   <a href="https://www.preprints.org/manuscript/202605.1446/v1">技术报告</a> ·
   <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
 </p>
