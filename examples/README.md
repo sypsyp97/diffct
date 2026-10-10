@@ -58,6 +58,8 @@ scripts to see their own options.
 | `quickstart.py` | Projector basics for parallel, fan and cone beams: projection, backprojection, adjoint check, image and geometry gradients. | 1 GPU |
 | `curved_detector.py` | Native cylindrical cone detector: projection, matched backprojection, adjoint check and volume/surface gradients. | 1 GPU |
 | `chunked_reconstruction.py` | CPU-backed CGLS with automatically sized CUDA tiles; optional `--chunk-shape` and `--view-chunk-size`; reports residual and peak CUDA tensor allocation. | 1 GPU, `--devices` in one process |
+| `disk_reconstruction.py` | Blockwise disk-backed CGLS, native flat/cylindrical/saddle geometry, rank-local checkpoints; `--partition space` gives fixed volume ownership. Synthetic data is generated blockwise by default. | 1 GPU, `--devices`, torchrun |
+| `benchmark_execution.py` | Real schedule and z-slab/3D-block comparisons; measured copy payloads, pilot metadata, elapsed time and CUDA tensor peaks. | 1 GPU, `--devices` |
 | `analytical_reconstruction.py` | Parallel-beam FBP, fan-beam FBP and cone-beam FDK. `--window` selects the ramp-filter window. | 1 GPU |
 | `iterative_reconstruction.py` | Cone-beam reconstruction with `--trajectory circular`, `helical`, `saddle` or `sinusoidal`. CGLS, SIRT and TV-regularized nonnegative least squares (Adam through autograd). FDK baseline outside distributed mode. `--noise` adds Gaussian noise. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `geometry_calibration.py` | Recovers per-view angle errors and a detector shift from projections, using geometry gradients. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
@@ -74,6 +76,24 @@ below. Other scripts support only the modes in the index. Use the command that
 matches your allocation. These existing reconstruction/calibration scripts use
 CUDA-resident volumes. For CPU-backed large volumes use `chunked_reconstruction.py`;
 its automatic spatial tiles and view batches bound GPU working buffers.
+
+For data and solver state exceeding host RAM, use a new disk run directory:
+
+```bash
+python examples/disk_reconstruction.py --output disk-run
+python examples/disk_reconstruction.py --surface saddle --output saddle-run
+python -m torch.distributed.run --standalone --nproc-per-node=2 \
+    examples/disk_reconstruction.py --partition space --output spatial-run
+```
+
+Space mode holds only each rank's contiguous volume slab and its `x,s,p`
+states. Ray batches are replicated; norms count them once. Every rank writes
+its own output, workspace and checkpoint directory. `--measurements` accepts
+an existing read-only .npy for the same scan; views mode requires local ray
+shards and permits `{rank}` in paths. A checkpoint resumes with the same scan,
+measurements, partition and ownership. Disk files can still occupy OS cache.
+Use one process per node controlling several GPUs when avoiding replicated
+host state in views mode, and one process per GPU for true spatial ownership.
 
 **1. One GPU**
 

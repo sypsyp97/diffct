@@ -10,6 +10,10 @@ The scripts in the repository ``examples/`` directory show how to use
   backprojection, adjoint check and volume/surface gradients on a circular scan.
 - ``chunked_reconstruction.py``: CPU-backed CGLS with automatic CUDA tiles,
   optional manual limits and measured peak allocation; see :doc:`chunking`.
+- ``disk_reconstruction.py``: blockwise disk CGLS, optional native curves,
+  rank-owned spatial slabs and completed-iteration checkpoints.
+- ``benchmark_execution.py``: schedule and slab/block comparisons with actual
+  copy payloads, pilot metadata, timing and CUDA tensor peaks.
 - ``analytical_reconstruction.py``: parallel-beam FBP, fan-beam FBP and cone-beam
   FDK, with a choice of ramp-filter window.
 - ``iterative_reconstruction.py``: 3D cone-beam CGLS, SIRT and TV reconstruction

@@ -15,6 +15,8 @@ from .projectors import (
 )
 
 from .operators import Projector
+from .storage import TensorStore, NpyStore
+from .surfaces import ParameterizedSurface
 
 from .geometry import (
     circular_trajectory_3d,
@@ -53,6 +55,9 @@ __version__ = '2.1.0'
 
 __all__ = [
     'Projector',
+    'TensorStore',
+    'NpyStore',
+    'ParameterizedSurface',
     'ParallelProjectorFunction',
     'ParallelBackprojectorFunction',
     'FanProjectorFunction',

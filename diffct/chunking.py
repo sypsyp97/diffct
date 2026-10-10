@@ -12,6 +12,21 @@ class _ChunkPlan:
     chunk_shape: tuple
     view_chunk_size: int
     devices: tuple
+    detector_chunk_shape: tuple = None
+    gpu_budget_bytes: int = 0
+    allocation_limit: int = (1 << 63) - 1
+    schedule: str = "spatial"
+    window_size: int = 1
+    slots: int = 1
+    estimated_gpu_bytes: int = 0
+    fallback_reason: str = ""
+    foreign_output: bool = False
+
+
+def _pixel_tiles(shape, chunk_shape):
+    for starts in product(*(range(0, size, part) for size, part in zip(shape, chunk_shape))):
+        clipped = tuple(min(part, size - start) for size, start, part in zip(shape, starts, chunk_shape))
+        yield tuple(slice(start, start + size) for start, size in zip(starts, clipped)), clipped
 
 
 def _memory_budget(device):
@@ -46,8 +61,8 @@ def _working_set_bytes(beam, shape, views, detector_shape, surface):
     rays = views * math.prod(detector_shape)
     geometry = (rank * (views + rays) if surface
                 else rank * (4 if beam == "cone" else 3) * views)
-    # Cone permuted layout and its returned tensor can coexist with staging.
-    # Two ray buffers cover native output/cotangent and transfer scratch; two
+    # A resident native tile, staging and completed cone layout can coexist.
+    # Two ray buffers cover reusable output/cotangent and transfer scratch; two
     # geometry buffers cover staged values and their first-order VJP/reduction.
     tile_buffers = 3 if beam == "cone" else 2
     return 4 * (tile_buffers * voxels + 2 * rays + 2 * geometry)
@@ -59,6 +74,37 @@ def _largest_buffer_bytes(beam, shape, views, detector_shape, surface):
     geometry = (rank * (views + rays) if surface
                 else rank * (4 if beam == "cone" else 3) * views)
     return 4 * max(math.prod(shape), rays, geometry)
+
+
+def _allocation_bytes(elements):
+    size = 4 * elements
+    if torch.cuda.get_allocator_backend() == "native":
+        return (size + 511) // 512 * 512
+    return size
+
+
+def _pipeline_bytes(beam, shape, views, pixels, points, *, slots=1, retained=1,
+                    geometry_grad=False, peers=False, ray_accumulators=0):
+    """Live typed allocations, including native allocator rounding per buffer."""
+    rank, rays = len(shape), views * math.prod(pixels)
+    native = _allocation_bytes(math.prod(shape))
+    # Two producer epochs permit the preceding native/layout/output storage
+    # to stay in flight while the next retained tile window queues work.
+    tile = native * (slots * (retained + int(beam == "cone")) + int(peers))
+    sizes = ((views * rank, rays * rank) if points
+             else (views * rank,) * (4 if beam == "cone" else 3))
+    geometry = sum(_allocation_bytes(size) for size in sizes)
+    return (tile + slots * (_allocation_bytes(rays) + geometry)
+            + ray_accumulators * _allocation_bytes(rays) + (slots * geometry if geometry_grad else 0))
+
+
+def _host_geometry_bytes(beam, views, pixels, points):
+    rank = 3 if beam == "cone" else 2
+    if not points:
+        return 8 * 2 * rank * views * (4 if beam == "cone" else 3)
+    # Grids/offsets, world expressions and first-order cotangent/graph work.
+    # Arbitrary sampler internals and explicit parameter snapshots are separate.
+    return 8 * rank * (math.prod(pixels) * (1 + 6 * views) + 4 * views)
 
 
 def _tiles(shape, chunk_shape, spacing):

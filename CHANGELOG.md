@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Operation-specific automatic schedules and slab/block comparisons for
+  native projection and matched backprojection, with bounded CUDA pilots
+  and per-call execution/copy metadata.
+- Detector-pixel tiling and explicit `ParameterizedSurface` batches using
+  global pixel/view coordinates, saved parameter/frame values and local VJP
+  reduction. Legacy two-argument surface callbacks remain compatible.
+- Caller-owned numerical `project_into`/`backproject_into` outputs, tensor
+  block access and mapped `.npy` stores for data exceeding host RAM.
+- Distributed `partition="space"` with fixed volume slabs, ownership-aware
+  autograd/norms and disk CGLS state/checkpoints without full-volume gathering.
+- Independent CUDA tests and bounded formal protocol/ownership verification.
+
+### Changed
+
+- GPU backprojection accumulators now span all contributing view batches,
+  with final transfer after tile completion. Contiguous native volume layouts
+  and ray buffers are reused across batches.
+- Transfer execution uses bounded pinned slots, separate streams and events;
+  all extra staging/cached GPU buffers are included in capacity estimates.
+  Local GPU and NCCL reductions occur before completed-result downloads.
+- Example CGLS norms accumulate FP64 blocks and vector updates reuse buffers.
+  The disk example keeps all three volume states plus residual/projection state
+  blockwise and retains `q` until the global `alpha` decision.
+
 ## [2.1.0] - 2026-10-10
 
 ### Added

@@ -1,26 +1,29 @@
 # Multiple GPUs and nodes
 
-`Projector` partitions views across GPUs/ranks. Spatial tiles and view batches
+By default, `Projector` partitions views across GPUs/ranks. Spatial tiles and view batches
 are selected automatically when data is CPU-backed or the estimated CUDA
 working set does not fit. Each GPU then holds a tile instead of a complete
 volume. Distributed mode stores each rank's sinogram shard; single-process
 multi-GPU mode gathers the full sinogram onto the input device.
 
-For a volume larger than one GPU, pass CPU arrays to `project()` and
-`backproject()`. Full volumes and iterative state remain replicated in host RAM
-across ranks. `volume_chunk_shape` and `view_chunk_size` optionally override the
+For a volume larger than one GPU, pass CPU arrays or use numerical block stores.
+In default `partition="views"` mode, tensor volumes and iterative state remain
+replicated across ranks. `volume_chunk_shape`, `view_chunk_size` and
+`detector_chunk_shape` optionally override the
 automatic limits; all ranks must use the same shapes and explicit settings.
 Automatic ranks agree on a common memory budget and collective schedule.
-NCCL sums CPU-backed outputs/gradients through bounded CUDA staging buffers.
+NCCL combines resident GPU results before their final host transfer. Gloo
+uses bounded CPU staging; user scalar NCCL reductions also need CUDA tensors.
 View ordering, empty ranks and the loss-scaling rules below still apply.
 
 In the single-process CPU path, the cards compute their view batches
 concurrently. Each card receives every volume tile, so host transfers limit the
 multi-GPU speedup.
 
-Ranks do not add memory capacity: every rank holds the complete volume and
-iterative state in host RAM. For a large volume, run one process per node with
-`devices=[...]` for its GPUs instead of one process per GPU.
+For replicated host state in views mode, one process per node controlling
+`devices=[...]` avoids a complete host volume/state copy per GPU process.
+Use `partition="space"` for fixed spatial ownership, described below, when
+capacity requires rank-local volumes and solver state.
 
 NCCL cannot reduce CPU tensors in your own solver or reporting code. Stage
 scalar reductions on the rank's CUDA device, then copy the scalar back to CPU.
@@ -30,6 +33,67 @@ Install diffct as described in the [root README](https://github.com/sypsyp97/dif
 commands from the repository root. CUDA is required for projection and
 backprojection. The multi-process examples below also require PyTorch with
 NCCL support.
+
+## Fixed spatial ownership
+
+After process-group initialization, construct the same global scan on every rank:
+
+```python
+A = Projector(trajectory, (1024, 1024, 1024), detector_shape,
+              distributed=True, partition="space")
+local_volume = torch.zeros(A.volume_shape, device="cpu", requires_grad=True)
+replicated_rays = A.project(local_volume)
+local_adjoint = A.backproject(replicated_rays.detach())
+```
+
+`global_volume_shape` is the constructor shape. `volume_slice` gives global
+half-open ownership, balanced along the first tensor axis. `volume_shape`
+and `local_volume_shape` are the required local shape. `projection_shape`
+contains all global views, and `view_slice` covers them all. Empty owned slabs
+remain valid. Local tiles use the global voxel lattice, including the owned
+offset; a rank-local array is not recentered around the origin.
+
+Forward execution sums each slab's contributions to bounded ray batches;
+backprojection generates only the local slab and does not SUM volumes.
+All ranks issue matching collectives regardless of their local tile count.
+Local GPU sums and NCCL reductions happen before host output reads.
+First-order shared frame/surface gradients are summed after local pixel
+cotangents are reduced to parameter gradients. Metadata agreement validates
+partition, global shapes, scan settings and parameter shape/dtype/count.
+
+Ownership changes loss and norm counting:
+
+| Quantity | `partition="views"` | `partition="space"` |
+| --- | --- | --- |
+| Data term on `project()` | Sum local view losses; global mean uses global ray count | Identical replicated ray loss: divide by world size before backward |
+| Loss on `backproject()` | Replicated volume loss: divide by world size | Sum losses on owned local slabs |
+| Volume-only regularizer | Full replicated term on every rank | Each rank evaluates its owned contribution; boundary-coupled regularizers need their own halo exchange |
+| CGLS volume norm | Count the replicated state once | SUM owned slab norms |
+| CGLS ray norm | SUM local view norms | Count the replicated rays once |
+
+For reporting, reduce detached scalars with the same ownership convention.
+Every rank makes the same calls, even with empty views or empty slabs. Do not
+add a DDP reduction to gradients already summed by the operator. Existing
+SIRT/TV/calibration examples use views mode; this change does not implement
+spatial halos for their regularizers.
+
+Disk-backed CGLS keeps all `x,s,p` volume states plus `r,q` ray states in local
+stores. It retains `q` until the global `alpha` is known and vector updates
+finish. Checkpoints write each rank's completed state and small ownership
+metadata without gathering a full volume:
+
+```bash
+torchrun --standalone --nproc-per-node=2 examples/disk_reconstruction.py \
+    --partition space --output spatial-run
+```
+
+The default example generates synthetic data blockwise. Supply the same scan
+and measurements for resume, using each rank's completed checkpoint directory.
+Choose one process per GPU for this spatial mode, and stream within each
+owned slab if it exceeds its GPU budget. The full solver working set includes
+all three volume states, ray states, geometry and pipeline buffers; fitting
+one volume alone does not establish capacity. View-by-space process grids are
+a separate extension. Multi-node capacity/runtime requires hardware validation.
 
 ## One process, multiple GPUs
 
