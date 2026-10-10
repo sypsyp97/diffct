@@ -6,9 +6,9 @@
 |---|---|---|
 | Acquisition | 2D parallel/fan and 3D cone beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
 | Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives raise an error; surface samples are checked on every call |
-| Execution | CUDA, one-process multi-GPU, or distributed ranks across nodes | Kernels and outputs are float32; CPU geometry is allowed, CPU projection is not |
+| Execution | CUDA computation with CPU or CUDA data; one-process multi-GPU or distributed ranks | Outputs are float32 on the input device; CPU data uses streamed CUDA tiles |
 | Reconstruction | Matched adjoint plus separate FBP/FDK helpers | `backproject()` is not an inverse; FDK remains approximate and does not become exact for arbitrary scans |
-| Memory | Views split across GPUs/ranks | Every participating GPU needs a full volume; local multi-GPU also gathers the full sinogram on the input device |
+| Memory | Automatic spatial tiles and view batches; views split across GPUs/ranks | Full arrays and gradients still need host RAM for out-of-core execution; caller-owned CUDA inputs/outputs still occupy their full size |
 
 Analytical helpers use flat detectors. Analytical fan/cone backprojection infers the physical isocenter from source
 lines along detector normals. For non-circular or ambiguous geometry (including
@@ -85,9 +85,10 @@ The callback receives centred physical float64 parameter grids on CPU:
 It returns a finite floating-point PyTorch tensor of local `(u, v, n)` offsets,
 with shape `(U, V, 3)` shared by all views, or `(views, U, V, 3)` for a separate
 surface in each view. Here `views` is the total trajectory view count, including
-in distributed mode; the operator handles view sharding. It may return offsets
-on CPU or CUDA; move the grids to your parameters' device inside the callback
-when needed. The world position is
+in distributed mode; the operator handles view sharding. Streamed calls require
+CPU offsets. A fitting automatic CUDA full-volume path also accepts CUDA offsets;
+move the grids to your parameters' device inside the callback when needed.
+The world position is
 `center + offset_u * det_u + offset_v * det_v + offset_n * cross(det_u, det_v)`.
 The normal's sign follows the supplied frame. In the generated frame above it
 points away from the source, so the example uses negative normal offsets and
@@ -119,6 +120,52 @@ line integrals onto a virtual flat detector along matching rays; this adds
 interpolation error and requires ray coverage. That conversion is outside
 the core operator.
 
+## Chunked execution
+
+`Projector` accepts floating CPU data by default. Projection and matched
+backprojection execute on CUDA while the full volume, sinogram and returned
+data gradients remain on the input device. Keep these arrays on CPU when they
+exceed GPU memory. CPU execution still requires a CUDA device.
+
+`volume_chunk_shape=None` (default) chooses an execution plan per call. CPU
+inputs always stream. CUDA inputs use the original full-volume path when a
+conservative additional working-set estimate fits each selected card and the
+output device; otherwise they stream. Memory is sized against the smallest
+participating budget, with 25% headroom for runtime allocations. Cone layout
+copies, projection batches, geometry/VJP buffers and collective staging count
+toward the estimate. Concurrent allocations can still cause an allocation
+error; available memory is not a reservation.
+PyTorch versions without the public memory-fraction getter expose only
+driver/allocator memory to this estimate; use explicit limits when setting a
+process ceiling on those versions.
+
+Manual overrides are `volume_chunk_shape=(H, W)` for 2D or `(D, H, W)` for cone
+beams, and `view_chunk_size=<positive integer>`. Spatial limits force streaming;
+a view limit alone also forces streamed batches. The automatic view batch is
+capped at 32 and can shrink to fit its geometry/projection buffers. Oversized
+spatial limits are clipped at the volume edge; nondivisible tails retain their
+global voxel positions. Explicit limits are not automatically made smaller.
+
+Streamed detector-surface callbacks must return CPU offsets, so complete
+per-view world positions are never expanded on CUDA. CUDA callbacks remain
+supported when an automatic CUDA full-volume path fits. CPU geometry snapshots
+keep data and first-order geometry backward consistent with the forward call,
+including later parameter changes. Geometry second derivatives remain
+unsupported. No cache or autograd state retains all streamed CUDA tiles.
+For bounded GPU residency, keep data, trajectory tensors and learnable surface
+parameters on CPU. CUDA geometry snapshots and CUDA intermediates created by a
+callback consume additional GPU memory outside the tile buffers.
+
+Each tile integrates a disjoint part of the original voxel grid. Forward
+contributions add; adjoint blocks accumulate across view batches. The
+cell-constant Siddon model and matched adjoint are preserved, with float32
+rounding differences from a changed summation order. Very small tiles cost more
+transfers and kernel launches. This API covers native projection and matched
+backprojection; analytical FBP/FDK helpers retain their existing memory path.
+
+See [the CPU-backed CGLS example](../examples/chunked_reconstruction.py), the
+[chunking guide](source/chunking.rst) and [distributed rules](DISTRIBUTED.md).
+
 ## Geometry gradients
 
 Trajectory tensors with `requires_grad=True` get gradients for the source,
@@ -142,14 +189,15 @@ Choose the execution mode by how you want to hold the projections:
 
 | Mode | Configuration | Projection ownership |
 |---|---|---|
-| One GPU | Default `Projector(...)` | Full sinogram on the input CUDA device |
-| One process, several GPUs | `devices=[0, 1, ...]` | Views computed on several GPUs, then full sinogram gathered on the input CUDA device |
+| One GPU | Default `Projector(...)` | Full sinogram on the input device |
+| One process, several GPUs | `devices=[0, 1, ...]` | Views computed on several GPUs, then full sinogram gathered on the input device |
 | One GPU per process, one or more nodes | `distributed=True` after process-group initialization | Rank-local sinogram with shape `A.projection_shape`, indexed by `A.view_slice` |
 
-All modes require the full volume on each participating GPU. Local multi-GPU
-execution also needs room for the full input/output sinogram on the caller's
-device, plus temporary copies; it does not pool memory. Distributed mode keeps
-projections sharded, while backprojection sums and replicates the full volume.
+CPU-backed arrays use bounded spatial tiles and view batches on each GPU.
+CUDA inputs/outputs occupy their complete size on the caller's device, and a
+fitting full-volume path may replicate the volume across GPUs. GPU memory is
+not pooled. Distributed mode keeps projections sharded, while backprojection
+sums and replicates the full volume on the input device, including CPU.
 
 **One process, several GPUs:**
 
@@ -203,8 +251,8 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
 - The kernels work in float32. In fan and cone beams, the source or the
   detector centre must be within 1e6 voxels of the volume centre in each view;
   both must be within 1e15 voxels. For surfaces these bounds apply to every
-  source/pixel pair. Geometry may be on CPU or CUDA, but volumes
-  and sinograms passed to the operator must be floating-point CUDA tensors.
+  source/pixel pair. Geometry and floating-point volume/sinogram inputs may be
+  on CPU or CUDA. CPU inputs use streamed CUDA computation.
   Ray positions are accurate to about 6e-8 times that nearer distance.
 
 **Gradient edge cases:**

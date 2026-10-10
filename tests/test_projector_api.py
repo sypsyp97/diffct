@@ -193,13 +193,19 @@ def test_distributed_mode_requires_an_initialized_process_group():
 
 
 @pytest.mark.cuda
-def test_projector_rejects_cpu_input_tensor():
+def test_projector_default_cpu_input_matches_cuda_forward_and_adjoint():
     _require_cuda()
     device = torch.device("cuda", torch.cuda.current_device())
     trajectory = tuple(t.to(device) for t in _cpu_parallel_trajectory(3))
     projector = Projector(trajectory, (6, 7), 5, beam="parallel")
-    with pytest.raises((RuntimeError, TypeError, ValueError)):
-        projector.project(torch.ones(6, 7))
+    image = torch.linspace(-.3, 1.1, 42, dtype=torch.float64).reshape(6, 7)
+    sino = torch.linspace(-.7, .9, 15, dtype=torch.float64).reshape(3, 5)
+    projected = projector.project(image)
+    back = projector.backproject(sino)
+    assert projected.device.type == back.device.type == "cpu"
+    assert projected.dtype == back.dtype == torch.float32
+    torch.testing.assert_close(projected, projector.project(image.to(device)).cpu(), rtol=4e-5, atol=5e-5)
+    torch.testing.assert_close(back, projector.backproject(sino.to(device)).cpu(), rtol=4e-5, atol=5e-5)
 
 
 @pytest.mark.parametrize("beam", ["parallel", "fan", "cone"])

@@ -46,7 +46,8 @@ To our knowledge, diffct is the only open-source GPU CT library that combines ar
 - **Arbitrary trajectories.** Each view has its own source, detector centre and detector axes. Circular, helical, saddle, sinusoidal, random and calibrated scans use the same code. Trajectory tensors with `requires_grad=True` receive geometry gradients for calibration.
 - **Curved detectors.** A `detector_surface(u, v)` callback defines each pixel's position for arc, cylindrical or other parameterized surfaces. Projection and matched backprojection support first-order surface gradients. See [the surface API](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#parameterized-detector-surfaces).
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
-- **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun and NCCL. Views are partitioned and the volume is replicated. Speedup depends on workload and communication costs.
+- **Large volumes.** CPU volumes and sinograms automatically stream spatial tiles and view batches through CUDA. Full arrays and data gradients stay on CPU; tile sizes follow the available device memory and can be overridden. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
+- **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun and NCCL. Views are partitioned. CPU-backed volumes stay in host RAM while GPUs compute tiles; distributed ranks retain replicated-volume semantics. Speedup depends on workload and communication costs.
 - **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak, shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP and FDK backprojection.
 
 Capabilities, limits and isocenter rules: [docs/REFERENCE.md](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#capabilities-and-limits).
@@ -114,6 +115,22 @@ loss.backward()                     # x.grad = A^T (A x - y)
 A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
 ```
 
+**Volumes larger than GPU memory.** Keep the arrays on CPU. The same calls use
+CUDA tiles automatically; CUDA inputs retain the full-volume path when its
+estimated working set fits. Explicit limits are optional:
+
+```python
+A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8)
+volume = torch.ones(A.volume_shape, device="cpu", requires_grad=True)
+sinogram = A.project(volume)                 # CPU output, CUDA computation
+sinogram.square().mean().backward()          # CPU volume.grad
+# Optional: volume_chunk_shape=(32, 64, 64), view_chunk_size=16
+```
+
+Run `python examples/chunked_reconstruction.py` for CPU-backed CGLS and measured
+CUDA allocation. Chunking preserves the Siddon model, with float32 summation
+differences; smaller blocks can increase transfer and launch overhead.
+
 ## Performance
 
 <p align="center">
@@ -166,7 +183,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 ## Examples
 
-`quickstart.py`, `curved_detector.py`, `analytical_reconstruction.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `analytical_reconstruction.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 

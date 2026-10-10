@@ -32,6 +32,11 @@ The partition proof assumes ordered, complete crossings. The quadrature proof as
 | World-point and arc-radius derivatives obey the chain rule, including a moving detector frame | PROOF: SymPy | Mathematical chain rule used by surface autograd | Missing normal/frame contributions in the model | PyTorch graph dispatch and derivatives at voxel edges |
 | Every tiny-grid basis gives the independent curved forward/adjoint matrix; explicit flat points reproduce the default branch | BOUNDED: CUDASIM | Native pixel-position branches of the parallel/fan/cone Siddon kernels | Ignored endpoints, wrong ray/pixel indices, unmatched adjoints | Callback sampling, hardware arithmetic and all trajectories |
 | Every pixel-coordinate VJP agrees with stable independent finite differences | BOUNDED: CUDASIM | Native pixel-position branches of geometry VJP kernels | Wrong endpoint-gradient units or routing | Source/ray-direction VJPs, frame/parameter chain rule, compiled CUDA and autograd |
+| Positive integer chunk limits give each cell one half-open owner; tile-centred coordinates recover the global cell and detector ray | PROOF: Z3 integers / SymPy | Mathematical partition and translation models used by streamed execution | Overlapping/missing cells and half-cell tile-origin errors in the model | Source equivalence, scheduler and floating-point translations |
+| Disjoint block forward maps have the assembled adjoint, including replicated rank SUM and an empty rank | PROOF: finite symbolic model | Four cells, three rays, two blocks and two nonempty/one empty view shards | Missing block embeddings or duplicated replicated losses in the model | Arbitrary distributed programs and real NCCL |
+| Cartesian tiles partition every cell and recover exact rational cell centres | BOUNDED: exhaustive rational arithmetic | Model extents 1..3, chunk limits 1..4, 2D/3D grids | Tail clipping and tensor/world order errors in the model | Production slice generator equivalence and all integer sizes |
+| Every tiny-grid block basis gives the independent full forward/adjoint matrix; boundaries and source-inside rays agree | BOUNDED: CUDASIM | Production Siddon kernels on shifted flat/curved blocks and batches of at most two views | Artificial tile boundary ownership, wrong translation/axis order and unmatched block adjoint | PyTorch scheduling, compiled CUDA, allocation bounds and larger domains |
+| Block entry/exit VJP terms sum to independent endpoint/source derivatives | BOUNDED: CUDASIM | Native pixel-position geometry VJP kernels over disjoint blocks | Missing cancellation of artificial boundaries | Frame/callback chain rule, all real-valued geometry and hardware arithmetic |
 
 ## Simulator domain
 
@@ -53,6 +58,25 @@ coordinate and require unchanged intersected cells and agreement between two
 finite-difference step sizes. Five exact symbolic checks cover the associated
 surface and chain-rule models. Shapes, spacings and tolerances are documented
 in the test module.
+
+`test_chunked_projector.py` adds 17 cases: three exact model checks and 14
+bounded checks. The Cartesian partition check enumerates 2D/3D extents 1..3,
+limits 1..4 and every cell using spacing 13/10. Production block matrices
+enumerate every image/sinogram basis for grids `(H,W)=(3,4)` and
+`(D,H,W)=(3,2,4)`, three views, three or `(2,2)` detector pixels, spacing 1.3,
+flat asymmetric tiles and per-view curved/coupled one-cell tiles. Three extra
+boundary cases cover internal faces/edges/corners, source-inside rays and
+misses. Three VJP cases sum block source/direction and pixel derivatives;
+float64 finite differences use two step sizes and unchanged intersected cells.
+Matrix comparisons use `rtol=4e-5, atol=5e-6`; VJPs use
+`rtol=4e-4, atol=4e-5`.
+
+These chunk checks verify mathematical models and actual low-level kernel
+bodies with independently assembled blocks. They do not prove the Python
+scheduler matches the model or establish GPU-memory bounds. The real CUDA
+tests in `tests/test_chunked_projector.py` separately check dispatch, autograd,
+saved geometry, automatic sizing and peak/staging bounds. Hardware-gated
+two-GPU/NCCL cases require a suitable host.
 
 Numba's [simulator documentation](https://nvidia.github.io/numba-cuda/user/simulator.html) describes its execution and limitations.
 The simulator executes Python kernel bodies—its arithmetic and scheduling do not establish the behavior of compiled GPU code.
@@ -103,3 +127,12 @@ numba-cuda 0.30.4 with `NUMBA_ENABLE_CUDASIM=1` and
 `FORMAL_REQUIRE_CUDASIM=1`. The simulator printed the existing
 `_PendingDeallocs` import error in the CUDA shutdown callback after pytest
 completed with exit code 0; the same warning occurred in the 202-case baseline.
+
+The chunking checks passed all 17 new cases on the same Windows runtime:
+3 PROOF and 14 BOUNDED, with no skips. The full run reported 248 passes and
+one failure in the existing
+`test_PROPERTY_open_angular_weights_nonnegative_and_total`: float32 reduction
+gave `0.9999997615814209`, outside its `1 +/- 2e-7` assertion. The same input
+reproduced on the detector-surface predecessor; summing its returned weights
+in float64 gave `0.9999999981373549`. The analytical implementation and that
+test are unchanged by the chunking feature.

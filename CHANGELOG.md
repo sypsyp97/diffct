@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Automatic CPU-backed spatial tiles and view batches for native `Projector`
+  projection, matched backprojection, data autograd/Hessians and first-order
+  geometry gradients. CUDA inputs retain the full-volume path when its estimated
+  working set fits. Optional `volume_chunk_shape` and `view_chunk_size` override
+  automatic limits; full CPU arrays are not staged on CUDA.
+- A CPU-backed CGLS example and independent chunk-boundary, CUDA memory and
+  formal partition/translation/adjoint checks.
 - `Projector(..., detector_surface=surface)` samples local parameterized surfaces
   into per-pixel world positions for native parallel, fan and cone projection
   and matched backprojection. Shared or per-view surfaces can contain trainable
