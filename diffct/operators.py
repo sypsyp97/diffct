@@ -161,10 +161,13 @@ def _all_reduce_copy(projector, tensor, plan=None):
     """Return a SUM over ranks of ``tensor`` (the tensor itself without ranks)."""
     if not (projector._distributed and projector.world_size > 1):
         return tensor
-    reduced = tensor.detach().clone(memory_format=torch.contiguous_format)
     if plan is not None:
+        # Streamed execution stages tiles from any device, so keep the reduced
+        # copy in host memory instead of a second full CUDA array.
+        reduced = tensor.detach().to(device="cpu", memory_format=torch.contiguous_format, copy=True)
         projector._reduce_streamed_(reduced, plan)
         return reduced
+    reduced = tensor.detach().clone(memory_format=torch.contiguous_format)
     with torch.cuda.device(reduced.device):
         torch.distributed.all_reduce(
             reduced, op=torch.distributed.ReduceOp.SUM, group=projector._process_group
@@ -288,8 +291,8 @@ class Projector:
     Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
     bounded by the chosen tile and view batch. Caller-owned CUDA data/results
     and CUDA work inside a supplied callback are outside this memory bound.
-    CPU multi-device transfers currently serialize device batches, so no
-    speedup is guaranteed. Local
+    Local devices launch their view batches concurrently, but each device
+    receives every volume tile, so host transfers limit the speedup. Local
     devices split views in list order; distributed mode returns rank-local
     projections and replicated backprojections. Distributed projection losses
     use SUM across ranks; divide replicated backprojection losses by
@@ -622,15 +625,29 @@ class Projector:
                 )
             return result
 
-    def _view_batches(self, plan):
+    def _view_rounds(self, plan):
+        """Yield rounds of view batches with at most one batch per device.
+
+        A round launches on every device before any result is collected, so
+        the devices compute concurrently while each holds one batch at a time.
+        """
         local_views = self.projection_shape[0]
-        for device_rank, device in enumerate(plan.devices):
-            shard = _balanced_slice(local_views, device_rank, len(plan.devices))
-            for start in range(shard.start, shard.stop, plan.view_chunk_size):
+        shards = [
+            _balanced_slice(local_views, device_rank, len(plan.devices))
+            for device_rank in range(len(plan.devices))
+        ]
+        longest = max(shard.stop - shard.start for shard in shards)
+        for offset in range(0, longest, plan.view_chunk_size):
+            batches = []
+            for device, shard in zip(plan.devices, shards):
+                start = shard.start + offset
+                if start >= shard.stop:
+                    continue
                 stop = min(start + plan.view_chunk_size, shard.stop)
-                yield device, slice(start, stop), slice(
+                batches.append((device, slice(start, stop), slice(
                     self.view_slice.start + start, self.view_slice.start + stop
-                )
+                )))
+            yield batches
 
     def _tile_geometry(self, geometry, global_slice, centre, device):
         components = geometry if geometry is not None else self._trajectory
@@ -646,25 +663,40 @@ class Projector:
         return tuple(translated)
 
     def _run_streamed(self, tensor, is_project, reduce_cotangent, geometry, plan):
+        output_device = tensor.device
         if reduce_cotangent:
             tensor = _all_reduce_copy(self, tensor, plan)
         shape = self.projection_shape if is_project else self.volume_shape
-        result = torch.zeros(shape, dtype=torch.float32, device=tensor.device)
+        result = torch.zeros(shape, dtype=torch.float32, device=output_device)
         for spatial_slice, tile_shape, centre in _tiles(
             self.volume_shape, plan.chunk_shape, self.voxel_spacing
         ):
-            for device, local_slice, global_slice in self._view_batches(plan):
-                source = tensor[spatial_slice] if is_project else tensor[local_slice]
-                with torch.cuda.device(device), cuda.gpus[device.index]:
-                    staged = source.detach().to(device=device, dtype=torch.float32).contiguous()
-                    tile_geometry = self._tile_geometry(geometry, global_slice, centre, device)
-                    output = (
-                        self._project_raw(staged, tile_geometry) if is_project
-                        else self._backproject_raw(staged, tile_geometry, tile_shape)
-                    )
+            # Each device stages a volume tile once and reuses it for all of its
+            # view batches. The plan already budgets one staged tile per batch.
+            volume_tiles = {}
+            for batches in self._view_rounds(plan):
+                launched, buffers = [], []
+                for device, local_slice, global_slice in batches:
+                    with torch.cuda.device(device), cuda.gpus[device.index]:
+                        if not is_project:
+                            staged = tensor[local_slice].detach().to(device=device, dtype=torch.float32).contiguous()
+                        elif device in volume_tiles:
+                            staged = volume_tiles[device]
+                        else:
+                            staged = tensor[spatial_slice].detach().to(device=device, dtype=torch.float32).contiguous()
+                            volume_tiles[device] = staged
+                        tile_geometry = self._tile_geometry(geometry, global_slice, centre, device)
+                        output = (
+                            self._project_raw(staged, tile_geometry) if is_project
+                            else self._backproject_raw(staged, tile_geometry, tile_shape)
+                        )
+                    buffers.append((staged, tile_geometry))
+                    launched.append((local_slice, output))
+                del staged, tile_geometry, output
+                for local_slice, output in launched:
                     destination = local_slice if is_project else spatial_slice
-                    result[destination].add_(output.to(device=tensor.device))
-                    del staged, tile_geometry, output
+                    result[destination].add_(output.to(device=output_device))
+                del launched, buffers, output
         if not is_project and self._distributed and self.world_size > 1:
             self._reduce_streamed_(result, plan)
         return result
@@ -747,18 +779,29 @@ class Projector:
         grads = [torch.zeros(component.shape, dtype=torch.float32, device="cpu")
                  for component in geometry]
         for spatial_slice, _, centre in _tiles(self.volume_shape, plan.chunk_shape, self.voxel_spacing):
-            for device, local_slice, global_slice in self._view_batches(plan):
-                with torch.cuda.device(device), cuda.gpus[device.index]:
-                    staged_volume = volume.detach()[spatial_slice].to(device=device, dtype=torch.float32).contiguous()
-                    staged_cotangent = cotangent.detach()[local_slice].to(device=device, dtype=torch.float32).contiguous()
-                    tile_geometry = self._tile_geometry(geometry, global_slice, centre, device)
-                    parts = _geometry_vjp(
-                        self.beam, staged_volume, staged_cotangent, tile_geometry,
-                        spacing, self.voxel_spacing,
-                    )
+            volume_tiles = {}
+            for batches in self._view_rounds(plan):
+                launched, buffers = [], []
+                for device, local_slice, global_slice in batches:
+                    with torch.cuda.device(device), cuda.gpus[device.index]:
+                        if device not in volume_tiles:
+                            volume_tiles[device] = volume.detach()[spatial_slice].to(
+                                device=device, dtype=torch.float32
+                            ).contiguous()
+                        staged_volume = volume_tiles[device]
+                        staged_cotangent = cotangent.detach()[local_slice].to(device=device, dtype=torch.float32).contiguous()
+                        tile_geometry = self._tile_geometry(geometry, global_slice, centre, device)
+                        parts = _geometry_vjp(
+                            self.beam, staged_volume, staged_cotangent, tile_geometry,
+                            spacing, self.voxel_spacing,
+                        )
+                    buffers.append((staged_volume, staged_cotangent, tile_geometry))
+                    launched.append((global_slice, parts))
+                del staged_volume, staged_cotangent, tile_geometry, parts
+                for global_slice, parts in launched:
                     for grad, part in zip(grads, parts):
                         grad[global_slice].add_(part.to(device="cpu"))
-                    del staged_volume, staged_cotangent, tile_geometry, parts, part
+                del launched, buffers, parts, part
         if self._distributed and self.world_size > 1:
             for grad in grads:
                 self._reduce_streamed_(grad, plan)
@@ -826,7 +869,7 @@ class Projector:
         chunk limits override automatic sizing. Execution requires CUDA.
         """
         plan = self._execution_plan(volume, True)
-        geometry = self._effective_geometry(plan)
+        geometry = self._effective_geometry(plan, volume.device)
         return _ProjectorAutograd.apply(volume, self, "project", plan, *geometry)
 
     def backproject(self, sinogram):
@@ -840,14 +883,14 @@ class Projector:
         divide a replicated-output loss by ``world_size``.
         """
         plan = self._execution_plan(sinogram, False)
-        geometry = self._effective_geometry(plan)
+        geometry = self._effective_geometry(plan, sinogram.device)
         return _ProjectorAutograd.apply(sinogram, self, "backproject", plan, *geometry)
 
     def __call__(self, volume):
         """Alias for :meth:`project`."""
         return self.project(volume)
 
-    def _effective_geometry(self, plan=None):
+    def _effective_geometry(self, plan, input_device):
         if self.detector_surface is None:
             return tuple(component.to(device="cpu" if plan is not None else component.device).clone()
                          for component in self._learnable)
@@ -862,11 +905,18 @@ class Projector:
             return tensor.to(device=device)
 
         with torch.autograd.graph.saved_tensors_hooks(pack, unpack):
-            geometry = self._sample_surface(cpu_only=plan is not None)[0]
+            geometry = self._sample_surface(
+                cpu_only=plan is not None, input_device=None if plan is not None else input_device
+            )[0]
             return tuple(component.clone() for component in geometry)
 
-    def _sample_surface(self, cpu_only=False, validate_on_cpu=False):
-        """Return effective per-view source/direction and sampled pixel points."""
+    def _sample_surface(self, cpu_only=False, validate_on_cpu=False, input_device=None):
+        """Return effective per-view source/direction and sampled pixel points.
+
+        ``input_device`` is the CUDA input device of a full-volume call. The
+        execution plan budgets world points only on the compute and input
+        devices, so offsets on another GPU are expanded on the input device.
+        """
         if self.beam == "cone":
             n_u, n_v = self.detector_shape
             du, dv = self.detector_spacing
@@ -888,6 +938,9 @@ class Projector:
             raise TypeError("streamed detector_surface offsets must be on CPU")
         if validate_on_cpu:
             offsets = offsets.to(device="cpu")
+        if (input_device is not None and offsets.is_cuda
+                and offsets.device not in (*(self._devices or ()), input_device)):
+            offsets = offsets.to(device=input_device)
         detector_rank = len(self.detector_shape)
         shared_shape = (*self.detector_shape, 3)
         per_view_shape = (self._n_views, *shared_shape)

@@ -1045,3 +1045,158 @@ def test_two_gpu_full_path_counts_total_cuda_surface_world_sampling_before_expan
     assert output.device == image.device
     _assert_bounded_launches(launches.records, case, case.shape, 4, ("project",), {0, 1})
     assert {record[3] for record in launches.records} == {0, 1}
+
+
+def _nccl_cuda_adjoint_memory_worker(rank, rendezvous):
+    torch.cuda.set_device(rank)
+    dist.init_process_group("nccl", init_method=rendezvous, rank=rank, world_size=2,
+                            timeout=timedelta(seconds=120))
+    try:
+        case = _case("cone", views=5)
+        case.shape, case.detector = (96, 112, 128), (8, 6)
+        chunk, batch = (24, 28, 32), 2
+        projector = _projector(case, distributed=True,
+                               volume_chunk_shape=chunk, view_chunk_size=batch)
+        full_sino = torch.linspace(-.4, .8, math.prod(case.sino_shape)).reshape(case.sino_shape)
+        local = full_sino[projector.view_slice].to(device=rank).detach().requires_grad_()
+        # backward(cotangent) differentiates a linear loss on the replicated
+        # output. Rank weights sum to 1.5, exercising SUM rather than averaging.
+        cotangent = torch.full(case.shape, (rank + 1) / 2, device=rank)
+        warm = projector.backproject(local)
+        warm.backward(cotangent)
+        del warm
+        local.grad = None
+        gc.collect()
+        torch.cuda.synchronize(rank)
+
+        output = projector.backproject(local)
+        assert output.device == local.device and output.dtype == torch.float32
+        # Input, replicated output and the complete incoming gradient already
+        # exist. Only backward scratch and the small sinogram gradient can grow.
+        torch.cuda.synchronize(rank)
+        initial = torch.cuda.memory_allocated(rank)
+        torch.cuda.reset_peak_memory_stats(rank)
+        output.backward(cotangent)
+        torch.cuda.synchronize(rank)
+        increase = torch.cuda.max_memory_allocated(rank) - initial
+        volume_bytes = math.prod(case.shape) * 4
+        assert increase < volume_bytes, (rank, increase, volume_bytes)
+        assert local.grad is not None and local.grad.device == local.device
+
+        reference = _projector(case, devices=[rank], volume_chunk_shape=chunk,
+                               view_chunk_size=batch)
+        expected = reference.project(torch.full(case.shape, 1.5))
+        _close(local.grad, _numpy(expected[projector.view_slice]))
+        assert local.grad.abs().sum().item() > .01
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(torch.cuda.device_count() < 2 or not dist.is_nccl_available(),
+                    reason="Two CUDA GPUs and real NCCL are required")
+def test_nccl_cuda_streamed_adjoint_backward_has_no_extra_full_volume(tmp_path):
+    rendezvous = (tmp_path / "cuda-adjoint-memory-nccl").resolve().as_uri()
+    mp.spawn(_nccl_cuda_adjoint_memory_worker, args=(rendezvous,), nprocs=2, join=True)
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Two CUDA GPUs are required")
+def test_full_path_surface_parameter_on_noncompute_gpu_gradient_and_memory():
+    case = _case("cone", views=65)
+    case.detector = (24, 20)
+    image, weight = _data(case, device="cuda:0")
+    results = []
+    for parameter_device in ("cuda:0", "cuda:1"):
+        strength = torch.tensor(.21, dtype=torch.float64, device=parameter_device,
+                                requires_grad=True)
+        curved = _surface(case, strength)
+
+        def surface(u, v):
+            return curved(u.to(strength.device), v.to(strength.device))
+
+        # Compile kernels and initialize both devices before measuring tensors.
+        warm_projector = _projector(case, surface, devices=[0])
+        warm = warm_projector.project(image)
+        (warm.double() * weight.double()).sum().backward()
+        del warm, warm_projector
+        strength.grad = None
+        gc.collect()
+        torch.cuda.synchronize(0)
+        torch.cuda.synchronize(1)
+        initial = torch.cuda.memory_allocated(1)
+        torch.cuda.reset_peak_memory_stats(1)
+        with _Launches() as launches:
+            projector = _projector(case, surface, devices=[0])
+            launches.phase = "project"
+            output = projector.project(image)
+            launches.phase = "backward"
+            (output.double() * weight.double()).sum().backward()
+        torch.cuda.synchronize(0)
+        torch.cuda.synchronize(1)
+        increase = torch.cuda.max_memory_allocated(1) - initial
+        world_bytes = math.prod(case.sino_shape) * 3 * 8
+        assert increase < world_bytes, (parameter_device, increase, world_bytes)
+        assert output.device == image.device
+        assert strength.grad is not None and strength.grad.device == strength.device
+        assert torch.isfinite(strength.grad) and strength.grad.abs().item() > 1e-3
+        forward = [record for record in launches.records if record[0] == "project"]
+        assert len(forward) == 1 and forward[0][-1] == case.sino_shape
+        _assert_bounded_launches(launches.records, case, case.shape, case.views,
+                                ("project", "backward"), {0})
+        results.append((_numpy(output), _numpy(strength.grad)))
+        del output, projector, strength, curved, surface
+    _close(torch.as_tensor(results[1][0]), results[0][0])
+    _close(torch.as_tensor(results[1][1]), results[0][1])
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Two CUDA GPUs are required")
+@pytest.mark.parametrize("beam", ["cone", "fan"])
+@pytest.mark.parametrize("curved", [False, True])
+def test_two_gpu_streaming_multiple_uneven_batches_matches_single_gpu(beam, curved):
+    results = []
+    for devices in ([0], [0, 1]):
+        case = _case(beam, views=11, learnable=True)
+        strength = torch.tensor(.21, dtype=torch.float64, requires_grad=True)
+        surface = _surface(case, strength, per_view=True) if curved else None
+        projector = _projector(case, surface, devices=devices,
+                               volume_chunk_shape=_chunk(case), view_chunk_size=2)
+        image, sino = (data.requires_grad_() for data in _data(case, device="cpu"))
+        parameters = (*case.trajectory, strength) if curved else case.trajectory
+        with _Launches() as launches:
+            launches.phase = "project"
+            projected = projector.project(image)
+            launches.phase = "project-backward"
+            forward_gradients = torch.autograd.grad(
+                (projected.double() * sino.detach().double()).sum(), (image, *parameters))
+            launches.phase = "backproject"
+            back = projector.backproject(sino)
+            launches.phase = "backproject-backward"
+            adjoint_gradients = torch.autograd.grad(
+                (back.double() * image.detach().double()).sum(), (sino, *parameters))
+        assert projected.device.type == back.device.type == "cpu"
+        assert all(gradient.device.type == "cpu"
+                   for gradient in (*forward_gradients, *adjoint_gradients))
+        matrix = _matrix(case, _offsets(case, .21, per_view=curved, flat=not curved))
+        _close(projected, (matrix @ _numpy(image).ravel()).reshape(case.sino_shape))
+        _close(back, (matrix.T @ _numpy(sino).ravel()).reshape(case.shape))
+        _close(forward_gradients[0], _numpy(back))
+        _close(adjoint_gradients[0], _numpy(projected))
+        _assert_bounded_launches(
+            launches.records, case, _chunk(case), 2,
+            ("project", "project-backward", "backproject", "backproject-backward"), set(devices))
+        if len(devices) == 2:
+            # Eleven views split 6/5. Both devices execute three view batches
+            # for every spatial tile, and device 1 has a one-view tail.
+            for phase in ("project", "project-backward", "backproject", "backproject-backward"):
+                for device, batches in ((0, {2}), (1, {1, 2})):
+                    observed = [record for record in launches.records
+                                if record[0] == phase and record[3] == device
+                                and record[2] != "geometry_vjp"]
+                    assert {record[-1][0] for record in observed} == batches
+                    assert len(observed) >= 3
+        results.append(tuple(_numpy(tensor) for tensor in
+                             (projected, back, *forward_gradients, *adjoint_gradients)))
+    for actual, expected in zip(results[1], results[0]):
+        _close(torch.as_tensor(actual), expected)

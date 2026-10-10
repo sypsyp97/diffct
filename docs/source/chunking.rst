@@ -75,8 +75,12 @@ limits and must participate in the same calls. The existing loss-scaling rules
 in :doc:`multi_gpu` still apply. A solver's own scalar NCCL reductions must use
 CUDA tensors.
 
-CPU streaming currently stages devices serially. This supports bounded-memory
-execution across cards; it does not promise a multi-GPU throughput improvement.
+With CPU streaming, the cards compute their view batches concurrently. Each
+card receives every volume tile, so host transfers limit the multi-GPU speedup.
+
+Ranks do not add memory capacity: every rank holds the complete volume and
+iterative state in host RAM. For a large volume, run one process per node with
+``devices=[...]`` for its GPUs instead of one process per GPU.
 
 Caller-owned CUDA inputs and complete CUDA outputs still occupy their full
 size. Keep arrays, trajectory tensors and learnable surface parameters on CPU
