@@ -6,6 +6,8 @@ The scripts in the repository ``examples/`` directory show how to use
 
 - ``quickstart.py``: ``Projector`` basics for parallel, fan and cone beams, with
   the adjoint check and gradients.
+- ``curved_detector.py``: native cylindrical cone detector projection, matched
+  backprojection, adjoint check and volume/surface gradients on a circular scan.
 - ``analytical_reconstruction.py``: parallel-beam FBP, fan-beam FBP and cone-beam
   FDK, with a choice of ramp-filter window.
 - ``iterative_reconstruction.py``: 3D cone-beam CGLS, SIRT and TV reconstruction
@@ -40,3 +42,18 @@ See ``examples/README.md`` in the repository for all launch modes.
    :caption: Measured Data
 
    walnut_example
+
+Native curved detector
+----------------------
+
+.. code-block:: bash
+
+   python examples/curved_detector.py
+
+This small CUDA example uses the native curved operators directly, without
+resampling or FDK. See :ref:`detector-surfaces` for the callback contract.
+
+.. literalinclude:: ../../examples/curved_detector.py
+   :language: python
+   :linenos:
+   :caption: Native cylindrical detector operators

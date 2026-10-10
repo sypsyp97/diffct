@@ -13,6 +13,10 @@ High-level Projector
 ``Projector`` takes trajectory tensors as described in :doc:`trajectories`. For
 multiple GPUs and nodes, see :doc:`multi_gpu`.
 
+``detector_surface`` defines native pixel positions for both projection and
+matched backprojection. See :ref:`detector-surfaces` for its coordinate and
+shape contract, and :doc:`examples` for a runnable cylindrical detector.
+
 Low-level Functions
 -------------------
 
@@ -91,8 +95,12 @@ backprojection of an analytical FBP or FDK pipeline. The weighted backprojection
 helpers do not support autograd through ``Projector``. The returned images are
 already scaled.
 
-Analytical FBP and FDK assume an acquisition model. A non-circular trajectory
-does not make the result exact. The helpers accept the same per-view
+Analytical FBP and FDK assume a flat detector and an acquisition model. These
+helpers do not accept ``detector_surface``. Native curved data must be resampled
+along matching rays onto a covered virtual flat detector before using these
+flat-detector helpers; resampling adds interpolation error. The native
+``Projector`` forward/adjoint pair needs no such conversion. A non-circular
+trajectory does not make the result exact. The helpers accept the same per-view
 ``(src_pos, det_center, det_u[, det_v])`` arrays as ``Projector``.
 
 Fan and cone backprojection accept a keyword-only ``isocenter`` vector in physical

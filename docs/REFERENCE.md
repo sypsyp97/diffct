@@ -75,13 +75,19 @@ sinogram.square().sum().backward()           # radius.grad
 adjoint = A.backproject(sinogram.detach())
 ```
 
+For a runnable circular cone example with native projection, matched
+backprojection and gradient checks, run `python examples/curved_detector.py`
+from the repository root.
+
 The callback receives centred physical float64 parameter grids on CPU:
 `u[i] = (i + 0.5 - U / 2) * du` and
 `v[j] = (j + 0.5 - V / 2) * dv`, with `ij` indexing.
 It returns a finite floating-point PyTorch tensor of local `(u, v, n)` offsets,
 with shape `(U, V, 3)` shared by all views, or `(views, U, V, 3)` for a separate
-surface in each view. It may return offsets on CPU or CUDA; move the grids to
-your parameters' device inside the callback when needed. The world position is
+surface in each view. Here `views` is the total trajectory view count, including
+in distributed mode; the operator handles view sharding. It may return offsets
+on CPU or CUDA; move the grids to your parameters' device inside the callback
+when needed. The world position is
 `center + offset_u * det_u + offset_v * det_v + offset_n * cross(det_u, det_v)`.
 The normal's sign follows the supplied frame. In the generated frame above it
 points away from the source, so the example uses negative normal offsets and
@@ -103,8 +109,14 @@ on every call; a source must not coincide with any pixel.
 Explicit positions cost two float32 coordinates per 2D pixel or three per
 cone pixel, plus gradients when needed. Sources and ray directions remain
 per-view tensors. Views are sharded with the same multi-GPU and distributed
-rules as flat detectors. FBP/FDK and analytical weighting helpers retain their
-flat-detector assumptions.
+rules as flat detectors. Each pixel samples one ray; these kernels do not
+integrate over a finite detector-pixel area. FBP/FDK and analytical weighting
+helpers retain their flat-detector assumptions and do not accept the surface
+callback. Native curved projection and matched backprojection need no
+resampling. To reuse a flat-detector FDK pipeline, first resample the measured
+line integrals onto a virtual flat detector along matching rays; this adds
+interpolation error and requires ray coverage. That conversion is outside
+the core operator.
 
 ## Geometry gradients
 
@@ -179,7 +191,7 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
 - The volume is centred on the origin. Voxel `i` of an axis with `N` voxels has
   its centre at `(i + 0.5 - N / 2) * voxel_spacing`. Voxel spacing is one
   isotropic value.
-- The detector array is centred. Pixel `k` of `N_det` pixels lies at
+- The default flat detector array is centred. Pixel `k` of `N_det` pixels lies at
   `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`
   (`det_origin` for parallel beams), the same convention as `main`. For cone
   beams, add the analogous offset along `det_v` using its own pitch.

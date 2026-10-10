@@ -66,13 +66,19 @@ coordinate system above.
 
 All components must be finite floating-point tensors with the same nonzero view
 count. ``ray_dir`` and ``det_u`` must be orthogonal for parallel beams. ``det_u``
-and ``det_v`` must be orthogonal for cone beams. For fan and cone beams, the
-source must not coincide with the detector centre or view the detector edge-on. The nearer of source and
-detector centre must lie within 1e6 voxel spacings of the origin.
+and ``det_v`` must be orthogonal for cone beams. With flat fan/cone detectors,
+the source must not coincide with the detector centre or view the detector
+edge-on. The nearer of source and detector centre must lie within 1e6 voxel
+spacings of the origin. Surface detectors instead validate each actual
+source/pixel pair: the endpoints must remain distinct in float32, and the
+nearer endpoint of every ray must lie within 1e6 voxel spacings of the origin.
+Both endpoints must lie within 1e15 voxel spacings.
 
 Arbitrary trajectories do not guarantee enough angular coverage for an inverse
 problem. Use iterative methods with regularization for sparse or incomplete
 acquisitions. The analytical helpers assume a circular orbit (see :doc:`api`).
+
+.. _detector-surfaces:
 
 Parameterized detector surfaces
 -------------------------------
@@ -80,7 +86,8 @@ Parameterized detector surfaces
 ``Projector(..., detector_surface=surface)`` uses a callback to place each pixel
 on an arc, cylinder or another parameterized surface. For cone beams it receives
 physical float64 ``u, v`` grids on CPU with shape ``(U, V)`` and ``ij`` indexing. It returns local
-``(u, v, n)`` offsets shaped ``(U, V, 3)`` or ``(views, U, V, 3)``. The world point is:
+``(u, v, n)`` offsets shaped ``(U, V, 3)`` or ``(views, U, V, 3)``. Here ``views``
+is the total trajectory view count, also in distributed mode. The world point is:
 
 .. code-block:: text
 
@@ -110,8 +117,15 @@ normal offsets and a radius equal to ``sdd`` centre the cylinder on the source.
 The callback is sampled afresh on each call, and its captured parameters receive
 first-order gradients. Every sample must be a finite floating-point tensor of
 the documented shape; fan/cone pixels cannot coincide with the source.
-``project`` and ``backproject`` retain their matched Siddon model. Analytical
-FBP/FDK and weighting helpers continue to assume flat detectors.
+``project`` and ``backproject`` retain their matched Siddon model, with one ray
+per pixel and no detector-area integration. They operate directly on the native
+curved grid without resampling. Run ``python examples/curved_detector.py`` for a
+complete circular cone example, also shown in :doc:`examples`.
+
+Analytical FBP/FDK and weighting helpers continue to assume flat detectors and
+do not accept the callback. Reusing a flat-detector FDK requires matching-ray
+resampling of the line integrals onto a covered virtual flat grid; this adds
+interpolation error and is outside the core operator.
 
 Geometry gradients
 ------------------
