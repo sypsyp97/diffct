@@ -8,6 +8,8 @@ The scripts in the repository ``examples/`` directory show how to use
   the adjoint check and gradients.
 - ``curved_detector.py``: native cylindrical cone detector projection, matched
   backprojection, adjoint check and volume/surface gradients on a circular scan.
+- ``chunked_reconstruction.py``: CPU-backed CGLS with automatic CUDA tiles,
+  optional manual limits and measured peak allocation; see :doc:`chunking`.
 - ``analytical_reconstruction.py``: parallel-beam FBP, fan-beam FBP and cone-beam
   FDK, with a choice of ramp-filter window.
 - ``iterative_reconstruction.py``: 3D cone-beam CGLS, SIRT and TV reconstruction

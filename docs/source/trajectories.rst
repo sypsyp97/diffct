@@ -122,6 +122,10 @@ per pixel and no detector-area integration. They operate directly on the native
 curved grid without resampling. Run ``python examples/curved_detector.py`` for a
 complete circular cone example, also shown in :doc:`examples`.
 
+Streamed operations require CPU offsets. CUDA offsets remain supported when
+the automatic CUDA full-volume path fits. See :doc:`chunking` for large-volume
+execution and memory requirements.
+
 Analytical FBP/FDK and weighting helpers continue to assume flat detectors and
 do not accept the callback. Reusing a flat-detector FDK requires matching-ray
 resampling of the line integrals onto a covered virtual flat grid; this adds

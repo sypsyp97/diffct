@@ -29,6 +29,7 @@ Start here
 
    getting_started
    trajectories
+   chunking
    multi_gpu
    examples
    api

@@ -57,6 +57,7 @@ scripts to see their own options.
 | --- | --- | --- |
 | `quickstart.py` | Projector basics for parallel, fan and cone beams: projection, backprojection, adjoint check, image and geometry gradients. | 1 GPU |
 | `curved_detector.py` | Native cylindrical cone detector: projection, matched backprojection, adjoint check and volume/surface gradients. | 1 GPU |
+| `chunked_reconstruction.py` | CPU-backed CGLS with automatically sized CUDA tiles; optional `--chunk-shape` and `--view-chunk-size`; reports residual and peak CUDA tensor allocation. | 1 GPU, `--devices` in one process |
 | `analytical_reconstruction.py` | Parallel-beam FBP, fan-beam FBP and cone-beam FDK. `--window` selects the ramp-filter window. | 1 GPU |
 | `iterative_reconstruction.py` | Cone-beam reconstruction with `--trajectory circular`, `helical`, `saddle` or `sinusoidal`. CGLS, SIRT and TV-regularized nonnegative least squares (Adam through autograd). FDK baseline outside distributed mode. `--noise` adds Gaussian noise. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `geometry_calibration.py` | Recovers per-view angle errors and a detector shift from projections, using geometry gradients. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
@@ -70,8 +71,9 @@ Shared helpers are in `_common.py`: the Shepp-Logan phantom, the scan geometry, 
 
 The reconstruction and geometry-calibration scripts support all four modes
 below. Other scripts support only the modes in the index. Use the command that
-matches your allocation. Every GPU must fit a full volume; views are partitioned,
-not volume voxels.
+matches your allocation. These existing reconstruction/calibration scripts use
+CUDA-resident volumes. For CPU-backed large volumes use `chunked_reconstruction.py`;
+its automatic spatial tiles and view batches bound GPU working buffers.
 
 **1. One GPU**
 

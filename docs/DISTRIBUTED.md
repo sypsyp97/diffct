@@ -1,9 +1,25 @@
 # Multiple GPUs and nodes
 
-`Projector` partitions views, not voxels. Every participating GPU needs room
-for a full volume. Adding GPUs does not let a volume exceed one device's
-memory. Distributed mode stores only each rank's sinogram shard; single-process
-multi-GPU mode gathers the full sinogram back onto the input device.
+`Projector` partitions views across GPUs/ranks. Spatial tiles and view batches
+are selected automatically when data is CPU-backed or the estimated CUDA
+working set does not fit. Each GPU then holds a tile instead of a complete
+volume. Distributed mode stores each rank's sinogram shard; single-process
+multi-GPU mode gathers the full sinogram onto the input device.
+
+For a volume larger than one GPU, pass CPU arrays to `project()` and
+`backproject()`. Full volumes and iterative state remain replicated in host RAM
+across ranks. `volume_chunk_shape` and `view_chunk_size` optionally override the
+automatic limits; all ranks must use the same shapes and explicit settings.
+Automatic ranks agree on a common memory budget and collective schedule.
+NCCL sums CPU-backed outputs/gradients through bounded CUDA staging buffers.
+View ordering, empty ranks and the loss-scaling rules below still apply.
+
+The current single-process CPU path stages cards serially. Its multi-GPU
+support provides bounded working buffers, with no throughput guarantee.
+
+NCCL cannot reduce CPU tensors in your own solver or reporting code. Stage
+scalar reductions on the rank's CUDA device, then copy the scalar back to CPU.
+The CPU CGLS example supports one process with one or several GPUs.
 
 Install diffct as described in the [root README](https://github.com/sypsyp97/diffct/blob/main/README.md) and run
 commands from the repository root. CUDA is required for projection and
@@ -31,7 +47,7 @@ sinogram.square().sum().backward()                   # volume.grad on cuda:0
 ```
 
 No process group is required. Views are split into contiguous shards in device
-list order. Outputs return to the input tensor's CUDA device as float32;
+list order. Outputs return to the input tensor's device as float32;
 input gradients use the input's device and dtype. Uneven view counts are
 supported, and devices with no views do not launch an empty CUDA grid.
 Use the ordinary full-sinogram loss in this mode; no world-size scaling applies.

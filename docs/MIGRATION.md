@@ -26,9 +26,11 @@ image-display convention `(views, V, U)`; transpose imported measurements if
 necessary. In distributed mode, only the leading view dimension is sharded.
 
 Trajectory tensors may be on CPU or CUDA. Projection and backprojection inputs
-must be floating-point CUDA tensors of exactly the documented shape, without
-batch or channel dimensions. Computation and outputs are float32 even if the
-input is float64; autograd returns input gradients in the input's dtype.
+must be floating-point CPU or CUDA tensors of exactly the documented shape,
+without batch or channel dimensions. CPU arrays automatically stream through
+CUDA tiles; see [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution). Computation
+and outputs are float32 even if the input is float64; autograd returns input
+gradients in the input's device and dtype.
 `voxel_spacing` is one positive scalar (isotropic voxels). `detector_spacing`
 is one positive scalar for 2D, and a scalar or `(u_pitch, v_pitch)` for cone.
 

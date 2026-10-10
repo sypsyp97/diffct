@@ -41,10 +41,11 @@ Minimal forward / adjoint / gradient example
    print(measurements.shape, estimate.grad.shape)
 
 ``Projector`` defaults to ``beam="cone"``. Set ``beam="parallel"`` or
-``beam="fan"`` for 2D data. Inputs must be floating-point CUDA tensors with
+``beam="fan"`` for 2D data. Inputs must be floating-point CPU or CUDA tensors with
 exactly the configured volume or sinogram shape, without batch or channel
-dimensions. Use contiguous tensors. Outputs are float32. Trajectory tensors can
-stay on CPU.
+dimensions. Outputs are float32 on the input device. CPU data automatically
+streams through CUDA tiles; see :doc:`chunking`. Trajectory tensors can stay
+on CPU.
 
 Choose a workflow
 -----------------

@@ -17,6 +17,10 @@ multiple GPUs and nodes, see :doc:`multi_gpu`.
 matched backprojection. See :ref:`detector-surfaces` for its coordinate and
 shape contract, and :doc:`examples` for a runnable cylindrical detector.
 
+CPU data automatically uses streamed CUDA execution. ``volume_chunk_shape``
+and ``view_chunk_size`` optionally override spatial and view limits; see
+:doc:`chunking` for memory, geometry and autograd requirements.
+
 Low-level Functions
 -------------------
 

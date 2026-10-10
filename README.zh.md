@@ -46,7 +46,8 @@
 - **任意轨迹。** 每个视角有各自的源点、探测器中心和探测器轴；圆轨迹、螺旋、鞍形、正弦、随机和标定扫描使用同一套代码。`requires_grad=True` 的轨迹张量可获得用于标定的几何梯度。
 - **曲面探测器。** 用 `detector_surface(u, v)` 定义每个像素的位置，原生支持弧形、柱面及其他参数化曲面；投影与匹配反投影支持曲面参数的一阶梯度。见[曲面接口](docs/REFERENCE.md#parameterized-detector-surfaces)（英文）。
 - **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
-- **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或每卡一个进程并用 torchrun 与 NCCL。视角分片，体数据复制。加速比取决于工作负载和通信开销。
+- **大体积。** CPU 体数据和正弦图默认按空间块、视角批次送入 CUDA；完整数组和数据梯度留在 CPU。块大小按可用显存选择，也可手动覆盖。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
+- **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或每卡一个进程并用 torchrun 与 NCCL。视角分片；CPU 体数据留在主机内存，各 GPU 计算分块，分布式各 rank 保留完整体数据副本。加速比取决于工作负载和通信开销。
 - **解析辅助函数。** `diffct.analytical` 提供斜坡滤波器（ram-lak、shepp-logan、cosine、hamming、hann）、扇束、锥束和 Parker 权重，以及 FBP 与 FDK 反投影。
 
 功能边界、限制和等中心规则见 [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits)（英文）。
@@ -112,6 +113,21 @@ loss.backward()                     # x.grad = A^T (A x - y)
 A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
 ```
 
+**体积超过显存容量。** 把数据放在 CPU，同一套接口会自动分块计算；CUDA
+输入在估计的工作集能装下时保留完整体积路径。无需开启分块开关：
+
+```python
+A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8)
+volume = torch.ones(A.volume_shape, device="cpu", requires_grad=True)
+sinogram = A.project(volume)                 # CPU 输出，CUDA 计算
+sinogram.square().mean().backward()          # volume.grad 在 CPU
+# 可选手动覆盖：volume_chunk_shape=(32, 64, 64), view_chunk_size=16
+```
+
+运行 `python examples/chunked_reconstruction.py` 可演示 CPU 数据上的 CGLS
+并测量 CUDA 张量分配峰值。分块保持同一 Siddon 模型，但浮点求和顺序会变化；
+更小的块可能增加传输和内核启动开销。完整数组及迭代状态仍需足够的主机内存。
+
 ## 性能
 
 <p align="center">
@@ -164,7 +180,7 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 ## 示例
 
-`quickstart.py`、`curved_detector.py`（原生曲面投影、匹配反投影和梯度）、`analytical_reconstruction.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
+`quickstart.py`、`curved_detector.py`（原生曲面投影、匹配反投影和梯度）、`chunked_reconstruction.py`（CPU 数据、自动分块的 CGLS）、`analytical_reconstruction.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
 
 ## 文档
 
