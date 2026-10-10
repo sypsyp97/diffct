@@ -6,7 +6,7 @@
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Migrating from diffct 1.x to 2.0" href="migration.html"><link rel="prev" title="Measured Walnut" href="walnut_example.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>API Reference - diffct 2.0.2</title>
+        <title>API Reference - diffct 2.1.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -162,7 +162,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="index.html"><div class="brand">diffct 2.0.2</div></a>
+      <a href="index.html"><div class="brand">diffct 2.1.0</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -183,7 +183,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
   
-  <span class="sidebar-brand-text">diffct 2.0.2</span>
+  <span class="sidebar-brand-text">diffct 2.1.0</span>
   
 </a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -295,8 +295,8 @@ Concurrent external allocations can still cause an allocation error.</p>
 <p>Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
 bounded by the chosen tile and view batch. Caller-owned CUDA data/results
 and CUDA work inside a supplied callback are outside this memory bound.
-CPU multi-device transfers currently serialize device batches, so no
-speedup is guaranteed. Local
+Local devices launch their view batches concurrently, but each device
+receives every volume tile, so host transfers limit the speedup. Local
 devices split views in list order; distributed mode returns rank-local
 projections and replicated backprojections. Distributed projection losses
 use SUM across ranks; divide replicated backprojection losses by
@@ -1687,7 +1687,7 @@ path.</p>
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=c2377ec0"></script>
+</div><script src="_static/documentation_options.js?v=20623aea"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>

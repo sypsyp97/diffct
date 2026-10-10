@@ -6,7 +6,7 @@
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Multiple GPUs and Nodes" href="multi_gpu.html"><link rel="prev" title="Trajectories and Geometry" href="trajectories.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>Large Volumes and Chunked Execution - diffct 2.0.2</title>
+        <title>Large Volumes and Chunked Execution - diffct 2.1.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -162,7 +162,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="index.html"><div class="brand">diffct 2.0.2</div></a>
+      <a href="index.html"><div class="brand">diffct 2.1.0</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -183,7 +183,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
   
-  <span class="sidebar-brand-text">diffct 2.0.2</span>
+  <span class="sidebar-brand-text">diffct 2.1.0</span>
   
 </a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -314,8 +314,11 @@ stage NCCL sums in bounded CUDA buffers. All ranks need the same explicit
 limits and must participate in the same calls. The existing loss-scaling rules
 in <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a> still apply. A solver’s own scalar NCCL reductions must use
 CUDA tensors.</p>
-<p>CPU streaming currently stages devices serially. This supports bounded-memory
-execution across cards; it does not promise a multi-GPU throughput improvement.</p>
+<p>With CPU streaming, the cards compute their view batches concurrently. Each
+card receives every volume tile, so host transfers limit the multi-GPU speedup.</p>
+<p>Ranks do not add memory capacity: every rank holds the complete volume and
+iterative state in host RAM. For a large volume, run one process per node with
+<code class="docutils literal notranslate"><span class="pre">devices=[...]</span></code> for its GPUs instead of one process per GPU.</p>
 <p>Caller-owned CUDA inputs and complete CUDA outputs still occupy their full
 size. Keep arrays, trajectory tensors and learnable surface parameters on CPU
 for bounded GPU residency. CUDA geometry snapshots or CUDA intermediates made
@@ -480,7 +483,7 @@ python<span class="w"> </span>examples/chunked_reconstruction.py<span class="w">
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=c2377ec0"></script>
+</div><script src="_static/documentation_options.js?v=20623aea"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>
