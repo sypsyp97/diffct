@@ -16,11 +16,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/diffct_intro.gif" width="100%" alt="diffct 动图：投影、正弦图、轨迹、多卡切分、重建和几何标定">
+  <img src="docs/assets/diffct_intro.gif?v=e0092c4" width="100%" alt="diffct 动图：投影、正弦图、轨迹、多卡切分、重建和几何标定">
 </p>
 
 <p align="center">
-  <a href="docs/assets/diffct_intro.mp4">完整视频（MP4）</a> ·
+  <a href="docs/assets/diffct_intro.mp4?v=e0092c4">完整视频（MP4）</a> ·
   <a href="https://www.preprints.org/manuscript/202605.1446/v1">技术报告</a> ·
   <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
 </p>
@@ -141,7 +141,7 @@ TV 指带全变分正则的迭代重建，Adam 是优化器。图中分别标注
 **实测核桃。** 240 个实测视角，圆形锥束，256³：FDK（Hann 窗）、SIRT（200 次迭代）、CGLS（20 次）、TV（300 次，权重 0.3）；轴向和冠状面中心切片。
 
 <p align="center">
-  <img src="docs/assets/walnut_measured.png" width="100%" alt="实测核桃：FDK、SIRT、CGLS 和 TV 重建结果">
+  <img src="docs/assets/walnut_measured.png?v=e0092c4" width="100%" alt="实测核桃：FDK、SIRT、CGLS 和 TV 重建结果">
 </p>
 
 ```bash
@@ -151,7 +151,7 @@ python examples/walnut_reconstruction.py --figure out.png
 **核桃螺旋扫描模拟。** 以 FDK 核桃体数据为真值，720 个视角，1% 噪声，256³。PSNR：FDK 26.67 dB，CGLS（30 次迭代）34.13 dB，SIRT（200 次）34.52 dB，TV（200 次，权重 1.0）37.77 dB。
 
 <p align="center">
-  <img src="docs/assets/walnut_helical.png" width="100%" alt="核桃螺旋扫描模拟：FDK、CGLS、SIRT 和 TV 重建结果">
+  <img src="docs/assets/walnut_helical.png?v=e0092c4" width="100%" alt="核桃螺旋扫描模拟：FDK、CGLS、SIRT 和 TV 重建结果">
 </p>
 
 ```bash

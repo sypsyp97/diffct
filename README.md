@@ -16,11 +16,11 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/diffct_intro.gif?v=e0092c4" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
 </p>
 
 <p align="center">
-  <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">Intro video (MP4)</a> ·
+  <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4?v=e0092c4">Intro video (MP4)</a> ·
   <a href="https://www.preprints.org/manuscript/202605.1446/v1">Technical report</a> ·
   <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
 </p>
@@ -143,7 +143,7 @@ TV denotes TV-regularized iterative reconstruction; Adam is the optimizer. Figur
 **Measured walnut.** 240 measured views, circular cone beam, 256³: FDK (Hann window), SIRT (200 iterations), CGLS (20), TV (300, weight 0.3); axial and coronal centre slices.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_measured.png" width="100%" alt="Measured walnut: FDK, SIRT, CGLS and TV reconstructions">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_measured.png?v=e0092c4" width="100%" alt="Measured walnut: FDK, SIRT, CGLS and TV reconstructions">
 </p>
 
 ```bash
@@ -153,7 +153,7 @@ python examples/walnut_reconstruction.py --figure out.png
 **Simulated helical scan of the walnut.** The FDK walnut volume as ground truth, 720 views, 1% noise, 256³. PSNR: FDK 26.67 dB, CGLS (30 iterations) 34.13 dB, SIRT (200) 34.52 dB, TV (200, weight 1.0) 37.77 dB.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_helical.png" width="100%" alt="Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_helical.png?v=e0092c4" width="100%" alt="Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions">
 </p>
 
 ```bash
