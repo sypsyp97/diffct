@@ -23,6 +23,8 @@ The scripts in the repository ``examples/`` directory show how to use
 - ``geometry_calibration.py``: recovers per-view angle errors and a detector shift
   from projections, using geometry gradients.
 - ``benchmark_projector.py``: compares one GPU with several GPUs.
+- ``benchmark_scaling.py``: measures the 512³ README workload on 1, 4 and 8 GPUs,
+  with raw timings and numerical checks.
 - ``plot_trajectory.py``: plots the trajectory generators (CPU only).
 
 See ``examples/README.md`` in the repository for all launch modes.
