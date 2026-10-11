@@ -374,3 +374,81 @@ def test_PROOF_omitting_any_cgls_state_or_transient_has_an_actual_phase_budget_c
     model = solver.model()
     assert model.eval(actual).as_long() > model.eval(budget).as_long()
     assert model.eval(incomplete).as_long() <= model.eval(budget).as_long()
+
+
+@pytest.mark.parametrize("ranks", range(1, 5))
+def test_BOUNDED_global_cgls_fallback_agreement_preserves_collective_order_for_all_local_requests(ranks):
+    # Signatures mirror the real planning protocol; this model does not prove
+    # source equivalence or run Gloo/NCCL. Native selection follows admission.
+    plan = (("MIN", "int64", 9), ("MAX", "int64", 9), ("MIN", "int64", 4))
+    solve = (*plan, ("all_gather_object", "object", 2), ("broadcast", "object", 1), ("SUM", "float64", 1))
+    for local in itertools.product((False, True), repeat=ranks):
+        agreement = (("MAX", "int64", 1),) if ranks > 1 else ()
+        common = [(*plan, *agreement, *(plan if any(local) else ()), *solve) for _ in local]
+        assert len(set(common)) == 1
+        previous = [(*plan, *(plan if request else ()), *solve) for request in local]
+        if any(local) and not all(local):
+            assert len(set(previous)) > 1
+            # The three conditional CPU-plan reductions can accidentally pair
+            # with another rank's native admission, then diverge at step 7.
+            left, right = previous[local.index(True)], previous[local.index(False)]
+            first = next(index for index, pair in enumerate(zip(left, right), start=1) if pair[0] != pair[1])
+            assert first == 7
+        else:
+            assert len(set(previous)) == 1
+
+
+@dataclass(frozen=True)
+class _CudaProducer:
+    complete: bool = False
+    copied: int = -1
+
+
+def _producer_interleavings(jobs, latest_wait):
+    # Pipeline initialization has already recorded its caller-stream wait.
+    # Each subsequent custom read enqueues a producer while its storage stays
+    # alive throughout. Lifetime retention itself adds no readiness edge.
+    initial = (_CudaProducer(),) * jobs
+    pending, seen, completed = deque([initial]), {initial}, set()
+    while pending:
+        state = pending.popleft()
+        if any(value.copied not in (-1, job + 1) for job, value in enumerate(state)):
+            return len(seen), completed, state
+        if all(value.copied == job + 1 for job, value in enumerate(state)):
+            completed.add(tuple(value.copied for value in state))
+        for job, value in enumerate(state):
+            changes = []
+            if not value.complete:
+                changes.append(replace(value, complete=True))
+            if value.copied == -1 and (value.complete or not latest_wait):
+                changes.append(replace(value, copied=job + 1 if value.complete else 0))
+            for changed in changes:
+                following = (*state[:job], changed, *state[job + 1:])
+                if following not in seen:
+                    seen.add(following)
+                    pending.append(following)
+    return len(seen), completed, None
+
+
+@pytest.mark.parametrize("jobs", range(1, 4))
+@pytest.mark.parametrize("latest_wait", [False, True])
+def test_BOUNDED_post_initialization_cuda_producer_requires_readiness_in_addition_to_storage_retention(jobs, latest_wait):
+    states, completed, counterexample = _producer_interleavings(jobs, latest_wait)
+    assert states > 1
+    if latest_wait:
+        assert counterexample is None and completed == {tuple(range(1, jobs + 1))}
+    else:
+        assert counterexample is not None and any(value.copied == 0 for value in counterexample)
+
+
+def test_PROOF_single_epoch_native_admission_requires_prior_compute_retirement_before_next_allocation():
+    native, other, budget = z3.Ints("single_epoch_native single_epoch_other single_epoch_budget")
+    admitted = native + other
+    solver = z3.Solver()
+    solver.add(native > 0, other >= 0, budget > 0, admitted <= budget,
+               2 * native + other > budget)
+    assert solver.check() == z3.sat  # A pending prior allocation is a second live epoch.
+    solver = z3.Solver()
+    solver.add(native > 0, other >= 0, budget > 0, admitted <= budget,
+               native + other > budget)
+    assert solver.check() == z3.unsat  # Retirement restores the assumed one-epoch bound.

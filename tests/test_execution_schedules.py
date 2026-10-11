@@ -437,3 +437,122 @@ def test_CPU_synthetic_auto_ranking_prioritizes_estimated_time_then_total_copy_b
         assert chosen.schedule == expected, ("CPU ranking policy chose copy bytes before estimated elapsed time", operation, pilots, chosen)
         assert winner.schedule == expected and winner.chunk_shape == plan.chunk_shape
         assert winner.view_chunk_size == plan.view_chunk_size and winner.detector_chunk_shape == plan.detector_chunk_shape
+
+
+def _single_epoch_native_trial(serial_control=False):
+    from tests.test_block_storage import _warm_native_point_kernels
+
+    if torch.cuda.get_allocator_backend() != "native":
+        pytest.skip("active-byte retirement measurement requires the native CUDA allocator")
+    _warm_native_point_kernels()
+    case = _schedule_case("parallel", views=3)
+    case.shape = (4, 1024)
+    chunk, budget = (1, 1024), 8192
+    image, _ = _data(case, device="cpu")
+    operator = _scheduled_projector(case, "views", volume_chunk_shape=chunk, view_chunk_size=1)
+    operator.project(image)  # Warm all native/copy paths before delay calibration.
+    expected = (_matrix(case, _offsets(case, flat=True)) @ _numpy(image).ravel()).reshape(case.sino_shape)
+    start, finish = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    start.record()
+    torch.cuda._sleep(50000000)
+    finish.record()
+    finish.synchronize()
+    measured_ms = start.elapsed_time(finish)
+    assert measured_ms > 0
+    cycles = math.ceil(50000000 * max(1., 50. / measured_ms))
+    torch.cuda.synchronize()
+    # Synchronization completes warmup work, but the native allocator can keep
+    # its already-freed storage active until events are processed. Retire that
+    # warmup backlog before recording the separate pipeline increment.
+    torch.cuda.empty_cache()
+    baseline = torch.cuda.memory_stats()
+    torch.cuda.reset_peak_memory_stats()
+
+    class NativeEpochTrace(_CopyTrace):
+        def __init__(self):
+            super().__init__(case)
+            self.done, self.native_allocations = [], []
+
+        def __torch_dispatch__(self, function, types, args=(), kwargs=None):
+            allocation = (str(function) == "aten.empty.memory_format" and tuple(args[0]) == chunk
+                          and torch.device((kwargs or {}).get("device", "cpu")).type == "cuda")
+            if allocation:
+                before = torch.cuda.memory_stats()
+                record = dict(pending_native=sum(not event.query() for event in self.done),
+                              allocated_before=before["allocated_bytes.all.current"],
+                              active_before=before["active_bytes.all.current"])
+            result = super().__torch_dispatch__(function, types, args, kwargs)
+            if allocation:
+                after = torch.cuda.memory_stats()
+                record.update(allocated_after=after["allocated_bytes.all.current"],
+                              active_after=after["active_bytes.all.current"],
+                              bytes=result.untyped_storage().nbytes())
+                self.native_allocations.append(record)
+            return result
+
+        def _proxy(self, kernel, beam, kind):
+            parent = super()._proxy(kernel, beam, kind)
+            tracer = self
+
+            class Proxy:
+                def __getitem__(self, configuration):
+                    launch = parent[configuration]
+
+                    def observed(*args, **kwargs):
+                        torch.cuda._sleep(cycles)
+                        result = launch(*args, **kwargs)
+                        event = torch.cuda.Event()
+                        event.record(torch.cuda.current_stream())
+                        tracer.done.append(event)
+                        return result
+                    return observed
+            return Proxy()
+
+    trace, plans = NativeEpochTrace(), []
+    original_native, original_choose = operator._native_tile, operator._choose_schedule
+
+    def native(*args, **kwargs):
+        if serial_control:
+            for event in trace.done:
+                event.synchronize()  # Real retirement barrier, explicit negative control only.
+        return original_native(*args, **kwargs)
+
+    def choose(*args, **kwargs):
+        result = original_choose(*args, **kwargs)
+        plan = result[0]
+        plans.append(dict(slots=plan.slots, schedule=plan.schedule, estimated_gpu_bytes=plan.estimated_gpu_bytes))
+        return result
+
+    # The inventory is synthetic admission pressure; allocations, allocator
+    # active bytes, pending events, kernels, copies and result values are real.
+    with _memory_inventory({torch.cuda.current_device(): (4 * budget + 2) // 3}), trace, \
+            mock.patch.object(operator, "_native_tile", side_effect=native), \
+            mock.patch.object(operator, "_choose_schedule", side_effect=choose):
+        result = operator.project(image)
+    after = torch.cuda.memory_stats()
+    _close(result, expected)
+    report = _check_report(operator, trace, "project")
+    assert len(plans) == 1 and plans[0]["slots"] == 1
+    assert not report["pilot"] and report["gpu_budget_bytes"] == budget
+    assert report["schedule"] in ("views", "spatial")
+    if report["schedule"] != "views":
+        assert report.get("fallback_reason")
+    assert any(record["kind"] == "forward" for record in trace.launches), "capacity trial did not launch an actual native forward kernel"
+    return dict(serial_control=serial_control, report=report, selected_plan=plans[0],
+                calibrated_delay_ms=measured_ms, delay_cycles=cycles,
+                baseline_allocated_bytes=baseline["allocated_bytes.all.current"],
+                baseline_active_bytes=baseline["active_bytes.all.current"],
+                peak_allocated_increment=after["allocated_bytes.all.peak"] - baseline["allocated_bytes.all.current"],
+                peak_active_increment=after["active_bytes.all.peak"] - baseline["active_bytes.all.current"],
+                native_allocations=trace.native_allocations, native_numeric_oracle="PASS")
+
+
+@pytest.mark.cuda
+@cuda_required
+@pytest.mark.parametrize("serial_control", [False, True], ids=["single-slot-native", "prior-event-retired-control"])
+def test_single_slot_view_first_native_peak_accounts_pending_prior_compute_before_next_allocation(serial_control):
+    trial = _single_epoch_native_trial(serial_control)
+    if serial_control:
+        assert all(record["pending_native"] == 0 for record in trial["native_allocations"]), trial
+    actual_peak = max(trial["peak_allocated_increment"], trial["peak_active_increment"])
+    assert actual_peak <= trial["report"]["estimated_gpu_bytes"] <= trial["report"]["gpu_budget_bytes"], trial

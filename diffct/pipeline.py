@@ -100,8 +100,7 @@ class _DevicePipeline:
         origin = torch.cuda.current_stream(source.device) if source.is_cuda else None
         with torch.cuda.device(self.device), torch.cuda.stream(self.upload):
             if source.is_cuda:
-                if source.device != self.device:
-                    self.upload.wait_stream(origin)
+                self.upload.wait_stream(origin)
                 _copy(target, source, self.stats)
                 if source.device == self.device:
                     source.record_stream(self.upload)

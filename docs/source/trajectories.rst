@@ -148,7 +148,10 @@ contains global view IDs. Return ``(*pixel_shape,3)`` shared offsets or
 ``(len(view_indices),*pixel_shape,3)`` batched offsets. In 2D the middle
 component remains zero. Streamed grids, IDs and explicit parameter snapshots
 are CPU tensors; parameter dtypes and original gradient devices are preserved.
-Offsets and world points are validated on every executing batch.
+World-coordinate arithmetic promotes all frames and offsets to one common
+dtype, at least float32; float64 inputs retain float64 arithmetic. Gradients
+return in each input's original dtype. Offsets and world points are validated
+on every executing batch.
 
 The sampler is pure. Mutable geometry tensors must be explicit parameters;
 other captured configuration must be immutable. Coupling across views uses

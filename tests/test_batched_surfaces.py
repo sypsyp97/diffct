@@ -568,3 +568,135 @@ def test_geometry_peak_is_bounded_across_global_view_and_detector_growth_includi
     slack = 2 * 4 * (3 * 4 * 5) + 4 * 4 * 2 * (4 * 3) * 3
     assert more_views <= small + slack, (small, more_views, slack)
     assert more_pixels <= small + slack, (small, more_pixels, slack)
+
+
+@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("layout", ["float", "double", "half", "source-double", "mixed-axes", "double-offsets"])
+def test_sampled_geometry_common_arithmetic_dtype_preserves_cpu_graph_and_original_gradient_dtypes(beam, layout):
+    from diffct.surfaces import _GeometrySpec, _sample_geometry
+
+    case = _case(beam, views=4)
+    count = len(case.trajectory)
+    dtype = {"half": torch.float16, "double": torch.float64}.get(layout, torch.float32)
+    dtypes = [dtype] * count
+    if layout == "source-double":
+        dtypes[0] = torch.float64
+    elif layout == "mixed-axes":
+        dtypes[-1] = torch.float64
+    frames = tuple(value.to(dtype=dtype).detach().requires_grad_()
+                   for value, dtype in zip(case.trajectory, dtypes))
+    gain = torch.tensor(.17, dtype=torch.float64 if layout == "double-offsets" else dtypes[1], requires_grad=True)
+    selected_views = slice(1, 3)
+    selected_pixels = (slice(1, 4), slice(1, 3)) if beam == "cone" else (slice(2, 6),)
+    samples = []
+
+    def sampler(u, v, ids, parameter):
+        assert u.device.type == v.device.type == ids.device.type == parameter.device.type == "cpu"
+        assert u.dtype == v.dtype == torch.float64 and ids.tolist() == [1, 2]
+        base = torch.stack((u, v if beam == "cone" else torch.zeros_like(v),
+                            .13 * u + .09 * v + .21), dim=-1).to(parameter.dtype)
+        samples.append(_numpy(base))
+        return parameter * base
+
+    source, points = _sample_geometry(beam, case.detector, case.pitch, (*frames, gain),
+                                     _GeometrySpec("sampled", sampler), selected_views, selected_pixels, case.spacing)
+    expected_dtype = torch.float64 if any(value.dtype == torch.float64 for value in (*frames, gain)) else torch.float32
+    assert source.dtype == points.dtype == expected_dtype
+    assert source.device.type == points.device.type == "cpu" and source.grad_fn is not None and points.grad_fn is not None
+    values = tuple(_numpy(value) for value in frames)
+    # The independent world-point oracle uses quantized caller values and a
+    # NumPy frame cross product; it never calls the production geometry builder.
+    offsets = _numpy(gain * torch.from_numpy(samples[0]).to(gain.dtype))
+
+    def world(frame, local):
+        center = frame[1][selected_views].reshape(2, *([1] * len(selected_pixels)), -1)
+        axis = frame[2][selected_views].reshape(center.shape)
+        if beam == "cone":
+            vertical = frame[3][selected_views].reshape(center.shape)
+            return center + local[..., 0, None] * axis + local[..., 1, None] * vertical + local[..., 2, None] * np.cross(axis, vertical)
+        normal = np.stack((axis[..., 1], -axis[..., 0]), axis=-1)
+        return center + local[..., 0, None] * axis + local[..., 2, None] * normal
+
+    expected = world(values, offsets)
+    np.testing.assert_allclose(_numpy(source), values[0][selected_views], rtol=0, atol=0)
+    np.testing.assert_allclose(_numpy(points), expected, rtol=2e-6, atol=2e-6)
+    weight = np.linspace(.011, .073, points.numel()).reshape(points.shape)
+    source_weight = np.linspace(.019, .053, source.numel()).reshape(source.shape)
+    loss = (points * torch.from_numpy(weight).to(points.dtype)).sum() + (source * torch.from_numpy(source_weight).to(source.dtype)).sum()
+    gradients = torch.autograd.grad(loss, (*frames, gain))
+    for original, gradient in zip((*frames, gain), gradients):
+        assert gradient.dtype == original.dtype and gradient.device == original.device and torch.isfinite(gradient).all()
+    for index, value in enumerate(values):
+        direction = np.linspace(.13, .37, value.size).reshape(value.shape)
+
+        def objective(changed):
+            frame = list(values)
+            frame[index] = changed
+            return float((world(frame, offsets) * weight).sum() + (frame[0][selected_views] * source_weight).sum())
+
+        expected_gradient = _finite_difference(objective, value, direction)
+        assert float((_numpy(gradients[index]) * direction).sum()) == pytest.approx(expected_gradient, rel=2e-3, abs=2e-4)
+    expected_gain = float(((world(values, samples[0]) - world(values, np.zeros_like(samples[0]))) * weight).sum())
+    assert float(gradients[-1]) == pytest.approx(expected_gain, rel=2e-3, abs=2e-4)
+
+
+@pytest.mark.parametrize("beam", BEAMS)
+def test_sampled_half_geometry_accepts_finite_world_points_beyond_half_range(beam):
+    from diffct.surfaces import _GeometrySpec, _sample_geometry
+    from tests.test_detector_surfaces import _axis_case
+
+    case = _axis_case(beam)
+    frames = tuple(value[:1].half() for value in case.trajectory)
+    frames[1][:, 0] = 50000.
+
+    def sampler(u, v, ids):
+        return torch.stack((u, v, torch.full_like(u, 40000.)), dim=-1).half()
+
+    source, points = _sample_geometry(beam, case.detector, case.pitch, frames,
+                                     _GeometrySpec("sampled", sampler), slice(0, 1),
+                                     tuple(slice(0, size) for size in case.detector), case.spacing)
+    assert source.dtype == points.dtype == torch.float32 and torch.isfinite(points).all()
+    torch.testing.assert_close(points[..., 0], torch.full(points.shape[:-1], 89984.), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("kind", ["nan", "infinite", "outside-float32"])
+def test_sampled_common_dtype_still_rejects_invalid_world_coordinates(kind):
+    from diffct.surfaces import _GeometrySpec, _sample_geometry
+
+    case = _case("cone", views=1)
+
+    def sampler(u, v, ids):
+        value = {"nan": float("nan"), "infinite": float("inf"), "outside-float32": 1e40}[kind]
+        return torch.stack((u, v, torch.full_like(u, value)), dim=-1)
+
+    with pytest.raises(ValueError, match="finite|float32"):
+        _sample_geometry(case.beam, case.detector, case.pitch, case.trajectory,
+                         _GeometrySpec("sampled", sampler), slice(0, 1),
+                         tuple(slice(0, size) for size in case.detector), case.spacing)
+
+
+@pytest.mark.cuda
+@cuda_required
+def test_sampled_float32_offsets_mixed_axes_real_projection_and_geometry_vjp():
+    case, parameters = _fixture("cone", learnable=True)
+    case.trajectory = tuple(value.detach().to(torch.float64 if index == 3 else torch.float32).requires_grad_()
+                            for index, value in enumerate(case.trajectory))
+    parameters = tuple(value.detach().float().requires_grad_() for value in parameters)
+
+    class FloatSampler(_Sampler):
+        def __call__(self, *args):
+            return super().__call__(*args).float()
+
+    chunk, pixels = _settings(case)
+    projector = _batched_projector(case, FloatSampler(case), parameters, chunk=chunk, pixels=pixels)
+    image, sino = _data(case, device="cpu")
+    values = tuple(_numpy(value) for value in parameters)
+    geometry = tuple(_numpy(value) for value in case.trajectory)
+    with _GeometryTrace(case, chunk, pixels, 2, (*parameters, *case.trajectory)) as trace:
+        output = projector.project(image)
+        gradients = torch.autograd.grad((output.double() * sino.double()).sum(), (*parameters, *case.trajectory))
+    matrix = _matrix(case, _numpy_offsets(case, values), geometry)
+    _close(output, (matrix @ _numpy(image).ravel()).reshape(case.sino_shape))
+    assert any(record["kind"] == "geometry_vjp" for record in trace.points)
+    assert all(gradient.dtype == original.dtype for original, gradient in zip((*parameters, *case.trajectory), gradients))
+    _check_parameter_and_frame_fd(case, values, geometry, gradients, image, sino)

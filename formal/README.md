@@ -96,6 +96,13 @@ pipeline, allocator or distributed runtime implements the model. The real
 CUDA schedule and transfer tests independently observe native launches,
 copies, events, storage lifetimes and peak allocations.
 
+Additional bounded models enumerate CPU-fallback requests for one through
+four ranks and check that a shared decision preserves collective order.
+They also distinguish post-initialization CUDA producer readiness from
+storage retention for one through three reads. A separate admission check
+requires the prior native allocation to retire before a one-epoch budget
+admits its successor. Runtime tests observe these conditions independently.
+
 The same protocol module models balanced spatial ownership, exact block
 adjoints and norm counting, collective participation, and CGLS state lifetime.
 Its slab enumeration covers sizes zero through nine and one through five

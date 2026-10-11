@@ -118,10 +118,20 @@ def cgls(operator, measurements, iterations):
     elements = 1048576
     report = _solver_capacity(operator, source, elements, measurements.device)
     device = measurements.device
-    if device.type == "cuda" and report["gpu_budget_bytes"] is not None:
-        if report["estimated_gpu_bytes"] > report["gpu_budget_bytes"]:
-            device = torch.device("cpu")
-            report = _solver_capacity(operator, source, elements, device)
+    fallback = (device.type == "cuda" and report["gpu_budget_bytes"] is not None
+                and report["estimated_gpu_bytes"] > report["gpu_budget_bytes"])
+    if operator.world_size > 1:
+        # Agree before the CPU replan issues its own collectives.
+        group = operator.process_group
+        control_device = (torch.device("cuda", torch.cuda.current_device())
+                          if dist.get_backend(group) == "nccl" else torch.device("cpu"))
+        agreement = torch.tensor(int(fallback), dtype=torch.int64, device=control_device)
+        dist.all_reduce(agreement, op=dist.ReduceOp.MAX, group=group)
+        fallback = bool(agreement.item())
+        del agreement
+    if fallback:
+        device = torch.device("cpu")
+        report = _solver_capacity(operator, source, elements, device)
     report["state_backend"] = device.type
     operator.last_solver_stats = report
     x = torch.zeros(operator.volume_shape, dtype=torch.float32, device=device)

@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The disk example keeps all three volume states plus residual/projection state
   blockwise and retains `q` until the global `alpha` decision.
 
+### Fixed
+
+- Tensor CGLS ranks agree on CPU fallback before jointly replanning unequal
+  spatial shards, preserving collective order.
+- Parameterized detector surfaces use a common arithmetic dtype of at least
+  float32, supporting mixed frame dtypes and finite half-precision inputs.
+- CUDA store uploads wait for newly generated blocks on their source stream,
+  including transfers within one GPU.
+- Single-slot execution retires prior native computation before allocating
+  the next tile, keeping deferred CUDA allocations within its admission bound.
+
 ## [2.1.0] - 2026-10-10
 
 ### Added

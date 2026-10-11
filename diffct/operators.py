@@ -984,6 +984,9 @@ class Projector:
     def _native_tile(self, source, spatial, shape, pipe, is_project):
         pipe.reclaim_output()
         with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload):
+            if len(pipe.host) == 1:
+                # A single-slot plan budgets only one live producer epoch.
+                pipe.event(pipe.compute).synchronize()
             staged = torch.empty(shape if is_project or self.beam != "cone" else shape[::-1],
                                  dtype=torch.float32, device=pipe.device)
         if is_project:

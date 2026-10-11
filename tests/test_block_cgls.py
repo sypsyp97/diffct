@@ -817,3 +817,180 @@ def test_common_cpu_state_fp64_cuda_input_copies_before_cast_without_unbudgeted_
         assert record["downloads"] and all(copy["equal_dtype"] for copy in record["downloads"])
         assert sum(copy["bytes"] for copy in record["downloads"]) == record["expected_fp64_bytes"], \
             "FP64 blocks must cross to CPU before the bounded FP32 conversion"
+
+
+def _common_admission_worker(rank, mode, rendezvous, directory):
+    torch.cuda.set_device(0)
+    _warm_native_point_kernels()
+    dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2,
+                            timeout=timedelta(seconds=30))
+    try:
+        case, _ = _fixture("cone", first=3, views=3)
+        case.shape = (3, 32, 32)
+        case.trajectory = tuple(value.float() for value in case.trajectory)
+        operator = _space_projector(case, distributed=True, devices=[0], schedule="spatial",
+                                    volume_chunk_shape=(1, 16, 16), view_chunk_size=1)
+        _, cpu_measurements = _data(case, device="cpu")
+        operator.backproject(cpu_measurements)  # Warm before tracing the original CGLS entry point.
+        measurements = (cpu_measurements if mode == "all-cpu" else cpu_measurements.cuda()).requires_grad_()
+        budget = (48 if mode == "any-fallback" else 512) * 1024
+        records, reports, q_decisions = [], [], []
+        observed = _ObservedOperator(operator)
+        rank_directory = Path(directory) / f"rank-{rank}"
+        rank_directory.mkdir()
+        original_reduce, original_broadcast = dist.all_reduce, dist.broadcast_object_list
+        original_gather = dist.all_gather_object
+        try:
+            blocks = importlib.import_module("_block_cgls")
+        except ModuleNotFoundError as error:
+            if error.name != "_block_cgls":
+                raise
+            blocks = importlib.import_module("examples._block_cgls")
+        original_capacity = blocks._solver_capacity
+
+        def save():
+            document = dict(rank=rank, mode=mode, collectives=records, capacities=reports,
+                            q_decisions=q_decisions, budget=budget, owned_shape=operator.volume_shape)
+            (rank_directory / "admission.json").write_text(json.dumps(document), encoding="utf-8")
+
+        def order(signature):
+            # An independent real Gloo observer agrees on the next operation's
+            # signature before invoking it. It bounds a bad original sequence
+            # without waiting for incompatible reductions to deadlock.
+            signatures = [None, None]
+            original_gather(signatures, signature, group=operator.process_group)
+            records.append(dict(step=len(records) + 1, signatures=signatures))
+            if signatures[0] != signatures[1]:
+                save()
+                raise AssertionError(f"CGLS collective order diverged at step {len(records)}: {signatures}")
+
+        def reduce(tensor, *args, **kwargs):
+            operation = kwargs.get("op", args[0] if args else dist.ReduceOp.SUM)
+            order(dict(kind="all_reduce", shape=list(tensor.shape), dtype=str(tensor.dtype), op=str(operation)))
+            result = original_reduce(tensor, *args, **kwargs)
+            if not observed.native[0] and tensor.is_floating_point() and tensor.numel() == 1 and observed.q_locked:
+                q_decisions.append(observed.q_identity)
+            return result
+
+        def broadcast(values, *args, **kwargs):
+            order(dict(kind="broadcast_object_list", count=len(values),
+                       src=kwargs.get("src", args[0] if args else 0)))
+            return original_broadcast(values, *args, **kwargs)
+
+        def gather(values, value, *args, **kwargs):
+            order(dict(kind="all_gather_object", count=len(values)))
+            return original_gather(values, value, *args, **kwargs)
+
+        def capacity(*args, **kwargs):
+            report = original_capacity(*args, **kwargs)
+            reports.append(dict(report))
+            return report
+
+        try:
+            with _memory_inventory({0: (4 * budget + 2) // 3}), \
+                    mock.patch.object(dist, "all_reduce", reduce), \
+                    mock.patch.object(dist, "broadcast_object_list", broadcast), \
+                    mock.patch.object(dist, "all_gather_object", gather), \
+                    mock.patch.object(blocks, "_solver_capacity", capacity), \
+                    _SolverAllocations(1048576, native=observed.native):
+                output = _example("_common").cgls(observed, measurements, 3)
+            matrix = _matrix(case, _offsets(case, flat=True))
+            expected, _ = _reference(matrix, _numpy(cpu_measurements), 3)
+            columns = _owned_columns(case.shape, _slab(case.shape, rank))
+            _close(output, expected[columns].reshape(operator.volume_shape), rtol=3e-3, atol=5e-4)
+            torch.testing.assert_close(measurements.detach().cpu(), cpu_measurements)
+            assert measurements.grad is None and output.grad_fn is None and not output.requires_grad
+            assert q_decisions, "actual q never survived an observed global norm decision"
+            report = observed.last_solver_stats
+            assert report["requested_volume_state_bytes"] == 12 * math.prod(operator.volume_shape)
+            assert report["requested_ray_state_bytes"] == 8 * math.prod(operator.projection_shape)
+            assert report["state_backend"] == ("cuda" if mode == "all-fit" else "cpu")
+            assert output.device.type == report["state_backend"]
+            assert len(reports) == (2 if mode == "any-fallback" else 1)
+            for kind in ("project_into", "backproject_into"):
+                calls = [identities for name, identities in observed.calls if name == kind]
+                assert len({value[0] for value in calls}) == len({value[-1] for value in calls}) == 1
+        finally:
+            save()
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.cuda
+@cuda_required
+@pytest.mark.skipif(not dist.is_available() or not dist.is_gloo_available(), reason="real two-process Gloo is required")
+@pytest.mark.parametrize("mode", ["all-cpu", "all-fit", "any-fallback"])
+def test_common_cgls_global_admission_preserves_collective_order_and_owned_native_numerics(mode, tmp_path):
+    _run_processes(_common_admission_worker, (mode, (tmp_path / "common-admission").resolve().as_uri(), str(tmp_path)),
+                   timeout=120)
+    records = [json.loads((tmp_path / f"rank-{rank}" / "admission.json").read_text()) for rank in range(2)]
+    assert records[0]["collectives"] == records[1]["collectives"]
+    estimates = [record["capacities"][0]["estimated_gpu_bytes"] for record in records]
+    budget = records[0]["budget"]
+    if mode == "any-fallback":
+        assert min(estimates) <= budget < max(estimates), "fixture did not induce asymmetric real capacity admission"
+    elif mode == "all-fit":
+        assert max(estimates) <= budget
+
+
+def _common_admission_metadata(backend, measurement_device, *, world_size=2):
+    class StopBeforeNative(Exception):
+        pass
+
+    class MetadataOperator(_Diagonal):
+        rank = 0
+
+        def backproject_into(self, value, output):
+            raise StopBeforeNative
+
+    operator = MetadataOperator(torch.ones(7))
+    operator.world_size, operator.process_group = world_size, object()
+    measurements = torch.ones(7, device=measurement_device)
+    calls, backend_groups = [], []
+
+    def get_backend(group=None):
+        backend_groups.append(group)
+        return backend
+
+    def reduce(tensor, *args, **kwargs):
+        group = kwargs.get("group", args[1] if len(args) > 1 else None)
+        calls.append((tensor.device, tensor.numel(), group))
+
+    # Backend and reductions are metadata observations only. This exercises
+    # the original entry-point's communication-device decision; no physical
+    # NCCL or second-GPU execution is claimed.
+    with mock.patch.object(dist, "get_backend", side_effect=get_backend), \
+            mock.patch.object(dist, "all_reduce", side_effect=reduce), \
+            mock.patch.object(dist, "is_initialized", return_value=True), \
+            mock.patch.object(dist, "get_world_size", return_value=2), \
+            mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"), \
+            pytest.raises(StopBeforeNative):
+        _example("_common").cgls(operator, measurements, 0)
+    return operator, calls, backend_groups
+
+
+@pytest.mark.cuda
+@cuda_required
+@pytest.mark.parametrize("measurement_device", ["cpu", "cuda"])
+def test_METADATA_common_cgls_nccl_admission_uses_local_cuda_communication_tensor(measurement_device):
+    local_device = torch.device("cuda", torch.cuda.current_device())
+    operator, calls, backend_groups = _common_admission_metadata("nccl", measurement_device)
+    assert calls, "distributed admission skipped collective fallback agreement"
+    assert backend_groups and all(group is operator.process_group for group in backend_groups)
+    assert all(device == local_device and elements == 1 and group is operator.process_group
+               for device, elements, group in calls)
+
+
+def test_METADATA_common_cgls_gloo_admission_uses_cpu_flag_and_operator_process_group():
+    with mock.patch.object(torch.cuda, "is_available", return_value=False):
+        operator, calls, backend_groups = _common_admission_metadata("gloo", "cpu")
+    assert calls, "distributed admission skipped collective fallback agreement"
+    assert backend_groups and all(group is operator.process_group for group in backend_groups)
+    assert all(device.type == "cpu" and elements == 1 and group is operator.process_group
+               for device, elements, group in calls)
+
+
+def test_METADATA_common_cgls_single_rank_admission_skips_collectives_even_with_initialized_default_group():
+    with mock.patch.object(torch.cuda, "is_available", return_value=False):
+        _, calls, backend_groups = _common_admission_metadata("gloo", "cpu", world_size=1)
+    assert calls == [] and backend_groups == [], "single-rank operator used unrelated initialized process-group collectives"

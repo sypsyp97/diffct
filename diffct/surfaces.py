@@ -65,10 +65,14 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
         raise ValueError("detector surface coordinates must be finite")
     if beam != "cone" and torch.any(offsets[..., 1] != 0).item():
         raise ValueError("2D detector surface middle coordinates must be zero")
+    dtype = torch.float32
+    for component in (*frames, offsets):
+        dtype = torch.promote_types(dtype, component.dtype)
+    offsets = offsets.to(dtype=dtype)
     local = offsets if offsets.ndim == u.ndim + 2 else offsets.unsqueeze(0)
 
     def frame(component):
-        return component[views].to(device="cpu", dtype=torch.promote_types(component.dtype, offsets.dtype)).reshape(
+        return component[views].to(device="cpu", dtype=dtype).reshape(
             len(ids), *([1] * u.ndim), component.shape[-1],
         )
 
@@ -81,7 +85,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
     else:
         normal = torch.stack((axis_u[..., 1], -axis_u[..., 0]), dim=-1)
         points = points + local[..., 2, None] * normal
-    source = frames[0][views].to(device="cpu")
+    source = frames[0][views].to(device="cpu", dtype=dtype)
     for component in (source, points):
         if not torch.isfinite(component).all().item() or not torch.isfinite(component.float()).all().item():
             raise ValueError("surface world coordinates must be finite in float32")

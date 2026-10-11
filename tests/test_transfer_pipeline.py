@@ -508,3 +508,131 @@ def _resident_nccl_worker(rank, beam, views, rendezvous):
 def test_nccl_tile_sum_is_resident_bounded_before_download_including_empty_rank(beam, views, tmp_path):
     mp.spawn(_resident_nccl_worker, args=(beam, views, (tmp_path / "resident-tile-sum").resolve().as_uri()),
              nprocs=2, join=True)
+
+
+class _SourceReadinessTrace(_PipelineTrace):
+    """Observe producer order separately from allocator record_stream ownership."""
+    def __init__(self, case, **kwargs):
+        super().__init__(case, **kwargs)
+        self.stream_waits, self.source_reads = [], []
+
+    def __enter__(self):
+        super().__enter__()
+        original = torch.cuda.Stream.wait_stream
+
+        def wait(target, origin):
+            result = original(target, origin)
+            self.stream_waits.append({"sequence": self._step(),
+                                      "target": (target.device.index, int(target.cuda_stream)),
+                                      "origin": (origin.device.index, int(origin.cuda_stream))})
+            return result
+
+        self.patches.enter_context(mock.patch.object(torch.cuda.Stream, "wait_stream", wait))
+        return self
+
+    def produced(self, tensor, event):
+        self.producers.setdefault(self._key(tensor), []).append({"event": event, "stream": _stream(),
+                                                                "sequence": self._step()})
+
+    def __torch_dispatch__(self, function, types, args=(), kwargs=None):
+        if str(function) == "aten.copy_.default" and args[1].is_cuda:
+            for producer in self.producers.get(self._key(args[1]), ()):
+                consumer = _stream()
+                covered = self._depends(consumer, self.sequence + 1, producer["stream"], producer["sequence"])
+                covered |= any(wait["target"] == consumer and wait["origin"] == producer["stream"]
+                               and producer["sequence"] < wait["sequence"] <= self.sequence for wait in self.stream_waits)
+                self.source_reads.append({"pending": not producer["event"].query(), "covered": bool(covered),
+                                          "producer": producer["stream"], "consumer": consumer})
+        return super().__torch_dispatch__(function, types, args, kwargs)
+
+
+class _DecodedCudaStore(_GuardedStore):
+    """A custom read really decodes its returned CUDA clone on the caller stream."""
+    def __init__(self, tensor, block_shape, trace, *, delayed):
+        super().__init__(tensor, block_shape, writable=False)
+        self.device, self.trace, self.delayed = tensor.device, trace, delayed
+
+    def read(self, index):
+        value = super().read(index)
+        if self.delayed:
+            torch.cuda._sleep(100000000)
+        value.mul_(1.7).add_(.23)
+        event = torch.cuda.Event()
+        event.record(torch.cuda.current_stream(self.device))
+        self.trace.produced(value, event)
+        if not self.delayed:
+            event.synchronize()  # Explicit completed-producer control, no device-wide barrier.
+        return value
+
+
+def _decoded_upload_trial(delayed, foreign):
+    case = _schedule_case("parallel")
+    origin = torch.device("cuda", torch.cuda.current_device())
+    destination = torch.device("cuda", 1 if origin.index == 0 else 0) if foreign else origin
+    expected = torch.linspace(-.41, .83, 37).mul(1.7).add(.23)
+    input_tensor = torch.linspace(-.41, .83, 37, device=origin)
+    target = torch.full((37,), -19., device=destination)
+    # Warm producer arithmetic/copy kernels and caller data before the pipeline
+    # records its initial stream waits. The delayed read happens afterwards.
+    target.copy_(input_tensor.to(destination).clone().mul_(1.7).add_(.23))
+    torch.cuda.synchronize(origin)
+    if foreign:
+        torch.cuda.synchronize(destination)
+    caller = torch.cuda.Stream(device=origin)
+    with torch.cuda.device(origin), torch.cuda.stream(caller), _SourceReadinessTrace(case) as trace:
+        stats = dict(h2d_bytes=0, d2h_bytes=0, p2p_bytes=0, pinned_bytes_peak=0)
+        pipe = pipeline._DevicePipeline(destination, 37, stats)
+        source = _DecodedCudaStore(input_tensor, (37,), trace, delayed=delayed)
+        try:
+            ready = pipe.upload_store(source, (slice(0, 37),), target)
+            assert ready is not None
+        finally:
+            pipe.close()
+        assert not trace.global_syncs
+        records = list(trace.source_reads)
+    return target.cpu(), expected, records
+
+
+@pytest.mark.cuda
+@cuda_required
+@pytest.mark.parametrize("delayed", [False, True], ids=["completed-producer", "delayed-producer"])
+@pytest.mark.parametrize("foreign", [False, True], ids=["same-gpu", "foreign-gpu"])
+@pytest.mark.parametrize("check", ["numerics", "dependency"])
+def test_upload_custom_cuda_read_waits_latest_producer_before_consumption(delayed, foreign, check):
+    if foreign and torch.cuda.device_count() < 2:
+        pytest.skip("foreign-source runtime control requires two physical GPUs")
+    result, expected, records = _decoded_upload_trial(delayed, foreign)
+    assert records and all(record["producer"] != record["consumer"] for record in records)
+    if check == "numerics":
+        torch.testing.assert_close(result, expected)
+    else:
+        if delayed:
+            assert any(record["pending"] for record in records), "producer delay ended before the consumption probe"
+        assert all(not record["pending"] or record["covered"] for record in records), records
+
+
+@pytest.mark.cuda
+@cuda_required
+@pytest.mark.parametrize("operation", ["project", "backproject"])
+@pytest.mark.parametrize("delayed", [False, True], ids=["completed-producer", "delayed-producer"])
+def test_native_into_custom_same_gpu_decode_reads_completed_values(operation, delayed):
+    case = _schedule_case("parallel", views=3)
+    image, sino = _data(case, device="cpu")
+    original = image if operation == "project" else sino
+    block = (4, 5) if operation == "project" else (2, *case.detector)
+    projector = _scheduled_projector(case, "spatial", volume_chunk_shape=(4, 5), view_chunk_size=2)
+    projector.project(image)
+    projector.backproject(sino)
+    caller_data = original.cuda()
+    # Include decode arithmetic in warmup; all native kernels are already warm.
+    caller_data.clone().mul_(1.7).add_(.23)
+    torch.cuda.synchronize()
+    shape = case.sino_shape if operation == "project" else case.shape
+    sink = _GuardedStore(torch.full(shape, torch.nan), (2, *case.detector) if operation == "project" else (4, 5))
+    with _SourceReadinessTrace(case, caller_tensors=(image, sino, sink.tensor, *case.trajectory)) as trace:
+        source = _DecodedCudaStore(caller_data, block, trace, delayed=delayed)
+        assert getattr(projector, f"{operation}_into")(source, sink) is sink
+    matrix = _matrix(case, _offsets(case, flat=True))
+    operator = matrix if operation == "project" else matrix.T
+    _close(sink.tensor, (operator @ _numpy(original.mul(1.7).add(.23)).ravel()).reshape(shape))
+    assert torch.all(sink.overwrites == 1) and trace.source_reads and not trace.global_syncs

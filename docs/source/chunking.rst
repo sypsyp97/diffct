@@ -107,6 +107,8 @@ also has an independent host working-set ceiling. Arbitrary allocations inside
 a user sampler and OS file-cache residency remain outside these ceilings.
 All additional GPU slots, layouts, geometry and collective staging contribute
 to the GPU budget. Very small budgets can use a bounded serial fallback.
+Single-slot plans retire prior native computation before allocating the next
+tile; two-slot plans retain their bounded overlap.
 
 ``A.last_execution_stats`` reports the last instrumented operation's schedule,
 limits, layout/kernel counts and actual upload/download/peer-copy payloads.
@@ -144,6 +146,10 @@ float32 and writable. Each completed output region overwrites its prior
 contents; no full result is allocated internally. These numerical methods do
 not build an autograd graph. Use tensor ``project``/``backproject`` for
 differentiation.
+
+Custom CUDA stores must produce returned blocks on the source device's
+current stream, or make that stream wait for their producer. The upload
+stream waits for this work before reading a block, including on the same GPU.
 
 Input and output must have distinct backing data. Identical objects,
 detectable overlapping tensors and the same canonical mapped file path are
@@ -218,7 +224,9 @@ PyTorch CUDA tensor allocation. The peak excludes driver/context memory.
    python examples/chunked_reconstruction.py --devices 0 1
 
 The tensor CGLS helper computes FP64 norms in bounded pieces and reuses vector
-update buffers. Its complete tensor states still need memory. Disk-backed
+update buffers. Its complete tensor states still need memory. If any rank's
+CUDA state exceeds its budget, all ranks agree to keep state on CPU and
+replan together, preserving collective order for unequal slabs. Disk-backed
 CGLS keeps ``x,s,p`` plus ``r,q`` in stores, performs blockwise vector updates
 and writes completed-iteration checkpoints without gathering the volume.
 ``q`` remains available until the global norm determines ``alpha`` and the
