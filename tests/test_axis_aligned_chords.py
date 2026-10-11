@@ -17,39 +17,25 @@ DTYPES = [torch.float32, torch.float64]
 CUDA_REQUIRED = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for public projection")
 
 
-def _central_rays(shape, dtype):
-    """Build positive and negative central rays along each physical axis."""
+def _operator(shape, geometry_dtype):
+    # Build positive and negative central rays along each physical axis.
     dimensions = len(shape)
-    directions = torch.cat((torch.eye(dimensions), -torch.eye(dimensions))).to(dtype)
+    directions = torch.cat((torch.eye(dimensions), -torch.eye(dimensions))).to(geometry_dtype)
     centers = 8 * directions
     u = torch.roll(directions, 1, dims=1)
     if dimensions == 2:
-        return directions, centers, u
-    v = torch.linalg.cross(directions, u)
-    return -centers, centers, u, v
-
-
-def _operator(shape, geometry_dtype):
+        trajectory = directions, centers, u
+    else:
+        v = torch.linalg.cross(directions, u)
+        trajectory = -centers, centers, u, v
     return Projector(
-        _central_rays(shape, geometry_dtype), shape,
+        trajectory, shape,
         (1,) if len(shape) == 2 else (1, 1),
         beam="parallel" if len(shape) == 2 else "cone",
         voxel_spacing=0.7, devices=[0] if torch.cuda.is_available() else None,
         distributed=False, volume_chunk_shape=tuple(min(3, size) for size in shape),
         schedule="spatial",
     )
-
-
-def _central_row_matrix(shape):
-    """Exact physical weights: each central ray crosses a full voxel row."""
-    dimensions = len(shape)
-    matrix = torch.zeros((2 * dimensions, *shape), dtype=torch.float64)
-    for view in range(2 * dimensions):
-        tensor_axis = dimensions - 1 - view % dimensions
-        index = [size // 2 for size in shape]
-        index[tensor_axis] = slice(None)
-        matrix[(view, *index)] = 0.7
-    return matrix.reshape(2 * dimensions, -1)
 
 
 @pytest.mark.parametrize("shape", SHAPES)
@@ -77,7 +63,15 @@ def test_central_chords_and_adjoint_with_short_final_tiles(shape, geometry_dtype
     assert projected.device == constant.device
     torch.testing.assert_close(projected.cpu().double().flatten(), expected_chords, rtol=3e-5, atol=3e-6)
 
-    matrix = _central_row_matrix(shape)
+    # Exact physical weights: each central ray crosses a full voxel row.
+    dimensions = len(shape)
+    matrix = torch.zeros((2 * dimensions, *shape), dtype=torch.float64)
+    for view in range(2 * dimensions):
+        tensor_axis = dimensions - 1 - view % dimensions
+        index = [size // 2 for size in shape]
+        index[tensor_axis] = slice(None)
+        matrix[(view, *index)] = 0.7
+    matrix = matrix.reshape(2 * dimensions, -1)
     image = (torch.arange(math.prod(shape), dtype=torch.float64).sin() + 0.4).reshape(shape)
     image = image.to(device=input_device, dtype=data_dtype)
     sino = torch.linspace(-0.7, 1.3, 2 * len(shape), dtype=data_dtype, device=input_device)
