@@ -34,8 +34,6 @@
   <a href="#citation">Citation</a>
 </p>
 
-> **Install** with the CUDA extra, `pip install "diffct[cu12]"` or `pip install "diffct[cu13]"`, after PyTorch. A plain `pip install diffct` needs a system CUDA Toolkit.
->
 > **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
 > For Apple Silicon, use the [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
@@ -46,7 +44,7 @@ To our knowledge, diffct is the only open-source GPU CT library that combines ar
 - **Arbitrary trajectories.** Each view has its own source, detector centre and detector axes. Circular, helical, saddle, sinusoidal, random and calibrated scans use the same code. Trajectory tensors with `requires_grad=True` receive geometry gradients for calibration.
 - **Curved detectors.** `ParameterizedSurface` defines native arc, cylindrical or arbitrary pixels from global coordinates and explicit parameters, sampled in bounded view/pixel batches. Legacy `detector_surface(u, v)` callbacks remain available. Projection and matched backprojection support first-order surface gradients. See [the surface API](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#parameterized-detector-surfaces).
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
-- **Large volumes.** Automatic spatial/view/pixel blocks, resident GPU adjoint accumulators and bounded transfer buffers control working memory. Numerical `project_into`/`backproject_into` accept caller-owned tensor or disk stores; tensor autograd keeps complete data on its input device. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
+- **Large volumes.** Automatic spatial, view and pixel blocks with bounded transfer buffers control working memory. `project_into`/`backproject_into` accept caller-owned tensor or disk stores; tensor autograd keeps complete data on its input device. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or torchrun and NCCL across ranks. Default `partition="views"` shards projections and replicates volumes. `partition="space"` gives each rank an owned volume slab and combines ray contributions. Speedup depends on workload and communication costs.
 - **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak, shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP and FDK backprojection.
 
@@ -109,7 +107,7 @@ loss.backward()                     # x.grad = A^T (A x - y)
 
 **Geometry gradients.** Set `requires_grad=True` on trajectory tensors before you build `Projector`. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#geometry-gradients).
 
-**Several GPUs and nodes.** Use `devices=[0, 1, 2, 3]` in one process, or one process per GPU with torchrun for one or more nodes. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#several-gpus-and-nodes) and [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md).
+**Several GPUs and nodes.** See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#several-gpus-and-nodes) and [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md).
 
 ```python
 A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
@@ -140,23 +138,26 @@ volume slabs use `--partition space` under torchrun. Run
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png">
-    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 64^3 and 128^3">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png?v=2.2.0">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png?v=2.2.0" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 512^3 volume">
   </picture>
 </p>
 
-| 128³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
+| 512³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
 |---|---:|---:|---:|
-| Forward projection | 8.45 ms | 2.66 ms (3.2×) | 1.68 ms (5.0×) |
-| Adjoint (backprojection) | 20.66 ms | 5.89 ms (3.5×) | 4.62 ms (4.5×) |
-| CGLS iteration | 30.08 ms | 8.08 ms (3.7×) | 5.59 ms (5.4×) |
+| Forward projection | 493.05 ms | 132.22 ms (3.7×) | 73.18 ms (6.7×) |
+| Adjoint (backprojection) | 1400.80 ms | 369.29 ms (3.8×) | 265.87 ms (5.3×) |
+| CGLS iteration | 2054.36 ms | 547.06 ms (3.8×) | 373.38 ms (5.5×) |
 
-Circular trajectory, 360 views, detector (2n, 1.5n) cells at pitch 1.25, A100 64 GB GPUs. Small volumes scale less: at 64³, one CGLS iteration takes 4.63 ms on 1 GPU, 1.57 ms on 4 and 1.56 ms on 8. Raw data: [docs/assets/scaling.json](https://github.com/sypsyp97/diffct/blob/main/docs/assets/scaling.json).
+diffct 2.2.0, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25. Default memory settings, without an imposed allocator cap.
 
-To measure one against several GPUs on your machine (default scan of the script, not the table setup):
+Projection times are medians of seven samples after three warmups. CGLS uses three ten-iteration solves after a two-iteration warmup; the median includes initialization and is divided by ten. Timings use synchronized wall time and the slowest rank. Raw samples and configuration: [scaling.json](https://github.com/sypsyp97/diffct/blob/main/docs/assets/scaling.json).
+
+Run the same workload:
 
 ```bash
-python examples/benchmark_projector.py --devices 0 1
+python examples/benchmark_scaling.py --output one.json
+torchrun --standalone --nproc-per-node=4 examples/benchmark_scaling.py --expected-nodes 1 --output four.json
 ```
 
 ## Gallery

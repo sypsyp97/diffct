@@ -26,7 +26,7 @@ def main():
     configs = record["configurations"]
     sizes = list(record["timings"])
     for theme, colors in THEMES.items():
-        fig, axes = plt.subplots(1, len(sizes), figsize=(12, 4.6), facecolor=colors["surface"])
+        fig, axes = plt.subplots(1, len(sizes), figsize=(6 * len(sizes), 4.6), facecolor=colors["surface"])
         for ax, size in zip(np.atleast_1d(axes), sizes):
             timings = record["timings"][size]
             ax.set_facecolor(colors["surface"])

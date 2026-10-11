@@ -64,10 +64,28 @@ scripts to see their own options.
 | `iterative_reconstruction.py` | Cone-beam reconstruction with `--trajectory circular`, `helical`, `saddle` or `sinusoidal`. CGLS, SIRT and TV-regularized nonnegative least squares (Adam through autograd). FDK baseline outside distributed mode. `--noise` adds Gaussian noise. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `geometry_calibration.py` | Recovers per-view angle errors and a detector shift from projections, using geometry gradients. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `benchmark_projector.py` | Checks correctness and measures speed of one GPU against several GPUs. | `--devices` in one process, torchrun |
+| `benchmark_scaling.py` | Benchmarks the 512³ default volume on 1, 4, and 8 GPUs, reporting raw timings and numerical checks. | 1 GPU, torchrun |
 | `plot_trajectory.py` | Plots a trajectory generator. | CPU |
 | `slurm/multi_node.sbatch` | Template: one torchrun launcher per node. | Slurm |
 
 Shared helpers are in `_common.py`: the Shepp-Logan phantom, the scan geometry, FDK, CGLS, SIRT and TV.
+
+## README benchmark
+
+```bash
+python examples/benchmark_scaling.py --expected-nodes 1 --output one.json
+torchrun --standalone --nproc-per-node=4 examples/benchmark_scaling.py \
+    --expected-nodes 1 --output four.json
+```
+
+For eight GPUs, use two torchrun nodes with four ranks each and `--expected-nodes 2`.
+The default workload uses a 512³ FP32 volume, 360 circular cone-beam views,
+a 1024×768 detector and pitch 1.25. No allocator cap is imposed.
+Forward and adjoint projections use three warmup runs and seven timed samples.
+CGLS uses two warmup iterations and three ten-iteration solves, including initialization.
+Its reported iteration time is the median solve time divided by ten.
+CUDA is synchronized at both timing boundaries; distributed timings use the slowest rank.
+The JSON output includes the configuration, raw samples and numerical checks.
 
 ## Launch modes
 

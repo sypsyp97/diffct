@@ -1,6 +1,7 @@
 # Configuration file for the Sphinx documentation builder.
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import atexit
 import os
 import re
 import sys
@@ -40,3 +41,12 @@ html_theme_options = {
     'source_branch': 'main',
     'source_directory': 'docs/source/',
 }
+
+
+def setup(app):
+    def release_mocked_cuda_cleanup(app, exception):
+        # Autodoc mocks load no CUDA modules, and disappear before interpreter exit.
+        if 'diffct.utils' in sys.modules:
+            atexit.unregister(sys.modules['diffct.utils']._keep_cuda_modules_at_exit)
+
+    app.connect('build-finished', release_mocked_cuda_cleanup)
