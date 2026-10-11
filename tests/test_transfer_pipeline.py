@@ -15,7 +15,7 @@ from torch.utils._pytree import tree_flatten
 import diffct.pipeline as pipeline
 from diffct.utils import TorchCUDABridge
 from tests.test_block_storage import _GuardedStore, _rejection, _slices
-from tests.test_chunked_projector import _memory_inventory, _offsets
+from tests.test_chunked_projector import _memory_inventory, _metadata_collectives, _offsets
 from tests.test_detector_surfaces import _close, _data, _matrix, _numpy
 from tests.test_execution_schedules import (
     _CopyTrace, _check_report, _schedule_case, _scheduled_projector, _stream, cuda_required,
@@ -477,9 +477,17 @@ def _resident_nccl_worker(rank, beam, views, rendezvous):
                     assert tensor.is_cuda and tensor.numel() <= math.prod(chunk)
                     collectives.append({"sequence": trace._step(), "storage": tensor.untyped_storage()._cdata,
                                         "bytes": tensor.numel() * tensor.element_size()})
+                elif operation in (dist.ReduceOp.MIN, dist.ReduceOp.MAX):
+                    assert tensor.is_cuda and tensor.dtype == torch.int64 and tensor.numel() <= 16
+                    trace.metadata_storages.add((tensor.device, tensor.untyped_storage()._cdata))
                 return original(tensor, *args, **kwargs)
-            with mock.patch.object(dist, "all_reduce", reduce):
+            with mock.patch.object(dist, "all_reduce", reduce), _metadata_collectives(trace, world_size=2):
                 output = projector.backproject(local)
+        assert trace.metadata_calls and trace.metadata_copies, "control metadata transfers were not observed"
+        assert all(0 < size <= 4096 for size in trace.metadata_calls)
+        assert all(item["direction"] in ("h2d", "d2h") and item["bytes"] <= 8192
+                   for item in trace.metadata_copies)
+        assert trace.metadata_byte_limit is None
         report = _check_report(projector, trace, "backproject", schedule="spatial")
         tiles = math.prod(math.ceil(size / part) for size, part in zip(case.shape, chunk))
         assert len(collectives) == tiles

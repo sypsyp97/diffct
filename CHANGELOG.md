@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including transfers within one GPU.
 - Single-slot execution retires prior native computation before allocating
   the next tile, keeping deferred CUDA allocations within its admission bound.
+- Mapped input and output stores reject hard links to the same file before writes.
+- Example PSNR supports CPU reconstruction results with CUDA reference volumes.
 
 ## [2.1.0] - 2026-10-10
 

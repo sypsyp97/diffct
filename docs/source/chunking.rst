@@ -131,7 +131,8 @@ limits, layout/kernel counts and actual upload/download/peer-copy payloads.
 ``estimated_gpu_bytes`` describes the tensor-buffer inventory;
 ``estimated_reserved_bytes`` and ``reservation_budget_bytes`` expose the
 separate allocation-segment estimate and available room. Copy counts describe
-transferred tensor bytes, independently of segment sizes.
+transferred numerical tensor bytes, independently of segment sizes.
+Distributed layout metadata and planning control messages are excluded.
 Pilot timing and payloads are reported separately; candidate full-workload
 costs are estimates. These counts are not physical bus measurements. The value
 is ``None`` before execution or for an uninstrumented full-CUDA path. Run

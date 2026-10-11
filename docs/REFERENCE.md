@@ -159,7 +159,8 @@ view/pixel batches, then downloads the completed tile. Projection and geometry
 VJPs reuse contiguous native layouts. Automatic scheduling compares spatial,
 view and bounded-window orders, slabs and blocks, using copy estimates and
 short real pilots. `last_execution_stats` separates actual copy payloads from
-pilot work and estimated candidate costs. Manual `schedule` choices support
+pilot work and estimated candidate costs. Copy counters exclude distributed
+layout metadata and planning control messages. Manual `schedule` choices support
 reproducible comparisons. Pinned slots, host fragments and local geometry have
 memory ceilings independent of GPU capacity.
 

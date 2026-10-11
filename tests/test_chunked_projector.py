@@ -449,6 +449,32 @@ class _Launches:
         return self.patches.__exit__(*exception)
 
 
+def _metadata_payload_size(payload):
+    leaves = tree_flatten(payload)[0]
+    assert all(type(value) in (type(None), bool, int, float, str) for value in leaves), \
+        "object collectives must contain only scalar layout metadata"
+    size = len(pickle.dumps(payload))
+    assert size <= 4096, "excessive collective metadata"
+    return size
+
+
+@contextmanager
+def _metadata_collectives(observer, world_size):
+    real_gather, real_broadcast = dist.all_gather_object, dist.broadcast_object_list
+
+    def gather(output, payload, *args, **kwargs):
+        with observer.metadata_collective(payload, world_size):
+            return real_gather(output, payload, *args, **kwargs)
+
+    def broadcast(payload, *args, **kwargs):
+        with observer.metadata_collective(payload, world_size):
+            return real_broadcast(payload, *args, **kwargs)
+
+    with mock.patch.object(dist, "all_gather_object", gather), \
+            mock.patch.object(dist, "broadcast_object_list", broadcast):
+        yield
+
+
 class _StagingGuard(TorchDispatchMode):
     def __init__(self, case, chunk, views):
         super().__init__()
@@ -459,12 +485,9 @@ class _StagingGuard(TorchDispatchMode):
 
     @contextmanager
     def metadata_collective(self, payload, world_size):
-        leaves = tree_flatten(payload)[0]
-        assert all(type(value) in (type(None), bool, int, float, str) for value in leaves), \
-            "object collectives must contain only scalar layout metadata"
+        _metadata_payload_size(payload)
         # Object collectives serialize control metadata, not numerical tiles.
         # Bound each rank independently, including the gathered byte buffer.
-        assert len(pickle.dumps(payload)) <= 4096, "excessive collective metadata"
         previous = self.metadata_byte_limit
         self.metadata_byte_limit = 4096 * world_size
         try:
@@ -668,19 +691,8 @@ def _nccl_worker(rank, beam, views, rendezvous):
             return real_reduce(tensor, *args, **kwargs)
 
         guard = _StagingGuard(case, _chunk(case), 2)
-        real_gather, real_broadcast = dist.all_gather_object, dist.broadcast_object_list
-
-        def gather_metadata(output, payload, *args, **kwargs):
-            with guard.metadata_collective(payload, world_size=2):
-                return real_gather(output, payload, *args, **kwargs)
-
-        def broadcast_metadata(payload, *args, **kwargs):
-            with guard.metadata_collective(payload, world_size=2):
-                return real_broadcast(payload, *args, **kwargs)
-
         with mock.patch.object(dist, "all_reduce", reduction), \
-                mock.patch.object(dist, "all_gather_object", gather_metadata), \
-                mock.patch.object(dist, "broadcast_object_list", broadcast_metadata), guard:
+                _metadata_collectives(guard, world_size=2), guard:
             output = projector.project(image)
             _close(output, (local_matrix @ _numpy(image).ravel()).reshape(local.shape))
             (output.double() * local.detach().double()).sum().backward()

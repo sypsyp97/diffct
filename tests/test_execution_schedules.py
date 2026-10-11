@@ -1,5 +1,6 @@
 """Actual native schedules, copy payloads and independent cell references."""
 
+from contextlib import contextmanager
 import inspect
 import math
 import sys
@@ -13,7 +14,7 @@ import diffct
 import diffct.operators as operators
 import diffct.projectors as native
 from tests.test_block_storage import _GuardedStore, _rejection
-from tests.test_chunked_projector import _memory_inventory, _offsets
+from tests.test_chunked_projector import _memory_inventory, _metadata_payload_size, _offsets
 from tests.test_detector_surfaces import _close, _data, _matrix, _numpy, _projector
 from tests.test_execution_buffers import BEAMS, _ExecutionTrace, _chunk, _regular_case
 
@@ -54,6 +55,20 @@ class _CopyTrace(_ExecutionTrace):
     def __init__(self, case):
         super().__init__(case)
         self.sequence, self.copies, self.layouts = 0, [], []
+        self.metadata_copies, self.metadata_calls = [], []
+        self.metadata_byte_limit = None
+        self.metadata_storages = set()
+
+    @contextmanager
+    def metadata_collective(self, payload, world_size):
+        size = _metadata_payload_size(payload)
+        self.metadata_calls.append(size)
+        previous = self.metadata_byte_limit
+        self.metadata_byte_limit = 4096 * world_size
+        try:
+            yield
+        finally:
+            self.metadata_byte_limit = previous
 
     def _step(self):
         self.sequence += 1
@@ -82,7 +97,16 @@ class _CopyTrace(_ExecutionTrace):
             else:
                 target_dtype, source_dtype = args[0].dtype, args[1].dtype
             non_blocking = (kwargs or {}).get("non_blocking", args[2] if len(args) > 2 else False)
-            self.copies.append({"sequence": sequence, "phase": self.phase, "direction": direction,
+            copies = self.copies
+            control_download = (direction == "d2h" and source_dtype == torch.int64
+                                and (source["device"], source["storage"]) in self.metadata_storages)
+            if self.metadata_byte_limit is not None or control_download:
+                assert source_dtype == target_dtype and target_dtype in (torch.uint8, torch.int64), \
+                    "numerical data copied inside a metadata collective"
+                limit = self.metadata_byte_limit if self.metadata_byte_limit is not None else 4096
+                assert target["bytes"] <= limit, "excessive metadata copy payload"
+                copies = self.metadata_copies
+            copies.append({"sequence": sequence, "phase": self.phase, "direction": direction,
                                 "bytes": target["bytes"], "source": source, "target": target,
                                 "stream": _stream(), "non_blocking": bool(non_blocking),
                                 "equal_dtype": source_dtype == target_dtype})
