@@ -379,6 +379,47 @@ def test_into_rejects_known_aliases_before_execution(operation, kind, tmp_path):
     assert not launches.records
 
 
+@pytest.mark.parametrize("operation", ["project", "backproject"])
+@pytest.mark.parametrize("path_kind", ["hard-link", "symbolic-link", "distinct-file"])
+def test_into_npy_file_identity_checked_before_io_or_backend(operation, path_kind, tmp_path):
+    case = _case("parallel", views=5)
+    case.shape, case.detector = (5, 7), (7,)
+    projector = _projector(case, volume_chunk_shape=(3, 4), view_chunk_size=2)
+    source_path, output_path = tmp_path / "source.npy", tmp_path / "output.npy"
+    values = np.linspace(-.4, .7, 35, dtype=np.float32).reshape(5, 7)
+    np.save(source_path, values)
+    if path_kind == "hard-link":
+        output_path.hardlink_to(source_path)
+        assert source_path.resolve() != output_path.resolve()
+    elif path_kind == "symbolic-link":
+        output_path.symlink_to(source_path)
+    else:
+        np.save(output_path, values)
+    alias = path_kind != "distinct-file"
+    assert source_path.samefile(output_path) == alias
+    before = source_path.read_bytes(), output_path.read_bytes()
+    store_type = _api("NpyStore")
+    source, output = store_type(source_path, mode="r"), store_type(output_path, mode="r+")
+    with mock.patch.object(torch.cuda, "is_available", return_value=False) as backend_probe, \
+            mock.patch.object(store_type, "read", autospec=True, side_effect=store_type.read) as reads, \
+            mock.patch.object(store_type, "write", autospec=True, side_effect=store_type.write) as writes, \
+            _Launches() as launches:
+        try:
+            if alias:
+                with _rejection("alias|overlap|same|distinct|backing"):
+                    getattr(projector, f"{operation}_into")(source, output)
+                backend_probe.assert_not_called()
+            else:
+                with pytest.raises(RuntimeError, match="CUDA is required"):
+                    getattr(projector, f"{operation}_into")(source, output)
+                backend_probe.assert_called_once_with()
+        finally:
+            reads.assert_not_called()
+            writes.assert_not_called()
+            assert not launches.records
+            assert (source_path.read_bytes(), output_path.read_bytes()) == before
+
+
 @pytest.mark.cuda
 @cuda_required
 def test_nonoverlapping_tensor_store_views_of_same_allocation_are_valid():

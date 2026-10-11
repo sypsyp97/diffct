@@ -43,6 +43,6 @@ def _validate_stores(projector, source, output, is_project):
             a, b = _tensor_span(first), _tensor_span(second)
             if a is not None and b is not None and max(a[0], b[0]) < min(a[1], b[1]):
                 raise ValueError("input and output tensor stores overlap")
-    if isinstance(source, NpyStore) and isinstance(output, NpyStore) and source.path == output.path:
+    if isinstance(source, NpyStore) and isinstance(output, NpyStore) and source.path.samefile(output.path):
         raise ValueError("input and output NpyStore paths alias")
     return source, output

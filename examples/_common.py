@@ -216,7 +216,18 @@ def tv_reconstruction(operator, measurements, iterations, weight=1.0, lr=0.1):
 
 def psnr(reconstruction, truth):
     """Peak signal-to-noise ratio in dB for images with peak value 1."""
-    mse = torch.mean((reconstruction - truth) ** 2).item()
+    if reconstruction.device == truth.device:
+        mse = torch.mean((reconstruction - truth) ** 2).item()
+    else:
+        from diffct.pipeline import _fragments
+
+        reconstruction, truth = torch.broadcast_tensors(reconstruction, truth)
+        squared_error = 0.0
+        for selected in _fragments(tuple(truth.shape), 1048576):
+            difference = reconstruction[selected].detach().to(device="cpu", dtype=torch.float64)
+            reference = truth[selected].detach().to(device="cpu", dtype=torch.float64)
+            squared_error += (difference - reference).square().sum().item()
+        mse = squared_error / truth.numel() if truth.numel() else math.nan
     if mse == 0:
         return math.inf
     return 10 * math.log10(1.0 / mse)
