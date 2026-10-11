@@ -288,15 +288,19 @@ only if a CUDA Toolkit is already installed on the system.</p>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="chunking.html#automatic-selection-and-manual-limits">Automatic selection and manual limits</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chunking.html#resident-layouts-and-accumulation">Resident layouts and accumulation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chunking.html#scheduling-and-transfers">Scheduling and transfers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chunking.html#caller-owned-blocks-and-disk-files">Caller-owned blocks and disk files</a></li>
 <li class="toctree-l2"><a class="reference internal" href="chunking.html#autograd-curved-detectors-and-several-gpus">Autograd, curved detectors and several GPUs</a></li>
 <li class="toctree-l2"><a class="reference internal" href="chunking.html#runnable-iterative-reconstruction">Runnable iterative reconstruction</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#spatial-ownership">Spatial ownership</a></li>
 <li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#one-process-several-gpus">One process, several GPUs</a></li>
 <li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#one-process-per-gpu">One process per GPU</a></li>
-<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#what-each-rank-holds">What each rank holds</a></li>
-<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#loss-scaling">Loss scaling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#views-mode-data-on-each-rank">Views mode: data on each rank</a></li>
+<li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#views-mode-loss-scaling">Views mode: loss scaling</a></li>
 <li class="toctree-l2"><a class="reference internal" href="multi_gpu.html#iterative-reconstruction-with-several-gpus">Iterative reconstruction with several GPUs</a></li>
 </ul>
 </li>
@@ -313,6 +317,7 @@ only if a CUDA Toolkit is already installed on the system.</p>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="api.html#high-level-projector">High-level Projector</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#block-stores-and-batched-surfaces">Block stores and batched surfaces</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#low-level-functions">Low-level Functions</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#geometry-helpers">Geometry Helpers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#analytical-reconstruction-helpers">Analytical Reconstruction Helpers</a></li>

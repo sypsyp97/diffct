@@ -252,16 +252,40 @@
         <article role="main" id="furo-main-content">
           <section id="multiple-gpus-and-nodes">
 <h1>Multiple GPUs and Nodes<a class="headerlink" href="#multiple-gpus-and-nodes" title="Link to this heading">¶</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> splits views across GPUs and automatically streams spatial tiles
+<p>By default, <code class="docutils literal notranslate"><span class="pre">Projector</span></code> splits views across GPUs and automatically streams spatial tiles
 when arrays are CPU-backed or the estimated CUDA working set does not fit.
-For volumes larger than one GPU, keep full arrays on CPU; see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>.
+For volumes larger than one GPU, use CPU arrays or numerical block stores;
+see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>.
 There are two modes:</p>
 <ul class="simple">
 <li><p><strong>One process, several GPUs:</strong> pass <code class="docutils literal notranslate"><span class="pre">devices</span></code> to <code class="docutils literal notranslate"><span class="pre">Projector</span></code>.</p></li>
 <li><p><strong>One process per GPU:</strong> launch with <code class="docutils literal notranslate"><span class="pre">torchrun</span></code> and pass <code class="docutils literal notranslate"><span class="pre">distributed=True</span></code>.
-Each rank holds its own view shard and the full volume, on CPU for streamed
-out-of-core execution. GPU working buffers hold bounded tiles and batches.</p></li>
+Default <code class="docutils literal notranslate"><span class="pre">partition=&quot;views&quot;</span></code> holds a local view shard and a replicated volume.
+<code class="docutils literal notranslate"><span class="pre">partition=&quot;space&quot;</span></code> holds an owned volume slab and replicated ray batches.
+GPU working buffers hold bounded tiles, pixels and view batches.</p></li>
 </ul>
+<section id="spatial-ownership">
+<h2>Spatial ownership<a class="headerlink" href="#spatial-ownership" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">partition=&quot;space&quot;</span></code> splits the first tensor axis into balanced half-open
+slabs. <code class="docutils literal notranslate"><span class="pre">global_volume_shape</span></code> is the constructor shape; <code class="docutils literal notranslate"><span class="pre">volume_slice</span></code> gives
+the rank’s global ownership. <code class="docutils literal notranslate"><span class="pre">volume_shape</span></code> and <code class="docutils literal notranslate"><span class="pre">local_volume_shape</span></code> give
+the local input/output shape. Global physical coordinates are preserved, and
+empty slabs are valid. Projection SUMs slab contributions; backprojection
+generates only the owned volume. Collective order does not depend on local
+tile counts. Shared parameter gradients are reduced after the local pixel VJP.</p>
+<p>In space mode, divide identical replicated projection losses by <code class="docutils literal notranslate"><span class="pre">world_size</span></code>
+before backward; sum losses on local backprojection slabs. CGLS SUMs owned
+volume norms but counts replicated ray norms once. Volume regularizers with
+neighbors across slabs require application-level halo exchange. The existing
+TV/SIRT examples continue to use views mode. The complete ownership and loss
+table is in <code class="docutils literal notranslate"><span class="pre">docs/DISTRIBUTED.md</span></code> in the repository.</p>
+<p>For replicated CPU state use one process per node controlling multiple GPUs
+to avoid extra host copies. For true spatial ownership use one process per
+GPU, with streaming inside an owned slab when needed. Disk-backed CGLS and
+rank-local checkpoints are available in <code class="docutils literal notranslate"><span class="pre">examples/disk_reconstruction.py</span></code>;
+see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>. The solver capacity includes <code class="docutils literal notranslate"><span class="pre">x,s,p</span></code> together plus ray,
+geometry and pipeline state. No view-by-space process grid is introduced.</p>
+</section>
 <section id="one-process-several-gpus">
 <h2>One process, several GPUs<a class="headerlink" href="#one-process-several-gpus" title="Link to this heading">¶</a></h2>
 <p>No process group is needed. Views are split into contiguous shards in the order
@@ -342,8 +366,8 @@ torchrun<span class="w"> </span>--nnodes<span class="o">=</span><span class="m">
 join the same collective calls and backward passes, including ranks with zero
 views.</p>
 </section>
-<section id="what-each-rank-holds">
-<h2>What each rank holds<a class="headerlink" href="#what-each-rank-holds" title="Link to this heading">¶</a></h2>
+<section id="views-mode-data-on-each-rank">
+<h2>Views mode: data on each rank<a class="headerlink" href="#views-mode-data-on-each-rank" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">operator.view_slice</span></code>: the contiguous range of global views on this rank.
 To use full measurements, select <code class="docutils literal notranslate"><span class="pre">full_measurements[operator.view_slice]</span></code>.</p></li>
@@ -355,8 +379,8 @@ The operator does not broadcast them.</p></li>
 volume on each rank. It is the matched adjoint, not an inverse.</p></li>
 </ul>
 </section>
-<section id="loss-scaling">
-<h2>Loss scaling<a class="headerlink" href="#loss-scaling" title="Link to this heading">¶</a></h2>
+<section id="views-mode-loss-scaling">
+<h2>Views mode: loss scaling<a class="headerlink" href="#views-mode-loss-scaling" title="Link to this heading">¶</a></h2>
 <p>The projector sums the volume and learnable-geometry gradients across ranks. Scale
 the loss as follows:</p>
 <ul class="simple">
@@ -442,10 +466,11 @@ repository. Set the account, partition and GPU request for your cluster.</p>
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Multiple GPUs and Nodes</a><ul>
+<li><a class="reference internal" href="#spatial-ownership">Spatial ownership</a></li>
 <li><a class="reference internal" href="#one-process-several-gpus">One process, several GPUs</a></li>
 <li><a class="reference internal" href="#one-process-per-gpu">One process per GPU</a></li>
-<li><a class="reference internal" href="#what-each-rank-holds">What each rank holds</a></li>
-<li><a class="reference internal" href="#loss-scaling">Loss scaling</a></li>
+<li><a class="reference internal" href="#views-mode-data-on-each-rank">Views mode: data on each rank</a></li>
+<li><a class="reference internal" href="#views-mode-loss-scaling">Views mode: loss scaling</a></li>
 <li><a class="reference internal" href="#iterative-reconstruction-with-several-gpus">Iterative reconstruction with several GPUs</a></li>
 </ul>
 </li>

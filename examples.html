@@ -261,6 +261,10 @@ the adjoint check and gradients.</p></li>
 backprojection, adjoint check and volume/surface gradients on a circular scan.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chunked_reconstruction.py</span></code>: CPU-backed CGLS with automatic CUDA tiles,
 optional manual limits and measured peak allocation; see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">disk_reconstruction.py</span></code>: blockwise disk CGLS, optional native curves,
+rank-owned spatial slabs and completed-iteration checkpoints.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">benchmark_execution.py</span></code>: schedule and slab/block comparisons with actual
+copy payloads, pilot metadata, timing and CUDA tensor peaks.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">analytical_reconstruction.py</span></code>: parallel-beam FBP, fan-beam FBP and cone-beam
 FDK, with a choice of ramp-filter window.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">iterative_reconstruction.py</span></code>: 3D cone-beam CGLS, SIRT and TV reconstruction

@@ -330,7 +330,8 @@ acquisitions. The analytical helpers assume a circular orbit (see <a class="refe
 </section>
 <section id="parameterized-detector-surfaces">
 <span id="detector-surfaces"></span><h2>Parameterized detector surfaces<a class="headerlink" href="#parameterized-detector-surfaces" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">Projector(...,</span> <span class="pre">detector_surface=surface)</span></code> uses a callback to place each pixel
+<p><code class="docutils literal notranslate"><span class="pre">Projector(...,</span> <span class="pre">detector_surface=surface)</span></code> places each pixel
+on a native curve. The legacy two-argument callback places pixels
 on an arc, cylinder or another parameterized surface. For cone beams it receives
 physical float64 <code class="docutils literal notranslate"><span class="pre">u,</span> <span class="pre">v</span></code> grids on CPU with shape <code class="docutils literal notranslate"><span class="pre">(U,</span> <span class="pre">V)</span></code> and <code class="docutils literal notranslate"><span class="pre">ij</span></code> indexing. It returns local
 <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v,</span> <span class="pre">n)</span></code> offsets shaped <code class="docutils literal notranslate"><span class="pre">(U,</span> <span class="pre">V,</span> <span class="pre">3)</span></code> or <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V,</span> <span class="pre">3)</span></code>. Here <code class="docutils literal notranslate"><span class="pre">views</span></code>
@@ -363,9 +364,41 @@ the documented shape; fan/cone pixels cannot coincide with the source.
 per pixel and no detector-area integration. They operate directly on the native
 curved grid without resampling. Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/curved_detector.py</span></code> for a
 complete circular cone example, also shown in <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a>.</p>
-<p>Streamed operations require CPU offsets. CUDA offsets remain supported when
+<p>Legacy streamed operations require CPU offsets and retain complete host
+callback geometry. CUDA offsets remain supported when
 the automatic CUDA full-volume path fits. See <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a> for large-volume
 execution and memory requirements.</p>
+<p>For bounded view/pixel sampling, pass explicit tensor parameters:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParameterizedSurface</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">view_indices</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">((</span><span class="n">r</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">u</span> <span class="o">/</span> <span class="n">r</span><span class="p">),</span> <span class="n">v</span><span class="p">,</span>
+                        <span class="n">r</span> <span class="o">*</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">u</span> <span class="o">/</span> <span class="n">r</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)),</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="n">surface</span> <span class="o">=</span> <span class="n">ParameterizedSurface</span><span class="p">(</span><span class="n">sample</span><span class="p">,</span> <span class="n">parameters</span><span class="o">=</span><span class="p">(</span><span class="n">radius</span><span class="p">,))</span>
+<span class="n">C</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span> <span class="p">(</span><span class="mi">96</span><span class="p">,</span> <span class="mi">64</span><span class="p">),</span>
+              <span class="n">detector_spacing</span><span class="o">=</span><span class="p">(</span><span class="mf">0.8</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span> <span class="n">detector_surface</span><span class="o">=</span><span class="n">surface</span><span class="p">,</span>
+              <span class="n">view_chunk_size</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">detector_chunk_shape</span><span class="o">=</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">))</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">u,v</span></code> are a rectangle of global physical pixel centres; <code class="docutils literal notranslate"><span class="pre">view_indices</span></code>
+contains global view IDs. Return <code class="docutils literal notranslate"><span class="pre">(*pixel_shape,3)</span></code> shared offsets or
+<code class="docutils literal notranslate"><span class="pre">(len(view_indices),*pixel_shape,3)</span></code> batched offsets. In 2D the middle
+component remains zero. Streamed grids, IDs and explicit parameter snapshots
+are CPU tensors; parameter dtypes and original gradient devices are preserved.
+World-coordinate arithmetic promotes all frames and offsets to one common
+dtype, at least float32; float64 inputs retain float64 arithmetic. Gradients
+return in each input’s original dtype. Offsets and world points are validated
+on every executing batch.</p>
+<p>The sampler is pure. Mutable geometry tensors must be explicit parameters;
+other captured configuration must be immutable. Coupling across views uses
+global IDs or explicit parameters, including values for omitted views. Each
+forward captures the sampler and one set of frame/parameter values. Backward
+recomputes local geometry from those snapshots and reduces pixel cotangents to
+parameter gradients before communication. It retains first-order geometry
+gradients and data Hessians. Explicit parameter snapshots scale with parameter
+count; allocations inside user samplers remain caller-controlled. Do not cache
+mutable callback values across calls.</p>
 <p>Analytical FBP/FDK and weighting helpers continue to assume flat detectors and
 do not accept the callback. Reusing a flat-detector FDK requires matching-ray
 resampling of the line integrals onto a covered virtual flat grid; this adds

@@ -1,15 +1,42 @@
 Multiple GPUs and Nodes
 =======================
 
-``Projector`` splits views across GPUs and automatically streams spatial tiles
+By default, ``Projector`` splits views across GPUs and automatically streams spatial tiles
 when arrays are CPU-backed or the estimated CUDA working set does not fit.
-For volumes larger than one GPU, keep full arrays on CPU; see :doc:`chunking`.
+For volumes larger than one GPU, use CPU arrays or numerical block stores;
+see :doc:`chunking`.
 There are two modes:
 
 - **One process, several GPUs:** pass ``devices`` to ``Projector``.
 - **One process per GPU:** launch with ``torchrun`` and pass ``distributed=True``.
-  Each rank holds its own view shard and the full volume, on CPU for streamed
-  out-of-core execution. GPU working buffers hold bounded tiles and batches.
+  Default ``partition="views"`` holds a local view shard and a replicated volume.
+  ``partition="space"`` holds an owned volume slab and replicated ray batches.
+  GPU working buffers hold bounded tiles, pixels and view batches.
+
+Spatial ownership
+-----------------
+
+``partition="space"`` splits the first tensor axis into balanced half-open
+slabs. ``global_volume_shape`` is the constructor shape; ``volume_slice`` gives
+the rank's global ownership. ``volume_shape`` and ``local_volume_shape`` give
+the local input/output shape. Global physical coordinates are preserved, and
+empty slabs are valid. Projection SUMs slab contributions; backprojection
+generates only the owned volume. Collective order does not depend on local
+tile counts. Shared parameter gradients are reduced after the local pixel VJP.
+
+In space mode, divide identical replicated projection losses by ``world_size``
+before backward; sum losses on local backprojection slabs. CGLS SUMs owned
+volume norms but counts replicated ray norms once. Volume regularizers with
+neighbors across slabs require application-level halo exchange. The existing
+TV/SIRT examples continue to use views mode. The complete ownership and loss
+table is in ``docs/DISTRIBUTED.md`` in the repository.
+
+For replicated CPU state use one process per node controlling multiple GPUs
+to avoid extra host copies. For true spatial ownership use one process per
+GPU, with streaming inside an owned slab when needed. Disk-backed CGLS and
+rank-local checkpoints are available in ``examples/disk_reconstruction.py``;
+see :doc:`chunking`. The solver capacity includes ``x,s,p`` together plus ray,
+geometry and pipeline state. No view-by-space process grid is introduced.
 
 One process, several GPUs
 -------------------------
@@ -101,8 +128,8 @@ Both nodes need the same checkout and Python environment. Every rank must
 join the same collective calls and backward passes, including ranks with zero
 views.
 
-What each rank holds
---------------------
+Views mode: data on each rank
+-----------------------------
 
 - ``operator.view_slice``: the contiguous range of global views on this rank.
   To use full measurements, select ``full_measurements[operator.view_slice]``.
@@ -113,8 +140,8 @@ What each rank holds
 - ``backproject()`` sums the contributions of all ranks and returns the full
   volume on each rank. It is the matched adjoint, not an inverse.
 
-Loss scaling
-------------
+Views mode: loss scaling
+------------------------
 
 The projector sums the volume and learnable-geometry gradients across ranks. Scale
 the loss as follows:

@@ -253,9 +253,10 @@
           <section id="large-volumes-and-chunked-execution">
 <h1>Large Volumes and Chunked Execution<a class="headerlink" href="#large-volumes-and-chunked-execution" title="Link to this heading">¶</a></h1>
 <p>Pass CPU volumes and sinograms to <code class="docutils literal notranslate"><span class="pre">Projector</span></code> when complete arrays exceed GPU
-memory. Its projection and matched adjoint execute on CUDA; outputs and data
-gradients return to the input device. Full arrays and iterative state still
-need host RAM.</p>
+memory. Projection and the matched adjoint execute on CUDA; outputs and data
+gradients return to the input device. Tensor methods still hold complete arrays
+on that device. For data exceeding host RAM, use the caller-owned block-store
+methods below and the disk-backed CGLS example.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">Projector</span><span class="p">,</span> <span class="n">circular_trajectory_3d</span>
 
@@ -278,19 +279,32 @@ copies, view data, frame or sampled pixel geometry, VJP buffers and collective
 scratch. It reserves 25% of available memory for runtime overhead, respects
 PyTorch’s per-process allocator ceiling and sizes against the smallest
 participating budget. Concurrent allocations can still cause allocation errors.
+Native PyTorch admission checks allocation-segment capacity separately from the
+live tensor payload estimate. A free split inside a partially occupied cached
+segment is not a promise that another buffer can use it. Small-pool and
+large-pool segment rounding also contribute to admission; a fitting sum of
+tensor sizes alone is insufficient. This check is conservative and may select
+smaller automatic tiles. Other allocator backends do not inherit native segment
+sizes. The segment estimate assumes standard native allocator settings and
+fresh fixed-buffer inventories; arbitrary fragmentation or allocator overrides
+can still cause allocation errors.
 On older PyTorch versions without the public memory-fraction getter, the
 estimate can observe driver/allocator memory only; use explicit limits when a
 process ceiling is set there.</p>
 <p>To override the automatic limits:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">A</span> <span class="o">=</span> <span class="n">Projector</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">),</span> <span class="p">(</span><span class="mi">192</span><span class="p">,</span> <span class="mi">128</span><span class="p">),</span> <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span>
-              <span class="n">volume_chunk_shape</span><span class="o">=</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span> <span class="n">view_chunk_size</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+              <span class="n">volume_chunk_shape</span><span class="o">=</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span> <span class="n">view_chunk_size</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+              <span class="n">detector_chunk_shape</span><span class="o">=</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">))</span>
 </pre></div>
 </div>
 <p>Spatial limits follow tensor order: <code class="docutils literal notranslate"><span class="pre">(H,</span> <span class="pre">W)</span></code> for parallel/fan and <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code>
 for cone beams. Limits are positive integral dimensions, clipped at the volume
 edge. <code class="docutils literal notranslate"><span class="pre">view_chunk_size</span></code> may also be supplied alone to force view streaming.
 Its automatic value is at most 32 and can shrink when geometry/data buffers
-require it. Explicit limits are not silently reduced.</p>
+require it. <code class="docutils literal notranslate"><span class="pre">detector_chunk_shape</span></code> follows <code class="docutils literal notranslate"><span class="pre">(U,)</span></code> or <code class="docutils literal notranslate"><span class="pre">(U,V)</span></code> order.
+Automatic execution can split a single detector image when it does not fit;
+reducing the volume alone cannot solve that case. Pixel rectangles keep the
+global detector origin. Explicit limits must fit the planned working set.</p>
 <p>Tiles retain the global origin-centred voxel lattice. Projection adds disjoint
 tile integrals; the adjoint accumulates each tile over view batches. Odd sizes,
 partial tails and internal boundaries retain the same cell ownership. Chunking
@@ -298,27 +312,143 @@ preserves the cell-constant Siddon model and matched adjoint, with float32
 rounding differences from a different summation order. Smaller tiles may cost
 more transfers and kernel launches.</p>
 </section>
+<section id="resident-layouts-and-accumulation">
+<h2>Resident layouts and accumulation<a class="headerlink" href="#resident-layouts-and-accumulation" title="Link to this heading">¶</a></h2>
+<p>For backprojection, each active GPU keeps one contiguous native-layout
+accumulator for a spatial tile. Every view batch adds to that accumulator;
+layout conversion and return to the caller happen after all views contribute.
+The accumulator is cleared once per tile. Projection prepares the native volume
+layout once per tile/device and reuses its ray output buffer across view
+batches. Geometry VJPs also prepare each tile once across their view batches. Cone kernels
+retain contiguous <code class="docutils literal notranslate"><span class="pre">(W,</span> <span class="pre">H,</span> <span class="pre">D)</span></code> access; tensor volumes remain <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code>.
+Forward kernels overwrite each active ray, including missed rays and short
+final batches, so they do not need unconditional output clearing.</p>
+<p>For example, a <code class="docutils literal notranslate"><span class="pre">1024**3</span></code> float32 volume is 4 GiB. With 720 views in batches of
+32, returning a complete partial volume after each of the 23 batches would
+transfer 92 GiB. Returning the completed accumulated volume transfers 4 GiB
+on a single GPU, excluding projections, geometry and other solver data. This
+is a copy-payload estimate; it does not imply a 23-fold reconstruction speedup.
+Float32 summation order can change slightly, while the underlying Siddon cell
+model and matched adjoint stay the same.</p>
+</section>
+<section id="scheduling-and-transfers">
+<h2>Scheduling and transfers<a class="headerlink" href="#scheduling-and-transfers" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">schedule=&quot;auto&quot;</span></code> compares a few spatial-first, view-first and bounded-window
+orders, including contiguous z slabs and three-dimensional blocks. Selection
+uses bounded real CUDA pilot times scaled by the full native launch count,
+with estimated full-workload copy payloads as a tie-breaker. The pilots use
+small residency/order prefixes, so selection is a heuristic; reduced copy
+payloads alone do not establish a runtime improvement. The benchmark example
+preserves the initial selection report separately from its warmed timings.
+<code class="docutils literal notranslate"><span class="pre">schedule=&quot;spatial&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;views&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;window&quot;</span></code> enables a reproducible
+comparison. Backprojection always completes each retained volume accumulator
+before returning it. View-first backprojection is eligible only when all its
+accumulators fit together.</p>
+<p>The transfer pipeline uses at most two reusable pinned slots per device,
+separate upload, compute and download streams, and CUDA events. Events protect
+input consumption, host output reads and reuse of GPU buffers. Each composite
+host slot is capped at 8 MiB, with a separate 8 MiB pageable read/cast scratch
+ceiling. These are memory policy ceilings. Larger resident GPU tiles use
+bounded host fragments; fragmentation changes copy call counts, while the
+completed volume payload is transferred once. Planned local surface geometry
+also has an independent host working-set ceiling. Arbitrary allocations inside
+a user sampler and OS file-cache residency remain outside these ceilings.
+All additional GPU slots, layouts, geometry and collective staging contribute
+to the GPU budget. Very small budgets can use a bounded serial fallback.
+Single-slot plans retire prior native computation before allocating the next
+tile. Compute and internal allocations use the caller stream. Repeated calls
+on that stream can reuse its cache, so temporary transfer streams do not divide
+the native allocator’s reusable cache. A new buffer is fenced against earlier caller work before
+upload. This can delay prefetch of a newly allocated volume buffer; existing
+ray/geometry slots retain their bounded overlap.
+Transfers hold source and destination references in the bounded completion-event
+queue until they finish. Completed internal copies release these references
+directly, avoiding stale transfer-stream reservations across calls.</p>
+<p><code class="docutils literal notranslate"><span class="pre">A.last_execution_stats</span></code> reports the last instrumented operation’s schedule,
+limits, layout/kernel counts and actual upload/download/peer-copy payloads.
+<code class="docutils literal notranslate"><span class="pre">estimated_gpu_bytes</span></code> describes the tensor-buffer inventory;
+<code class="docutils literal notranslate"><span class="pre">estimated_reserved_bytes</span></code> and <code class="docutils literal notranslate"><span class="pre">reservation_budget_bytes</span></code> expose the
+separate allocation-segment estimate and available room. Copy counts describe
+transferred numerical tensor bytes, independently of segment sizes.
+Distributed layout metadata and planning control messages are excluded.
+Pilot timing and payloads are reported separately; candidate full-workload
+costs are estimates. These counts are not physical bus measurements. The value
+is <code class="docutils literal notranslate"><span class="pre">None</span></code> before execution or for an uninstrumented full-CUDA path. Run
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/benchmark_execution.py</span></code> to compare schedules and slab/block
+shapes on your hardware.</p>
+</section>
+<section id="caller-owned-blocks-and-disk-files">
+<h2>Caller-owned blocks and disk files<a class="headerlink" href="#caller-owned-blocks-and-disk-files" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">TensorStore</span></code> provides detached numerical block access to an existing tensor.
+<code class="docutils literal notranslate"><span class="pre">NpyStore</span></code> maps a float32/float64 <code class="docutils literal notranslate"><span class="pre">.npy</span></code> file. Creating a store reserves a new
+path exclusively; existing files are not overwritten. Block reads/casts and
+writes do not materialize a complete mapped array.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">NpyStore</span>
+
+<span class="c1"># The file has shape A.volume_shape, in tensor axis order.</span>
+<span class="n">source</span> <span class="o">=</span> <span class="n">NpyStore</span><span class="p">(</span><span class="s2">"volume.npy"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+<span class="n">rays</span> <span class="o">=</span> <span class="n">NpyStore</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"projections.npy"</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">projection_shape</span><span class="p">)</span>
+<span class="n">A</span><span class="o">.</span><span class="n">project_into</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">rays</span><span class="p">)</span>
+<span class="n">rays</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">NpyStore</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"adjoint.npy"</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">volume_shape</span><span class="p">)</span>
+<span class="n">A</span><span class="o">.</span><span class="n">backproject_into</span><span class="p">(</span><span class="n">rays</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+<span class="n">result</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">project_into</span></code> and <code class="docutils literal notranslate"><span class="pre">backproject_into</span></code> return the supplied output. They
+accept tensors, these stores, or structural backends with <code class="docutils literal notranslate"><span class="pre">shape</span></code>, <code class="docutils literal notranslate"><span class="pre">dtype</span></code>,
+<code class="docutils literal notranslate"><span class="pre">read(slices)</span></code>, <code class="docutils literal notranslate"><span class="pre">write(slices,value,accumulate=False)</span></code> and <code class="docutils literal notranslate"><span class="pre">flush()</span></code>. Outputs must be
+float32 and writable. Each completed output region overwrites its prior
+contents; no full result is allocated internally. These numerical methods do
+not build an autograd graph. Use tensor <code class="docutils literal notranslate"><span class="pre">project</span></code>/<code class="docutils literal notranslate"><span class="pre">backproject</span></code> for
+differentiation.</p>
+<p>Custom CUDA stores must produce returned blocks on the source device’s
+current stream, or make that stream wait for their producer. The upload
+stream waits for this work before reading a block, including on the same GPU.</p>
+<p>Input and output must have distinct backing data. Identical objects,
+detectable overlapping tensors and the same canonical mapped file path are
+rejected before execution. Custom backends must guarantee that hidden backing storage is
+distinct; an opaque object’s path attribute alone is not an alias guarantee.
+Calling a store’s <code class="docutils literal notranslate"><span class="pre">read</span></code> with a complete array slice can still request a
+complete array; keep application-side reads and vector updates blockwise too.</p>
+</section>
 <section id="autograd-curved-detectors-and-several-gpus">
 <h2>Autograd, curved detectors and several GPUs<a class="headerlink" href="#autograd-curved-detectors-and-several-gpus" title="Link to this heading">¶</a></h2>
 <p>Data gradients and data Hessians, plus first-order frame/surface gradients, use
 the streamed path too. Saved CPU geometry keeps backward consistent with its
 forward call if parameters change. Geometry second derivatives remain
 unsupported.</p>
-<p>Streamed <code class="docutils literal notranslate"><span class="pre">detector_surface</span></code> callbacks must return CPU offsets. Complete
-sampled world geometry is not expanded on CUDA. CUDA callbacks remain supported
-when the automatic CUDA full-volume path fits. See <a class="reference internal" href="trajectories.html#detector-surfaces"><span class="std std-ref">Parameterized detector surfaces</span></a>.</p>
+<p>For bounded geometry, use <code class="docutils literal notranslate"><span class="pre">ParameterizedSurface(sampler,</span> <span class="pre">parameters=...)</span></code>.
+Its sampler receives global physical pixel centres, global view IDs and
+explicit parameter snapshots, and generates only the executing view/pixel
+batch. Pixel cotangents are reduced through the local sampler/frame graph to
+parameter gradients before communication. The captured sampler and one set of
+frame/parameter snapshots preserve backward behavior after parameter mutation.
+See <a class="reference internal" href="trajectories.html#detector-surfaces"><span class="std std-ref">Parameterized detector surfaces</span></a>.</p>
+<p>Legacy two-argument callbacks still sample their complete detector geometry
+on the host and retain that footprint. Streamed legacy callbacks must return
+CPU offsets. CUDA callbacks remain supported when the automatic CUDA
+full-volume path fits. Callback values are not cached across operations.</p>
 <p><code class="docutils literal notranslate"><span class="pre">devices=[0,</span> <span class="pre">1]</span></code> still partitions views in list order. Each card streams tiles;
-the full output returns to the input device. Distributed ranks retain local
-view shards and replicated host volumes, agree on a common execution plan, and
-stage NCCL sums in bounded CUDA buffers. All ranks need the same explicit
-limits and must participate in the same calls. The existing loss-scaling rules
-in <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a> still apply. A solver’s own scalar NCCL reductions must use
-CUDA tensors.</p>
+the full output returns to the input device. Distributed <code class="docutils literal notranslate"><span class="pre">partition=&quot;views&quot;</span></code>
+ranks retain local view shards and replicated volumes. Local GPU backprojection
+sums and NCCL reductions occur while the tile is resident, before its final
+host transfer. Gloo uses bounded CPU staging. All ranks need matching settings
+and must participate in the same calls, including empty ranks. The
+ownership-specific loss rules in <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a> apply. Scalar NCCL reductions
+also use CUDA tensors.</p>
 <p>With CPU streaming, the cards compute their view batches concurrently. Each
 card receives every volume tile, so host transfers limit the multi-GPU speedup.</p>
-<p>Ranks do not add memory capacity: every rank holds the complete volume and
-iterative state in host RAM. For a large volume, run one process per node with
-<code class="docutils literal notranslate"><span class="pre">devices=[...]</span></code> for its GPUs instead of one process per GPU.</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">partition=&quot;views&quot;</span></code>, every rank holds the complete tensor volume and
+iterative state. One process per node controlling <code class="docutils literal notranslate"><span class="pre">devices=[...]</span></code> avoids
+extra host replicas. <code class="docutils literal notranslate"><span class="pre">partition=&quot;space&quot;</span></code> instead assigns balanced contiguous
+first-axis slabs to ranks. <code class="docutils literal notranslate"><span class="pre">global_volume_shape</span></code> retains the constructor
+shape; <code class="docutils literal notranslate"><span class="pre">volume_slice</span></code> gives global ownership and <code class="docutils literal notranslate"><span class="pre">volume_shape</span></code>/
+<code class="docutils literal notranslate"><span class="pre">local_volume_shape</span></code> give the required local tensor/store shape. Projection
+SUMs the slab contributions into replicated ray batches; backprojection
+returns only the owned slab. Physical coordinates remain on the global voxel
+lattice. Empty slabs are valid. This is one spatial process dimension, without
+a combined view-by-space process grid.</p>
 <p>Caller-owned CUDA inputs and complete CUDA outputs still occupy their full
 size. Keep arrays, trajectory tensors and learnable surface parameters on CPU
 for bounded GPU residency. CUDA geometry snapshots or CUDA intermediates made
@@ -337,6 +467,41 @@ python<span class="w"> </span>examples/chunked_reconstruction.py<span class="w">
 python<span class="w"> </span>examples/chunked_reconstruction.py<span class="w"> </span>--devices<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="m">1</span>
 </pre></div>
 </div>
+<p>The tensor CGLS helper computes FP64 norms in bounded pieces and reuses vector
+update buffers. Its complete tensor states still need memory. If any rank’s
+CUDA state exceeds its budget, all ranks agree to keep state on CPU and
+replan together, preserving collective order for unequal slabs. Disk-backed
+CGLS keeps <code class="docutils literal notranslate"><span class="pre">x,s,p</span></code> plus <code class="docutils literal notranslate"><span class="pre">r,q</span></code> in stores, performs blockwise vector updates
+and writes completed-iteration checkpoints without gathering the volume.
+<code class="docutils literal notranslate"><span class="pre">q</span></code> remains available until the global norm determines <code class="docutils literal notranslate"><span class="pre">alpha</span></code> and the
+<code class="docutils literal notranslate"><span class="pre">x</span></code>/residual updates finish. Account for all three volume states together;
+fitting one volume does not establish that the complete solver fits.
+CUDA admission also checks each state and FP64 norm block against the feasible
+individual allocation limit, together with the forward and adjoint pipeline
+inventories. A small total state size cannot bypass an allocation-segment limit.
+State allocations can pin complete native allocator segments. Admission reserves
+these segments separately from the later pipeline or FP64 norm work, matching
+the fresh-segment budget used when execution replans after state allocation.
+It does not assume later calls can use free splits inside the state segments.
+The state bound also includes compatible idle segments on the caller’s stream:
+reusing an oversized cached segment can pin more memory than a fresh allocation.
+The example helpers set <code class="docutils literal notranslate"><span class="pre">operator.last_solver_stats</span></code> with state and scratch
+capacity metadata. This report belongs to the examples; the core package
+continues to provide projection and backprojection. The disk entrypoint saves
+it alongside the actual residual, elapsed time and CUDA tensor peak.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/disk_reconstruction.py<span class="w"> </span>--output<span class="w"> </span>disk-run
+python<span class="w"> </span>examples/disk_reconstruction.py<span class="w"> </span>--surface<span class="w"> </span>saddle<span class="w"> </span>--output<span class="w"> </span>saddle-run
+torchrun<span class="w"> </span>--standalone<span class="w"> </span>--nproc-per-node<span class="o">=</span><span class="m">2</span><span class="w"> </span>examples/disk_reconstruction.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--partition<span class="w"> </span>space<span class="w"> </span>--output<span class="w"> </span>spatial-run
+</pre></div>
+</div>
+<p>The default disk example generates explicitly synthetic measurements
+blockwise. Each rank owns its output, workspace and checkpoint files. Resume
+requires matching partition, ownership, shapes, scan and measurements. Files
+back the arrays; the OS may cache their pages in RAM. Local tests and bounded
+models provide evidence separately from physical multi-GPU or cross-node runs.
+The iteration count is the target total: resuming iteration 2 with
+<code class="docutils literal notranslate"><span class="pre">--iterations</span> <span class="pre">5</span></code> performs three further iterations in a new run directory.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="linenos"> 1</span><span class="sd">"""CPU-backed CGLS using CUDA tiles; automatic memory sizing by default.</span>
 <span class="linenos"> 2</span>
 <span class="linenos"> 3</span><span class="sd">Run from the repository root. Full arrays and CGLS state still need host RAM.</span>
@@ -470,6 +635,9 @@ python<span class="w"> </span>examples/chunked_reconstruction.py<span class="w">
             <ul>
 <li><a class="reference internal" href="#">Large Volumes and Chunked Execution</a><ul>
 <li><a class="reference internal" href="#automatic-selection-and-manual-limits">Automatic selection and manual limits</a></li>
+<li><a class="reference internal" href="#resident-layouts-and-accumulation">Resident layouts and accumulation</a></li>
+<li><a class="reference internal" href="#scheduling-and-transfers">Scheduling and transfers</a></li>
+<li><a class="reference internal" href="#caller-owned-blocks-and-disk-files">Caller-owned blocks and disk files</a></li>
 <li><a class="reference internal" href="#autograd-curved-detectors-and-several-gpus">Autograd, curved detectors and several GPUs</a></li>
 <li><a class="reference internal" href="#runnable-iterative-reconstruction">Runnable iterative reconstruction</a></li>
 </ul>
