@@ -1518,7 +1518,7 @@ class Projector:
                     sink.write(selected, value, accumulate=accumulate)
 
             pipe.drain_tensor(output, ready, GlooOutput(), spatial)
-            for slot in pipe.host:
+            for slot in pipe.ordered_host_slots():
                 slot.finish()
         else:
             pipe.drain_tensor(output, ready, sink, spatial)
@@ -1725,7 +1725,7 @@ class Projector:
                 pipe.drain_tensor(part, ready, TensorStore(weight),
                                   tuple(slice(0, size) for size in weight.shape))
                 weights.append(weight)
-            for slot in pipe.host:
+            for slot in pipe.ordered_host_slots():
                 slot.finish()
             pipe.reclaim_output()
             if sampled:

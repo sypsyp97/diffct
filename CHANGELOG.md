@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the next tile, keeping deferred CUDA allocations within its admission bound.
 - Mapped input and output stores reject hard links to the same file before writes.
 - Example PSNR supports CPU reconstruction results with CUDA reference volumes.
+- Deferred CPU output writes retain their submission order across spatial tiles.
+- Coronal slice displays preserve the measured detector row orientation.
 
 ## [2.1.0] - 2026-10-10
 

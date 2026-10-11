@@ -99,6 +99,11 @@ class _DevicePipeline:
         slot.finish()
         return slot
 
+    def ordered_host_slots(self):
+        """Return slots in reservation order so deferred writes stay ordered."""
+        return tuple(self.host[(self.cursor + offset) % len(self.host)]
+                     for offset in range(len(self.host)))
+
     @staticmethod
     def event(stream):
         event = torch.cuda.Event()
@@ -200,7 +205,7 @@ class _DevicePipeline:
     def close(self):
         error = None
         try:
-            for slot in self.host:
+            for slot in self.ordered_host_slots():
                 try:
                     slot.finish()
                 except BaseException as caught:
