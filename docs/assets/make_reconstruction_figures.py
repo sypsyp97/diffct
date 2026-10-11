@@ -21,7 +21,7 @@ def figure(filename, data, panels, title):
     for column,(key,name,detail) in enumerate(panels):
         for row,section in enumerate(('axial','coronal')):
             ax=axes[row,column]
-            ax.imshow(data[f'{key}_{section}'],cmap='gray',vmin=0,vmax=1)
+            ax.imshow(data[f'{key}_{section}'],cmap='gray',vmin=0,vmax=1,origin='upper')
             ax.set_xticks([]);ax.set_yticks([])
             for spine in ax.spines.values():spine.set_visible(False)
             if column==0:ax.set_ylabel(section,color=muted,fontsize=10)

@@ -252,11 +252,14 @@ def synchronize(distributed):
 
 
 def central_section(volume, section):
-    """Central slice of a ``(D, H, W)`` volume: "axial" is ``(H, W)``, "coronal" is ``(D, W)`` with z up."""
+    """Central axial ``(H, W)`` or coronal ``(D, W)`` slice in array order.
+
+    Display with an upper origin to preserve the measured detector's row order.
+    """
     if section == "axial":
         return volume[volume.shape[0] // 2]
     if section == "coronal":
-        return volume[:, volume.shape[1] // 2].flip(0)
+        return volume[:, volume.shape[1] // 2]
     raise ValueError(f"unknown section {section!r}; choose 'axial' or 'coronal'")
 
 
@@ -281,7 +284,7 @@ def save_slices(path, panels, title, vmax=0.4, sections=("axial",)):
         for row in range(rows):
             image = central_section(volume, sections[row]) if volume.ndim == 3 else volume
             ax = axes[row, column]
-            ax.imshow(image.detach().cpu().numpy(), cmap="gray", vmin=0.0, vmax=vmax)
+            ax.imshow(image.detach().cpu().numpy(), cmap="gray", vmin=0.0, vmax=vmax, origin="upper")
             ax.set_xticks([])
             ax.set_yticks([])
             for spine in ax.spines.values():
