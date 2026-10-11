@@ -34,8 +34,6 @@
   <a href="#引用">引用</a>
 </p>
 
-> **安装**请带 CUDA extra，在 PyTorch 之后运行 `pip install "diffct[cu12]"` 或 `pip install "diffct[cu13]"`。只运行 `pip install diffct` 需要系统已装 CUDA Toolkit。
->
 > **2.0 版**用逐视角轨迹取代了 1.x 的圆轨迹接口。为 1.x 写的代码需要修改，见[迁移说明](docs/MIGRATION.md)。
 > Apple Silicon 请使用 [Linda-Sophie Schneider 的 MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
 
@@ -46,7 +44,7 @@
 - **任意轨迹。** 每个视角有各自的源点、探测器中心和探测器轴；圆轨迹、螺旋、鞍形、正弦、随机和标定扫描使用同一套代码。`requires_grad=True` 的轨迹张量可获得用于标定的几何梯度。
 - **曲面探测器。** `ParameterizedSurface` 接收全局像素坐标、视角编号和显式参数，按批次生成弧形、柱面及其他曲面；原有 `detector_surface(u, v)` 回调仍可用。投影与匹配反投影支持曲面参数的一阶梯度。见[曲面接口](docs/REFERENCE.md#parameterized-detector-surfaces)（英文）。
 - **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
-- **大体积。** 默认按空间、视角和探测器像素分块，反投影块在 GPU 上累加完再传回，传输缓冲有独立容量上限。数值接口 `project_into`/`backproject_into` 可写入调用方的张量或磁盘存储；张量 autograd 接口仍保留完整输入、输出和梯度。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
+- **大体积。** 按空间、视角和像素自动分块，传输缓冲有容量上限。`project_into`/`backproject_into` 可写入调用方的张量或磁盘存储；张量 autograd 接口仍保留完整输入、输出和梯度。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
 - **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或用 torchrun 与 NCCL。默认 `partition="views"` 分片视角并复制体数据；`partition="space"` 让每个 rank 固定拥有一部分体积，合并射线贡献。加速比取决于工作负载和通信开销。
 - **解析辅助函数。** `diffct.analytical` 提供斜坡滤波器（ram-lak、shepp-logan、cosine、hamming、hann）、扇束、锥束和 Parker 权重，以及 FBP 与 FDK 反投影。
 
@@ -107,7 +105,7 @@ loss.backward()                     # x.grad = A^T (A x - y)
 
 **几何梯度。** 构造 `Projector` 前，将轨迹张量设为 `requires_grad=True`。详见 [REFERENCE](docs/REFERENCE.md#geometry-gradients)（英文）。
 
-**多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`；每卡一个进程并用 torchrun，可跨一个或多个节点。详见 [REFERENCE](docs/REFERENCE.md#several-gpus-and-nodes)（英文）和 [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md)。
+**多卡与多节点。** 详见 [REFERENCE](docs/REFERENCE.md#several-gpus-and-nodes)（英文）和 [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md)。
 
 ```python
 A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
@@ -135,23 +133,26 @@ sinogram.square().mean().backward()          # volume.grad 在 CPU
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png">
-    <img src="docs/assets/scaling_light.png" width="100%" alt="1、4、8 卡上正投影、伴随和 CGLS 每次迭代的耗时，64³ 和 128³">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png?v=2.2.0">
+    <img src="docs/assets/scaling_light.png?v=2.2.0" width="100%" alt="1、4、8 卡上正投影、伴随和 CGLS 每次迭代的耗时，512³ 体数据">
   </picture>
 </p>
 
-| 128³ 体数据 | 1 卡 | 4 卡，1 节点 | 8 卡，2 节点 |
+| 512³ 体数据 | 1 卡 | 4 卡，1 节点 | 8 卡，2 节点 |
 |---|---:|---:|---:|
-| 正投影 | 8.45 ms | 2.66 ms（3.2×） | 1.68 ms（5.0×） |
-| 伴随（反投影） | 20.66 ms | 5.89 ms（3.5×） | 4.62 ms（4.5×） |
-| CGLS 迭代 | 30.08 ms | 8.08 ms（3.7×） | 5.59 ms（5.4×） |
+| 正投影 | 493.05 ms | 132.22 ms（3.7×） | 73.18 ms（6.7×） |
+| 伴随（反投影） | 1400.80 ms | 369.29 ms（3.8×） | 265.87 ms（5.3×） |
+| CGLS 迭代 | 2054.36 ms | 547.06 ms（3.8×） | 373.38 ms（5.5×） |
 
-圆轨迹，360 个视角，探测器 (2n, 1.5n) 个单元、pitch 1.25，A100 64 GB GPU。小体积加速比较低：64³ 时，一次 CGLS 迭代在 1 卡、4 卡和 8 卡上分别为 4.63 ms、1.57 ms 和 1.56 ms。原始数据见 [docs/assets/scaling.json](docs/assets/scaling.json)。
+diffct 2.2.0，FP32，A100 64 GB GPU；圆形锥束，360 个视角，1024×768 探测器，pitch 1.25。采用默认内存设置，不额外限制分配器容量。
 
-在本机比较单卡与多卡（脚本自带的默认扫描，不是上表的配置）：
+正投影与反投影各预热三次，再取七次计时的中位数。CGLS 预热两次迭代，再运行三组十次迭代；取包含初始化的耗时中位数，除以十。计时同步 CUDA，并取最慢 rank 的墙钟耗时。原始样本与配置见 [scaling.json](docs/assets/scaling.json)。
+
+复现同一工作负载：
 
 ```bash
-python examples/benchmark_projector.py --devices 0 1
+python examples/benchmark_scaling.py --output one.json
+torchrun --standalone --nproc-per-node=4 examples/benchmark_scaling.py --expected-nodes 1 --output four.json
 ```
 
 ## 示例图

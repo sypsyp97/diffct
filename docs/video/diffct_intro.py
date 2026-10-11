@@ -393,7 +393,7 @@ class DiffCTIntro(Scene):
         self.reset()
         self.heading(4,'Measured multi-GPU scaling')
         self.note('Circular cone beam · 128³ volume · 360 views · A100-SXM-64GB')
-        data=json.loads((HERE.parent/'assets/scaling.json').read_text()); timings=data['timings']['128']
+        data=json.loads((HERE/'scaling.json').read_text()); timings=data['timings']['128']
         baseline=timings['gpus_1']['cgls_ms_per_iter']
         chart_title=left(T('One CGLS iteration',28,SUB),-6.05).set_y(2.08)
         for i,cfg in enumerate(data['configurations']):

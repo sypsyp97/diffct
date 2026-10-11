@@ -1,0 +1,17 @@
+{
+  "description": "Measurements used by the existing intro video; current README measurements are in docs/assets/scaling.json.",
+  "gpu": "NVIDIA A100-SXM-64GB",
+  "software": "PyTorch 2.10 cu126, numba-cuda 0.30.4",
+  "configurations": [
+    {"key": "gpus_1", "label": "1 GPU"},
+    {"key": "gpus_4_nodes_1", "label": "4 GPUs, 1 node"},
+    {"key": "gpus_8_nodes_2", "label": "8 GPUs, 2 nodes"}
+  ],
+  "timings": {
+    "128": {
+      "gpus_1": {"forward_ms": 8.448, "adjoint_ms": 20.659, "cgls_ms_per_iter": 30.078},
+      "gpus_4_nodes_1": {"forward_ms": 2.662, "adjoint_ms": 5.894, "cgls_ms_per_iter": 8.082},
+      "gpus_8_nodes_2": {"forward_ms": 1.684, "adjoint_ms": 4.62, "cgls_ms_per_iter": 5.591}
+    }
+  }
+}
