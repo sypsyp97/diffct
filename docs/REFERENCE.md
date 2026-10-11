@@ -193,6 +193,12 @@ does not establish that a plan can be allocated.
 The segment estimate assumes standard native allocator settings and fresh
 fixed-buffer inventories; it does not guarantee allocation under arbitrary
 fragmentation or allocator overrides.
+The tensor CGLS example budgets state segments separately from subsequent
+pipeline and norm segments. If these phases cannot fit under the same rules
+used after state allocation, ranks agree to keep solver state on CPU before
+allocating it.
+The state bound includes compatible idle cached segments that state allocation
+may reuse and pin on the caller's stream.
 PyTorch versions without the public memory-fraction getter expose only
 driver/allocator memory to this estimate; use explicit limits when setting a
 process ceiling on those versions.

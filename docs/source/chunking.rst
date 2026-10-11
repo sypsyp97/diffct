@@ -255,6 +255,12 @@ fitting one volume does not establish that the complete solver fits.
 CUDA admission also checks each state and FP64 norm block against the feasible
 individual allocation limit, together with the forward and adjoint pipeline
 inventories. A small total state size cannot bypass an allocation-segment limit.
+State allocations can pin complete native allocator segments. Admission reserves
+these segments separately from the later pipeline or FP64 norm work, matching
+the fresh-segment budget used when execution replans after state allocation.
+It does not assume later calls can use free splits inside the state segments.
+The state bound also includes compatible idle segments on the caller's stream:
+reusing an oversized cached segment can pin more memory than a fresh allocation.
 The example helpers set ``operator.last_solver_stats`` with state and scratch
 capacity metadata. This report belongs to the examples; the core package
 continues to provide projection and backprojection. The disk entrypoint saves

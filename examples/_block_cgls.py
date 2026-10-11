@@ -10,7 +10,7 @@ import torch
 import torch.distributed as dist
 
 from diffct import NpyStore, TensorStore
-from diffct.chunking import _allocation_bytes, _reservation_bytes
+from diffct.chunking import _allocation_bytes, _native_segments, _reservation_bytes
 from diffct.pipeline import _fragments
 from diffct.streaming import _validate_stores
 
@@ -65,6 +65,38 @@ def _norm(operator, store, kind, elements):
     return value.item()
 
 
+def _state_reservation_bytes(buffer_sizes, device):
+    """Pinned state bound for stable, monotone standard-native allocation."""
+    if not buffer_sizes or torch.cuda.get_allocator_backend() != "native":
+        return _reservation_bytes(buffer_sizes) if buffer_sizes else 0
+    caller = torch.cuda.current_stream(device).cuda_stream
+    idle = [segment for segment in _native_segments(device)
+            if segment["stream"] == caller
+            and all(block["state"] == "inactive" for block in segment["blocks"])]
+    mib, reservation = 1024 ** 2, 0
+    for pool in ("small", "large"):
+        requests = [size for size in buffer_sizes if size > 0 and (size <= mib) == (pool == "small")]
+        if not requests:
+            continue
+        fresh = _reservation_bytes(requests)
+        cached = [segment["total_size"] for segment in idle
+                  if segment["segment_type"] == pool and segment["total_size"] >= min(requests)]
+        if not cached:
+            reservation += fresh
+            continue
+        capacities = ([2 * mib] if pool == "small" else
+                      [20 * mib if size < 10 * mib else (size + 2 * mib - 1) // (2 * mib) * (2 * mib)
+                       for size in requests]) + cached
+        lower, upper = min(capacities), max(capacities)
+        count = len(requests)
+        if lower > max(requests):
+            # Before another segment pins, every preceding one holds more
+            # than lower - max(requests); the last holds at least min(requests).
+            count = min(count, 1 + (sum(requests) - min(requests)) // (lower - max(requests)))
+        reservation += max(fresh, count * upper)
+    return reservation
+
+
 def _solver_capacity(operator, measurements, block_elements, output_device, *, state_device=None):
     volume = math.prod(operator.volume_shape)
     rays = math.prod(operator.projection_shape)
@@ -80,8 +112,12 @@ def _solver_capacity(operator, measurements, block_elements, output_device, *, s
                    if state_device.type == "cuda" else (_allocation_bytes(2),) if nccl else ())
     dot_cuda = sum(dot_buffers)
     cuda_states = states if state_device.type == "cuda" else 0
-    cuda_buffers = (state_buffers if state_device.type == "cuda" else ()) + dot_buffers
-    reservation = _reservation_bytes(cuda_buffers) if cuda_buffers else 0
+    persistent_buffers = state_buffers if state_device.type == "cuda" else ()
+    cuda_buffers = persistent_buffers + dot_buffers
+    state_reservation = _state_reservation_bytes(persistent_buffers, state_device)
+    # States stay pinned across calls; closed pipelines and norm scratch occupy
+    # separate phases and cannot rely on packing into those pinned segments.
+    reservation = state_reservation + (_reservation_bytes(dot_buffers) if dot_buffers else 0)
     plan = None
     if hasattr(operator, "_execution_plan"):
         plan = operator._execution_plan(measurements, False, SimpleNamespace(device=output_device))
@@ -97,7 +133,7 @@ def _solver_capacity(operator, measurements, block_elements, output_device, *, s
         pipeline = max((candidate.estimated_gpu_bytes for candidate, _ in candidates), default=pipeline)
         for candidate, is_project in candidates:
             buffers = operator._plan_buffers(candidate, is_project, spec)
-            reservation = max(reservation, _reservation_bytes(cuda_buffers + buffers))
+            reservation = max(reservation, state_reservation + _reservation_bytes(buffers))
     return dict(
         requested_volume_state_bytes=12 * volume,
         requested_ray_state_bytes=8 * rays,

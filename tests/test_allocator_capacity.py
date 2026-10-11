@@ -337,6 +337,8 @@ def test_solver_admission_includes_forward_view_accumulators_when_rays_dominate_
                              device=torch.device("cuda:0"))
     with mock.patch.object(torch.cuda, "is_available", return_value=True), \
             mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"), \
+            mock.patch.object(torch.cuda, "current_stream", return_value=SimpleNamespace(cuda_stream=17)), \
+            mock.patch.object(torch.cuda, "memory_snapshot", return_value=[]), \
             mock.patch.object(operator, "_execution_plan", return_value=plan):
         report = _example("_block_cgls")._solver_capacity(operator, source, MIB, "cuda:0")
     # Two producer tiles, four ray buffers (two slots + two resident SUM
