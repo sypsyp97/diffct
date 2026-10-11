@@ -5,10 +5,11 @@ forward calls. CPU configuration tests remain runnable without a CUDA machine.
 The slab oracle is reused read-only from the detector-surface contract tests.
 """
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 import gc
 import math
+import pickle
 import sys
 from unittest import mock
 
@@ -454,18 +455,61 @@ class _StagingGuard(TorchDispatchMode):
         self.case, self.chunk, self.views = case, chunk, views
         self.limit = max(math.prod(chunk), views * math.prod(case.detector) * 3,
                          views * 12)
+        self.metadata_byte_limit = None
+
+    @contextmanager
+    def metadata_collective(self, payload, world_size):
+        leaves = tree_flatten(payload)[0]
+        assert all(type(value) in (type(None), bool, int, float, str) for value in leaves), \
+            "object collectives must contain only scalar layout metadata"
+        # Object collectives serialize control metadata, not numerical tiles.
+        # Bound each rank independently, including the gathered byte buffer.
+        assert len(pickle.dumps(payload)) <= 4096, "excessive collective metadata"
+        previous = self.metadata_byte_limit
+        self.metadata_byte_limit = 4096 * world_size
+        try:
+            yield
+        finally:
+            self.metadata_byte_limit = previous
+
+    def check_tensor(self, tensor, function):
+        shape = tuple(tensor.shape)
+        if self.metadata_byte_limit is not None and tensor.dtype == torch.uint8:
+            assert tensor.ndim == 1 and tensor.numel() <= self.metadata_byte_limit, \
+                f"excessive collective metadata buffer: {function}, {shape}"
+            return
+        assert tensor.numel() <= self.limit, f"unbounded CUDA tensor: {function}, {shape}"
+        if self.case.views > self.views:
+            assert shape != self.case.sino_shape, "full sinogram staged on CUDA"
+            assert shape != (*self.case.sino_shape, len(self.case.shape)), "full detector geometry on CUDA"
 
     def __torch_dispatch__(self, function, types, args=(), kwargs=None):
         result = function(*args, **(kwargs or {}))
         for tensor in tree_flatten(result)[0]:
             if not isinstance(tensor, torch.Tensor) or not tensor.is_cuda:
                 continue
-            shape = tuple(tensor.shape)
-            assert tensor.numel() <= self.limit, f"unbounded CUDA tensor: {function}, {shape}"
-            if self.case.views > self.views:
-                assert shape != self.case.sino_shape, "full sinogram staged on CUDA"
-                assert shape != (*self.case.sino_shape, len(self.case.shape)), "full detector geometry on CUDA"
+            self.check_tensor(tensor, function)
         return result
+
+
+def test_staging_guard_metadata_exception_keeps_data_and_control_buffers_bounded():
+    case = _case("parallel", views=5)
+    guard = _StagingGuard(case, _chunk(case), 2)
+    oversized_data = torch.empty(guard.limit + 1)
+    metadata_bytes = torch.empty(4096, dtype=torch.uint8)
+    with guard.metadata_collective(("views", (5, 7), 1.0), world_size=2):
+        guard.check_tensor(metadata_bytes, "metadata serialization")
+        with pytest.raises(AssertionError, match="unbounded CUDA tensor"):
+            guard.check_tensor(oversized_data, "numerical staging")
+        with pytest.raises(AssertionError, match="excessive collective metadata buffer"):
+            guard.check_tensor(torch.empty(8193, dtype=torch.uint8), "metadata serialization")
+    with pytest.raises(AssertionError, match="unbounded CUDA tensor"):
+        guard.check_tensor(metadata_bytes, "outside object collective")
+    for payload, message in [(torch.zeros(1), "scalar layout metadata"),
+                             ("x" * 4097, "excessive collective metadata")]:
+        with pytest.raises(AssertionError, match=message), guard.metadata_collective(payload, world_size=2):
+            pytest.fail("invalid metadata admitted")
+    assert guard.metadata_byte_limit is None
 
 
 def _assert_bounded_launches(records, case, chunk, batch, phases, devices=None):
@@ -623,7 +667,20 @@ def _nccl_worker(rank, beam, views, rendezvous):
             reductions.append(tensor.numel())
             return real_reduce(tensor, *args, **kwargs)
 
-        with mock.patch.object(dist, "all_reduce", reduction), _StagingGuard(case, _chunk(case), 2):
+        guard = _StagingGuard(case, _chunk(case), 2)
+        real_gather, real_broadcast = dist.all_gather_object, dist.broadcast_object_list
+
+        def gather_metadata(output, payload, *args, **kwargs):
+            with guard.metadata_collective(payload, world_size=2):
+                return real_gather(output, payload, *args, **kwargs)
+
+        def broadcast_metadata(payload, *args, **kwargs):
+            with guard.metadata_collective(payload, world_size=2):
+                return real_broadcast(payload, *args, **kwargs)
+
+        with mock.patch.object(dist, "all_reduce", reduction), \
+                mock.patch.object(dist, "all_gather_object", gather_metadata), \
+                mock.patch.object(dist, "broadcast_object_list", broadcast_metadata), guard:
             output = projector.project(image)
             _close(output, (local_matrix @ _numpy(image).ravel()).reshape(local.shape))
             (output.double() * local.detach().double()).sum().backward()
