@@ -538,7 +538,10 @@ def _geometry_memory_trial(views, detector):
     case.detector = detector
     chunk, pixels = _settings(case)
     sampler = _Sampler(case, pixels=pixels, batch=2)
-    projector = _batched_projector(case, sampler, parameters, chunk=chunk, pixels=pixels)
+    # Hold the two-tile resident inventory constant across geometry sizes;
+    # timing-based schedule choice would also change the volume memory peak.
+    projector = _batched_projector(case, sampler, parameters, chunk=chunk, pixels=pixels,
+                                  schedule="window")
     image, sino = _data(case, device="cpu")
     image.requires_grad_()
     projector.project(image.detach())

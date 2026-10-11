@@ -32,6 +32,15 @@ copies, view data, frame or sampled pixel geometry, VJP buffers and collective
 scratch. It reserves 25% of available memory for runtime overhead, respects
 PyTorch's per-process allocator ceiling and sizes against the smallest
 participating budget. Concurrent allocations can still cause allocation errors.
+Native PyTorch admission checks allocation-segment capacity separately from the
+live tensor payload estimate. A free split inside a partially occupied cached
+segment is not a promise that another buffer can use it. Small-pool and
+large-pool segment rounding also contribute to admission; a fitting sum of
+tensor sizes alone is insufficient. This check is conservative and may select
+smaller automatic tiles. Other allocator backends do not inherit native segment
+sizes. The segment estimate assumes standard native allocator settings and
+fresh fixed-buffer inventories; arbitrary fragmentation or allocator overrides
+can still cause allocation errors.
 On older PyTorch versions without the public memory-fraction getter, the
 estimate can observe driver/allocator memory only; use explicit limits when a
 process ceiling is set there.
@@ -108,10 +117,21 @@ a user sampler and OS file-cache residency remain outside these ceilings.
 All additional GPU slots, layouts, geometry and collective staging contribute
 to the GPU budget. Very small budgets can use a bounded serial fallback.
 Single-slot plans retire prior native computation before allocating the next
-tile; two-slot plans retain their bounded overlap.
+tile. Compute and internal allocations use the caller stream. Repeated calls
+on that stream can reuse its cache, so temporary transfer streams do not divide
+the native allocator's reusable cache. A new buffer is fenced against earlier caller work before
+upload. This can delay prefetch of a newly allocated volume buffer; existing
+ray/geometry slots retain their bounded overlap.
+Transfers hold source and destination references in the bounded completion-event
+queue until they finish. Completed internal copies release these references
+directly, avoiding stale transfer-stream reservations across calls.
 
 ``A.last_execution_stats`` reports the last instrumented operation's schedule,
 limits, layout/kernel counts and actual upload/download/peer-copy payloads.
+``estimated_gpu_bytes`` describes the tensor-buffer inventory;
+``estimated_reserved_bytes`` and ``reservation_budget_bytes`` expose the
+separate allocation-segment estimate and available room. Copy counts describe
+transferred tensor bytes, independently of segment sizes.
 Pilot timing and payloads are reported separately; candidate full-workload
 costs are estimates. These counts are not physical bus measurements. The value
 is ``None`` before execution or for an uninstrumented full-CUDA path. Run
@@ -232,6 +252,9 @@ and writes completed-iteration checkpoints without gathering the volume.
 ``q`` remains available until the global norm determines ``alpha`` and the
 ``x``/residual updates finish. Account for all three volume states together;
 fitting one volume does not establish that the complete solver fits.
+CUDA admission also checks each state and FP64 norm block against the feasible
+individual allocation limit, together with the forward and adjoint pipeline
+inventories. A small total state size cannot bypass an allocation-segment limit.
 The example helpers set ``operator.last_solver_stats`` with state and scratch
 capacity metadata. This report belongs to the examples; the core package
 continues to provide projection and backprojection. The disk entrypoint saves

@@ -185,6 +185,14 @@ participating budget, with 25% headroom for runtime allocations. Cone layout
 copies, projection batches, geometry/VJP buffers and collective staging count
 toward the estimate. Concurrent allocations can still cause an allocation
 error; available memory is not a reservation.
+For PyTorch's native allocator, streamed admission also checks segment capacity
+separately from tensor payload bytes. Partially occupied cached segments are
+not treated as wholly available for new buffers. Small and large allocation
+pools have different segment sizes, so a fitting sum of tensor sizes alone
+does not establish that a plan can be allocated.
+The segment estimate assumes standard native allocator settings and fresh
+fixed-buffer inventories; it does not guarantee allocation under arbitrary
+fragmentation or allocator overrides.
 PyTorch versions without the public memory-fraction getter expose only
 driver/allocator memory to this estimate; use explicit limits when setting a
 process ceiling on those versions.
@@ -196,6 +204,15 @@ a view limit alone also forces streamed batches. The automatic view batch is
 capped at 32 and can shrink to fit its geometry/projection buffers. Oversized
 spatial limits are clipped at the volume edge; nondivisible tails retain their
 global voxel positions. Explicit limits are not automatically made smaller.
+
+Streamed compute uses the caller's CUDA stream. Internal buffers share that
+allocation owner across calls on the same stream; upload and download use
+separate streams with explicit reuse dependencies. A newly allocated volume buffer may wait for
+earlier caller work before upload, while existing ray/geometry slots retain
+their bounded prefetch overlap.
+Transfers hold source and destination references in the bounded completion-event
+queue until they finish. Completed internal copies release these references
+directly, avoiding stale transfer-stream reservations across calls.
 
 Legacy streamed detector-surface callbacks must return CPU offsets and retain
 their full CPU callback footprint. Explicit `ParameterizedSurface` instead

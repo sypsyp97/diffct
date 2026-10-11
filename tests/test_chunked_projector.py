@@ -654,7 +654,12 @@ def test_nccl_cpu_backed_bounded_collectives_and_sum_semantics(beam, views, tmp_
 
 # Automatic defaults below follow frozen automatic-cpu-backed-volume-tiles-v2.
 def _memory_inventory(free_by_device):
-    """Mock memory observations only. Numerical kernels and outputs stay real."""
+    """Inject logical payload pressure; numerical kernels and outputs stay real.
+
+    These existing KiB-sized fixtures test active-byte policy, not physical
+    native segments (whose minimum reservation is 2 MiB). Reservation admission
+    remains unconstrained here; isolated allocator tests exercise real ceilings.
+    """
     patches = ExitStack()
     allocated = torch.cuda.memory_allocated
 
@@ -668,6 +673,11 @@ def _memory_inventory(free_by_device):
     # Exclude pre-existing reusable cache from this deliberately constrained
     # inventory; otherwise earlier tests could make a small free-memory mock fit.
     patches.enter_context(mock.patch.object(torch.cuda, "memory_reserved", side_effect=allocated))
+    # Match that zero-reusable-cache inventory in the segment snapshot too;
+    # real foreign free splits belong to the physical allocator tests.
+    patches.enter_context(mock.patch("diffct.chunking._native_segments", return_value=[]))
+    patches.enter_context(mock.patch("diffct.operators._reservation_budget",
+                                     return_value=(1 << 63) - 1))
     return patches
 
 

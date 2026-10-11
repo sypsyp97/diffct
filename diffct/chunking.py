@@ -21,6 +21,8 @@ class _ChunkPlan:
     estimated_gpu_bytes: int = 0
     fallback_reason: str = ""
     foreign_output: bool = False
+    reservation_budget_bytes: int = (1 << 63) - 1
+    estimated_reserved_bytes: int = 0
 
 
 def _pixel_tiles(shape, chunk_shape):
@@ -42,16 +44,49 @@ def _memory_budget(device):
     getter = getattr(torch.cuda, "get_per_process_memory_fraction", None)
     fraction = getter(device) if getter is not None else 1.0
     allocator_room = max(0, int(total * fraction) - allocated)
-    available = max(0, min(free + reusable, allocator_room))
+    backend = getattr(torch.cuda, "get_allocator_backend", lambda: "native")()
+    foreign_splits = 0
+    if backend == "native":
+        caller = torch.cuda.current_stream(device).cuda_stream
+        for segment in _native_segments(device):
+            blocks = segment["blocks"]
+            if segment["stream"] != caller and any(block["state"] != "inactive" for block in blocks):
+                foreign_splits += sum(block["size"] for block in blocks if block["state"] == "inactive")
+    available = max(0, min(free + reusable, allocator_room) - foreign_splits)
     budget = available * 3 // 4
     allocation_limit = (1 << 63) - 1  # Unbounded limit in scalar int64 agreement.
-    backend = getattr(torch.cuda, "get_allocator_backend", lambda: "native")()
     # Native requests >1 MiB and <10 MiB reserve a 20 MiB segment. A smaller
     # current available room must use the <=1 MiB small pool, whose segments are 2 MiB.
     # Source: pytorch/c10/cuda/CUDACachingAllocator.cpp (Native allocator notes).
     if backend == "native" and available < 20 * 1024 ** 2:
         allocation_limit = 1024 ** 2
     return budget, allocation_limit
+
+
+def _native_segments(device):
+    index = torch.device(device).index if not isinstance(device, int) else device
+    index = torch.cuda.current_device() if index is None else index
+    return [segment for segment in torch.cuda.memory_snapshot() if segment["device"] == index]
+
+
+def _reservation_budget(device):
+    """Room for fresh segments, conservatively excluding every pinned segment.
+
+    Free splits in a live segment may serve the caller, but cannot guarantee
+    placement of the complete new inventory. Wholly inactive segments can be
+    released by the native allocator, including those owned by other streams.
+    """
+    if torch.cuda.get_allocator_backend() != "native":
+        return (1 << 63) - 1
+    free, total = torch.cuda.mem_get_info(device)
+    segments = _native_segments(device)
+    pinned = sum(segment["total_size"] for segment in segments
+                 if any(block["state"] != "inactive" for block in segment["blocks"]))
+    reclaimable = sum(segment["total_size"] for segment in segments
+                      if all(block["state"] == "inactive" for block in segment["blocks"]))
+    getter = getattr(torch.cuda, "get_per_process_memory_fraction", None)
+    fraction = getter(device) if getter is not None else 1.0
+    return max(0, min(free + reclaimable, int(total * fraction) - pinned))
 
 
 def _working_set_bytes(beam, shape, views, detector_shape, surface):
@@ -83,13 +118,60 @@ def _allocation_bytes(elements):
     return size
 
 
-def _pipeline_bytes(beam, shape, views, pixels, points, *, slots=1, retained=1,
-                    geometry_grad=False, peers=False, ray_accumulators=0):
-    """Live typed allocations, including native allocator rounding per buffer."""
+def _reservation_bytes(buffer_sizes):
+    """Fresh, monotone fixed-buffer inventory bound for standard native pools.
+
+    Arbitrary free holes and allocator overrides are outside this model. Large
+    and middle requests share one pool, so mixed inventories use separate fresh
+    segments per request instead of assuming their placement is independent.
+    """
+    sizes = [size for size in buffer_sizes if size > 0]
+    if torch.cuda.get_allocator_backend() != "native":
+        return sum(sizes)
+    mib = 1024 ** 2
+    sizes = [(size + 511) // 512 * 512 for size in sizes]
+    large = [size for size in sizes if size >= 10 * mib]
+    reservation = sum((size + 2 * mib - 1) // (2 * mib) * (2 * mib) for size in large)
+    middle = [size for size in sizes if mib < size < 10 * mib]
+    if large:
+        reservation += len(middle) * 20 * mib
+        middle = []
+    for segment_size, requests in (
+        (2 * mib, [size for size in sizes if size <= mib]),
+        (20 * mib, middle),
+    ):
+        if not requests:
+            continue
+        total = sum(requests)
+        # At a new segment's birth every older segment holds more than
+        # segment_size - max(requests); the new one holds at least min(requests).
+        # This bounds online best-fit placement in any allocation order.
+        count = (1 if total <= segment_size else
+                 (total - min(requests)) // (segment_size - max(requests)) + 1)
+        reservation += count * segment_size
+    return reservation
+
+
+def _pipeline_buffers(beam, shape, views, pixels, points, *, slots=1, retained=1,
+                      geometry_grad=False, peers=False, ray_accumulators=0):
+    """Live typed allocation inventory, with native rounding per buffer."""
     rank, rays = len(shape), views * math.prod(pixels)
     native = _allocation_bytes(math.prod(shape))
     # Two producer epochs permit the preceding native/layout/output storage
     # to stay in flight while the next retained tile window queues work.
+    tiles = slots * (retained + int(beam == "cone")) + int(peers)
+    sizes = ((views * rank, rays * rank) if points
+             else (views * rank,) * (4 if beam == "cone" else 3))
+    geometry = tuple(_allocation_bytes(size) for size in sizes)
+    return ((native,) * tiles + (_allocation_bytes(rays),) * (slots + ray_accumulators)
+            + geometry * (slots * (1 + int(geometry_grad))))
+
+
+def _pipeline_bytes(beam, shape, views, pixels, points, *, slots=1, retained=1,
+                    geometry_grad=False, peers=False, ray_accumulators=0):
+    """Live typed bytes; segment reservation is admitted separately."""
+    rank, rays = len(shape), views * math.prod(pixels)
+    native = _allocation_bytes(math.prod(shape))
     tile = native * (slots * (retained + int(beam == "cone")) + int(peers))
     sizes = ((views * rank, rays * rank) if points
              else (views * rank,) * (4 if beam == "cone" else 3))

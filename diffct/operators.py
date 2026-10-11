@@ -9,7 +9,8 @@ import torch
 from numba import cuda
 
 from .chunking import (_ChunkPlan, _host_geometry_bytes, _largest_buffer_bytes, _memory_budget,
-                       _pipeline_bytes, _pixel_tiles, _tiles, _working_set_bytes)
+                       _pipeline_buffers, _pipeline_bytes, _pixel_tiles, _reservation_budget,
+                       _reservation_bytes, _tiles, _working_set_bytes)
 from . import pipeline as _pipeline
 from .storage import TensorStore
 from .streaming import _validate_stores
@@ -580,6 +581,10 @@ class Projector:
         observed = {device: _memory_budget(device) for device in inventory}
         budgets = {device: limits[0] for device, limits in observed.items()}
         allocation_limit = min((limits[1] for limits in observed.values()), default=(1 << 63) - 1)
+        # A known zero budget rejects metadata-only device inventories before
+        # querying their physical streams or allocator snapshots.
+        reservation_budget = (min((_reservation_budget(device) for device in inventory),
+                                  default=(1 << 63) - 1) if all(budgets.values()) else 0)
         parameterized = isinstance(self.detector_surface, ParameterizedSurface)
         surface = self.detector_surface is not None or self.detector_chunk_shape is not None
         # Sampling precedes view sharding. Conservatively allow the complete
@@ -606,6 +611,13 @@ class Projector:
             can_use_full = can_use_full and _largest_buffer_bytes(
                 self.beam, self.volume_shape, views, self.detector_shape, surface
             ) <= allocation_limit
+            buffers = _pipeline_buffers(self.beam, self.volume_shape, views, self.detector_shape,
+                                        surface, retained=2,
+                                        geometry_grad=True, ray_accumulators=1)
+            buffers += (world_bytes // 4,) * 4
+            if is_cuda and device == input_device:
+                buffers += (4 * volume_elements,) * 2 + (4 * projection_elements,) * 2
+            can_use_full = can_use_full and _reservation_bytes(buffers) <= reservation_budget
         if is_cuda and input_device not in active_devices:
             can_use_full = can_use_full and 8 * (volume_elements + projection_elements) + world_bytes <= budgets[input_device]
         can_use_full = can_use_full and all(world_bytes <= amount for amount in budgets.values())
@@ -618,6 +630,7 @@ class Projector:
         streamed_budgets = dict(budgets)
         if is_cuda and output_store is None:
             streamed_budgets[input_device] -= 4 * max(volume_elements, projection_elements)
+            reservation_budget -= _reservation_bytes((4 * max(volume_elements, projection_elements),))
         budget = min(streamed_budgets.values(), default=(1 << 63) - 1)
         if is_cuda and output_store is None and 4 * max(volume_elements, projection_elements) > allocation_limit:
             budget = -1
@@ -636,9 +649,10 @@ class Projector:
             torch.distributed.all_reduce(upper, op=torch.distributed.ReduceOp.MAX, group=self._process_group)
             if not torch.equal(lower, upper):
                 raise ValueError("distributed ranks must agree on volume shape and explicit chunk limits")
-            agreement = torch.tensor([int(can_use_full), budget, allocation_limit, int(not foreign_output)], dtype=torch.int64, device=control_device)
+            agreement = torch.tensor([int(can_use_full), budget, allocation_limit, int(not foreign_output),
+                                      reservation_budget], dtype=torch.int64, device=control_device)
             torch.distributed.all_reduce(agreement, op=torch.distributed.ReduceOp.MIN, group=self._process_group)
-            can_use_full, budget, allocation_limit, same_output = agreement.cpu().tolist()
+            can_use_full, budget, allocation_limit, same_output, reservation_budget = agreement.cpu().tolist()
             foreign_output = not same_output
         if can_use_full:
             return None
@@ -657,10 +671,12 @@ class Projector:
 
         def fits(shape):
             points = surface or pixels != self.detector_shape
+            buffers = _pipeline_buffers(self.beam, shape, batch, pixels, points,
+                                        geometry_grad=self._geometry_trainable,
+                                        ray_accumulators=extra_rays, peers=peers or foreign_output)
             return (
-                _pipeline_bytes(self.beam, shape, batch, pixels, points,
-                                geometry_grad=self._geometry_trainable,
-                                ray_accumulators=extra_rays, peers=peers or foreign_output) <= budget
+                sum(buffers) <= budget
+                and _reservation_bytes(buffers) <= reservation_budget
                 and _largest_buffer_bytes(self.beam, shape, batch, pixels, points) <= allocation_limit
                 and _host_geometry_bytes(self.beam, batch, pixels, points) <= _pipeline._GEOMETRY_WORK_BYTES
             )
@@ -687,7 +703,12 @@ class Projector:
                                    geometry_grad=self._geometry_trainable,
                                    ray_accumulators=extra_rays, peers=peers or foreign_output)
         return _ChunkPlan(chunk, batch, devices, pixels, budget, allocation_limit,
-                          estimated_gpu_bytes=estimate, foreign_output=foreign_output)
+                          estimated_gpu_bytes=estimate, foreign_output=foreign_output,
+                          reservation_budget_bytes=reservation_budget,
+                          estimated_reserved_bytes=_reservation_bytes(_pipeline_buffers(
+                              self.beam, chunk, batch, pixels, surface or pixels != self.detector_shape,
+                              geometry_grad=self._geometry_trainable,
+                              ray_accumulators=extra_rays, peers=peers or foreign_output)))
 
     def _validate_input(self, tensor, is_project):
         if not isinstance(tensor, torch.Tensor):
@@ -869,7 +890,9 @@ class Projector:
                     chunk_shape=tuple(plan.chunk_shape), view_chunk_size=plan.view_chunk_size,
                     detector_chunk_shape=tuple(plan.detector_chunk_shape or self.detector_shape),
                     window_size=plan.window_size, gpu_budget_bytes=plan.gpu_budget_bytes,
-                    estimated_gpu_bytes=plan.estimated_gpu_bytes, pinned_bytes_peak=0,
+                    estimated_gpu_bytes=plan.estimated_gpu_bytes,
+                    reservation_budget_bytes=plan.reservation_budget_bytes,
+                    estimated_reserved_bytes=plan.estimated_reserved_bytes, pinned_bytes_peak=0,
                     h2d_bytes=0, d2h_bytes=0, p2p_bytes=0, kernel_launches=0,
                     layout_preparations=0, collective_calls=0, collective_bytes=0, pilot=[],
                     **({"fallback_reason": plan.fallback_reason} if plan.fallback_reason else {}))
@@ -885,11 +908,18 @@ class Projector:
                                    slots=slots, retained=retained, geometry_grad=self._geometry_trainable,
                                    peers=peers, ray_accumulators=ray_accumulators)
 
+        def reserved(shape, slots=1, retained=1, ray_accumulators=0):
+            return _reservation_bytes(_pipeline_buffers(
+                self.beam, shape, plan.view_chunk_size, pixels, points,
+                slots=slots, retained=retained, geometry_grad=self._geometry_trainable,
+                peers=peers, ray_accumulators=ray_accumulators))
+
         shapes = [plan.chunk_shape]
         if self.volume_chunk_shape is None and len(volume_shape) == 3:
             slab = list(volume_shape)
             def fits(candidate):
                 return (size(tuple(candidate)) <= plan.gpu_budget_bytes
+                        and reserved(tuple(candidate)) <= plan.reservation_budget_bytes
                         and _largest_buffer_bytes(self.beam, candidate, plan.view_chunk_size, pixels, points)
                         <= plan.allocation_limit)
             while not fits(slab) and slab[0] > 1:
@@ -916,16 +946,22 @@ class Projector:
                 extra_rays += int(is_project and plan.foreign_output)
                 extra_rays += int(is_project and self.partition == "space" and peers)
                 estimate = size(shape, slots, retained, extra_rays)
+                reservation = (reserved(shape, slots, retained, extra_rays)
+                               if estimate <= plan.gpu_budget_bytes else (1 << 63) - 1)
                 host_fits = 2 * _host_geometry_bytes(self.beam, plan.view_chunk_size, pixels, points) <= _pipeline._GEOMETRY_WORK_BYTES
-                if estimate > plan.gpu_budget_bytes or not host_fits:
+                if (estimate > plan.gpu_budget_bytes
+                        or reservation > plan.reservation_budget_bytes or not host_fits):
                     if schedule == "window":
                         continue
                     slots, estimate = 1, size(shape, 1, retained, extra_rays)
-                if estimate > plan.gpu_budget_bytes:
+                    reservation = (reserved(shape, slots, retained, extra_rays)
+                                   if estimate <= plan.gpu_budget_bytes else (1 << 63) - 1)
+                if estimate > plan.gpu_budget_bytes or reservation > plan.reservation_budget_bytes:
                     continue
                 candidates.append(replace(plan, chunk_shape=shape, schedule=schedule,
                                           window_size=retained, slots=slots, estimated_gpu_bytes=estimate,
-                                          fallback_reason="two-slot pipeline exceeds live CUDA allocation budget" if slots == 1 else ""))
+                                          estimated_reserved_bytes=reservation,
+                                          fallback_reason="two-slot pipeline exceeds CUDA allocation or reservation budget" if slots == 1 else ""))
         if self.partition == "space" and is_project:
             if not candidates:
                 raise RuntimeError("CUDA memory budget cannot fit a resident spatial-partition ray batch")
@@ -940,13 +976,27 @@ class Projector:
             raise RuntimeError("CUDA memory budget cannot fit the requested schedule accumulators")
         return candidates
 
+    def _plan_buffers(self, plan, is_project, spec):
+        pixels = plan.detector_chunk_shape or self.detector_shape
+        points = spec is not None or self.detector_chunk_shape is not None or pixels != self.detector_shape
+        peers = len(plan.devices) > 1 or (self._distributed and self.world_size > 1) or plan.foreign_output
+        count = math.prod(math.ceil(size / part) for size, part in zip(self._planning_volume_shape, plan.chunk_shape))
+        extra_rays = 2 if self.partition == "space" or (is_project and plan.schedule == "views" and count > 1) else 0
+        extra_rays += int(is_project and plan.foreign_output)
+        extra_rays += int(is_project and self.partition == "space" and peers)
+        return _pipeline_buffers(
+            self.beam, plan.chunk_shape, plan.view_chunk_size, pixels, points,
+            slots=plan.slots, retained=plan.window_size, geometry_grad=self._geometry_trainable,
+            peers=peers, ray_accumulators=extra_rays)
+
     def _choose_schedule(self, source, sink, is_project, geometry, plan, spec):
         candidates = self._candidate_plans(plan, is_project, spec)
         if not candidates:
             raise RuntimeError("CUDA memory budget cannot fit a streamed schedule")
         key = (is_project, plan.chunk_shape, plan.view_chunk_size, plan.detector_chunk_shape,
                tuple(device.index for device in plan.devices), str(source.dtype), plan.gpu_budget_bytes,
-               plan.allocation_limit, str(getattr(source, "device", "cpu")), str(getattr(sink, "device", "cpu")),
+               plan.allocation_limit, plan.reservation_budget_bytes,
+               str(getattr(source, "device", "cpu")), str(getattr(sink, "device", "cpu")),
                spec.kind if spec is not None else "flat", self.schedule)
         collective = self._distributed and self.world_size > 1
         if not collective and key in self._schedule_cache:
@@ -983,12 +1033,10 @@ class Projector:
 
     def _native_tile(self, source, spatial, shape, pipe, is_project):
         pipe.reclaim_output()
-        with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload):
-            if len(pipe.host) == 1:
-                # A single-slot plan budgets only one live producer epoch.
-                pipe.event(pipe.compute).synchronize()
-            staged = torch.empty(shape if is_project or self.beam != "cone" else shape[::-1],
-                                 dtype=torch.float32, device=pipe.device)
+        if len(pipe.host) == 1:
+            # A single-slot plan budgets only one live producer epoch.
+            pipe.event(pipe.compute).synchronize()
+        staged = pipe.empty(shape if is_project or self.beam != "cone" else shape[::-1])
         if is_project:
             ready = pipe.upload_store(source, spatial, staged)
             with torch.cuda.stream(pipe.compute):
@@ -1054,10 +1102,9 @@ class Projector:
 
     def _ray_buffers(self, groups, index, pipe, shape, sizes):
         if index not in groups:
-            with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload):
-                groups[index] = dict(rays=torch.empty(groups.get("_max_rays", math.prod(shape)), dtype=torch.float32, device=pipe.device),
-                                     geometry=[torch.empty(size, dtype=torch.float32, device=pipe.device)
-                                               for size in groups.get("_max_geometry", sizes)], done=None)
+            groups[index] = dict(rays=pipe.empty(groups.get("_max_rays", math.prod(shape))),
+                                 geometry=[pipe.empty(size) for size in groups.get("_max_geometry", sizes)],
+                                 done=None)
         return groups[index]
 
     def _groups_for(self, plan, spec):
@@ -1400,10 +1447,10 @@ class Projector:
                 del native
 
     def _replicate_native(self, native, origin, target):
+        copied = target.empty(native.shape, dtype=native.dtype)
         with torch.cuda.device(target.device), torch.cuda.stream(target.upload):
             target.upload.wait_event(origin.event(origin.compute))
-            copied = native.to(device=target.device, non_blocking=True)
-            target.stats["p2p_bytes"] += copied.numel() * copied.element_size()
+            _pipeline._copy(copied, native, target.stats)
             target.retain(target.event(target.upload), native, copied)
         target.compute.wait_event(target.event(target.upload))
         copied.record_stream(target.compute)
@@ -1579,8 +1626,7 @@ class Projector:
         store = TensorStore(tensor)
         with _pipeline._TransferPipeline((plan.devices[0],), block, stats, slots=1) as transfer:
             pipe = transfer.for_device(plan.devices[0])
-            with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload):
-                staged = torch.empty(block, dtype=torch.float32, device=pipe.device)
+            staged = pipe.empty(block)
             for selected in slices:
                 shape = tuple(item.stop - item.start for item in selected)
                 fragment = staged[:math.prod(shape)].view(shape)
@@ -1681,6 +1727,7 @@ class Projector:
                 weights.append(weight)
             for slot in pipe.host:
                 slot.finish()
+            pipe.reclaim_output()
             if sampled:
                 weights = tuple(weight.to(dtype=value.dtype) for weight, value in zip(weights, local_geometry))
                 with torch.enable_grad():

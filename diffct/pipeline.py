@@ -57,11 +57,11 @@ class _DevicePipeline:
     """Two reusable host slots; events own all asynchronous transfer lifetimes."""
     def __init__(self, device, elements, stats, slots=2):
         self.device, self.stats = device, stats
-        self.upload = torch.cuda.Stream(device=device)
-        self.compute = torch.cuda.Stream(device=device)
-        self.download = torch.cuda.Stream(device=device)
         self.caller = torch.cuda.current_stream(device)
-        for stream in (self.upload, self.compute, self.download):
+        self.upload = torch.cuda.Stream(device=device)
+        self.compute = self.caller
+        self.download = torch.cuda.Stream(device=device)
+        for stream in (self.upload, self.download):
             stream.wait_stream(self.caller)
         self.capacity = max(1, min(elements, _HOST_SLOT_BYTES // 4))
         self.host = [_HostSlot(self.capacity) for _ in range(slots)]
@@ -69,6 +69,14 @@ class _DevicePipeline:
         self.pending = []
         self.output_streams = {}
         self.outputs = []
+
+    def empty(self, shape, *, dtype=torch.float32):
+        # Native cached blocks belong to their allocation stream. Keep that
+        # owner stable across calls, then fence reuse before a new upload.
+        with torch.cuda.device(self.device), torch.cuda.stream(self.caller):
+            tensor = torch.empty(shape, dtype=dtype, device=self.device)
+        self.upload.wait_stream(self.caller)
+        return tensor
 
     def reclaim_output(self, keep=None):
         """Keep one previous drain in flight when the two-epoch plan permits it."""
@@ -81,7 +89,8 @@ class _DevicePipeline:
     def retain(self, event, source, target):
         self.pending[:] = [entry for entry in self.pending if not entry[0].query()]
         if len(self.pending) >= len(self.host):
-            self.pending.pop(0)[0].synchronize()
+            self.pending[0][0].synchronize()
+            self.pending.pop(0)
         self.pending.append((event, source, target))
 
     def slot(self):
@@ -101,11 +110,12 @@ class _DevicePipeline:
         with torch.cuda.device(self.device), torch.cuda.stream(self.upload):
             if source.is_cuda:
                 self.upload.wait_stream(origin)
-                _copy(target, source, self.stats)
-                if source.device == self.device:
-                    source.record_stream(self.upload)
-                else:
-                    self.retain(self.event(self.upload), source, target)
+                try:
+                    _copy(target, source, self.stats)
+                finally:
+                    ready = self.event(self.upload)
+                    self.retain(ready, source, target)
+                return ready
             else:
                 limit = min(self.capacity, _HOST_SCRATCH_BYTES // source.element_size())
                 for selected in _fragments(tuple(source.shape), limit):
@@ -113,8 +123,12 @@ class _DevicePipeline:
                     slot = self.slot()
                     pinned = slot.tensor[:value.numel()].view(value.shape)
                     pinned.copy_(value)
-                    _copy(target[selected], pinned, self.stats)
-                    slot.event = self.event(self.upload)
+                    destination = target[selected]
+                    try:
+                        _copy(destination, pinned, self.stats)
+                    finally:
+                        slot.event = self.event(self.upload)
+                        self.retain(slot.event, None, destination)
             return self.event(self.upload)
 
     def upload_store(self, store, selected, target):
@@ -146,13 +160,18 @@ class _DevicePipeline:
                 stream, caller = self.output_streams[output_device]
             with torch.cuda.device(output_device), torch.cuda.stream(stream):
                 stream.wait_event(ready)
-                value = tensor.to(device=output_device, non_blocking=True)
-                if value.device != tensor.device:
-                    self.stats["p2p_bytes"] += value.numel() * value.element_size()
-                store.write(selected, value, accumulate=accumulate)
-                done = self.event(stream)
-                self.retain(done, tensor, value)
-                value.record_stream(caller)
+                value = tensor
+                if output_device != tensor.device:
+                    with torch.cuda.stream(caller):
+                        value = torch.empty(tensor.shape, dtype=tensor.dtype, device=output_device)
+                    stream.wait_stream(caller)
+                try:
+                    if output_device != tensor.device:
+                        _copy(value, tensor, self.stats)
+                    store.write(selected, value, accumulate=accumulate)
+                finally:
+                    done = self.event(stream)
+                    self.retain(done, tensor, value)
             caller.wait_event(done)
             self.outputs.append(done)
             return done
@@ -163,9 +182,11 @@ class _DevicePipeline:
             pinned = slot.tensor[:source.numel()].view(source.shape)
             with torch.cuda.device(self.device), torch.cuda.stream(self.download):
                 self.download.wait_event(ready)
-                _copy(pinned, source, self.stats)
-                source.record_stream(self.download)
-                slot.event = self.event(self.download)
+                try:
+                    _copy(pinned, source, self.stats)
+                finally:
+                    slot.event = self.event(self.download)
+                    self.retain(slot.event, source, None)
             output_slice = _selected(selected, fragment)
             slot.drain = lambda pinned=pinned, output_slice=output_slice: store.write(
                 output_slice, pinned, accumulate=accumulate,

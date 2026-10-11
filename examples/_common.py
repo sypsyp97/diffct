@@ -119,7 +119,9 @@ def cgls(operator, measurements, iterations):
     report = _solver_capacity(operator, source, elements, measurements.device)
     device = measurements.device
     fallback = (device.type == "cuda" and report["gpu_budget_bytes"] is not None
-                and report["estimated_gpu_bytes"] > report["gpu_budget_bytes"])
+                and (report["estimated_gpu_bytes"] > report["gpu_budget_bytes"]
+                     or report["largest_cuda_allocation_bytes"] > report["allocation_limit"]
+                     or report["estimated_reserved_bytes"] > report["reservation_budget_bytes"]))
     if operator.world_size > 1:
         # Agree before the CPU replan issues its own collectives.
         group = operator.process_group

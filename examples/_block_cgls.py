@@ -10,7 +10,7 @@ import torch
 import torch.distributed as dist
 
 from diffct import NpyStore, TensorStore
-from diffct.chunking import _allocation_bytes
+from diffct.chunking import _allocation_bytes, _reservation_bytes
 from diffct.pipeline import _fragments
 from diffct.streaming import _validate_stores
 
@@ -68,15 +68,20 @@ def _norm(operator, store, kind, elements):
 def _solver_capacity(operator, measurements, block_elements, output_device, *, state_device=None):
     volume = math.prod(operator.volume_shape)
     rays = math.prod(operator.projection_shape)
-    states = 3 * _allocation_bytes(volume) + 2 * _allocation_bytes(rays) if torch.cuda.is_available() else 4 * (3 * volume + 2 * rays)
+    state_buffers = ((_allocation_bytes(volume),) * 3 + (_allocation_bytes(rays),) * 2
+                     if torch.cuda.is_available() else (4 * volume,) * 3 + (4 * rays,) * 2)
+    states = sum(state_buffers)
     state_device = torch.device(output_device if state_device is None else state_device)
     dot_elements = min(block_elements, max(volume, rays))
     nccl = operator.world_size > 1 and dist.get_backend(operator.process_group) == "nccl"
     # One block, its persistent accumulator and its reduction scalar. NCCL
     # may additionally stage that scalar onto the process's collective device.
-    dot_cuda = (_allocation_bytes(2 * dot_elements) + (2 + int(nccl)) * _allocation_bytes(2)
-                if state_device.type == "cuda" else _allocation_bytes(2) if nccl else 0)
+    dot_buffers = ((_allocation_bytes(2 * dot_elements),) + (_allocation_bytes(2),) * (2 + int(nccl))
+                   if state_device.type == "cuda" else (_allocation_bytes(2),) if nccl else ())
+    dot_cuda = sum(dot_buffers)
     cuda_states = states if state_device.type == "cuda" else 0
+    cuda_buffers = (state_buffers if state_device.type == "cuda" else ()) + dot_buffers
+    reservation = _reservation_bytes(cuda_buffers) if cuda_buffers else 0
     plan = None
     if hasattr(operator, "_execution_plan"):
         plan = operator._execution_plan(measurements, False, SimpleNamespace(device=output_device))
@@ -87,8 +92,12 @@ def _solver_capacity(operator, measurements, block_elements, output_device, *, s
         from diffct.surfaces import _GeometrySpec
         surface = operator.detector_surface
         spec = _GeometrySpec("sampled", surface.sampler) if isinstance(surface, ParameterizedSurface) else _GeometrySpec("points") if surface is not None else None
-        candidates = operator._candidate_plans(plan, False, spec)
-        pipeline = max((candidate.estimated_gpu_bytes for candidate in candidates), default=pipeline)
+        candidates = [(candidate, is_project) for is_project in (False, True)
+                      for candidate in operator._candidate_plans(plan, is_project, spec)]
+        pipeline = max((candidate.estimated_gpu_bytes for candidate, _ in candidates), default=pipeline)
+        for candidate, is_project in candidates:
+            buffers = operator._plan_buffers(candidate, is_project, spec)
+            reservation = max(reservation, _reservation_bytes(cuda_buffers + buffers))
     return dict(
         requested_volume_state_bytes=12 * volume,
         requested_ray_state_bytes=8 * rays,
@@ -100,6 +109,10 @@ def _solver_capacity(operator, measurements, block_elements, output_device, *, s
         estimated_pipeline_and_geometry_bytes=pipeline,
         gpu_budget_bytes=plan.gpu_budget_bytes if plan is not None else None,
         estimated_gpu_bytes=cuda_states + pipeline + dot_cuda,
+        largest_cuda_allocation_bytes=max(cuda_buffers, default=0),
+        allocation_limit=plan.allocation_limit if plan is not None else (1 << 63) - 1,
+        reservation_budget_bytes=plan.reservation_budget_bytes if plan is not None else (1 << 63) - 1,
+        estimated_reserved_bytes=reservation,
     )
 
 
