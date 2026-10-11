@@ -96,36 +96,66 @@ def fdk(scan, sinogram, trajectory, window="shepp-logan"):
                                      scan.pitch, scan.pitch, voxel_spacing=1.0).clamp_min(0)
 
 
+@torch.no_grad()
 def cgls(operator, measurements, iterations):
     """Conjugate gradient least squares for ``min ||A x - y||``.
 
-    In distributed mode ``measurements`` is the rank's view shard and the
-    volume is replicated: sinogram inner products are summed over ranks,
-    volume inner products are not.
+    Norms respect the projector's view or spatial ownership. FP64 norm work
+    is block bounded on the state device. CUDA state is admitted only when all
+    x/s/p/r/q states and the native pipeline fit; otherwise state stays on CPU.
+    The example assigns a tensor-free capacity report to ``last_solver_stats``.
     """
-    def shard_dot(a, b):
-        value = torch.sum(a.double() * b.double())
-        if operator.world_size > 1:
-            dist.all_reduce(value, group=operator.process_group)
-        return value
+    try:
+        from _block_cgls import _copy_blocks, _count, _norm, _solver_capacity
+    except ModuleNotFoundError as error:
+        if error.name != "_block_cgls":
+            raise
+        from examples._block_cgls import _copy_blocks, _count, _norm, _solver_capacity
+    from diffct import TensorStore
 
-    x = torch.zeros(operator.volume_shape, device=measurements.device)
-    r = measurements.clone()
-    s = operator.backproject(r)
-    p = s.clone()
-    gamma = torch.sum(s.double() * s.double())
+    iterations = _count(iterations, "iterations")
+    source = TensorStore(measurements)
+    elements = 1048576
+    report = _solver_capacity(operator, source, elements, measurements.device)
+    device = measurements.device
+    fallback = (device.type == "cuda" and report["gpu_budget_bytes"] is not None
+                and (report["estimated_gpu_bytes"] > report["gpu_budget_bytes"]
+                     or report["largest_cuda_allocation_bytes"] > report["allocation_limit"]
+                     or report["estimated_reserved_bytes"] > report["reservation_budget_bytes"]))
+    if operator.world_size > 1:
+        # Agree before the CPU replan issues its own collectives.
+        group = operator.process_group
+        control_device = (torch.device("cuda", torch.cuda.current_device())
+                          if dist.get_backend(group) == "nccl" else torch.device("cpu"))
+        agreement = torch.tensor(int(fallback), dtype=torch.int64, device=control_device)
+        dist.all_reduce(agreement, op=dist.ReduceOp.MAX, group=group)
+        fallback = bool(agreement.item())
+        del agreement
+    if fallback:
+        device = torch.device("cpu")
+        report = _solver_capacity(operator, source, elements, device)
+    report["state_backend"] = device.type
+    operator.last_solver_stats = report
+    x = torch.zeros(operator.volume_shape, dtype=torch.float32, device=device)
+    r = torch.empty(operator.projection_shape, dtype=torch.float32, device=device)
+    _copy_blocks(source, TensorStore(r), elements)
+    s = torch.empty_like(x)
+    p = torch.empty_like(x)
+    q = torch.empty_like(r)
+    operator.backproject_into(r, s)
+    p.copy_(s)
+    gamma = _norm(operator, TensorStore(s), "volume", elements)
     for _ in range(iterations):
-        q = operator.project(p)
-        qq = shard_dot(q, q)
-        # gamma is replicated and qq is reduced, so every rank stops together.
+        operator.project_into(p, q)
+        qq = _norm(operator, TensorStore(q), "rays", elements)
         if gamma == 0 or qq == 0:
             break
-        alpha = (gamma / qq).float()
-        x += alpha * p
-        r -= alpha * q
-        s = operator.backproject(r)
-        gamma_new = torch.sum(s.double() * s.double())
-        p = s + (gamma_new / gamma).float() * p
+        alpha = gamma / qq
+        x.add_(p, alpha=alpha)
+        r.add_(q, alpha=-alpha)
+        operator.backproject_into(r, s)
+        gamma_new = _norm(operator, TensorStore(s), "volume", elements)
+        p.mul_(gamma_new / gamma).add_(s)
         gamma = gamma_new
     return x
 
@@ -186,7 +216,18 @@ def tv_reconstruction(operator, measurements, iterations, weight=1.0, lr=0.1):
 
 def psnr(reconstruction, truth):
     """Peak signal-to-noise ratio in dB for images with peak value 1."""
-    mse = torch.mean((reconstruction - truth) ** 2).item()
+    if reconstruction.device == truth.device:
+        mse = torch.mean((reconstruction - truth) ** 2).item()
+    else:
+        from diffct.pipeline import _fragments
+
+        reconstruction, truth = torch.broadcast_tensors(reconstruction, truth)
+        squared_error = 0.0
+        for selected in _fragments(tuple(truth.shape), 1048576):
+            difference = reconstruction[selected].detach().to(device="cpu", dtype=torch.float64)
+            reference = truth[selected].detach().to(device="cpu", dtype=torch.float64)
+            squared_error += (difference - reference).square().sum().item()
+        mse = squared_error / truth.numel() if truth.numel() else math.nan
     if mse == 0:
         return math.inf
     return 10 * math.log10(1.0 / mse)
@@ -211,11 +252,14 @@ def synchronize(distributed):
 
 
 def central_section(volume, section):
-    """Central slice of a ``(D, H, W)`` volume: "axial" is ``(H, W)``, "coronal" is ``(D, W)`` with z up."""
+    """Central axial ``(H, W)`` or coronal ``(D, W)`` slice in array order.
+
+    Display with an upper origin to preserve the measured detector's row order.
+    """
     if section == "axial":
         return volume[volume.shape[0] // 2]
     if section == "coronal":
-        return volume[:, volume.shape[1] // 2].flip(0)
+        return volume[:, volume.shape[1] // 2]
     raise ValueError(f"unknown section {section!r}; choose 'axial' or 'coronal'")
 
 
@@ -240,7 +284,7 @@ def save_slices(path, panels, title, vmax=0.4, sections=("axial",)):
         for row in range(rows):
             image = central_section(volume, sections[row]) if volume.ndim == 3 else volume
             ax = axes[row, column]
-            ax.imshow(image.detach().cpu().numpy(), cmap="gray", vmin=0.0, vmax=vmax)
+            ax.imshow(image.detach().cpu().numpy(), cmap="gray", vmin=0.0, vmax=vmax, origin="upper")
             ax.set_xticks([])
             ax.set_yticks([])
             for spine in ax.spines.values():

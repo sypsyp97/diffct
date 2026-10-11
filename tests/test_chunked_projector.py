@@ -5,10 +5,11 @@ forward calls. CPU configuration tests remain runnable without a CUDA machine.
 The slab oracle is reused read-only from the detector-surface contract tests.
 """
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 import gc
 import math
+import pickle
 import sys
 from unittest import mock
 
@@ -448,24 +449,90 @@ class _Launches:
         return self.patches.__exit__(*exception)
 
 
+def _metadata_payload_size(payload):
+    leaves = tree_flatten(payload)[0]
+    assert all(type(value) in (type(None), bool, int, float, str) for value in leaves), \
+        "object collectives must contain only scalar layout metadata"
+    size = len(pickle.dumps(payload))
+    assert size <= 4096, "excessive collective metadata"
+    return size
+
+
+@contextmanager
+def _metadata_collectives(observer, world_size):
+    real_gather, real_broadcast = dist.all_gather_object, dist.broadcast_object_list
+
+    def gather(output, payload, *args, **kwargs):
+        with observer.metadata_collective(payload, world_size):
+            return real_gather(output, payload, *args, **kwargs)
+
+    def broadcast(payload, *args, **kwargs):
+        with observer.metadata_collective(payload, world_size):
+            return real_broadcast(payload, *args, **kwargs)
+
+    with mock.patch.object(dist, "all_gather_object", gather), \
+            mock.patch.object(dist, "broadcast_object_list", broadcast):
+        yield
+
+
 class _StagingGuard(TorchDispatchMode):
     def __init__(self, case, chunk, views):
         super().__init__()
         self.case, self.chunk, self.views = case, chunk, views
         self.limit = max(math.prod(chunk), views * math.prod(case.detector) * 3,
                          views * 12)
+        self.metadata_byte_limit = None
+
+    @contextmanager
+    def metadata_collective(self, payload, world_size):
+        _metadata_payload_size(payload)
+        # Object collectives serialize control metadata, not numerical tiles.
+        # Bound each rank independently, including the gathered byte buffer.
+        previous = self.metadata_byte_limit
+        self.metadata_byte_limit = 4096 * world_size
+        try:
+            yield
+        finally:
+            self.metadata_byte_limit = previous
+
+    def check_tensor(self, tensor, function):
+        shape = tuple(tensor.shape)
+        if self.metadata_byte_limit is not None and tensor.dtype == torch.uint8:
+            assert tensor.ndim == 1 and tensor.numel() <= self.metadata_byte_limit, \
+                f"excessive collective metadata buffer: {function}, {shape}"
+            return
+        assert tensor.numel() <= self.limit, f"unbounded CUDA tensor: {function}, {shape}"
+        if self.case.views > self.views:
+            assert shape != self.case.sino_shape, "full sinogram staged on CUDA"
+            assert shape != (*self.case.sino_shape, len(self.case.shape)), "full detector geometry on CUDA"
 
     def __torch_dispatch__(self, function, types, args=(), kwargs=None):
         result = function(*args, **(kwargs or {}))
         for tensor in tree_flatten(result)[0]:
             if not isinstance(tensor, torch.Tensor) or not tensor.is_cuda:
                 continue
-            shape = tuple(tensor.shape)
-            assert tensor.numel() <= self.limit, f"unbounded CUDA tensor: {function}, {shape}"
-            if self.case.views > self.views:
-                assert shape != self.case.sino_shape, "full sinogram staged on CUDA"
-                assert shape != (*self.case.sino_shape, len(self.case.shape)), "full detector geometry on CUDA"
+            self.check_tensor(tensor, function)
         return result
+
+
+def test_staging_guard_metadata_exception_keeps_data_and_control_buffers_bounded():
+    case = _case("parallel", views=5)
+    guard = _StagingGuard(case, _chunk(case), 2)
+    oversized_data = torch.empty(guard.limit + 1)
+    metadata_bytes = torch.empty(4096, dtype=torch.uint8)
+    with guard.metadata_collective(("views", (5, 7), 1.0), world_size=2):
+        guard.check_tensor(metadata_bytes, "metadata serialization")
+        with pytest.raises(AssertionError, match="unbounded CUDA tensor"):
+            guard.check_tensor(oversized_data, "numerical staging")
+        with pytest.raises(AssertionError, match="excessive collective metadata buffer"):
+            guard.check_tensor(torch.empty(8193, dtype=torch.uint8), "metadata serialization")
+    with pytest.raises(AssertionError, match="unbounded CUDA tensor"):
+        guard.check_tensor(metadata_bytes, "outside object collective")
+    for payload, message in [(torch.zeros(1), "scalar layout metadata"),
+                             ("x" * 4097, "excessive collective metadata")]:
+        with pytest.raises(AssertionError, match=message), guard.metadata_collective(payload, world_size=2):
+            pytest.fail("invalid metadata admitted")
+    assert guard.metadata_byte_limit is None
 
 
 def _assert_bounded_launches(records, case, chunk, batch, phases, devices=None):
@@ -487,7 +554,7 @@ def test_real_tiles_and_default_32_view_batches_in_both_directions():
     case = _case("cone", views=35)
     case.shape = (5, 7, 9)
     chunk = (2, 3, 4)
-    projector = _projector(case, volume_chunk_shape=chunk)
+    projector = _projector(case, volume_chunk_shape=chunk, schedule="spatial")
     image, sino = _data(case, device="cpu")
     with _Launches() as launches, _StagingGuard(case, chunk, 32):
         launches.phase = "project"
@@ -520,7 +587,7 @@ def _memory_trial(shape, views):
     chunk, batch = (24, 24, 24), 3
     strength = torch.tensor(.21, dtype=torch.float64, requires_grad=True)
     projector = _projector(case, _surface(case, strength, per_view=True),
-                           volume_chunk_shape=chunk, view_chunk_size=batch)
+                           volume_chunk_shape=chunk, view_chunk_size=batch, schedule="spatial")
     image = torch.ones(shape, dtype=torch.float64, requires_grad=True)
     sino = torch.linspace(-.4, .8, math.prod(case.sino_shape), dtype=torch.float64).reshape(case.sino_shape)
     sino.requires_grad_()
@@ -623,7 +690,9 @@ def _nccl_worker(rank, beam, views, rendezvous):
             reductions.append(tensor.numel())
             return real_reduce(tensor, *args, **kwargs)
 
-        with mock.patch.object(dist, "all_reduce", reduction), _StagingGuard(case, _chunk(case), 2):
+        guard = _StagingGuard(case, _chunk(case), 2)
+        with mock.patch.object(dist, "all_reduce", reduction), \
+                _metadata_collectives(guard, world_size=2), guard:
             output = projector.project(image)
             _close(output, (local_matrix @ _numpy(image).ravel()).reshape(local.shape))
             (output.double() * local.detach().double()).sum().backward()
@@ -654,7 +723,12 @@ def test_nccl_cpu_backed_bounded_collectives_and_sum_semantics(beam, views, tmp_
 
 # Automatic defaults below follow frozen automatic-cpu-backed-volume-tiles-v2.
 def _memory_inventory(free_by_device):
-    """Mock memory observations only. Numerical kernels and outputs stay real."""
+    """Inject logical payload pressure; numerical kernels and outputs stay real.
+
+    These existing KiB-sized fixtures test active-byte policy, not physical
+    native segments (whose minimum reservation is 2 MiB). Reservation admission
+    remains unconstrained here; isolated allocator tests exercise real ceilings.
+    """
     patches = ExitStack()
     allocated = torch.cuda.memory_allocated
 
@@ -668,6 +742,11 @@ def _memory_inventory(free_by_device):
     # Exclude pre-existing reusable cache from this deliberately constrained
     # inventory; otherwise earlier tests could make a small free-memory mock fit.
     patches.enter_context(mock.patch.object(torch.cuda, "memory_reserved", side_effect=allocated))
+    # Match that zero-reusable-cache inventory in the segment snapshot too;
+    # real foreign free splits belong to the physical allocator tests.
+    patches.enter_context(mock.patch("diffct.chunking._native_segments", return_value=[]))
+    patches.enter_context(mock.patch("diffct.operators._reservation_budget",
+                                     return_value=(1 << 63) - 1))
     return patches
 
 
@@ -675,28 +754,37 @@ def _chosen_shape(records, beam, device=None):
     shapes = [record[-2][::-1] if beam == "cone" else record[-2]
               for record in records if device is None or record[3] == device]
     assert shapes
-    return tuple(max(axis) for axis in zip(*shapes))
+    return max(shapes, key=math.prod)
 
 
-def _halving_shapes(shape):
-    """Allowed largest-axis halving states; permit either integer rounding."""
-    seen, pending = {shape}, [shape]
-    while pending:
-        current = pending.pop()
-        largest = max(current)
-        if largest == 1:
-            continue
-        for axis, size in enumerate(current):
-            if size != largest:
-                continue
-            for half in {max(1, size // 2), (size + 1) // 2}:
-                changed = list(current)
-                changed[axis] = half
-                changed = tuple(changed)
-                if changed not in seen:
-                    seen.add(changed)
-                    pending.append(changed)
-    return seen
+def _assert_automatic_plans(records, case, reports, budget, devices=None):
+    """Match actual launches to bounded reported candidates, including pilots."""
+    final = []
+    for phase, report in reports.items():
+        observed = [record for record in records if record[0] == phase]
+        assert observed and 0 < report["estimated_gpu_bytes"] <= report["gpu_budget_bytes"] <= budget
+        candidates = [report, *report["pilot"]]
+        for candidate in candidates:
+            assert len(candidate["chunk_shape"]) == len(case.shape)
+            assert all(0 < part <= size for part, size in zip(candidate["chunk_shape"], case.shape))
+            assert 0 < candidate["view_chunk_size"] <= min(32, case.views)
+            assert len(candidate["detector_chunk_shape"]) == len(case.detector)
+            assert all(0 < part <= size for part, size in zip(candidate["detector_chunk_shape"], case.detector))
+        for _, beam, _, device, volume, rays in observed:
+            shape = volume[::-1] if beam == "cone" else volume
+            assert beam == case.beam and shape != case.shape
+            assert math.prod(shape) * 4 <= budget
+            assert any(all(a <= b for a, b in zip(shape, candidate["chunk_shape"]))
+                       and 0 < rays[0] <= candidate["view_chunk_size"]
+                       and all(0 < a <= b for a, b in zip(rays[1:], candidate["detector_chunk_shape"]))
+                       for candidate in candidates), (shape, rays, candidates)
+            if devices is not None:
+                assert device in devices
+        pilot_count = sum(candidate["kernel_launches"] for candidate in report["pilot"])
+        assert len(observed) == pilot_count + report["kernel_launches"]
+        final.extend(observed[pilot_count:])
+    assert final
+    return final
 
 
 def _chords(case, offsets):
@@ -788,21 +876,24 @@ def test_fitting_default_cuda_keeps_full_path_and_view_only_override_streams(bea
 @pytest.mark.cuda
 @cuda_required
 @pytest.mark.parametrize("input_device", ["cpu", "cuda"])
-def test_constrained_automatic_budget_halves_largest_axis_and_matches_oracle(input_device):
+def test_constrained_automatic_budget_bounds_slab_and_block_candidates_and_matches_oracle(input_device):
     case = _case("cone", views=5)
     case.shape = (17, 19, 23)
     projector = _projector(case, _surface(case, per_view=True))
     image, sino = _data(case, device=input_device)
     matrix = _matrix(case, _offsets(case, per_view=True))
     device, free = torch.cuda.current_device(), 64 * 1024
+    reports = {}
     with _memory_inventory({device: free}), _Launches() as launches:
         launches.phase = "project"
         projected = projector.project(image)
+        reports["project"] = projector.last_execution_stats
         launches.phase = "adjoint"
         back = projector.backproject(sino)
-    chosen = _chosen_shape(launches.records, case.beam)
+        reports["adjoint"] = projector.last_execution_stats
+    final = _assert_automatic_plans(launches.records, case, reports, free * .75)
+    chosen = _chosen_shape(final, case.beam)
     assert chosen != case.shape, "constrained automatic path staged the full volume"
-    assert chosen in _halving_shapes(case.shape), chosen
     # One float32 tile alone cannot exceed the usable 75-percent budget.
     assert math.prod(chosen) * 4 <= free * .75
     assert projected.device == image.device and back.device == sino.device
@@ -860,7 +951,7 @@ def test_automatic_gpu_surface_constructor_cpu_validation_and_early_stream_rejec
         output = projector.project(image)
     _close(output, _chords(case, _offsets(case, flat=True)))
     assert len(launches.records) == 1
-    with _memory_inventory({device: 4096}), _StagingGuard(case, case.shape, 1), \
+    with _memory_inventory({device: 8192}), _StagingGuard(case, case.shape, 1), \
             pytest.raises((TypeError, ValueError), match="CPU|cpu"):
         projector.project(image)
 
@@ -913,14 +1004,17 @@ def test_automatic_two_gpu_common_tile_uses_smallest_asymmetric_budget():
     projector = _projector(case, _surface(case, per_view=True), devices=[1, 0])
     image, sino = _data(case, device="cpu")
     matrix = _matrix(case, _offsets(case, per_view=True))
+    reports = {}
     with _memory_inventory({0: 1024 ** 2, 1: 64 * 1024}), _Launches() as launches:
         launches.phase = "project"
         output = projector.project(image)
+        reports["project"] = projector.last_execution_stats
         launches.phase = "adjoint"
         back = projector.backproject(sino)
-    first, second = (_chosen_shape(launches.records, case.beam, device) for device in (0, 1))
+        reports["adjoint"] = projector.last_execution_stats
+    final = _assert_automatic_plans(launches.records, case, reports, .75 * 64 * 1024, {0, 1})
+    first, second = (_chosen_shape(final, case.beam, device) for device in (0, 1))
     assert first == second and first != case.shape
-    assert first in _halving_shapes(case.shape)
     assert math.prod(first) * 4 <= .75 * 64 * 1024
     _close(output, (matrix @ _numpy(image).ravel()).reshape(case.sino_shape))
     _close(back, (matrix.T @ _numpy(sino).ravel()).reshape(case.shape))
@@ -965,7 +1059,9 @@ def _remaining_room_worker(rank):
     assert torch.cuda.max_memory_allocated() <= ceiling
     chosen = _chosen_shape(launches.records, case.beam)
     assert math.prod(chosen) * 4 <= remaining
-    _assert_bounded_launches(launches.records, case, chosen, 32, ("project", "backward"))
+    # Slab/block candidates can differ by axis; the largest actual tile's
+    # product already bounds every native allocation by the remaining room.
+    _assert_bounded_launches(launches.records, case, case.shape, 32, ("project", "backward"))
     assert held[0].item() == held[-1].item() == 41
 
 
