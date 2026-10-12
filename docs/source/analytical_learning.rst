@@ -8,7 +8,9 @@ same interpolation coefficients, including distance weights and normalization.
 It does not substitute the Siddon projector for the analytical transpose.
 
 The reconstruction APIs return signed float32 CUDA images. Clamping is a caller
-decision. Sinogram, filter and explicit weight gradients propagate through the
+decision. Low-precision measurements are promoted to float32 before geometry,
+weighting and FFT operations; gradients retain the original input/parameter dtype.
+Sinogram, filter and explicit weight gradients propagate through the
 pipeline, including higher derivatives with respect to those tensors. Acquisition
 geometry and isocenter are fixed; trainable geometry is rejected explicitly.
 Use the Siddon ``Projector`` for geometry calibration.
@@ -92,11 +94,14 @@ still reside on the CUDA device.
 Local validation
 ----------------
 
-On an RTX 4070 SUPER, the final analytical/autograd/filter/weight test selection
-passed 219 tests. The new tests compare the CUDA gather with an independent
+On an RTX 4070 SUPER, the complete default repository suite passed 1211 tests
+with 90 skipped and no failures. CPU formal verification passed all 337 checks.
+The focused analytical API/autograd selection passed 137 tests. These tests
+compare the CUDA gather with an independent
 float64 PyTorch model, its explicit matrix transpose and higher derivatives.
 They also cover mirrored short-scan detector axes, incomplete helical windows
-and large absolute angle offsets.
+and large absolute angle offsets, plus low-precision measurements, parameter
+gradients and coverage checks.
 
 The 32-voxel learning examples used 180 views and 20 Adam steps on a synthetic
 phantom with Gaussian projection noise. These measured training results are
@@ -120,8 +125,9 @@ specific to that example:
 
 The 32-cubed, 720-view, four-turn helical example measured 32.99 dB. Every slice's
 integration weights summed to pi. Manual composition and the complete API
-agreed within 4e-7. The full repository run recorded 1171 passed and 91 skipped;
-two existing Windows symbolic-link fixtures failed with ``WinError 1314``
-before entering library code. After the final boundary fixes, the related
-219-test selection was rerun successfully. Documentation, lint and wheel/sdist
-checks passed.
+agreed within 4e-7. Of the 90 skipped tests, 88 require two physical CUDA GPUs
+and/or NCCL; two require Windows symbolic-link privileges unavailable on the
+validation account. The fixture attempts real symbolic links and skips only
+``WinError 1314``; hard-link alias checks still execute. Documentation, lint
+and wheel/sdist checks passed. Opt-in performance benchmarks are separate from
+the default correctness suite.

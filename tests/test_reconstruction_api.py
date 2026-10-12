@@ -553,3 +553,101 @@ def test_helical_mixed_precision_heights_preserve_overlap_and_weight_dtype(devic
     torch.testing.assert_close(actual.sum(dim=1).double(),
                                torch.full((1,), math.pi, device=device, dtype=torch.float64),
                                rtol=2e-6, atol=2e-7)
+
+
+def _assert_low_precision_reconstruction_matches_float32(actual, expected, inputs, reference_inputs):
+    assert actual.dtype == torch.float32 and actual.device == inputs[0].device
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+    cotangent = _random(actual.shape, 225).float()
+    actual_gradients = torch.autograd.grad(actual, inputs, cotangent)
+    reference_gradients = torch.autograd.grad(expected, reference_inputs, cotangent)
+    for leaf, actual_gradient, reference_gradient in zip(inputs, actual_gradients, reference_gradients):
+        assert actual_gradient.dtype == leaf.dtype
+        assert torch.isfinite(actual_gradient).all() and actual_gradient.abs().max() > 0
+        # Float32 atomic accumulation may straddle a leaf cast's rounding boundary.
+        # Allow one leaf-dtype relative ULP; retain the float32/float64 bounds.
+        torch.testing.assert_close(actual_gradient, reference_gradient.to(leaf.dtype),
+                                   rtol=max(3e-5, torch.finfo(leaf.dtype).eps), atol=3e-6)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+@pytest.mark.parametrize("custom_response", (False, True))
+@pytest.mark.parametrize(("beam", "short_scan"), (
+    ("parallel", False), ("fan", False), ("cone", False), ("fan", True),
+))
+def test_low_precision_circular_reconstruction_matches_float32_data_and_leaf_gradients(
+        dtype, custom_response, beam, short_scan):
+    acquisition = _acquisition(beam, short_scan=short_scan)
+    assert acquisition["sino_shape"][1] == 11
+    assert all(component.dtype == torch.float32 for component in acquisition["trajectory"])
+    sinogram = _random(acquisition["sino_shape"], 220).to(dtype).requires_grad_()
+    reference = sinogram.detach().float().requires_grad_()
+    overrides = {}
+    if custom_response:
+        overrides = {
+            "projection_weights": (_random(sinogram.shape, 221) * 0.05 + 0.8).to(dtype).requires_grad_(),
+            "angular_weights": (_random((len(acquisition["angles"]),), 222) * 0.01 + 0.2).requires_grad_(),
+            "filter_response": (_random((12,), 223) * 0.03 + 0.2).to(dtype).requires_grad_(),
+        }
+    reference_overrides = {name: value.detach().float().requires_grad_()
+                           for name, value in overrides.items()}
+    expected = _reconstruct(beam, reference, acquisition, short_scan=short_scan, **reference_overrides)
+    actual = _reconstruct(beam, sinogram, acquisition, short_scan=short_scan, **overrides)
+    _assert_low_precision_reconstruction_matches_float32(
+        actual, expected, (sinogram, *overrides.values()), (reference, *reference_overrides.values()),
+    )
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+@pytest.mark.parametrize("mode", ("default", "custom", "weighted"))
+def test_low_precision_helical_reconstruction_matches_float32_data_and_leaf_gradients(dtype, mode):
+    acquisition = {**_helix(), "sino_shape": (49, 11, 17)}
+    assert all(component.dtype == torch.float32 for component in acquisition["trajectory"])
+    sinogram = _random(acquisition["sino_shape"], 226).to(dtype).requires_grad_()
+    reference = sinogram.detach().float().requires_grad_()
+    kwargs = {"isocenter": acquisition["isocenter"], "detector_spacing": acquisition["pitch"],
+              "voxel_spacing": acquisition["voxel_spacing"]}
+    overrides = {}
+    if mode != "default":
+        overrides["view_weights"] = (_random((3, 49), 227) * 0.01 + 0.1).to(dtype).requires_grad_()
+    if mode == "custom":
+        overrides.update({
+            "projection_weights": (_random(sinogram.shape, 228) * 0.05 + 0.8).to(dtype).requires_grad_(),
+            "filter_response": (_random((12,), 229) * 0.03 + 0.2).to(dtype).requires_grad_(),
+        })
+    reference_overrides = {name: value.detach().float().requires_grad_()
+                           for name, value in overrides.items()}
+    arguments = (acquisition["trajectory"], acquisition["shape"])
+    if mode == "weighted":
+        expected = helical_weighted_backproject(reference, *arguments, **kwargs, **reference_overrides)
+        actual = helical_weighted_backproject(sinogram, *arguments, **kwargs, **overrides)
+    else:
+        expected = helical_fdk(reference, *arguments, acquisition["angles"], **kwargs, **reference_overrides)
+        actual = helical_fdk(sinogram, *arguments, acquisition["angles"], **kwargs, **overrides)
+    _assert_low_precision_reconstruction_matches_float32(
+        actual, expected, (sinogram, *overrides.values()), (reference, *reference_overrides.values()),
+    )
+
+
+@pytest.mark.parametrize(("dtype", "uncovered_height"), (
+    (torch.float16, -4.01), (torch.bfloat16, -4.3),
+))
+def test_low_precision_helical_angles_reject_incomplete_turn_without_relaxing_coverage(dtype, uncovered_height):
+    angles = torch.linspace(-3 * math.pi, 3 * math.pi, 49, dtype=dtype)
+    source_z = torch.linspace(-6.0, 6.0, 49)
+    covered = torch.tensor([0.0])
+    expected = _overlap_reference(angles, source_z, covered).to(dtype)
+    actual = helical_view_weights(angles, source_z, covered)
+    assert actual.dtype == dtype
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    uncovered = torch.tensor([uncovered_height])
+    assert _overlap_reference(angles, source_z, uncovered).sum() < math.pi - 1e-3
+    # Identical quantized angles already fail the float32 coverage contract.
+    with pytest.raises(ValueError, match=r"(?i)(cover|window|fully)"):
+        helical_view_weights(angles.float(), source_z, uncovered)
+    with pytest.raises(ValueError, match=r"(?i)(cover|window|fully)"):
+        helical_view_weights(angles, source_z, uncovered)

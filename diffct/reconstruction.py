@@ -24,6 +24,10 @@ def _prepare(sinogram, trajectory, volume_shape, beam, detector_spacing, voxel_s
         raise ValueError("Analytical reconstruction requires a CUDA sinogram tensor")
     if not torch.is_floating_point(sinogram):
         raise ValueError("sinogram must have a real floating-point dtype")
+    # FFT and geometric checks need at least float32 precision. The native
+    # cast keeps gradients connected to low-precision input/parameter leaves.
+    if sinogram.dtype not in (torch.float32, torch.float64):
+        sinogram = sinogram.float()
     rank = 3 if beam == "cone" else 2
     if sinogram.ndim != rank or min(sinogram.shape[1:]) < 2:
         raise ValueError("sinogram rank must match the beam and detector axes need at least two bins")
@@ -37,7 +41,7 @@ def _prepare(sinogram, trajectory, volume_shape, beam, detector_spacing, voxel_s
     pitch = _detector_spacing(detector_spacing, beam)
     spacing = _positive_float(voxel_spacing, "voxel_spacing")
     geometry = tuple(t.to(device=sinogram.device, dtype=sinogram.dtype) for t in geometry)
-    return geometry, shape, pitch, spacing
+    return sinogram, geometry, shape, pitch, spacing
 
 
 def _angles(angles, views, device):
@@ -191,11 +195,13 @@ def fbp(sinogram, trajectory, volume_shape, angles, *, beam="parallel",
     its physical units; length is ``pad_factor*bins//2+1``. Its use ignores
     ``window``. These tensors retain autograd. ``short_scan=True`` adds Parker
     weighting before filtering for a circular fan scan with sufficient coverage.
-    Output is signed float32; geometry gradients are rejected.
+    Low-precision inputs are promoted to float32 for reconstruction, retaining
+    gradients to their original dtype. Output is signed float32; geometry
+    gradients are rejected.
     """
     if beam not in ("parallel", "fan"):
         raise ValueError("fbp beam must be 'parallel' or 'fan'; use fdk for cone data")
-    geometry, shape, pitch, spacing = _prepare(
+    sinogram, geometry, shape, pitch, spacing = _prepare(
         sinogram, trajectory, volume_shape, beam, detector_spacing, voxel_spacing, isocenter)
     angles = _angles(angles, len(geometry[0]), sinogram.device)
     filtered = _pipeline(sinogram, geometry, angles, beam, pitch, window, pad_factor,
@@ -218,7 +224,7 @@ def fdk(sinogram, trajectory, volume_shape, angles, *, detector_spacing=1.0,
     discrete interpolation transpose; it does not make FDK an exact inverse.
     Use :func:`helical_fdk` for slice-centered integration of an axial helix.
     """
-    geometry, shape, pitch, spacing = _prepare(
+    sinogram, geometry, shape, pitch, spacing = _prepare(
         sinogram, trajectory, volume_shape, "cone", detector_spacing, voxel_spacing, isocenter)
     angles = _angles(angles, len(geometry[0]), sinogram.device)
     filtered = _pipeline(sinogram, geometry, angles, "cone", pitch, window, pad_factor,
@@ -266,7 +272,9 @@ def helical_view_weights(angles, source_z, slice_z):
     fraction = (slice_z - heights[upper - 1]) / (heights[upper] - heights[upper - 1])
     center = angle_at_z[upper - 1] + fraction * (angle_at_z[upper] - angle_at_z[upper - 1])
     lower, upper_angle = center - math.pi, center + math.pi
-    tolerance = 8 * torch.finfo(output_dtype).eps * max(1.0, float(ordered[-1] - ordered[0]))
+    # Output rounding must not relax the acquired-window coverage contract.
+    precision = min(torch.finfo(output_dtype).eps, torch.finfo(torch.float32).eps)
+    tolerance = 8 * precision * max(1.0, float(ordered[-1] - ordered[0]))
     if torch.any(lower < ordered[0] - tolerance) or torch.any(upper_angle > ordered[-1] + tolerance):
         raise ValueError("Every reconstructed slice needs a fully acquired 2*pi angular window")
     # Clip Voronoi integration cells, including fractional boundary cells.
@@ -317,7 +325,7 @@ def helical_weighted_backproject(sinogram, trajectory, volume_shape, view_weight
     One slice is processed per launch, avoiding a views-by-volume weight array;
     a fused slice-weight kernel can replace this if launch overhead dominates.
     """
-    geometry, shape, pitch, spacing = _prepare(
+    sinogram, geometry, shape, pitch, spacing = _prepare(
         sinogram, trajectory, volume_shape, "cone", detector_spacing, voxel_spacing, isocenter)
     center = _axial_helix(geometry, isocenter)
     weights = _weights(view_weights, sinogram, "view_weights", (shape[0], len(geometry[0])))
@@ -352,7 +360,7 @@ def helical_fdk(sinogram, trajectory, volume_shape, angles, *, isocenter,
     corrected. This native-cone approximation does not implement cone-parallel
     rebinning, 3D conjugate weights or exact Katsevich inversion.
     """
-    geometry, shape, pitch, spacing = _prepare(
+    sinogram, geometry, shape, pitch, spacing = _prepare(
         sinogram, trajectory, volume_shape, "cone", detector_spacing, voxel_spacing, isocenter)
     center = _axial_helix(geometry, isocenter)
     angles = _angles(angles, len(geometry[0]), sinogram.device)

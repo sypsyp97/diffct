@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Analytical short-scan validation and detector-u handedness; helical angular
   quadrature preserves interval precision at large angle and height offsets.
+- Low-precision analytical measurements use float32 reconstruction stages with
+  gradients to the original dtype; low-precision helical angles cannot relax
+  the complete-turn coverage requirement.
 
 ## [2.2.0] - 2026-10-11
 
