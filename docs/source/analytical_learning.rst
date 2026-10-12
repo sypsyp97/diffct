@@ -15,6 +15,11 @@ pipeline, including higher derivatives with respect to those tensors. Acquisitio
 geometry and isocenter are fixed; trainable geometry is rejected explicitly.
 Use the Siddon ``Projector`` for geometry calibration.
 
+Short-scan distance and offset checks account for physical coordinate scale and
+the original trajectory precision, including when float32 geometry is promoted
+for float64 measurements. Helical slice centers use float64 independently of
+the angle dtype; low-precision angles do not round physical voxel coordinates.
+
 Flat detectors and one CUDA device are supported by these analytical APIs.
 They do not inherit the streamed, distributed or curved-detector execution of
 ``Projector``. FDK is an approximate inverse even though its implemented
@@ -94,14 +99,17 @@ still reside on the CUDA device.
 Local validation
 ----------------
 
-On an RTX 4070 SUPER, the complete default repository suite passed 1211 tests
+On an RTX 4070 SUPER, the complete default repository suite passed 1221 tests
 with 90 skipped and no failures. CPU formal verification passed all 337 checks.
-The focused analytical API/autograd selection passed 137 tests. These tests
+The focused analytical API/autograd selection passed 147 tests. These tests
 compare the CUDA gather with an independent
 float64 PyTorch model, its explicit matrix transpose and higher derivatives.
 They also cover mirrored short-scan detector axes, incomplete helical windows
 and large absolute angle offsets, plus low-precision measurements, parameter
-gradients and coverage checks.
+gradients and coverage checks. Short scans with geometry and pixel/voxel spacing
+scaled by 100 preserve outputs and gradients for fan and cone beams. BF16-angle
+helices with 256 and 384 slices preserve physical centers, outputs and gradients;
+valid and incomplete acquisition-boundary windows are distinguished.
 
 The 32-voxel learning examples used 180 views and 20 Adam steps on a synthetic
 phantom with Gaussian projection noise. These measured training results are

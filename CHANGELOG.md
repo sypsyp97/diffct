@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Low-precision analytical measurements use float32 reconstruction stages with
   gradients to the original dtype; low-precision helical angles cannot relax
   the complete-turn coverage requirement.
+- Parker short-scan validation accounts for physical geometry scale and original
+  input precision; helical slice centers use float64 independently of angle dtype.
 
 ## [2.2.0] - 2026-10-11
 

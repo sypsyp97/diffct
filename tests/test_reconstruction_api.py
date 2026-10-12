@@ -9,8 +9,11 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+import diffct.reconstruction as reconstruction
 from diffct import (
     angular_integration_weights,
+    circular_trajectory_2d_fan,
+    circular_trajectory_3d,
     cone_weighted_backproject,
     fan_weighted_backproject,
     fbp,
@@ -651,3 +654,155 @@ def test_low_precision_helical_angles_reject_incomplete_turn_without_relaxing_co
         helical_view_weights(angles.float(), source_z, uncovered)
     with pytest.raises(ValueError, match=r"(?i)(cover|window|fully)"):
         helical_view_weights(angles, source_z, uncovered)
+
+
+def _scaled_native_short_scan(beam, scale):
+    n_views, end_angle = 180, math.radians(230)
+    generator = circular_trajectory_2d_fan if beam == "fan" else circular_trajectory_3d
+    trajectory = generator(n_views, 5.0 * scale, 10.0 * scale,
+                           end_angle=end_angle, device="cpu", dtype=torch.float32)
+    return {
+        "trajectory": trajectory, "angles": torch.arange(n_views) * (end_angle / n_views),
+        "shape": (3, 3) if beam == "fan" else (3, 3, 3),
+        "sino_shape": (n_views, 11) if beam == "fan" else (n_views, 11, 7),
+        "pitch": (0.4 * scale,) if beam == "fan" else (0.4 * scale, 0.5 * scale),
+        "voxel_spacing": 0.5 * scale, "isocenter": torch.zeros(2 if beam == "fan" else 3),
+    }
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("beam", ("fan", "cone"))
+@pytest.mark.parametrize("dtype", (torch.float32, torch.float64))
+def test_parker_float32_geometry_short_scan_is_invariant_to_length_scale(beam, dtype):
+    baseline = _scaled_native_short_scan(beam, 1.0)
+    scale = 100.0
+    scaled = _scaled_native_short_scan(beam, scale)
+    assert all(component.dtype == torch.float32 for component in scaled["trajectory"])
+    # The original geometry remains quantized even when the sinogram is float64.
+    source, detector, u = scaled["trajectory"][:3]
+    offset = ((detector - source) * u).sum(1)
+    assert 1e-5 < float(offset.abs().max()) < 1e-4
+    sinogram = _random(baseline["sino_shape"], 230).to(dtype).requires_grad_()
+    scaled_sinogram = (sinogram.detach() * scale).requires_grad_()
+    expected = _reconstruct(beam, sinogram, baseline, short_scan=True)
+    actual = _reconstruct(beam, scaled_sinogram, scaled, short_scan=True)
+    assert torch.isfinite(actual).all() and actual.abs().max() > 0
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+    cotangent = _random(baseline["shape"], 231).float()
+    expected_gradient, = torch.autograd.grad(expected, sinogram, cotangent)
+    actual_gradient, = torch.autograd.grad(actual, scaled_sinogram, cotangent)
+    assert actual_gradient.dtype == dtype
+    assert torch.isfinite(actual_gradient).all() and actual_gradient.abs().max() > 0
+    # Differentiating the scaled physical line integrals introduces 1/scale.
+    torch.testing.assert_close(actual_gradient * scale, expected_gradient, rtol=3e-5, atol=3e-6)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("beam", ("fan", "cone"))
+def test_parker_large_scale_still_rejects_changing_detector_offsets(beam):
+    acquisition = _scaled_native_short_scan(beam, 100.0)
+    source, detector, u, *remaining = acquisition["trajectory"]
+    # One physical unit is over four orders larger than the float32 roundoff.
+    detector = detector + torch.linspace(0.0, 1.0, len(source))[:, None] * u
+    acquisition["trajectory"] = (source, detector, u, *remaining)
+    offsets = ((detector - source) * u).sum(1)
+    assert float(offsets.max() - offsets.min()) > 0.99
+    sinogram = _random(acquisition["sino_shape"], 232).float()
+    with pytest.raises(ValueError, match=r"(?i)(constant|offset)"):
+        _reconstruct(beam, sinogram, acquisition, short_scan=True)
+
+
+def _deep_quantized_helix(depth, *, window_margin=0.5):
+    angles = torch.linspace(-3 * math.pi, 3 * math.pi, 49, dtype=torch.bfloat16)
+    # Build source phase from these exact quantized samples, not the ideal linspace.
+    phase = angles.double()
+    slope = ((depth - 1) / 2) / (float(phase[-1]) - math.pi - window_margin)
+    source_z = phase * slope
+    source = torch.stack((-20 * phase.sin(), 20 * phase.cos(), source_z), dim=1).float()
+    detector = torch.stack((20 * phase.sin(), -20 * phase.cos(), source_z), dim=1).float()
+    u = torch.stack((phase.cos(), phase.sin(), torch.zeros_like(phase)), dim=1).float()
+    v = torch.tensor([0.0, 0.0, 1.0]).expand(len(angles), -1)
+    assert torch.all(source[1:, 2] > source[:-1, 2])
+    return {
+        "trajectory": (source, detector, u, v), "angles": angles, "shape": (depth, 3, 3),
+        "sino_shape": (len(angles), 9, 9), "pitch": (1.0, depth / 4),
+        "voxel_spacing": 1.0, "isocenter": torch.zeros(3),
+    }
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("depth", (256, 384))
+def test_helical_bfloat16_angles_keep_exact_deep_volume_slice_centers(depth, monkeypatch):
+    acquisition = _deep_quantized_helix(depth)
+    centers = torch.arange(depth, dtype=torch.float64) + 0.5 - depth / 2
+    assert centers.unique().numel() == depth
+    weights = _overlap_reference(acquisition["angles"], acquisition["trajectory"][0][:, 2], centers)
+    torch.testing.assert_close(weights.sum(1), torch.full((depth,), math.pi, dtype=torch.float64),
+                               rtol=0, atol=1e-12)
+    sinogram = _random(acquisition["sino_shape"], 233).float().requires_grad_()
+    reference_sinogram = sinogram.detach().clone().requires_grad_()
+    kwargs = {"isocenter": acquisition["isocenter"], "detector_spacing": acquisition["pitch"],
+              "voxel_spacing": acquisition["voxel_spacing"]}
+    filtered = _filter(reference_sinogram * _cosine("cone", reference_sinogram, acquisition),
+                       acquisition["pitch"][0])
+    # Keep the documented angle-dtype weight rounding; only slice arithmetic differs.
+    expected = helical_weighted_backproject(filtered, acquisition["trajectory"], acquisition["shape"],
+                                           weights.to(torch.bfloat16), **kwargs)
+    expected_double = helical_weighted_backproject(
+        filtered, acquisition["trajectory"], acquisition["shape"], weights, **kwargs,
+    )
+    double_result = helical_fdk(sinogram.detach(), acquisition["trajectory"], acquisition["shape"],
+                                acquisition["angles"].double(), **kwargs)
+    torch.testing.assert_close(double_result, expected_double, rtol=3e-5, atol=3e-6)
+    observed_centers = []
+    original = reconstruction.helical_view_weights
+
+    def record_centers(angles, source_z, slice_z):
+        observed_centers.append(slice_z.detach().cpu().double())
+        return original(angles, source_z, slice_z)
+
+    monkeypatch.setattr(reconstruction, "helical_view_weights", record_centers)
+    actual = helical_fdk(sinogram, acquisition["trajectory"], acquisition["shape"],
+                         acquisition["angles"], **kwargs)
+    assert torch.isfinite(actual).all() and actual.abs().max() > 0
+    torch.testing.assert_close(observed_centers[0], centers, rtol=0, atol=0)
+    assert observed_centers[0].unique().numel() == depth
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+    cotangent = _random(acquisition["shape"], 234).float()
+    actual_gradient, = torch.autograd.grad(actual, sinogram, cotangent)
+    expected_gradient, = torch.autograd.grad(expected, reference_sinogram, cotangent)
+    assert torch.isfinite(actual_gradient).all() and actual_gradient.abs().max() > 0
+    torch.testing.assert_close(actual_gradient, expected_gradient, rtol=3e-5, atol=3e-6)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("window_margin", (0.005, -0.04))
+def test_helical_bfloat16_deep_boundary_coverage_matches_exact_slice_centers(window_margin):
+    acquisition = _deep_quantized_helix(256, window_margin=window_margin)
+    centers = torch.arange(256, dtype=torch.float64) + 0.5 - 128
+    weights = _overlap_reference(acquisition["angles"], acquisition["trajectory"][0][:, 2], centers)
+    sinogram = _random(acquisition["sino_shape"], 235).float()
+    kwargs = {"isocenter": acquisition["isocenter"], "detector_spacing": acquisition["pitch"],
+              "voxel_spacing": acquisition["voxel_spacing"]}
+    if window_margin < 0:
+        assert weights[[0, -1]].sum(1).max() < math.pi - 0.01
+        for angles in (acquisition["angles"], acquisition["angles"].double()):
+            with pytest.raises(ValueError, match=r"(?i)(cover|window|fully)"):
+                helical_fdk(sinogram, acquisition["trajectory"], acquisition["shape"], angles, **kwargs)
+        return
+    torch.testing.assert_close(weights.sum(1), torch.full((256,), math.pi, dtype=torch.float64),
+                               rtol=0, atol=1e-12)
+    filtered = _filter(sinogram * _cosine("cone", sinogram, acquisition), acquisition["pitch"][0])
+    expected = helical_weighted_backproject(filtered, acquisition["trajectory"], acquisition["shape"],
+                                           weights.to(torch.bfloat16), **kwargs)
+    double_result = helical_fdk(sinogram, acquisition["trajectory"], acquisition["shape"],
+                                acquisition["angles"].double(), **kwargs)
+    assert torch.isfinite(double_result).all() and double_result.abs().max() > 0
+    actual = helical_fdk(sinogram, acquisition["trajectory"], acquisition["shape"],
+                         acquisition["angles"], **kwargs)
+    assert torch.isfinite(actual).all() and actual.abs().max() > 0
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
