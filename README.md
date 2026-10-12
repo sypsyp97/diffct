@@ -46,7 +46,7 @@ To our knowledge, diffct is the only open-source GPU CT library that combines ar
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
 - **Large volumes.** Automatic spatial, view and pixel blocks with bounded transfer buffers control working memory. `project_into`/`backproject_into` accept caller-owned tensor or disk stores; tensor autograd keeps complete data on its input device. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or torchrun and NCCL across ranks. Default `partition="views"` shards projections and replicates volumes. `partition="space"` gives each rank an owned volume slab and combines ray contributions. Speedup depends on workload and communication costs.
-- **Analytical helpers.** `diffct.analytical` provides ramp filters (ram-lak, shepp-logan, cosine, hamming, hann), fan, cone and Parker weights, and FBP and FDK backprojection.
+- **Differentiable FBP and FDK.** `fbp`, `fdk` and approximate `helical_fdk` compose the public filters, weights and analytical backprojectors. Their backward kernels transpose the actual interpolation stencil; custom filters and weights can be learned. See the [analytical guide](docs/source/analytical_learning.rst).
 
 Capabilities, limits and isocenter rules: [docs/REFERENCE.md](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#capabilities-and-limits).
 
@@ -189,7 +189,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 ## Examples
 
-`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `analytical_reconstruction.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 

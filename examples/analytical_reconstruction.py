@@ -21,6 +21,7 @@ from diffct import (
     circular_trajectory_2d_parallel,
     fan_cosine_weights,
     fan_weighted_backproject,
+    fbp,
     parallel_weighted_backproject,
     ramp_filter_1d,
 )
@@ -51,6 +52,9 @@ def main():
     filtered = filtered * angular_integration_weights(half_turn, redundant_full_scan=False).view(-1, 1)
     parallel = parallel_weighted_backproject(filtered.contiguous(), *[t.cuda() for t in trajectory],
                                              pitch, n, n).clamp_min(0)
+    parallel_api = fbp(sinogram, trajectory, (n, n), half_turn, detector_spacing=pitch,
+                       window=args.window).clamp_min(0)
+    parallel_difference = (parallel - parallel_api).abs().max().item()
 
     # Fan beam over a full turn; magnification 1.6, detector pitch 0.8 (0.5 voxel at the isocentre).
     sid, sdd, n_det, pitch = 2.5 * n, 4.0 * n, 3 * n, 0.8
@@ -61,6 +65,9 @@ def main():
     filtered = filtered * angular_integration_weights(full_turn, redundant_full_scan=True).view(-1, 1)
     fan = fan_weighted_backproject(filtered.contiguous(), *[t.cuda() for t in trajectory],
                                    pitch, n, n).clamp_min(0)
+    fan_api = fbp(sinogram, trajectory, (n, n), full_turn, beam="fan", detector_spacing=pitch,
+                  window=args.window, isocenter=(0, 0)).clamp_min(0)
+    fan_difference = (fan - fan_api).abs().max().item()
 
     # Cone beam FDK on a circular orbit.
     scan = Scan(n, views)
@@ -70,6 +77,7 @@ def main():
 
     print(f"window {args.window}: parallel FBP {psnr(parallel, image):.2f} dB, "
           f"fan FBP {psnr(fan, image):.2f} dB, cone FDK {psnr(cone, phantom):.2f} dB")
+    print(f"manual/API maximum difference: parallel {parallel_difference:.3g}, fan {fan_difference:.3g}")
     if args.figure:
         save_slices(args.figure, [("phantom\nground truth", phantom),
                                   (f"parallel FBP\n{psnr(parallel, image):.1f} dB", parallel),

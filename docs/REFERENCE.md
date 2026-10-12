@@ -7,7 +7,7 @@
 | Acquisition | 2D parallel/fan and 3D cone beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
 | Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives raise an error; surface samples are checked on every call |
 | Execution | CUDA computation with CPU or CUDA data; one-process multi-GPU or distributed ranks | Outputs are float32 on the input device; CPU data uses streamed CUDA tiles |
-| Reconstruction | Matched adjoint plus separate FBP/FDK helpers | `backproject()` is not an inverse; FDK remains approximate and does not become exact for arbitrary scans |
+| Reconstruction | Matched adjoint plus differentiable `fbp`, `fdk`, approximate `helical_fdk` and composable helpers | Analytical APIs use fixed flat geometry on one CUDA device; `backproject()` is not an inverse |
 | Memory | Automatic spatial/view/pixel blocks, bounded transfers, numerical tensor/file stores and rank-owned volume slabs | Tensor autograd still holds complete inputs/outputs/gradients; disk solvers must keep their vector operations blockwise |
 
 Analytical helpers use flat detectors. Analytical fan/cone backprojection infers the physical isocenter from source
@@ -15,6 +15,12 @@ lines along detector normals. For non-circular or ambiguous geometry (including
 a single view), supply `isocenter=(x, y)` or `(x, y, z)`. Analytical interpolation
 requires at least two detector bins per axis. The finite discrete Ram-Lak filter
 uses `pad_factor>=2` for linear convolution when unwindowed.
+
+Analytical gathers have their own discrete transpose kernels, with sinogram
+gradients and higher derivatives. Filters and explicit weights use PyTorch
+autograd. Geometry gradients are rejected by analytical APIs; use `Projector`
+for calibration. See the [analytical learning guide](source/analytical_learning.rst)
+for custom stages, circular short scans and the slice-windowed helical approximation.
 
 ## Custom or calibrated trajectories
 

@@ -16,6 +16,10 @@ The scripts in the repository ``examples/`` directory show how to use
   copy payloads, pilot metadata, timing and CUDA tensor peaks.
 - ``analytical_reconstruction.py``: parallel-beam FBP, fan-beam FBP and cone-beam
   FDK, with a choice of ramp-filter window.
+- ``learnable_reconstruction.py``: build and train a filter and detector weights
+  for parallel/fan FBP or cone FDK using public helpers.
+- ``helical_fdk.py``: approximate axial helical FDK with explicit slice windows
+  and weight gradients.
 - ``iterative_reconstruction.py``: 3D cone-beam CGLS, SIRT and TV reconstruction
   on circular, helical, saddle or sinusoidal trajectories.
 - ``walnut_reconstruction.py``: FDK, SIRT, CGLS and TV reconstruction of a measured
@@ -36,6 +40,7 @@ See ``examples/README.md`` in the repository for all launch modes.
    fbp_parallel_example
    fbp_fan_example
    fdk_cone_example
+   analytical_learning
 
 .. toctree::
    :maxdepth: 1

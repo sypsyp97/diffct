@@ -8,11 +8,8 @@ import torch
 import torch.distributed as dist
 
 from diffct import (
-    angular_integration_weights,
     circular_trajectory_3d,
-    cone_cosine_weights,
-    cone_weighted_backproject,
-    ramp_filter_1d,
+    fdk as reconstruct_fdk,
     saddle_trajectory_3d,
     sinusoidal_trajectory_3d,
     spiral_trajectory_3d,
@@ -85,15 +82,11 @@ def fdk(scan, sinogram, trajectory, window="shepp-logan"):
     all frequencies, "hann" is the smoothest.
     """
     device = sinogram.device
-    u, v = scan.detector
-    weights = cone_cosine_weights(u, v, scan.pitch, scan.pitch, scan.sdd, device=device).unsqueeze(0)
-    filtered = ramp_filter_1d(sinogram * weights, dim=1, sample_spacing=scan.pitch,
-                              pad_factor=2, window=window).contiguous()
     angles = torch.linspace(0.0, 2 * math.pi, scan.views + 1, device=device)[:-1]
-    filtered = filtered * angular_integration_weights(angles, redundant_full_scan=True).view(-1, 1, 1)
     n = scan.n
-    return cone_weighted_backproject(filtered, *[g.to(device) for g in trajectory], n, n, n,
-                                     scan.pitch, scan.pitch, voxel_spacing=1.0).clamp_min(0)
+    return reconstruct_fdk(sinogram, trajectory, (n, n, n), angles,
+                           detector_spacing=scan.pitch, window=window,
+                           isocenter=(0, 0, 0)).clamp_min(0)
 
 
 @torch.no_grad()

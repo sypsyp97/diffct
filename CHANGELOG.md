@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Public differentiable `fbp`, `fdk` and approximate slice-windowed `helical_fdk`
+  pipelines, with replaceable projection, angular and frequency-response tensors.
+- Dedicated CUDA transposes of the analytical parallel/fan/cone gathers,
+  including sinogram gradients and higher derivatives with fixed geometry.
+- Public helical view weights and weighted gather, plus examples that build
+  and learn filters and detector weights in PyTorch.
+
+### Fixed
+
+- Analytical short-scan validation and detector-u handedness; helical angular
+  quadrature preserves interval precision at large angle and height offsets.
+
 ## [2.2.0] - 2026-10-11
 
 ### Added

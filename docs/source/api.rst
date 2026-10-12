@@ -115,8 +115,10 @@ Analytical Reconstruction Helpers
 
 These helpers build the pre-weights, angular weights, filter and weighted
 backprojection of an analytical FBP or FDK pipeline. The weighted backprojection
-helpers do not support autograd through ``Projector``. The returned images are
-already scaled.
+helpers support sinogram autograd with dedicated transpose kernels, including
+higher derivatives. They use fixed geometry and reject geometry/isocenter
+gradients. The returned images are already scaled. See :doc:`analytical_learning`
+for complete APIs and learnable filter/weight examples.
 
 Analytical FBP and FDK assume a flat detector and an acquisition model. These
 helpers do not accept ``detector_surface``. Native curved data must be resampled
@@ -149,6 +151,21 @@ interpolated axis, including the cone detector's v axis.
 .. autofunction:: fan_weighted_backproject
 
 .. autofunction:: cone_weighted_backproject
+
+Complete Reconstruction Pipelines
+------------------------------------
+
+.. currentmodule:: diffct.reconstruction
+
+.. autofunction:: fbp
+
+.. autofunction:: fdk
+
+.. autofunction:: helical_fdk
+
+.. autofunction:: helical_view_weights
+
+.. autofunction:: helical_weighted_backproject
 
 Ramp Filter Options
 -------------------

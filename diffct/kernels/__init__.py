@@ -26,6 +26,11 @@ from .geometry_vjp import (
     _fan_2d_geometry_vjp_kernel,
     _cone_3d_geometry_vjp_kernel,
 )
+from .analytical_transpose import (
+    _parallel_2d_fbp_transpose_kernel,
+    _fan_2d_fbp_transpose_kernel,
+    _cone_3d_fdk_transpose_kernel,
+)
 
 __all__ = [
     '_parallel_2d_forward_kernel',
@@ -40,4 +45,7 @@ __all__ = [
     '_parallel_2d_geometry_vjp_kernel',
     '_fan_2d_geometry_vjp_kernel',
     '_cone_3d_geometry_vjp_kernel',
+    '_parallel_2d_fbp_transpose_kernel',
+    '_fan_2d_fbp_transpose_kernel',
+    '_cone_3d_fdk_transpose_kernel',
 ]
