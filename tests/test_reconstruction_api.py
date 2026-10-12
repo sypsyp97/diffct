@@ -806,3 +806,67 @@ def test_helical_bfloat16_deep_boundary_coverage_matches_exact_slice_centers(win
                          acquisition["angles"], **kwargs)
     assert torch.isfinite(actual).all() and actual.abs().max() > 0
     torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("v_dtype", (torch.float32, torch.bfloat16))
+def test_mixed_dtype_parker_rejects_changing_u_offset_with_identical_v_values(
+        sinogram_dtype, v_dtype):
+    acquisition = _scaled_native_short_scan("cone", 100.0)
+    source, detector, u, v = acquisition["trajectory"]
+    mixed_v = v.to(v_dtype)
+    torch.testing.assert_close(mixed_v.float(), v, rtol=0, atol=0)
+    # v does not participate in the tangential offset dot product.
+    detector = detector + torch.linspace(0.0, 50.0, len(source))[:, None] * u
+    acquisition["trajectory"] = (source, detector, u, mixed_v)
+    offsets = ((detector - source) * u).sum(1)
+    assert float(offsets.max() - offsets.min()) > 49.99
+    sinogram = _random(acquisition["sino_shape"], 236).to(sinogram_dtype)
+    with pytest.raises(ValueError, match=r"(?i)(constant.*offset|offset.*constant)"):
+        _reconstruct("cone", sinogram, acquisition, short_scan=True)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("v_dtype", (torch.float32, torch.bfloat16))
+def test_mixed_dtype_parker_valid_zero_offset_matches_float32_output_and_gradient(
+        sinogram_dtype, v_dtype):
+    acquisition = _scaled_native_short_scan("cone", 100.0)
+    source, detector, u, v = acquisition["trajectory"]
+    mixed_v = v.to(v_dtype)
+    torch.testing.assert_close(mixed_v.float(), v, rtol=0, atol=0)
+    mixed = {**acquisition, "trajectory": (source, detector, u, mixed_v)}
+    reference_sinogram = (_random(acquisition["sino_shape"], 237).float() * 100).requires_grad_()
+    sinogram = reference_sinogram.detach().to(sinogram_dtype).requires_grad_()
+    expected = _reconstruct("cone", reference_sinogram, acquisition, short_scan=True)
+    actual = _reconstruct("cone", sinogram, mixed, short_scan=True)
+    assert actual.dtype == torch.float32 and actual.device == sinogram.device
+    assert torch.isfinite(actual).all() and actual.abs().max() > 0
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+    cotangent = _random(acquisition["shape"], 238).float() * 100
+    actual_gradient, = torch.autograd.grad(actual, sinogram, cotangent)
+    expected_gradient, = torch.autograd.grad(expected, reference_sinogram, cotangent)
+    assert actual_gradient.dtype == sinogram_dtype
+    assert torch.isfinite(actual_gradient).all() and actual_gradient.abs().max() > 0
+    torch.testing.assert_close(actual_gradient, expected_gradient.to(sinogram_dtype),
+                               rtol=3e-5, atol=3e-6)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+def test_mixed_dtype_parker_retains_changing_distance_rejection(sinogram_dtype):
+    acquisition = _scaled_native_short_scan("cone", 100.0)
+    assert all(component.dtype == torch.float32 for component in acquisition["trajectory"])
+    source, detector, u, v = acquisition["trajectory"]
+    normal = F.normalize(torch.linalg.cross(u, v, dim=1), dim=1)
+    detector = detector + torch.linspace(0.0, 50.0, len(source))[:, None] * normal
+    acquisition["trajectory"] = (source, detector, u, v)
+    distances = ((detector - source) * normal).sum(1).abs()
+    assert float(distances.max() - distances.min()) > 49.99
+    sinogram = _random(acquisition["sino_shape"], 239).to(sinogram_dtype)
+    with pytest.raises(ValueError, match=r"(?i)(constant.*distance|distance.*constant)"):
+        _reconstruct("cone", sinogram, acquisition, short_scan=True)

@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the complete-turn coverage requirement.
 - Parker short-scan validation accounts for physical geometry scale and original
   input precision; helical slice centers use float64 independently of angle dtype.
+- Parker distance and detector-u offset checks use separate precision budgets;
+  detector-v dtype cannot relax the detector-u offset check.
 
 ## [2.2.0] - 2026-10-11
 

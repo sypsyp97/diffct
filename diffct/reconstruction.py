@@ -119,15 +119,19 @@ def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_eps):
     normal = torch.where(((vector * normal).sum(1) < 0)[:, None], -normal, normal)
     distance = (vector * normal).sum(1).abs()
     offset = (vector * u).sum(1)
-    # Preserve input quantization even after _prepare promotes the geometry.
+    # Preserve each input's quantization after _prepare promotes the geometry.
     # Eight eps covers coordinate rounding, subtraction, projection and a
     # comparison between two views; its physical scale also covers translation.
     coordinate_scale = float(torch.linalg.vector_norm(
         source.double().abs() + detector.double().abs(), dim=1).max())
-    precision = max(geometry_eps, torch.finfo(source.dtype).eps)
-    tolerance = max(1e-5, 8 * precision * coordinate_scale)
-    if not (torch.allclose(distance, distance[:1].expand_as(distance), rtol=1e-4, atol=tolerance)
-            and torch.allclose(offset, offset[:1].expand_as(offset), rtol=1e-4, atol=tolerance)):
+    arithmetic_eps = torch.finfo(source.dtype).eps
+    # V participates in the cone normal/distance, but never the U-offset dot.
+    distance_precision = max((arithmetic_eps, *geometry_eps))
+    offset_precision = max((arithmetic_eps, *geometry_eps[:3]))
+    distance_tolerance = max(1e-5, 8 * distance_precision * coordinate_scale)
+    offset_tolerance = max(1e-5, 8 * offset_precision * coordinate_scale)
+    if not (torch.allclose(distance, distance[:1].expand_as(distance), rtol=1e-4, atol=distance_tolerance)
+            and torch.allclose(offset, offset[:1].expand_as(offset), rtol=1e-4, atol=offset_tolerance)):
         raise ValueError("Parker short-scan weighting requires constant detector distance and offset")
     sdd, offset_u = float(distance[0]), float(offset[0])
     gamma_max = math.atan(((sinogram.shape[1] - 1) * pitch[0] / 2 + abs(offset_u)) / sdd)
@@ -214,7 +218,7 @@ def fbp(sinogram, trajectory, volume_shape, angles, *, beam="parallel",
     angles = _angles(angles, len(geometry[0]), sinogram.device)
     filtered = _pipeline(sinogram, geometry, angles, beam, pitch, window, pad_factor,
                          projection_weights, angular_weights, filter_response, short_scan, isocenter,
-                         max(torch.finfo(component.dtype).eps for component in trajectory))
+                         tuple(torch.finfo(component.dtype).eps for component in trajectory))
     if beam == "parallel":
         return parallel_weighted_backproject(filtered, *geometry, pitch[0], *shape, spacing)
     return fan_weighted_backproject(filtered, *geometry, pitch[0], *shape, spacing, isocenter=isocenter)
@@ -238,7 +242,7 @@ def fdk(sinogram, trajectory, volume_shape, angles, *, detector_spacing=1.0,
     angles = _angles(angles, len(geometry[0]), sinogram.device)
     filtered = _pipeline(sinogram, geometry, angles, "cone", pitch, window, pad_factor,
                          projection_weights, angular_weights, filter_response, short_scan, isocenter,
-                         max(torch.finfo(component.dtype).eps for component in trajectory))
+                         tuple(torch.finfo(component.dtype).eps for component in trajectory))
     return cone_weighted_backproject(filtered, *geometry, *shape, *pitch, spacing, isocenter=isocenter)
 
 
