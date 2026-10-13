@@ -430,7 +430,7 @@ class DiffCTIntro(Scene):
         for i,(key,title,detail) in enumerate(methods):
             x=-4.2+i*2.8
             pair=Group(gray(self.data[key+'_axial'],2.15).move_to([x,1.04,0]),
-                       gray(np.flipud(self.data[key+'_coronal']),2.15).move_to([x,-1.25,0]))
+                       gray(self.data[key+'_coronal'],2.15).move_to([x,-1.25,0]))
             columns.add(pair)
             titles.add(label_baseline(T(title,28,INK),x,2.32))
             details.add(label_baseline(T(detail,20,SUB),x,-2.78))
