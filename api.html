@@ -200,6 +200,7 @@
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam Feldkamp-Davis-Kress (FDK)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="analytical_learning.html">Differentiable analytical reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
@@ -1425,8 +1426,10 @@ where angles has shape (n_views,) and output has shape (n_views, 2).</p></li>
 <h2>Analytical Reconstruction Helpers<a class="headerlink" href="#analytical-reconstruction-helpers" title="Link to this heading">¶</a></h2>
 <p>These helpers build the pre-weights, angular weights, filter and weighted
 backprojection of an analytical FBP or FDK pipeline. The weighted backprojection
-helpers do not support autograd through <code class="docutils literal notranslate"><span class="pre">Projector</span></code>. The returned images are
-already scaled.</p>
+helpers support sinogram autograd with dedicated transpose kernels, including
+higher derivatives. They use fixed geometry and reject geometry/isocenter
+gradients. The returned images are already scaled. See <a class="reference internal" href="analytical_learning.html"><span class="doc">Differentiable analytical reconstruction</span></a>
+for complete APIs and learnable filter/weight examples.</p>
 <p>Analytical FBP and FDK assume a flat detector and an acquisition model. These
 helpers do not accept <code class="docutils literal notranslate"><span class="pre">detector_surface</span></code>. Native curved data must be resampled
 along matching rays onto a covered virtual flat detector before using these
@@ -1570,6 +1573,79 @@ reduces to the classical <code class="docutils literal notranslate"><span class=
 lines along detector normals by default. Supply it explicitly for an
 ambiguous or non-circular acquisition. FDK remains an approximation
 outside its circular-acquisition assumptions.</p>
+</dd></dl>
+
+</section>
+<section id="complete-reconstruction-pipelines">
+<h2>Complete Reconstruction Pipelines<a class="headerlink" href="#complete-reconstruction-pipelines" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.reconstruction.fbp">
+<span class="sig-prename descclassname"><span class="pre">diffct.reconstruction.</span></span><span class="sig-name descname"><span class="pre">fbp</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trajectory</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume_shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">beam</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'parallel'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">window</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'ram-lak'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pad_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">projection_weights</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angular_weights</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filter_response</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">short_scan</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/reconstruction.html#fbp"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.reconstruction.fbp" title="Link to this definition">¶</a></dt>
+<dd><p>Differentiable parallel/fan FBP for fixed flat-detector geometry.</p>
+<p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> is a CUDA tensor <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">bins)</span></code>; <code class="docutils literal notranslate"><span class="pre">volume_shape</span></code> is <code class="docutils literal notranslate"><span class="pre">(H,W)</span></code>.
+<code class="docutils literal notranslate"><span class="pre">angles</span></code> are explicit unwrapped radians. Detector/voxel spacings share the
+trajectory’s physical unit. <code class="docutils literal notranslate"><span class="pre">projection_weights</span></code> and <code class="docutils literal notranslate"><span class="pre">angular_weights</span></code>
+replace the default cosine and angular quadrature, respectively.
+<code class="docutils literal notranslate"><span class="pre">filter_response</span></code> replaces the complete real rFFT multiplier, including
+its physical units; length is <code class="docutils literal notranslate"><span class="pre">pad_factor*bins//2+1</span></code>. Its use ignores
+<code class="docutils literal notranslate"><span class="pre">window</span></code>. These tensors retain autograd. <code class="docutils literal notranslate"><span class="pre">short_scan=True</span></code> adds Parker
+weighting before filtering for a circular fan scan with sufficient coverage.
+Low-precision inputs are promoted to float32 for reconstruction, retaining
+gradients to their original dtype. Output is signed float32; geometry
+gradients are rejected.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.reconstruction.fdk">
+<span class="sig-prename descclassname"><span class="pre">diffct.reconstruction.</span></span><span class="sig-name descname"><span class="pre">fdk</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trajectory</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume_shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">window</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'ram-lak'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pad_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">projection_weights</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angular_weights</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filter_response</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">short_scan</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/reconstruction.html#fdk"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.reconstruction.fdk" title="Link to this definition">¶</a></dt>
+<dd><p>Differentiable flat-detector FDK; fixed geometry, approximate inversion.</p>
+<p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> is <code class="docutils literal notranslate"><span class="pre">(views,U,V)</span></code> on CUDA; <code class="docutils literal notranslate"><span class="pre">volume_shape</span></code> is <code class="docutils literal notranslate"><span class="pre">(D,H,W)</span></code>.
+Filtering runs along U. <code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code> is a scalar or <code class="docutils literal notranslate"><span class="pre">(du,dv)</span></code>.
+The explicit weight/filter overrides and <code class="docutils literal notranslate"><span class="pre">short_scan</span></code> follow <a class="reference internal" href="#diffct.reconstruction.fbp" title="diffct.reconstruction.fbp"><code class="xref py py-func docutils literal notranslate"><span class="pre">fbp()</span></code></a>.
+Returns signed float32 without clamping. The backward pass is the precise
+discrete interpolation transpose; it does not make FDK an exact inverse.
+Use <a class="reference internal" href="#diffct.reconstruction.helical_fdk" title="diffct.reconstruction.helical_fdk"><code class="xref py py-func docutils literal notranslate"><span class="pre">helical_fdk()</span></code></a> for slice-centered integration of an axial helix.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.reconstruction.helical_fdk">
+<span class="sig-prename descclassname"><span class="pre">diffct.reconstruction.</span></span><span class="sig-name descname"><span class="pre">helical_fdk</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trajectory</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume_shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">window</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'ram-lak'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pad_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">projection_weights</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">view_weights</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filter_response</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/reconstruction.html#helical_fdk"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.reconstruction.helical_fdk" title="Link to this definition">¶</a></dt>
+<dd><p>Approximate axial helical FDK with one complete angular turn per slice.</p>
+<p>Filters detector U once, then applies <a class="reference internal" href="#diffct.reconstruction.helical_view_weights" title="diffct.reconstruction.helical_view_weights"><code class="xref py py-func docutils literal notranslate"><span class="pre">helical_view_weights()</span></code></a> inside
+the analytical gather. <code class="docutils literal notranslate"><span class="pre">isocenter</span></code> is required in physical coordinates.
+Source heights and unwrapped <code class="docutils literal notranslate"><span class="pre">angles</span></code> must agree with the actual helix;
+finite scans must cover a full turn around every requested slice.
+<code class="docutils literal notranslate"><span class="pre">view_weights</span></code> replaces the complete <code class="docutils literal notranslate"><span class="pre">(D,views)</span></code> window/quadrature stage.
+Projection/filter replacements follow <a class="reference internal" href="#diffct.reconstruction.fbp" title="diffct.reconstruction.fbp"><code class="xref py py-func docutils literal notranslate"><span class="pre">fbp()</span></code></a>. Custom tensors retain
+autograd and are not normalized or clamped. Detector truncation is not
+corrected. This native-cone approximation does not implement cone-parallel
+rebinning, 3D conjugate weights or exact Katsevich inversion.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.reconstruction.helical_view_weights">
+<span class="sig-prename descclassname"><span class="pre">diffct.reconstruction.</span></span><span class="sig-name descname"><span class="pre">helical_view_weights</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">angles</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_z</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">slice_z</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/reconstruction.html#helical_view_weights"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.reconstruction.helical_view_weights" title="Link to this definition">¶</a></dt>
+<dd><p>Return <code class="docutils literal notranslate"><span class="pre">(slices,views)</span></code> weights for complete slice-centered turns.</p>
+<p><code class="docutils literal notranslate"><span class="pre">angles</span></code> are strictly monotone, unwrapped radians; <code class="docutils literal notranslate"><span class="pre">source_z</span></code> is the
+corresponding strictly monotone source height, with at least two samples.
+<code class="docutils literal notranslate"><span class="pre">slice_z</span></code> holds physical slice centers. Reversed acquisitions are valid.
+Interpolate the angle at each height, then integrate angular sample cells
+over the centered <code class="docutils literal notranslate"><span class="pre">2*pi</span></code> interval. Weights include the half redundancy
+factor and sum to pi. Missing coverage raises instead of renormalizing.
+These acquisition coordinates are fixed; learn replacement weights instead.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="diffct.reconstruction.helical_weighted_backproject">
+<span class="sig-prename descclassname"><span class="pre">diffct.reconstruction.</span></span><span class="sig-name descname"><span class="pre">helical_weighted_backproject</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sinogram</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trajectory</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume_shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">view_weights</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">isocenter</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">detector_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/reconstruction.html#helical_weighted_backproject"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.reconstruction.helical_weighted_backproject" title="Link to this definition">¶</a></dt>
+<dd><p>Gather filtered cone data using replaceable <code class="docutils literal notranslate"><span class="pre">(D,views)</span></code> weights.</p>
+<p><code class="docutils literal notranslate"><span class="pre">sinogram</span></code> is a filtered CUDA <code class="docutils literal notranslate"><span class="pre">(views,U,V)</span></code> tensor. <code class="docutils literal notranslate"><span class="pre">view_weights</span></code>
+includes angular quadrature and redundancy and is applied AFTER filtering.
+Gradients flow to both tensors through the discrete cone-gather transpose.
+Fixed axial geometry, constant source radius and radial flat detectors are
+required. Caller-supplied weights own their angular coverage and truncation.
+One slice is processed per launch, avoiding a views-by-volume weight array;
+a fused slice-weight kernel can replace this if launch overhead dominates.</p>
 </dd></dl>
 
 </section>
@@ -1753,6 +1829,14 @@ path.</p>
 <li><a class="reference internal" href="#diffct.analytical.parallel_weighted_backproject"><code class="docutils literal notranslate"><span class="pre">parallel_weighted_backproject()</span></code></a></li>
 <li><a class="reference internal" href="#diffct.analytical.fan_weighted_backproject"><code class="docutils literal notranslate"><span class="pre">fan_weighted_backproject()</span></code></a></li>
 <li><a class="reference internal" href="#diffct.analytical.cone_weighted_backproject"><code class="docutils literal notranslate"><span class="pre">cone_weighted_backproject()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#complete-reconstruction-pipelines">Complete Reconstruction Pipelines</a><ul>
+<li><a class="reference internal" href="#diffct.reconstruction.fbp"><code class="docutils literal notranslate"><span class="pre">fbp()</span></code></a></li>
+<li><a class="reference internal" href="#diffct.reconstruction.fdk"><code class="docutils literal notranslate"><span class="pre">fdk()</span></code></a></li>
+<li><a class="reference internal" href="#diffct.reconstruction.helical_fdk"><code class="docutils literal notranslate"><span class="pre">helical_fdk()</span></code></a></li>
+<li><a class="reference internal" href="#diffct.reconstruction.helical_view_weights"><code class="docutils literal notranslate"><span class="pre">helical_view_weights()</span></code></a></li>
+<li><a class="reference internal" href="#diffct.reconstruction.helical_weighted_backproject"><code class="docutils literal notranslate"><span class="pre">helical_weighted_backproject()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#ramp-filter-options">Ramp Filter Options</a></li>

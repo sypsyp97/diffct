@@ -200,6 +200,7 @@
 <li class="toctree-l2"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="fdk_cone_example.html">Cone Beam Feldkamp-Davis-Kress (FDK)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="analytical_learning.html">Differentiable analytical reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_parallel_example.html">Parallel Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_fan_example.html">Fan Beam Iterative Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="iterative_reco_cone_example.html">Cone Beam Iterative Reconstruction</a></li>
@@ -267,6 +268,10 @@ rank-owned spatial slabs and completed-iteration checkpoints.</p></li>
 copy payloads, pilot metadata, timing and CUDA tensor peaks.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">analytical_reconstruction.py</span></code>: parallel-beam FBP, fan-beam FBP and cone-beam
 FDK, with a choice of ramp-filter window.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">learnable_reconstruction.py</span></code>: build and train a filter and detector weights
+for parallel/fan FBP or cone FDK using public helpers.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">helical_fdk.py</span></code>: approximate axial helical FDK with explicit slice windows
+and weight gradients.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">iterative_reconstruction.py</span></code>: 3D cone-beam CGLS, SIRT and TV reconstruction
 on circular, helical, saddle or sinusoidal trajectories.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">walnut_reconstruction.py</span></code>: FDK, SIRT, CGLS and TV reconstruction of a measured
@@ -285,6 +290,7 @@ with raw timings and numerical checks.</p></li>
 <li class="toctree-l1"><a class="reference internal" href="fbp_parallel_example.html">Parallel Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="fbp_fan_example.html">Fan Beam Filtered Backprojection (FBP)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="fdk_cone_example.html">Cone Beam Feldkamp-Davis-Kress (FDK)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="analytical_learning.html">Differentiable analytical reconstruction</a></li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">

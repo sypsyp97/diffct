@@ -25,14 +25,19 @@ rays onto a covered virtual flat grid. This adds interpolation error; FDK still
 retains its circular cone-beam approximation. For native curved projection and
 matched backprojection, see :ref:`detector-surfaces` and :doc:`examples`.
 
-The helper ``examples/_common.py::fdk`` performs these steps:
+The example projects a 3D phantom with ``Projector`` into a ``(views, U, V)``
+sinogram. The helper ``examples/_common.py::fdk`` then calls :func:`diffct.reconstruction.fdk`,
+which performs these steps:
 
-1. Project a 3D phantom with ``Projector`` into a ``(views, U, V)`` sinogram.
-2. Apply ``cone_cosine_weights`` for the detector geometry.
-3. Filter along the detector u axis (``dim=1``) with ``sample_spacing=scan.pitch``
+1. Apply detector cosine weights computed from the actual per-view rays.
+2. Filter along the detector u axis (``dim=1``) with ``sample_spacing=du``
    and ``pad_factor=2``. The last axis is v, not u.
-4. Apply ``angular_integration_weights`` with ``redundant_full_scan=True``.
-5. Call ``cone_weighted_backproject``. The example clamps negative values to zero.
+3. Apply ``angular_integration_weights``. A full turn includes the ``1/2``
+   redundancy factor.
+4. Call ``cone_weighted_backproject``. The example clamps negative values to zero.
+
+The same stages are public helpers. See :doc:`analytical_learning` to replace
+or learn the weights and filter.
 
 FDK is approximate for a circular cone-beam scan away from the central plane.
 Large cone angles increase artifacts. On non-circular trajectories, FDK is a
