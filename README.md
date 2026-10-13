@@ -16,11 +16,11 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/edf7c52227ec2cc14c988918faa7313f8ee0fe03/docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/2ec2be32693206c921319d36bf17d894106f87dc/docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
 </p>
 
 <p align="center">
-  <a href="https://github.com/sypsyp97/diffct/blob/edf7c52227ec2cc14c988918faa7313f8ee0fe03/docs/assets/diffct_intro.mp4">Intro video (MP4)</a> ·
+  <a href="https://github.com/sypsyp97/diffct/blob/2ec2be32693206c921319d36bf17d894106f87dc/docs/assets/diffct_intro.mp4">Intro video (MP4)</a> ·
   <a href="https://www.preprints.org/manuscript/202605.1446/v1">Technical report</a> ·
   <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
 </p>
