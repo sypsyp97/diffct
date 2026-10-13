@@ -419,7 +419,7 @@ class DiffCTIntro(Scene):
         self.heading(5,'One measured scan. Four reconstructions.')
         self.note('240 measured cone-beam views · 256³ reconstruction · shared display range')
         # Show the real acquisition before revealing the method comparison.
-        projections=Group(*[gray(np.flipud(p.T),2.5,float(self.data['projections'].max())) for p in self.data['projections']])
+        projections=Group(*[gray(p.T,2.5,float(self.data['projections'].max())) for p in self.data['projections']])
         projections.arrange(RIGHT,buff=.4).move_to([0,.35,0])
         self.show(projections)
         scan_label=T('Four measured projection views of the same walnut',28,SUB).move_to([0,-1.5,0])
