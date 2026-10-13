@@ -98,26 +98,12 @@ readable and avoiding a views-by-volume weight tensor. This trades kernel-launch
 overhead for bounded temporary storage; inputs, outputs and autograd state
 still reside on the CUDA device.
 
-Local validation
-----------------
+Example results
+---------------
 
-On an RTX 4070 SUPER, the complete default repository suite passed 1231 tests
-with 90 skipped and no failures. CPU formal verification passed all 337 checks.
-The focused analytical API/autograd selection passed 157 tests. These tests
-compare the CUDA gather with an independent
-float64 PyTorch model, its explicit matrix transpose and higher derivatives.
-They also cover mirrored short-scan detector axes, incomplete helical windows
-and large absolute angle offsets, plus low-precision measurements, parameter
-gradients and coverage checks. Short scans with geometry and pixel/voxel spacing
-scaled by 100 preserve outputs and gradients for fan and cone beams. BF16-angle
-helices with 256 and 384 slices preserve physical centers, outputs and gradients;
-valid and incomplete acquisition-boundary windows are distinguished.
-Changing only a constant detector-v axis to BF16 preserves valid FDK outputs and
-gradients while still rejecting detector-u offsets that vary across views.
-
-The 32-voxel learning examples used 180 views and 20 Adam steps on a synthetic
-phantom with Gaussian projection noise. These measured training results are
-specific to that example:
+The 32-voxel learning examples use 180 views and 20 Adam steps on a synthetic
+phantom with Gaussian projection noise. These training results are specific to
+that example:
 
 .. list-table::
    :header-rows: 1
@@ -132,14 +118,10 @@ specific to that example:
      - 29.90 dB
      - 32.86 dB
    * - Cone FDK
-     - 30.26 dB
-     - 32.10 dB
+     - 30.24 dB
+     - 32.09 dB
 
-The 32-cubed, 720-view, four-turn helical example measured 32.99 dB. Every slice's
-integration weights summed to pi. Manual composition and the complete API
-agreed within 4e-7. Of the 90 skipped tests, 88 require two physical CUDA GPUs
-and/or NCCL; two require Windows symbolic-link privileges unavailable on the
-validation account. The fixture attempts real symbolic links and skips only
-``WinError 1314``; hard-link alias checks still execute. Documentation, lint
-and wheel/sdist checks passed. Opt-in performance benchmarks are separate from
-the default correctness suite.
+The 32-cubed, 720-view, four-turn helical example gives 32.99 dB. The integration
+weights of each slice sum to pi. Manual composition and the complete API agree
+within 4e-7. Float32 atomic accumulation order depends on the GPU, so the last
+digit of these values can change.

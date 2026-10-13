@@ -344,8 +344,8 @@ def helical_weighted_backproject(sinogram, trajectory, volume_shape, view_weight
     center = _axial_helix(geometry, isocenter)
     weights = _weights(view_weights, sinogram, "view_weights", (shape[0], len(geometry[0])))
     slices = []
-    # ponytail: one launch per slice; fuse slice weights if measured launch
-    # overhead dominates. Preserve ordinary PyTorch weight gradients here.
+    # One launch per slice; fuse slice weights if measured launch overhead
+    # dominates. Preserve ordinary PyTorch weight gradients here.
     for index in range(shape[0]):
         z = (index + 0.5 - shape[0] / 2) * spacing
         shift = sinogram.new_tensor((0, 0, z))

@@ -189,7 +189,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 ## Examples
 
-`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 

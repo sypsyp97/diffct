@@ -184,7 +184,7 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 ## 示例
 
-`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`analytical_reconstruction.py`、`learnable_reconstruction.py`、`helical_fdk.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
+`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`analytical_reconstruction.py`、`learnable_reconstruction.py`、`helical_fdk.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`benchmark_scaling.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
 
 ## 文档
 

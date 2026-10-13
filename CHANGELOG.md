@@ -11,22 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Public differentiable `fbp`, `fdk` and approximate slice-windowed `helical_fdk`
   pipelines, with replaceable projection, angular and frequency-response tensors.
+  Low-precision measurements run in float32 and keep gradients in their own dtype.
 - Dedicated CUDA transposes of the analytical parallel/fan/cone gathers,
   including sinogram gradients and higher derivatives with fixed geometry.
-- Public helical view weights and weighted gather, plus examples that build
-  and learn filters and detector weights in PyTorch.
+- Circular short-scan checks for `short_scan=True`: orbit, detector-u handedness,
+  angular span, and constant detector distance and offset. Tolerances follow the
+  physical geometry scale and the original trajectory precision.
+- Public helical view weights and weighted gather. Slice centers and angular
+  quadrature use float64, so large angle or height offsets keep full-turn coverage.
+- Examples `learnable_reconstruction.py` and `helical_fdk.py`, and the
+  analytical learning guide.
 
-### Fixed
+### Changed
 
-- Analytical short-scan validation and detector-u handedness; helical angular
-  quadrature preserves interval precision at large angle and height offsets.
-- Low-precision analytical measurements use float32 reconstruction stages with
-  gradients to the original dtype; low-precision helical angles cannot relax
-  the complete-turn coverage requirement.
-- Parker short-scan validation accounts for physical geometry scale and original
-  input precision; helical slice centers use float64 independently of angle dtype.
-- Parker distance and detector-u offset checks use separate precision budgets;
-  detector-v dtype cannot relax the detector-u offset check.
+- `parallel_weighted_backproject`, `fan_weighted_backproject` and
+  `cone_weighted_backproject` support sinogram autograd. Geometry and isocenter
+  gradients raise an error.
+- The FDK baselines in `examples/_common.py` and `walnut_reconstruction.py` call `fdk`.
 
 ## [2.2.0] - 2026-10-11
 
