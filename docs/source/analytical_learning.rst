@@ -19,6 +19,14 @@ Short-scan distance and offset checks account for physical coordinate scale and
 the original trajectory precision, including when float32 geometry is promoted
 for float64 measurements. Each check uses only the trajectory components involved
 in its calculation; detector-v precision cannot relax the detector-u offset check.
+Each source/detector coordinate and detector-axis component counts with its own
+rounding along the checked direction, and each allows twice the largest two-view
+change that this rounding can cause. Axis components have half the smallest
+subnormal as a rounding floor. Eight eps of the in-plane ray length covers
+arithmetic and orbit rounding. Both checks also allow a relative tolerance of
+1e-4, and the absolute tolerance is at least 1e-5. A change smaller than these
+bounds cannot be told apart from rounding: low-precision or far-translated
+coordinates that have a component along the checked direction widen the check.
 Helical slice centers use float64 independently of
 the angle dtype; low-precision angles do not round physical voxel coordinates.
 
