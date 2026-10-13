@@ -40,6 +40,9 @@ from .kernels import (
     _parallel_2d_fbp_backproject_kernel,
     _fan_2d_fbp_backproject_kernel,
     _cone_3d_fdk_backproject_kernel,
+    _parallel_2d_fbp_transpose_kernel,
+    _fan_2d_fbp_transpose_kernel,
+    _cone_3d_fdk_transpose_kernel,
 )
 
 
@@ -367,8 +370,8 @@ def _as_contig_f32(t, device):
 
 
 @_on_device_of("sinogram")
-def parallel_weighted_backproject(sinogram, ray_dir, det_origin, det_u_vec,
-                                  detector_spacing, H, W, voxel_spacing=1.0):
+def _parallel_weighted_backproject_raw(sinogram, ray_dir, det_origin, det_u_vec,
+                                      detector_spacing, H, W, voxel_spacing=1.0):
     """Voxel-driven parallel-beam FBP backprojection with analytical constant.
 
     Runs the dedicated parallel-beam FBP gather kernel (one thread per
@@ -451,8 +454,8 @@ def _analytical_geometry(src_pos, det_center, n, isocenter):
 
 
 @_on_device_of("sinogram")
-def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
-                             detector_spacing, H, W, voxel_spacing=1.0, *, isocenter=None):
+def _fan_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec,
+                                 detector_spacing, H, W, voxel_spacing=1.0, *, isocenter=None):
     """Voxel-driven fan-beam FBP backprojection with analytical constant.
 
     Runs the dedicated fan-beam FBP gather kernel (one thread per output
@@ -507,8 +510,8 @@ def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
 
 
 @_on_device_of("sinogram")
-def cone_weighted_backproject(sinogram, src_pos, det_center, det_u_vec, det_v_vec,
-                              D, H, W, du, dv, voxel_spacing=1.0, *, isocenter=None):
+def _cone_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec, det_v_vec,
+                                  D, H, W, du, dv, voxel_spacing=1.0, *, isocenter=None):
     """Voxel-driven cone-beam FDK backprojection with analytical constant.
 
     Runs the dedicated cone-beam FDK gather kernel (one thread per output
@@ -571,3 +574,145 @@ def cone_weighted_backproject(sinogram, src_pos, det_center, det_u_vec, det_v_ve
     # Convert back to (D, H, W) layout for the user.
     reco = reco_perm.permute(2, 1, 0).contiguous() * scale
     return reco
+
+
+def _validate_analytical_inputs(sinogram, geometry, ndim, isocenter=None):
+    if not isinstance(sinogram, torch.Tensor) or sinogram.ndim != ndim:
+        raise ValueError(f"sinogram must have rank {ndim}")
+    if min(sinogram.shape[1:]) < 2:
+        raise ValueError("Analytical backprojection requires at least two detector bins on each axis")
+    for component in geometry:
+        if not isinstance(component, torch.Tensor) or component.shape != (sinogram.shape[0], ndim):
+            raise ValueError(f"Every geometry tensor must have shape (n_views, {ndim})")
+        if component.requires_grad:
+            raise ValueError("Analytical backprojection does not support geometry gradients")
+    if isinstance(isocenter, torch.Tensor) and isocenter.requires_grad:
+        raise ValueError("Analytical backprojection does not support isocenter gradients")
+    if not sinogram.is_cuda:
+        raise ValueError("sinogram must be on a CUDA device")
+
+
+def _analytical_gather_raw(sinogram, beam, geometry, parameters, isocenter):
+    if beam == "parallel":
+        return _parallel_weighted_backproject_raw(sinogram, *geometry, *parameters)
+    if beam == "fan":
+        return _fan_weighted_backproject_raw(sinogram, *geometry, *parameters, isocenter=isocenter)
+    return _cone_weighted_backproject_raw(sinogram, *geometry, *parameters, isocenter=isocenter)
+
+
+@_on_device_of("image")
+def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sinogram_shape):
+    device = image.device
+    geometry = tuple(_as_contig_f32(component, device) for component in geometry)
+    image = _as_contig_f32(image, device)
+    sinogram = torch.zeros(sinogram_shape, device=device, dtype=torch.float32)
+    d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
+    d_geometry = tuple(TorchCUDABridge.tensor_to_cuda_array(component) for component in geometry)
+    stream = _get_numba_external_stream_for(torch.cuda.current_stream())
+
+    scale = 1.0 / (2.0 * math.pi)
+    iso = ()
+    if beam != "parallel":
+        source, detector, u = geometry[:3]
+        normal = (torch.stack((-u[:, 1], u[:, 0]), dim=1) if beam == "fan"
+                  else torch.cross(u, geometry[3], dim=1))
+        isocenter, sid_mean, sdd_mean = _analytical_geometry(source, detector, normal, isocenter)
+        scale = sdd_mean / (2.0 * math.pi * sid_mean)
+        iso = tuple(_DTYPE(value.item() / parameters[-1]) for value in isocenter)
+    image = image * scale
+
+    if beam == "cone":
+        D, H, W, du, dv, spacing = parameters
+        image = image.permute(2, 1, 0).contiguous()
+        d_image = TorchCUDABridge.tensor_to_cuda_array(image)
+        grid, tpb = _grid_3d(D, H, W)
+        _cone_3d_fdk_transpose_kernel[grid, tpb, stream](
+            d_sino, *sinogram_shape, d_image, W, H, D, _DTYPE(du), _DTYPE(dv),
+            *d_geometry, _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
+            _DTYPE(spacing), *iso,
+        )
+    else:
+        pitch, H, W, spacing = parameters
+        d_image = TorchCUDABridge.tensor_to_cuda_array(image)
+        grid, tpb = _grid_2d(W, H)
+        kernel = (_parallel_2d_fbp_transpose_kernel if beam == "parallel"
+                  else _fan_2d_fbp_transpose_kernel)
+        kernel[grid, tpb, stream](
+            d_sino, *sinogram_shape, d_image, W, H, _DTYPE(pitch), *d_geometry,
+            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(spacing), *iso,
+        )
+    return sinogram
+
+
+class _AnalyticalGather(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, sinogram, beam, geometry, parameters, isocenter):
+        # Backward uses the exact geometry observed by forward, even if the
+        # caller edits its fixed trajectory or isocenter afterwards.
+        geometry = tuple(component.detach().clone() for component in geometry)
+        if isocenter is not None:
+            isocenter = torch.as_tensor(isocenter, device=sinogram.device,
+                                        dtype=torch.float32).detach().clone()
+        ctx.save_for_backward(*geometry, isocenter)
+        ctx.beam, ctx.parameters = beam, parameters
+        ctx.input_shape, ctx.input_dtype, ctx.input_device = sinogram.shape, sinogram.dtype, sinogram.device
+        return _analytical_gather_raw(sinogram, beam, geometry, parameters, isocenter)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        *geometry, isocenter = ctx.saved_tensors
+        grad_input = _AnalyticalTranspose.apply(
+            grad_output, ctx.beam, tuple(geometry), ctx.parameters, isocenter, ctx.input_shape,
+        ).to(device=ctx.input_device, dtype=ctx.input_dtype)
+        return grad_input, None, None, None, None
+
+
+class _AnalyticalTranspose(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, image, beam, geometry, parameters, isocenter, sinogram_shape):
+        ctx.beam, ctx.geometry, ctx.parameters, ctx.isocenter = beam, geometry, parameters, isocenter
+        ctx.input_dtype, ctx.input_device = image.dtype, image.device
+        return _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sinogram_shape)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_input = _AnalyticalGather.apply(
+            grad_output, ctx.beam, ctx.geometry, ctx.parameters, ctx.isocenter,
+        ).to(device=ctx.input_device, dtype=ctx.input_dtype)
+        return grad_input, None, None, None, None, None
+
+
+def _analytical_backproject(sinogram, beam, geometry, parameters, isocenter=None):
+    _validate_analytical_inputs(sinogram, geometry, 3 if beam == "cone" else 2, isocenter)
+    if torch.is_grad_enabled() and sinogram.requires_grad:
+        return _AnalyticalGather.apply(sinogram, beam, geometry, parameters, isocenter)
+    return _analytical_gather_raw(sinogram, beam, geometry, parameters, isocenter)
+
+
+def parallel_weighted_backproject(sinogram, ray_dir, det_origin, det_u_vec,
+                                  detector_spacing, H, W, voxel_spacing=1.0):
+    return _analytical_backproject(
+        sinogram, "parallel", (ray_dir, det_origin, det_u_vec),
+        (detector_spacing, H, W, voxel_spacing),
+    )
+
+
+def fan_weighted_backproject(sinogram, src_pos, det_center, det_u_vec,
+                             detector_spacing, H, W, voxel_spacing=1.0, *, isocenter=None):
+    return _analytical_backproject(
+        sinogram, "fan", (src_pos, det_center, det_u_vec),
+        (detector_spacing, H, W, voxel_spacing), isocenter,
+    )
+
+
+def cone_weighted_backproject(sinogram, src_pos, det_center, det_u_vec, det_v_vec,
+                              D, H, W, du, dv, voxel_spacing=1.0, *, isocenter=None):
+    return _analytical_backproject(
+        sinogram, "cone", (src_pos, det_center, det_u_vec, det_v_vec),
+        (D, H, W, du, dv, voxel_spacing), isocenter,
+    )
+
+
+parallel_weighted_backproject.__doc__ = _parallel_weighted_backproject_raw.__doc__
+fan_weighted_backproject.__doc__ = _fan_weighted_backproject_raw.__doc__
+cone_weighted_backproject.__doc__ = _cone_weighted_backproject_raw.__doc__

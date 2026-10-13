@@ -61,7 +61,10 @@ scripts to see their own options.
 | `disk_reconstruction.py` | Blockwise disk-backed CGLS, native flat/cylindrical/saddle geometry, rank-local checkpoints; `--partition space` gives fixed volume ownership. Synthetic data is generated blockwise by default. | 1 GPU, `--devices`, torchrun |
 | `benchmark_execution.py` | Real schedule and z-slab/3D-block comparisons; measured copy payloads, pilot metadata, elapsed time and CUDA tensor peaks. | 1 GPU, `--devices` |
 | `analytical_reconstruction.py` | Parallel-beam FBP, fan-beam FBP and cone-beam FDK. `--window` selects the ramp-filter window. | 1 GPU |
+| `learnable_reconstruction.py` | Build parallel/fan FBP or cone FDK from FFT, weights and analytical gather; optimize filter and detector weights on synthetic noisy data. | 1 GPU |
+| `helical_fdk.py` | Approximate slice-windowed axial helical FDK; expose per-slice view weights and their gradients. | 1 GPU |
 | `iterative_reconstruction.py` | Cone-beam reconstruction with `--trajectory circular`, `helical`, `saddle` or `sinusoidal`. CGLS, SIRT and TV-regularized nonnegative least squares (Adam through autograd). FDK baseline outside distributed mode. `--noise` adds Gaussian noise. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
+| `walnut_reconstruction.py` | FDK, SIRT, CGLS and TV reconstruction of the measured walnut cone-beam scan in `data/walnut_cone.npz`. | 1 GPU, `--devices` for the iterative solvers |
 | `geometry_calibration.py` | Recovers per-view angle errors and a detector shift from projections, using geometry gradients. | 1 GPU, `--devices`, torchrun, Slurm multi-node |
 | `benchmark_projector.py` | Checks correctness and measures speed of one GPU against several GPUs. | `--devices` in one process, torchrun |
 | `benchmark_scaling.py` | Benchmarks the 512³ default volume on 1, 4, and 8 GPUs, reporting raw timings and numerical checks. | 1 GPU, torchrun |
@@ -69,6 +72,25 @@ scripts to see their own options.
 | `slurm/multi_node.sbatch` | Template: one torchrun launcher per node. | Slurm |
 
 Shared helpers are in `_common.py`: the Shepp-Logan phantom, the scan geometry, FDK, CGLS, SIRT and TV.
+
+## Analytical APIs and learning
+
+```bash
+python examples/analytical_reconstruction.py --size 64
+python examples/learnable_reconstruction.py --beam parallel --size 32
+python examples/learnable_reconstruction.py --beam fan --size 32
+python examples/learnable_reconstruction.py --beam cone --size 32
+python examples/helical_fdk.py --size 32 --views 720
+```
+
+Use `diffct.fbp`, `diffct.fdk` or `diffct.helical_fdk` for a complete pipeline.
+The low-level `*_weighted_backproject` functions now support sinogram gradients
+and higher derivatives through dedicated interpolation-transpose kernels.
+Filter and explicit projection/angular weights remain ordinary trainable
+PyTorch tensors. Geometry is fixed in the analytical APIs. They use one CUDA
+device and flat detectors; they do not share Projector's streamed execution.
+See the [guide](../docs/source/analytical_learning.rst) for stage replacement
+semantics and the helical approximation's coverage limits.
 
 ## README benchmark
 

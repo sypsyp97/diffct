@@ -17,6 +17,13 @@ from .projectors import (
 from .operators import Projector
 from .storage import TensorStore, NpyStore
 from .surfaces import ParameterizedSurface
+from .reconstruction import (
+    fbp,
+    fdk,
+    helical_fdk,
+    helical_view_weights,
+    helical_weighted_backproject,
+)
 
 from .geometry import (
     circular_trajectory_3d,
@@ -58,6 +65,11 @@ __all__ = [
     'TensorStore',
     'NpyStore',
     'ParameterizedSurface',
+    'fbp',
+    'fdk',
+    'helical_fdk',
+    'helical_view_weights',
+    'helical_weighted_backproject',
     'ParallelProjectorFunction',
     'ParallelBackprojectorFunction',
     'FanProjectorFunction',

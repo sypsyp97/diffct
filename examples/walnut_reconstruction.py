@@ -22,8 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from diffct import (Projector, angular_integration_weights, cone_cosine_weights,
-                    cone_weighted_backproject, ramp_filter_1d)
+from diffct import Projector, fdk
 from _common import cgls, save_slices, sirt, tv_reconstruction
 from data.preprocess_walnut import RAW_COLS, RAW_ROWS, detector_center_offset
 
@@ -64,19 +63,6 @@ def circular_geometry(angles, sid, sdd, offset_u, offset_v):
     v_axis = torch.stack((zero, zero, torch.ones_like(a)), dim=1)
     detector = detector + offset_u * u_axis + offset_v * v_axis
     return tuple(t.float() for t in (source, detector, u_axis, v_axis))
-
-
-def fdk(sinogram, angles, trajectory, du, dv, offset_u, offset_v, sdd, size, voxel, window):
-    """Circular-orbit FDK: cosine weights, ramp filter along u, angular weights, weighted backprojection."""
-    device = sinogram.device
-    n_u, n_v = sinogram.shape[1:]
-    weights = cone_cosine_weights(n_u, n_v, du, dv, sdd, detector_offset_u=offset_u,
-                                  detector_offset_v=offset_v, device=device).unsqueeze(0)
-    filtered = ramp_filter_1d(sinogram * weights, dim=1, sample_spacing=du, pad_factor=2, window=window)
-    angle_weights = angular_integration_weights(torch.as_tensor(angles, dtype=torch.float32, device=device))
-    filtered = (filtered * angle_weights.view(-1, 1, 1)).contiguous()
-    return cone_weighted_backproject(filtered, *[t.to(device) for t in trajectory], size, size, size,
-                                     du, dv, voxel_spacing=voxel).clamp_min(0)
 
 
 def shell_scale(volume):
@@ -121,7 +107,9 @@ def main():
           f"sdd {sdd:.2f} mm; volume {args.size}^3 at {voxel:.4f} mm")
 
     def run_fdk():
-        return fdk(measured, angles, trajectory, du, dv, offset_u, offset_v, sdd, args.size, voxel, args.window)
+        # The detector offsets are part of the per-view geometry, so fdk weights the actual rays.
+        return fdk(measured, trajectory, (args.size,) * 3, angles, detector_spacing=(du, dv),
+                   voxel_spacing=voxel, window=args.window, isocenter=(0, 0, 0)).clamp_min(0)
 
     run_fdk()  # compile kernels and warm up
     reconstruction, seconds = timed(run_fdk)

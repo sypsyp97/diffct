@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Public differentiable `fbp`, `fdk` and approximate slice-windowed `helical_fdk`
+  pipelines, with replaceable projection, angular and frequency-response tensors.
+  Low-precision measurements run in float32 and keep gradients in their own dtype.
+- Dedicated CUDA transposes of the analytical parallel/fan/cone gathers,
+  including sinogram gradients and higher derivatives with fixed geometry.
+- Circular short-scan checks for `short_scan=True`: orbit, detector-u handedness,
+  angular span, and constant detector distance and offset. Tolerances follow the
+  physical geometry scale and the original trajectory precision.
+- Public helical view weights and weighted gather. Slice centers and angular
+  quadrature use float64, so large angle or height offsets keep full-turn coverage.
+- Examples `learnable_reconstruction.py` and `helical_fdk.py`, and the
+  analytical learning guide.
+
+### Changed
+
+- `parallel_weighted_backproject`, `fan_weighted_backproject` and
+  `cone_weighted_backproject` support sinogram autograd. Geometry and isocenter
+  gradients raise an error.
+- The FDK baselines in `examples/_common.py` and `walnut_reconstruction.py` call `fdk`.
+
 ## [2.2.0] - 2026-10-11
 
 ### Added

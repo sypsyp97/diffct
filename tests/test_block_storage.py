@@ -4,6 +4,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from functools import lru_cache
 import math
+import os
 from pathlib import Path
 from unittest import mock
 
@@ -392,7 +393,12 @@ def test_into_npy_file_identity_checked_before_io_or_backend(operation, path_kin
         output_path.hardlink_to(source_path)
         assert source_path.resolve() != output_path.resolve()
     elif path_kind == "symbolic-link":
-        output_path.symlink_to(source_path)
+        try:
+            output_path.symlink_to(source_path)
+        except OSError as error:
+            if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                pytest.skip("Windows symlink privilege missing: enable Developer Mode or grant Create symbolic links")
+            raise
     else:
         np.save(output_path, values)
     alias = path_kind != "distinct-file"
