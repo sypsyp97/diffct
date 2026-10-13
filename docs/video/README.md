@@ -49,7 +49,8 @@ The API and archived measurements were checked against upstream main
 - `walnut_measured.npz` and `data2d.npz` are copied byte-for-byte from that commit.
   The former contains four measured cone-beam projections plus FDK, SIRT (200),
   CGLS (20), and TV (300, weight 0.3) axial/coronal slices at 256³. All reconstruction
-  panels use [0, 1]. `data2d.npz` contains a walnut slice and a SciPy rotate/sum
+  panels use [0, 1]; coronal panels display increasing z upwards. `data2d.npz`
+  contains a walnut slice and a SciPy rotate/sum
   **display simulation** of a parallel sinogram; the film labels it accordingly.
 - `calib_history.json` is the saved, separate 64³ calibration run. Its seven
   samples are plotted on a labelled log10 axis, with steps 0–149 (150 steps).
@@ -62,10 +63,10 @@ The API and archived measurements were checked against upstream main
 - `walnut_surface.npz` is newly derived from the **real measured dataset**, not
   generated imagery. Upstream 2.0.2's `walnut_reconstruction.py` reconstructed all
   240 views at 128³ using FDK with the Hann window on an RTX 4070 SUPER. The stored
-  field of view is 39 mm (0.3043 mm/voxel). Rendering flips the z array for an upright
-  presentation, smooths with separable [1, 2, 1]/4, then shades the 0.30 isosurface
+  field of view is 39 mm (0.3043 mm/voxel). Rendering preserves the reconstructed
+  z order, smooths with separable [1, 2, 1]/4, then shades the 0.30 isosurface
   of the normalized reconstruction. The 180 RGBA views are 512². The small scanner
-  support visible below the walnut is retained. This is a CT surface, not a photo.
+  support visible with the walnut is retained. This is a CT surface, not a photo.
   The acquisition rig uses the same orthographic camera basis and scale, with
   a per-pixel depth buffer shared by the specimen, ray segments, detector triangles, source marker and volume boundary. The depth map is saved in `walnut_surface.npz`; trajectory examples are schematics.
 

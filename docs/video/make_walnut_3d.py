@@ -20,7 +20,7 @@ def main():
     parser.add_argument('--resolution', type=int, default=512)
     args = parser.parse_args()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    raw = np.flip(np.load(args.volume), axis=0).copy().astype(np.float32)
+    raw = np.load(args.volume).astype(np.float32)
     volume = torch.from_numpy(raw)[None, None].to(device)
     # Mild smoothing removes voxel stair steps before extracting a 0.30 isosurface.
     weights = torch.tensor([1., 2., 1.], device=device) / 4
