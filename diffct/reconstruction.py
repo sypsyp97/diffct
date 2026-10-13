@@ -110,7 +110,7 @@ def _filter(sinogram, pitch, window, pad_factor, response):
     return filtered.narrow(1, left, n_u)
 
 
-def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_eps):
+def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_finfo):
     source, detector, u = geometry[:3]
     vector = detector - source
     normal = (torch.stack((-u[:, 1], u[:, 0]), dim=1) if sinogram.ndim == 2
@@ -120,16 +120,32 @@ def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_eps):
     distance = (vector * normal).sum(1).abs()
     offset = (vector * u).sum(1)
     # Preserve each input's quantization after _prepare promotes the geometry.
-    # Eight eps covers coordinate rounding, subtraction, projection and a
-    # comparison between two views; its physical scale also covers translation.
-    coordinate_scale = float(torch.linalg.vector_norm(
-        source.double().abs() + detector.double().abs(), dim=1).max())
+    # Rounding moves each source and detector coordinate by at most eps/2 of its
+    # magnitude, counted only along the checked direction; twice the two-view
+    # change is allowed. Eight eps of the in-plane ray length covers subtraction,
+    # projection and trigonometric orbit rounding, independent of translation.
+    ray_length = torch.linalg.vector_norm(vector, dim=1)
     arithmetic_eps = torch.finfo(source.dtype).eps
-    # V participates in the cone normal/distance, but never the U-offset dot.
-    distance_precision = max((arithmetic_eps, *geometry_eps))
-    offset_precision = max((arithmetic_eps, *geometry_eps[:3]))
-    distance_tolerance = max(1e-5, 8 * distance_precision * coordinate_scale)
-    offset_tolerance = max(1e-5, 8 * offset_precision * coordinate_scale)
+    source_eps, detector_eps = (max(arithmetic_eps, info.eps) for info in geometry_finfo[:2])
+    coordinate_rounding = 2 * (source_eps * source.abs() + detector_eps * detector.abs())
+    floor = 8 * max(source_eps, detector_eps) * torch.hypot(distance, offset)
+    # Rounding moves each axis component by at most eps/2 of its magnitude plus
+    # half the smallest subnormal. Only the part along the normal tilts it,
+    # within the detector plane: the distance moves by that tilt times the ray
+    # offset along the axis, plus a second-order term over the ray. Each axis
+    # budget is twice the largest two-view change; absolute coordinates and
+    # rounding along the axis itself cannot relax it.
+    axes = (u, geometry[3]) if sinogram.ndim == 3 else (u,)
+    distance_error = float(((coordinate_rounding * normal.abs()).sum(1) + floor).max())
+    for axis, info in zip(axes, geometry_finfo[2:]):
+        tilt = (info.eps * (axis.abs() + info.tiny) * normal.abs()).sum(1)
+        axis_offset = (vector * axis).sum(1).abs()
+        distance_error += 2 * float((tilt * (axis_offset + tilt * ray_length)).max())
+    u_rounding = geometry_finfo[2].eps * (u.abs() + geometry_finfo[2].tiny)
+    offset_error = float(((coordinate_rounding * u.abs() + 2 * vector.abs() * u_rounding).sum(1)
+                          + floor).max())
+    distance_tolerance = max(1e-5, distance_error)
+    offset_tolerance = max(1e-5, offset_error)
     if not (torch.allclose(distance, distance[:1].expand_as(distance), rtol=1e-4, atol=distance_tolerance)
             and torch.allclose(offset, offset[:1].expand_as(offset), rtol=1e-4, atol=offset_tolerance)):
         raise ValueError("Parker short-scan weighting requires constant detector distance and offset")
@@ -177,7 +193,7 @@ def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_eps):
 
 def _pipeline(sinogram, geometry, angles, beam, pitch, window, pad_factor,
               projection_weights, angular_weights, filter_response, short_scan, isocenter,
-              geometry_eps):
+              geometry_finfo):
     if short_scan and beam == "parallel":
         raise ValueError("Parker short-scan weights apply to fan or cone beams, not parallel")
     if projection_weights is None:
@@ -185,7 +201,7 @@ def _pipeline(sinogram, geometry, angles, beam, pitch, window, pad_factor,
     else:
         weighted = sinogram * _weights(projection_weights, sinogram, "projection_weights")
     if short_scan:
-        weighted = weighted * _parker(angles, sinogram, geometry, pitch, isocenter, geometry_eps)
+        weighted = weighted * _parker(angles, sinogram, geometry, pitch, isocenter, geometry_finfo)
     filtered = _filter(weighted, pitch[0], window, pad_factor, filter_response)
     relative_angles = angles.double() - angles[0].double()
     angular = (angular_integration_weights(relative_angles) if angular_weights is None
@@ -218,7 +234,7 @@ def fbp(sinogram, trajectory, volume_shape, angles, *, beam="parallel",
     angles = _angles(angles, len(geometry[0]), sinogram.device)
     filtered = _pipeline(sinogram, geometry, angles, beam, pitch, window, pad_factor,
                          projection_weights, angular_weights, filter_response, short_scan, isocenter,
-                         tuple(torch.finfo(component.dtype).eps for component in trajectory))
+                         tuple(torch.finfo(component.dtype) for component in trajectory))
     if beam == "parallel":
         return parallel_weighted_backproject(filtered, *geometry, pitch[0], *shape, spacing)
     return fan_weighted_backproject(filtered, *geometry, pitch[0], *shape, spacing, isocenter=isocenter)
@@ -242,7 +258,7 @@ def fdk(sinogram, trajectory, volume_shape, angles, *, detector_spacing=1.0,
     angles = _angles(angles, len(geometry[0]), sinogram.device)
     filtered = _pipeline(sinogram, geometry, angles, "cone", pitch, window, pad_factor,
                          projection_weights, angular_weights, filter_response, short_scan, isocenter,
-                         tuple(torch.finfo(component.dtype).eps for component in trajectory))
+                         tuple(torch.finfo(component.dtype) for component in trajectory))
     return cone_weighted_backproject(filtered, *geometry, *shape, *pitch, spacing, isocenter=isocenter)
 
 

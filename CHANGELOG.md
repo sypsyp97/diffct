@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Parker short-scan distance and detector-u offset checks bound position and
+  detector-axis rounding per component along the checked direction, not by the
+  absolute coordinate size.
+  A bfloat16 or float16 detector-v axis made a 50-unit change in detector distance
+  pass, and the Parker weights then used the first view's distance.
+
 ## [2.2.1] - 2026-10-13
 
 ### Added

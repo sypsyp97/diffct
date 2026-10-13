@@ -870,3 +870,179 @@ def test_mixed_dtype_parker_retains_changing_distance_rejection(sinogram_dtype):
     sinogram = _random(acquisition["sino_shape"], 239).to(sinogram_dtype)
     with pytest.raises(ValueError, match=r"(?i)(constant.*distance|distance.*constant)"):
         _reconstruct("cone", sinogram, acquisition, short_scan=True)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("v_dtype", (torch.float32, torch.bfloat16, torch.float16))
+def test_mixed_dtype_parker_rejects_changing_distance_with_identical_v_values(
+        sinogram_dtype, v_dtype):
+    acquisition = _scaled_native_short_scan("cone", 100.0)
+    source, detector, u, v = acquisition["trajectory"]
+    mixed_v = v.to(v_dtype)
+    torch.testing.assert_close(mixed_v.float(), v, rtol=0, atol=0)
+    normal = F.normalize(torch.linalg.cross(u, v, dim=1), dim=1)
+    normal = normal * ((detector - source) * normal).sum(1).sign()[:, None]
+    detector = detector + torch.linspace(0.0, 50.0, len(source))[:, None] * normal
+    acquisition["trajectory"] = (source, detector, u, mixed_v)
+    distances = ((detector.double() - source.double()) * normal.double()).sum(1)
+    torch.testing.assert_close(distances, torch.linspace(1000.0, 1050.0, len(source)).double(),
+                               rtol=0, atol=1e-3)
+    assert 49.99 < float(distances.max() - distances.min()) < 50.01
+    fan_angle = math.atan((acquisition["sino_shape"][1] - 1) * acquisition["pitch"][0] / 2000)
+    assert float(acquisition["angles"][-1] - acquisition["angles"][0]) > math.pi + 2 * fan_angle
+    sinogram = _random(acquisition["sino_shape"], 240).to(sinogram_dtype)
+    with pytest.raises(ValueError, match=r"(?i)(constant.*distance|distance.*constant)"):
+        _reconstruct("cone", sinogram, acquisition, short_scan=True)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("v_dtype", (torch.bfloat16, torch.float16))
+def test_mixed_dtype_parker_fixed_v_offset_matches_float32_output_and_gradient(
+        sinogram_dtype, v_dtype):
+    acquisition = _scaled_native_short_scan("cone", 100.0)
+    source, detector, u, v = acquisition["trajectory"]
+    mixed_v = v.to(v_dtype)
+    torch.testing.assert_close(mixed_v.float(), v, rtol=0, atol=0)
+    detector = detector + 25.0 * v
+    acquisition["trajectory"] = (source, detector, u, v)
+    mixed = {**acquisition, "trajectory": (source, detector, u, mixed_v)}
+    normal = F.normalize(torch.linalg.cross(u, v, dim=1), dim=1)
+    distances = ((detector.double() - source.double()) * normal.double()).sum(1).abs()
+    torch.testing.assert_close(distances, torch.full_like(distances, 1000.0), rtol=0, atol=1e-3)
+    torch.testing.assert_close(((detector - source) * v).sum(1),
+                               torch.full((len(source),), 25.0), rtol=0, atol=0)
+    reference_sinogram = (_random(acquisition["sino_shape"], 241).to(sinogram_dtype)
+                          * 100).requires_grad_()
+    sinogram = reference_sinogram.detach().clone().requires_grad_()
+    expected = _reconstruct("cone", reference_sinogram, acquisition, short_scan=True)
+    actual = _reconstruct("cone", sinogram, mixed, short_scan=True)
+    assert actual.dtype == torch.float32 and actual.device == sinogram.device
+    assert torch.isfinite(actual).all() and actual.abs().max() > 0
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+    cotangent = _random(acquisition["shape"], 242).float() * 100
+    actual_gradient, = torch.autograd.grad(actual, sinogram, cotangent)
+    expected_gradient, = torch.autograd.grad(expected, reference_sinogram, cotangent)
+    assert actual_gradient.dtype == sinogram_dtype
+    assert torch.isfinite(actual_gradient).all() and actual_gradient.abs().max() > 0
+    torch.testing.assert_close(actual_gradient, expected_gradient, rtol=3e-5, atol=3e-6)
+
+
+def _exact_axis_aligned_short_scan(*, v_offset=0.0, z_shift=0.0,
+                                   distance_change=0.0, offset_change=0.0,
+                                   u_dtype=torch.float32, v_dtype=torch.float32):
+    # Cardinal views avoid trigonometric rounding in every trajectory component.
+    u = torch.tensor([[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]], dtype=torch.float64)
+    v = torch.tensor([0, 0, 1], dtype=torch.float64).expand(4, -1)
+    normal = torch.linalg.cross(u, v, dim=1)
+    center = torch.tensor([0, 0, z_shift], dtype=torch.float64)
+    distances = torch.tensor([1000, 1000, 1000 + distance_change, 1000 + distance_change],
+                             dtype=torch.float64)
+    offsets = torch.tensor([0, 0, offset_change, offset_change], dtype=torch.float64)
+    source = center - 500 * normal
+    detector = source + distances[:, None] * normal + offsets[:, None] * u + v_offset * v
+    exact = (source, detector, u, v)
+    trajectory = tuple(component.to(dtype) for component, dtype in zip(
+        exact, (torch.float32, torch.float32, u_dtype, v_dtype),
+    ))
+    for stored, expected in zip(trajectory, exact):
+        torch.testing.assert_close(stored.double(), expected, rtol=0, atol=0)
+    torch.testing.assert_close(center.float().double(), center, rtol=0, atol=0)
+    stored_source, stored_detector, stored_u, stored_v = (t.double() for t in trajectory)
+    ray = stored_detector - stored_source
+    torch.testing.assert_close((ray * torch.linalg.cross(stored_u, stored_v, dim=1)).sum(1),
+                               distances, rtol=0, atol=0)
+    torch.testing.assert_close((ray * stored_u).sum(1), offsets, rtol=0, atol=0)
+    torch.testing.assert_close((ray * stored_v).sum(1), torch.full_like(distances, v_offset),
+                               rtol=0, atol=0)
+    angles = torch.arange(4, dtype=torch.float64) * (math.pi / 2)
+    assert torch.all(angles[1:] > angles[:-1])
+    torch.testing.assert_close(stored_u[:, 0], angles.cos(), rtol=0, atol=1e-15)
+    torch.testing.assert_close(stored_u[:, 1], angles.sin(), rtol=0, atol=1e-15)
+    fan_angle = math.atan((200 + float(offsets.abs().max())) / float(distances.min()))
+    assert float(angles[-1] - angles[0]) > math.pi + 2 * fan_angle
+    return {
+        "trajectory": trajectory, "angles": angles, "shape": (3, 3, 3),
+        "sino_shape": (4, 11, 7), "pitch": (40.0, 1000.0),
+        "voxel_spacing": 1.0, "isocenter": center.float(),
+    }
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("v_dtype", (torch.bfloat16, torch.float16))
+def test_parker_large_v_offset_rejects_distance_change_with_exact_low_precision_v(
+        sinogram_dtype, v_dtype):
+    acquisition = _exact_axis_aligned_short_scan(v_offset=1000, distance_change=50, v_dtype=v_dtype)
+    # Twice the axis rounding budget is still far below the distance change.
+    assert 50 > 2 * (torch.finfo(v_dtype).eps / 2) * math.hypot(1050, 1000)
+    sinogram = _random(acquisition["sino_shape"], 243).to(sinogram_dtype)
+    with pytest.raises(ValueError, match=r"(?i)(constant.*distance|distance.*constant)"):
+        _reconstruct("cone", sinogram, acquisition, short_scan=True)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("v_dtype", (torch.bfloat16, torch.float16))
+def test_parker_far_z_translation_rejects_distance_change_with_exact_low_precision_v(
+        sinogram_dtype, v_dtype):
+    acquisition = _exact_axis_aligned_short_scan(z_shift=60000, distance_change=50, v_dtype=v_dtype)
+    assert 50 > 2 * (torch.finfo(v_dtype).eps / 2) * 1050
+    sinogram = _random(acquisition["sino_shape"], 244).to(sinogram_dtype)
+    with pytest.raises(ValueError, match=r"(?i)(constant.*distance|distance.*constant)"):
+        _reconstruct("cone", sinogram, acquisition, short_scan=True)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("u_dtype", (torch.bfloat16, torch.float16))
+def test_parker_far_z_translation_rejects_offset_change_with_exact_low_precision_u(
+        sinogram_dtype, u_dtype):
+    acquisition = _exact_axis_aligned_short_scan(z_shift=60000, offset_change=50, u_dtype=u_dtype)
+    assert 50 > 2 * (torch.finfo(u_dtype).eps / 2) * math.hypot(1000, 50)
+    sinogram = _random(acquisition["sino_shape"], 245).to(sinogram_dtype)
+    with pytest.raises(ValueError, match=r"(?i)(constant.*offset|offset.*constant)"):
+        _reconstruct("cone", sinogram, acquisition, short_scan=True)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize(("v_offset", "z_shift"), ((1000, 0), (0, 60000), (1000, 60000)))
+def test_parker_exact_bfloat16_v_large_offsets_match_float32_geometry(
+        sinogram_dtype, v_offset, z_shift):
+    acquisition = _exact_axis_aligned_short_scan(v_offset=v_offset, z_shift=z_shift,
+                                                v_dtype=torch.bfloat16)
+    reference = {**acquisition, "trajectory": tuple(t.float() for t in acquisition["trajectory"])}
+    sinogram = _random(acquisition["sino_shape"], 246).to(sinogram_dtype)
+    expected = _reconstruct("cone", sinogram, reference, short_scan=True)
+    actual = _reconstruct("cone", sinogram, acquisition, short_scan=True)
+    assert torch.isfinite(actual).all()
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+
+
+@pytest.mark.cuda
+@CUDA
+@pytest.mark.parametrize("sinogram_dtype", (torch.float32, torch.float64))
+@pytest.mark.parametrize("v_dtype", (torch.float32, torch.bfloat16))
+def test_parker_perpendicular_v_offset_does_not_widen_distance_check(sinogram_dtype, v_dtype):
+    # The helper verifies exact representability before reconstruction.
+    acquisition = _exact_axis_aligned_short_scan(v_offset=5000000, distance_change=4,
+                                                v_dtype=v_dtype)
+    sinogram = _random(acquisition["sino_shape"], 247).to(sinogram_dtype)
+    with pytest.raises(ValueError, match=r"(?i)(constant.*distance|distance.*constant)"):
+        _reconstruct("cone", sinogram, acquisition, short_scan=True)
+
+    valid = _exact_axis_aligned_short_scan(v_offset=5000000, v_dtype=torch.bfloat16)
+    source, detector, u, v = valid["trajectory"]
+    reference = {**valid, "trajectory": (source, detector, u, v.float())}
+    expected = _reconstruct("cone", sinogram, reference, short_scan=True)
+    actual = _reconstruct("cone", sinogram, valid, short_scan=True)
+    assert torch.isfinite(expected).all() and torch.isfinite(actual).all()
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
