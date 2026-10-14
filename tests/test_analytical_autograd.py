@@ -118,7 +118,7 @@ def _reference(beam, sinogram, case):
         safe_distance = torch.where(valid_distance, distance, torch.ones_like(distance))
         detector_points = source[:, None, :] + relative * (sdd[:, None] / safe_distance)[:, :, None]
         weight = torch.where(valid_distance, (sid[:, None] / safe_distance).square(), 0)
-        scale = sdd.mean() / (2 * math.pi * sid.mean())
+        scale = (sdd / (2 * math.pi * sid))[:, None]
 
     relative = detector_points - detector[:, None, :]
     fu = (relative * u[:, None, :]).sum(dim=2) / case["pitch"][0]
@@ -140,7 +140,7 @@ def _reference(beam, sinogram, case):
                   + sinogram[views, iu + 1, iv] * tu * (1 - tv)
                   + sinogram[views, iu, iv + 1] * (1 - tu) * tv
                   + sinogram[views, iu + 1, iv + 1] * tu * tv)
-    return (torch.where(valid, weight * sample, 0).sum(dim=0) * scale).reshape(case["output_shape"])
+    return (torch.where(valid, weight * sample, 0) * scale).sum(dim=0).reshape(case["output_shape"])
 
 
 def _random(shape, seed, *, device="cuda", dtype=torch.float64, noncontiguous=False):
