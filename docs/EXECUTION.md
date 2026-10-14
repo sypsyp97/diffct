@@ -118,6 +118,8 @@ process-group size. Each space rank owns a balanced first-axis slab and each
 view rank owns a balanced view shard. Both retain global physical coordinates.
 Forward ray contributions sum across space ranks; adjoint/analytical volume
 tiles sum across view ranks. Empty and uneven shards participate normally.
+Distributed PyTorch-backend projectors require the same `volume_chunk_shape`,
+`view_chunk_size` and `detector_chunk_shape` arguments on every rank.
 Neither reduction gathers a whole volume.
 
 | Output/loss | views | space | hybrid |
