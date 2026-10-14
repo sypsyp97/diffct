@@ -69,8 +69,9 @@ def _learned_weights_worker(rank, rendezvous, directory):
 @GLOO
 def test_four_rank_learned_analytical_weight_and_data_gradients_survive_uneven_and_empty_ownership(tmp_path):
     try:
+        # The shared parent deadline includes Windows spawning and child-process exit.
         _run_four(_learned_weights_worker,
-                  ((tmp_path / "weights-rendezvous").resolve().as_uri(), str(tmp_path)), timeout=40)
+                  ((tmp_path / "weights-rendezvous").resolve().as_uri(), str(tmp_path)))
     except (mp.ProcessExitedException, mp.ProcessRaisedException) as error:
         states = [json.loads(path.read_text()) for path in sorted(tmp_path.glob("weights-*.json"))]
         progress = [(len(state["completed"]), state["current"]) for state in states]
