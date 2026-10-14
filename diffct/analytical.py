@@ -95,8 +95,9 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     ``redundant_full_scan=True`` for automatic fan/cone scan classification.
     Setting it to ``False`` explicitly disables the full-turn ``1/2`` factor.
     Parker and angular quadrature share the same periodic-scan decision.
+    FP16 and BF16 angles are promoted to FP32; FP64 angles retain their precision.
     """
-    if not torch.is_floating_point(angles):
+    if angles.dtype not in (torch.float32, torch.float64):
         angles = angles.to(dtype=torch.float32)
     angles = angles.contiguous()
     n = angles.shape[0]
@@ -199,8 +200,9 @@ def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset
     Only meaningful for circular (fan-shaped) trajectories — when using
     non-circular trajectories you typically want either a constant weight
     (full-coverage) or a custom redundancy scheme.
+    FP16 and BF16 angles are promoted to FP32; FP64 angles retain their precision.
     """
-    if not torch.is_floating_point(angles):
+    if angles.dtype not in (torch.float32, torch.float64):
         angles = angles.to(dtype=torch.float32)
     angles = angles.contiguous()
     n_ang = angles.shape[0]
