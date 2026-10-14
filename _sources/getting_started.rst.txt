@@ -4,9 +4,10 @@ Getting Started
 Install
 -------
 
-diffct needs an NVIDIA CUDA GPU for projection and backprojection. Geometry
-construction runs on CPU. Install a CUDA-enabled PyTorch build that matches your
-driver first, then:
+Native execution uses an NVIDIA CUDA GPU. The portable PyTorch backend also
+supports CPU and PyTorch ROCm devices; see :doc:`execution` for precision and
+hardware-validation limits. For native execution, install a CUDA-enabled
+PyTorch build that matches your driver first, then:
 
 .. code-block:: bash
 
@@ -16,8 +17,10 @@ driver first, then:
 
 Use ``diffct[cu13]`` for CUDA 13. The extra installs the CUDA compiler libraries
 that Numba CUDA needs. A plain ``pip install diffct`` does not install them; use it
-only if a CUDA Toolkit is already installed on the system. The NVVM and NVJitLink packages must match the
-CUDA libraries that PyTorch loads.
+for the PyTorch backend, or if a CUDA Toolkit is already installed for native
+execution. Importing diffct and using the PyTorch backend require no CUDA
+runtime; Numba CUDA initializes on native use. The NVVM and NVJitLink packages
+must match the CUDA libraries that PyTorch loads.
 
 Minimal forward / adjoint / gradient example
 --------------------------------------------
@@ -42,10 +45,11 @@ Minimal forward / adjoint / gradient example
 
 ``Projector`` defaults to ``beam="cone"``. Set ``beam="parallel"`` or
 ``beam="fan"`` for 2D data. Inputs must be floating-point CPU or CUDA tensors with
-exactly the configured volume or sinogram shape, without batch or channel
-dimensions. Outputs are float32 on the input device. CPU data automatically
-streams through CUDA tiles; see :doc:`chunking`. Trajectory tensors can stay
-on CPU.
+the configured volume or sinogram shape in their trailing dimensions. Leading
+batch/channel dimensions are preserved. Outputs use the selected precision on
+the input device. Native CPU data streams through CUDA tiles; the PyTorch
+backend computes on its input device. See :doc:`execution` and :doc:`chunking`.
+Trajectory tensors can stay on CPU.
 
 Choose a workflow
 -----------------

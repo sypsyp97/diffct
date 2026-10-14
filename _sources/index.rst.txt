@@ -19,7 +19,8 @@ Install
 
 Use ``diffct[cu13]`` for CUDA 13. The extra installs the CUDA compiler libraries
 that Numba CUDA needs. A plain ``pip install diffct`` does not install them; use it
-only if a CUDA Toolkit is already installed on the system.
+for the PyTorch backend, or when a CUDA Toolkit is already present for native
+execution. Backend, precision and solver contracts are in :doc:`execution`.
 
 Start here
 ----------
@@ -28,6 +29,7 @@ Start here
    :maxdepth: 2
 
    getting_started
+   execution
    trajectories
    chunking
    multi_gpu

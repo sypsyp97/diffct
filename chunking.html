@@ -193,6 +193,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
@@ -399,7 +400,8 @@ writes do not materialize a complete mapped array.</p>
 <p><code class="docutils literal notranslate"><span class="pre">project_into</span></code> and <code class="docutils literal notranslate"><span class="pre">backproject_into</span></code> return the supplied output. They
 accept tensors, these stores, or structural backends with <code class="docutils literal notranslate"><span class="pre">shape</span></code>, <code class="docutils literal notranslate"><span class="pre">dtype</span></code>,
 <code class="docutils literal notranslate"><span class="pre">read(slices)</span></code>, <code class="docutils literal notranslate"><span class="pre">write(slices,value,accumulate=False)</span></code> and <code class="docutils literal notranslate"><span class="pre">flush()</span></code>. Outputs must be
-float32 and writable. Each completed output region overwrites its prior
+match <code class="docutils literal notranslate"><span class="pre">A.dtype</span></code> and be writable. Native fast output is float32; explicit
+<code class="docutils literal notranslate"><span class="pre">precision=&quot;float64&quot;</span></code> output is float64. Each completed output region overwrites its prior
 contents; no full result is allocated internally. These numerical methods do
 not build an autograd graph. Use tensor <code class="docutils literal notranslate"><span class="pre">project</span></code>/<code class="docutils literal notranslate"><span class="pre">backproject</span></code> for
 differentiation.</p>

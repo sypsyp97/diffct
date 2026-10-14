@@ -192,6 +192,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../getting_started.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../execution.html">Precision, training and reconstruction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../trajectories.html">Trajectories and Geometry</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../multi_gpu.html">Multiple GPUs and Nodes</a></li>
@@ -249,7 +250,6 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">numba</span><span class="w"> </span><span class="kn">import</span> <span class="n">cuda</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.chunking</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span><span class="n">_ChunkPlan</span><span class="p">,</span> <span class="n">_host_geometry_bytes</span><span class="p">,</span> <span class="n">_largest_buffer_bytes</span><span class="p">,</span> <span class="n">_memory_budget</span><span class="p">,</span>
                        <span class="n">_pipeline_buffers</span><span class="p">,</span> <span class="n">_pipeline_bytes</span><span class="p">,</span> <span class="n">_pixel_tiles</span><span class="p">,</span> <span class="n">_reservation_budget</span><span class="p">,</span>
@@ -258,6 +258,8 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.storage</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorStore</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.streaming</span><span class="w"> </span><span class="kn">import</span> <span class="n">_validate_stores</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.surfaces</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParameterizedSurface</span><span class="p">,</span> <span class="n">_GeometrySpec</span><span class="p">,</span> <span class="n">_sample_geometry</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.backends</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReferenceProjector</span><span class="p">,</span> <span class="n">select_backend</span><span class="p">,</span> <span class="n">voxel_spacing_tuple</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.distribution</span><span class="w"> </span><span class="kn">import</span> <span class="n">Partition</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.projectors</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">_backproject_into</span><span class="p">,</span>
     <span class="n">_geometry_vjp</span><span class="p">,</span>
@@ -518,7 +520,7 @@
 <div class="viewcode-block" id="Projector">
 <a class="viewcode-back" href="../../api.html#diffct.Projector">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">Projector</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Project CPU or CUDA volumes along parallel, fan, or cone trajectories.</span>
+<span class="w">    </span><span class="sd">"""Project floating tensors along parallel, fan, or cone trajectories.</span>
 
 <span class="sd">    A parallel trajectory is ``(ray_dir, det_origin, det_u)`` and a fan</span>
 <span class="sd">    trajectory is ``(src_pos, det_center, det_u)``; each component has shape</span>
@@ -551,19 +553,34 @@
 
 <span class="sd">    Volumes use ``(H, W)`` for parallel and fan beams and ``(D, H, W)`` for</span>
 <span class="sd">    cone beams. Sinograms use ``(views, detectors)`` or ``(views, U, V)``.</span>
-<span class="sd">    Results are float32 and returned to the input tensor's device. CPU inputs</span>
-<span class="sd">    stream spatial tiles and view batches through CUDA. CUDA inputs retain the</span>
+<span class="sd">    Any leading batch/channel dimensions are preserved. ``voxel_spacing`` is</span>
+<span class="sd">    a positive scalar or a tuple in volume tensor order: ``(y, x)`` or</span>
+<span class="sd">    ``(z, y, x)``. Physical coordinates retain the centred global volume frame.</span>
+<span class="sd">    Results stay on the input device. ``precision="fast"`` and ``"float32"``</span>
+<span class="sd">    return float32; ``"float64"`` computes geometry, ray lengths and</span>
+<span class="sd">    accumulations in float64. The selected ``backend``, ``precision`` and</span>
+<span class="sd">    ``dtype`` are public metadata.</span>
+
+<span class="sd">    ``backend="auto"`` selects the native ``"numba"`` backend for NVIDIA</span>
+<span class="sd">    CUDA, fast precision and scalar voxel spacing, except for hybrid</span>
+<span class="sd">    partitions. Other configurations use portable ``"torch"`` execution on</span>
+<span class="sd">    the input's CPU or supported PyTorch accelerator. Explicit ``"numba"``</span>
+<span class="sd">    requires a compatible native configuration. Data ``torch.func``</span>
+<span class="sd">    transforms use portable operations while preserving selected metadata.</span>
+
+<span class="sd">    Native CPU inputs stream spatial tiles and view batches through CUDA.</span>
+<span class="sd">    Native CUDA inputs retain the</span>
 <span class="sd">    full-volume path when its additional working set fits every device;</span>
 <span class="sd">    otherwise they stream too. ``volume_chunk_shape`` sets explicit spatial</span>
 <span class="sd">    limits in tensor order; ``view_chunk_size`` sets an explicit view limit.</span>
-<span class="sd">    Either forces streaming. With no overrides, sizing uses live free memory,</span>
+<span class="sd">    Either forces native streaming. Native automatic sizing uses live free memory,</span>
 <span class="sd">    reusable allocator cache and the observable per-process fraction ceiling,</span>
 <span class="sd">    retaining 25% headroom. Automatic sizing compares fitting first-axis slabs</span>
 <span class="sd">    and Cartesian blocks; view batches are at most 32 and shrink if needed. Older</span>
 <span class="sd">    PyTorch without a public fraction getter cannot account for that ceiling.</span>
 <span class="sd">    Concurrent external allocations can still cause an allocation error.</span>
 
-<span class="sd">    ``schedule="auto"`` selects spatial, view or bounded two-tile window order</span>
+<span class="sd">    For the native backend, ``schedule="auto"`` selects spatial, view or bounded two-tile window order</span>
 <span class="sd">    using estimated full-workload time from short native pilots, with estimated</span>
 <span class="sd">    copy bytes breaking ties. The same orders can be requested with</span>
 <span class="sd">    ``"spatial"``, ``"views"`` or ``"window"``;</span>
@@ -573,22 +590,28 @@
 <span class="sd">    independently of the resident GPU tile size. ``last_execution_stats``</span>
 <span class="sd">    reports actual copy payloads, native launches/layouts, planned capacity</span>
 <span class="sd">    and pilot metadata; it is None before execution, after errors, and on the</span>
-<span class="sd">    uninstrumented full-CUDA path. Reports and selection caches retain metadata.</span>
+<span class="sd">    uninstrumented native full-CUDA path. Portable execution reports actual</span>
+<span class="sd">    ray/tile pairs, store I/O, transfers and collective payloads, with</span>
+<span class="sd">    conservative automatic chunks targeting 8 MiB work arrays. Explicit</span>
+<span class="sd">    chunk hints take priority. Reports and selection caches retain metadata.</span>
 
 <span class="sd">    Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are</span>
 <span class="sd">    bounded by the chosen tile and view batch. Caller-owned CUDA data/results</span>
 <span class="sd">    and CUDA work inside a supplied callback are outside this memory bound.</span>
-<span class="sd">    Local devices launch their view batches concurrently, but each device</span>
+<span class="sd">    Native local devices launch their view batches concurrently, but each device</span>
 <span class="sd">    receives every owned volume tile, so host transfers limit the speedup.</span>
 <span class="sd">    Local devices split views in list order. ``partition="views"`` returns</span>
 <span class="sd">    rank-local projections and replicated backprojections. ``partition="space"``</span>
 <span class="sd">    assigns balanced first-axis slabs and returns replicated projections and</span>
-<span class="sd">    owned backprojections. ``global_volume_shape`` is the constructor shape;</span>
+<span class="sd">    owned backprojections. ``partition="hybrid"`` combines both with</span>
+<span class="sd">    ``partition_grid=(view_ranks, space_ranks)`` and parent-group rank</span>
+<span class="sd">    ``view_rank * space_world_size + space_rank``. ``global_volume_shape`` is the constructor shape;</span>
 <span class="sd">    ``volume_slice`` identifies the owned global slab, and ``volume_shape``</span>
 <span class="sd">    and ``local_volume_shape`` give its required tensor shape. Empty slabs are</span>
 <span class="sd">    valid. Physical coordinates retain the global volume frame.</span>
 <span class="sd">    For replicated outputs, count the loss once globally or divide each</span>
-<span class="sd">    rank's loss by ``world_size``. Geometry gradients already SUM over ranks;</span>
+<span class="sd">    rank's projection loss by ``space_world_size`` or backprojection loss by</span>
+<span class="sd">    ``view_world_size``. Geometry gradients already SUM over all parent ranks;</span>
 <span class="sd">    do not apply an additional DDP reduction to them. Space ranks participate</span>
 <span class="sd">    in backward even when their local input and geometry require no gradients.</span>
 <span class="sd">    """</span>
@@ -597,10 +620,15 @@
                  <span class="n">detector_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">devices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                  <span class="n">distributed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">process_group</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">detector_surface</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                  <span class="n">volume_chunk_shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">view_chunk_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">detector_chunk_shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-                 <span class="n">schedule</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span> <span class="n">partition</span><span class="o">=</span><span class="s2">"views"</span><span class="p">):</span>
+                 <span class="n">schedule</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span> <span class="n">partition</span><span class="o">=</span><span class="s2">"views"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span> <span class="n">precision</span><span class="o">=</span><span class="s2">"fast"</span><span class="p">,</span>
+                 <span class="n">partition_grid</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">backend</span> <span class="o">=</span> <span class="n">select_backend</span><span class="p">(</span><span class="n">backend</span><span class="p">,</span> <span class="n">precision</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">,</span> <span class="n">partition</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">precision</span> <span class="o">=</span> <span class="n">precision</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dtype</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span> <span class="k">if</span> <span class="n">precision</span> <span class="o">==</span> <span class="s2">"float64"</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">partition</span> <span class="o">=</span> <span class="n">partition</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">partition</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="n">partition</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"views"</span><span class="p">,</span> <span class="s2">"space"</span><span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"partition must be 'views' or 'space'"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">partition</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="n">partition</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"views"</span><span class="p">,</span> <span class="s2">"space"</span><span class="p">,</span> <span class="s2">"hybrid"</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"partition must be 'views', 'space', or 'hybrid'"</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">schedule</span> <span class="o">=</span> <span class="n">schedule</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">last_execution_stats</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">schedule</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="n">schedule</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"auto"</span><span class="p">,</span> <span class="s2">"spatial"</span><span class="p">,</span> <span class="s2">"views"</span><span class="p">,</span> <span class="s2">"window"</span><span class="p">):</span>
@@ -635,7 +663,8 @@
         <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">detector_spacing</span> <span class="o">=</span> <span class="n">_detector_spacing</span><span class="p">(</span><span class="n">detector_spacing</span><span class="p">,</span> <span class="n">beam</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">voxel_spacing</span> <span class="o">=</span> <span class="n">_positive_float</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">,</span> <span class="s2">"voxel_spacing"</span><span class="p">)</span>
+        <span class="n">spacing</span> <span class="o">=</span> <span class="n">voxel_spacing_tuple</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">,</span> <span class="n">rank</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">voxel_spacing</span> <span class="o">=</span> <span class="n">spacing</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">voxel_spacing</span><span class="p">,</span> <span class="p">(</span><span class="nb">tuple</span><span class="p">,</span> <span class="nb">list</span><span class="p">))</span> <span class="k">else</span> <span class="n">spacing</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
         <span class="k">if</span> <span class="n">detector_surface</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">callable</span><span class="p">(</span><span class="n">detector_surface</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">"detector_surface must be callable or None"</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">detector_surface</span> <span class="o">=</span> <span class="n">detector_surface</span>
@@ -647,7 +676,12 @@
             <span class="nb">tuple</span><span class="p">(</span><span class="n">trajectory</span><span class="p">)</span> <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">requires_grad</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">trajectory</span><span class="p">)</span> <span class="k">else</span> <span class="p">()</span>
         <span class="p">)</span>
         <span class="n">surface_trainable</span> <span class="o">=</span> <span class="kc">False</span>
-        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">detector_surface</span><span class="p">,</span> <span class="n">ParameterizedSurface</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">backend</span> <span class="o">==</span> <span class="s2">"torch"</span><span class="p">:</span>
+            <span class="n">surface_trainable</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="nb">isinstance</span><span class="p">(</span><span class="n">detector_surface</span><span class="p">,</span> <span class="n">ParameterizedSurface</span><span class="p">)</span>
+                <span class="ow">and</span> <span class="nb">any</span><span class="p">(</span><span class="n">parameter</span><span class="o">.</span><span class="n">requires_grad</span> <span class="k">for</span> <span class="n">parameter</span> <span class="ow">in</span> <span class="n">detector_surface</span><span class="o">.</span><span class="n">parameters</span><span class="p">)</span>
+            <span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">detector_surface</span><span class="p">,</span> <span class="n">ParameterizedSurface</span><span class="p">):</span>
             <span class="n">frames</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">component</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span> <span class="k">for</span> <span class="n">component</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_trajectory</span><span class="p">)</span>
             <span class="n">parameters</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">parameter</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span> <span class="k">for</span> <span class="n">parameter</span> <span class="ow">in</span> <span class="n">detector_surface</span><span class="o">.</span><span class="n">parameters</span><span class="p">)</span>
             <span class="n">spec</span> <span class="o">=</span> <span class="n">_GeometrySpec</span><span class="p">(</span><span class="s2">"sampled"</span><span class="p">,</span> <span class="n">detector_surface</span><span class="o">.</span><span class="n">sampler</span><span class="p">)</span>
@@ -664,13 +698,16 @@
                 <span class="p">)</span>
                 <span class="n">surface_trainable</span> <span class="o">=</span> <span class="n">surface_offsets</span><span class="o">.</span><span class="n">requires_grad</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_geometry_trainable</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_learnable</span><span class="p">)</span> <span class="ow">or</span> <span class="n">surface_trainable</span>
-        <span class="k">if</span> <span class="n">beam</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"fan"</span><span class="p">,</span> <span class="s2">"cone"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">detector_surface</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="c1"># The kernels set up each ray in float32 from the endpoint nearer the</span>
-            <span class="c1"># volume centre, which is the origin.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span> <span class="ow">and</span> <span class="n">beam</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"fan"</span><span class="p">,</span> <span class="s2">"cone"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">detector_surface</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Both FP32 backends set up each segment from the endpoint nearer</span>
+            <span class="c1"># the volume centre. Measure per-axis distances in voxel units.</span>
             <span class="n">distances</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span>
-                <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">vector_norm</span><span class="p">(</span><span class="n">component</span><span class="o">.</span><span class="n">double</span><span class="p">(),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">vector_norm</span><span class="p">(</span>
+                    <span class="n">component</span><span class="o">.</span><span class="n">double</span><span class="p">()</span> <span class="o">/</span> <span class="n">component</span><span class="o">.</span><span class="n">new_tensor</span><span class="p">(</span><span class="n">spacing</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+                    <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+                <span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
                 <span class="k">for</span> <span class="n">component</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_trajectory</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
-            <span class="p">])</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">voxel_spacing</span>
+            <span class="p">])</span>
             <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">distances</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">&gt;</span> <span class="mf">1e6</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">():</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
                     <span class="s2">"the source or the detector center must lie within 1e6 voxels "</span>
@@ -683,24 +720,14 @@
                 <span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_geometry_cache</span> <span class="o">=</span> <span class="p">{}</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_devices</span> <span class="o">=</span> <span class="n">_normalize_devices</span><span class="p">(</span><span class="n">devices</span><span class="p">)</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">distributed</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">"distributed must be a bool"</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_distributed</span> <span class="o">=</span> <span class="n">distributed</span>
-        <span class="k">if</span> <span class="n">process_group</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_distributed</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"process_group requires distributed=True"</span><span class="p">)</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_distributed</span><span class="p">:</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">is_initialized</span><span class="p">():</span>
-                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"distributed=True requires an initialized process group"</span><span class="p">)</span>
-            <span class="k">try</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">get_rank</span><span class="p">(</span><span class="n">process_group</span><span class="p">)</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">get_world_size</span><span class="p">(</span><span class="n">process_group</span><span class="p">)</span>
-            <span class="k">except</span> <span class="p">(</span><span class="ne">RuntimeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">)</span> <span class="k">as</span> <span class="n">error</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"process_group must include the calling rank"</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">error</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"process_group must include the calling rank"</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">rank</span> <span class="o">=</span> <span class="mi">0</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_partition</span> <span class="o">=</span> <span class="n">Partition</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">distributed</span><span class="o">=</span><span class="n">distributed</span><span class="p">,</span>
+                                    <span class="n">process_group</span><span class="o">=</span><span class="n">process_group</span><span class="p">,</span> <span class="n">partition</span><span class="o">=</span><span class="n">partition</span><span class="p">,</span>
+                                    <span class="n">partition_grid</span><span class="o">=</span><span class="n">partition_grid</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"rank"</span><span class="p">,</span> <span class="s2">"world_size"</span><span class="p">,</span> <span class="s2">"space_rank"</span><span class="p">,</span> <span class="s2">"view_rank"</span><span class="p">,</span> <span class="s2">"space_world_size"</span><span class="p">,</span>
+                     <span class="s2">"view_world_size"</span><span class="p">,</span> <span class="s2">"space_group"</span><span class="p">,</span> <span class="s2">"view_group"</span><span class="p">,</span> <span class="s2">"partition_grid"</span><span class="p">,</span>
+                     <span class="s2">"volume_slice"</span><span class="p">,</span> <span class="s2">"local_volume_shape"</span><span class="p">,</span> <span class="s2">"view_slice"</span><span class="p">):</span>
+            <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_partition</span><span class="p">,</span> <span class="n">name</span><span class="p">))</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_process_group</span> <span class="o">=</span> <span class="n">process_group</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_agree_geometry_layout</span><span class="p">()</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_distributed</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
@@ -723,20 +750,15 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">_geometry_trainable</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">bounds</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">partition</span> <span class="o">==</span> <span class="s2">"space"</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_geometry_trainable</span><span class="p">:</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">_learnable</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">trajectory</span><span class="p">)</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">partition</span> <span class="o">==</span> <span class="s2">"space"</span><span class="p">:</span>
-            <span class="n">first</span> <span class="o">=</span> <span class="n">_balanced_slice</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">volume_slice</span> <span class="o">=</span> <span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="o">*</span><span class="p">(</span><span class="nb">slice</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span> <span class="k">for</span> <span class="n">size</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:]))</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">volume_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">first</span><span class="o">.</span><span class="n">stop</span> <span class="o">-</span> <span class="n">first</span><span class="o">.</span><span class="n">start</span><span class="p">,</span> <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">local_volume_shape</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">volume_shape</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_planning_volume_shape</span> <span class="o">=</span> <span class="p">((</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span><span class="p">),</span>
-                                       <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">partition</span> <span class="o">==</span> <span class="s2">"space"</span>
-                                      <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">view_slice</span> <span class="o">=</span> <span class="p">(</span><span class="nb">slice</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n_views</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">partition</span> <span class="o">==</span> <span class="s2">"space"</span>
-                           <span class="k">else</span> <span class="n">_balanced_slice</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">rank</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">volume_shape</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">local_volume_shape</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_planning_volume_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">space_world_size</span><span class="p">),</span>
+                                       <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">projection_shape</span> <span class="o">=</span> <span class="p">(</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">view_slice</span><span class="o">.</span><span class="n">stop</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">view_slice</span><span class="o">.</span><span class="n">start</span><span class="p">,</span>
             <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">detector_shape</span><span class="p">,</span>
         <span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">backend</span> <span class="o">==</span> <span class="s2">"torch"</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span> <span class="o">=</span> <span class="n">ReferenceProjector</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_agree_geometry_layout</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_distributed</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">):</span>
@@ -747,14 +769,21 @@
             <span class="n">parameters</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">((</span><span class="nb">tuple</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">shape</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span> <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">surface</span><span class="o">.</span><span class="n">parameters</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">kind</span><span class="p">,</span> <span class="n">parameters</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"points"</span> <span class="k">if</span> <span class="n">surface</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">"flat"</span><span class="p">),</span> <span class="p">()</span>
-        <span class="n">metadata</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">partition</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">schedule</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">beam</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">voxel_spacing</span><span class="p">,</span>
+        <span class="n">metadata</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">partition</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">partition_grid</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">backend</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">precision</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">schedule</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">global_volume_shape</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">beam</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">voxel_spacing</span><span class="p">,</span>
                     <span class="bp">self</span><span class="o">.</span><span class="n">detector_spacing</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_n_views</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">detector_shape</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">parameters</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">backend</span> <span class="o">==</span> <span class="s2">"torch"</span><span class="p">:</span>
+            <span class="c1"># Portable collectives follow the tile and ray-batch order, so</span>
+            <span class="c1"># every rank must derive the same chunks.</span>
+            <span class="n">metadata</span> <span class="o">+=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">volume_chunk_shape</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">view_chunk_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">detector_chunk_shape</span><span class="p">)</span>
         <span class="n">layouts</span> <span class="o">=</span> <span class="p">[</span><span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span>
         <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">all_gather_object</span><span class="p">(</span><span class="n">layouts</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_process_group</span><span class="p">)</span>
         <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">layout</span> <span class="o">!=</span> <span class="n">metadata</span> <span class="k">for</span> <span class="n">layout</span> <span class="ow">in</span> <span class="n">layouts</span><span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"distributed ranks must agree on geometry and surface parameter count, shapes and dtypes"</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"distributed ranks must agree on geometry, surface layout and portable chunk hints"</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_participation</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">backend</span> <span class="o">==</span> <span class="s2">"torch"</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_grad_enabled</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((),</span> <span class="n">dtype</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">partition</span> <span class="o">==</span> <span class="s2">"space"</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_distributed</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_grad_enabled</span><span class="p">():</span>
             <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="k">return</span> <span class="kc">None</span>
@@ -979,6 +1008,8 @@
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_streamed</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="n">is_project</span><span class="p">,</span> <span class="n">reduce_cotangent</span><span class="p">,</span> <span class="n">geometry</span><span class="p">,</span> <span class="n">plan</span><span class="p">,</span> <span class="n">geometry_spec</span><span class="p">)</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">"input tensor must be on CUDA"</span><span class="p">)</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">numba</span><span class="w"> </span><span class="kn">import</span> <span class="n">cuda</span>
+
         <span class="n">input_device</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">device</span>
         <span class="k">if</span> <span class="n">reduce_cotangent</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_distributed</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
             <span class="n">tensor</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">(</span><span class="n">memory_format</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">contiguous_format</span><span class="p">)</span>
@@ -1300,6 +1331,8 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">_ray_job</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">source</span><span class="p">,</span> <span class="n">native</span><span class="p">,</span> <span class="n">geometry</span><span class="p">,</span> <span class="n">centre</span><span class="p">,</span> <span class="n">local</span><span class="p">,</span> <span class="n">global_views</span><span class="p">,</span> <span class="n">pixels</span><span class="p">,</span>
                  <span class="n">spec</span><span class="p">,</span> <span class="n">pipe</span><span class="p">,</span> <span class="n">groups</span><span class="p">,</span> <span class="n">index</span><span class="p">,</span> <span class="n">is_project</span><span class="p">,</span> <span class="n">before_launch</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                  <span class="n">geometry_vjp</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cpu_geometry</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">cached_rays</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">after_launch</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">numba</span><span class="w"> </span><span class="kn">import</span> <span class="n">cuda</span>
+
         <span class="n">shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">local</span><span class="o">.</span><span class="n">stop</span> <span class="o">-</span> <span class="n">local</span><span class="o">.</span><span class="n">start</span><span class="p">,</span> <span class="o">*</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">stop</span> <span class="o">-</span> <span class="n">value</span><span class="o">.</span><span class="n">start</span> <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">pixels</span><span class="p">))</span>
         <span class="n">prefetch</span> <span class="o">=</span> <span class="n">groups</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">"prefetch"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="n">cpu_geometry</span> <span class="o">=</span> <span class="p">(</span><span class="n">prefetch</span><span class="p">[</span><span class="s2">"geometry"</span><span class="p">]</span> <span class="k">if</span> <span class="n">prefetch</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span>
@@ -1894,6 +1927,8 @@
 <span class="sd">        """</span>
         <span class="k">if</span> <span class="n">plan</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_geometry_grad_streamed</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">cotangent</span><span class="p">,</span> <span class="n">geometry</span><span class="p">,</span> <span class="n">plan</span><span class="p">,</span> <span class="n">geometry_spec</span><span class="p">)</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">numba</span><span class="w"> </span><span class="kn">import</span> <span class="n">cuda</span>
+
         <span class="n">devices</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_devices</span> <span class="ow">or</span> <span class="p">(</span><span class="n">volume</span><span class="o">.</span><span class="n">device</span><span class="p">,)</span>
         <span class="n">local_views</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">projection_shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
         <span class="n">spacing</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">detector_spacing</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">beam</span> <span class="o">==</span> <span class="s2">"cone"</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">detector_spacing</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
@@ -2078,14 +2113,21 @@
 <div class="viewcode-block" id="Projector.project">
 <a class="viewcode-back" href="../../api.html#diffct.Projector.project">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">project</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">volume</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Project a floating ``(H, W)`` or ``(D, H, W)`` CPU/CUDA tensor.</span>
+<span class="w">        </span><span class="sd">"""Project a floating tensor ending in the owned ``volume_shape``.</span>
 
-<span class="sd">        The output shape is ``projection_shape``; views partitioning uses this</span>
-<span class="sd">        rank's contiguous view slice, while space partitioning replicates all</span>
-<span class="sd">        views. The input shape is the owned ``volume_shape``. The result stays on</span>
-<span class="sd">        ``volume.device``. CPU data streams through CUDA automatically; manual</span>
-<span class="sd">        chunk limits override automatic sizing. Execution requires CUDA.</span>
+<span class="sd">        Leading batch/channel dimensions are preserved ahead of</span>
+<span class="sd">        ``projection_shape``. The result has the selected precision and stays</span>
+<span class="sd">        on ``volume.device``. View partitions own contiguous view slices;</span>
+<span class="sd">        spatial ranks SUM their ray contributions and replicate the result.</span>
+<span class="sd">        Portable execution supports CPU and PyTorch accelerator tensors;</span>
+<span class="sd">        native execution uses NVIDIA CUDA and streams CPU data when needed.</span>
 <span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">_C</span><span class="o">.</span><span class="n">_are_functorch_transforms_active</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">ReferenceProjector</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">validate</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="ow">and</span> <span class="n">volume</span><span class="o">.</span><span class="n">ndim</span> <span class="o">&gt;</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">volume_shape</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_native_batch</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">last_execution_stats</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_snapshot_d2h_bytes</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="n">plan</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_execution_plan</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
@@ -2096,16 +2138,20 @@
 <div class="viewcode-block" id="Projector.backproject">
 <a class="viewcode-back" href="../../api.html#diffct.Projector.backproject">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">backproject</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Backproject a floating-point CPU/CUDA sinogram with the matched adjoint.</span>
+<span class="w">        </span><span class="sd">"""Apply the matched adjoint to a tensor ending in ``projection_shape``.</span>
 
-<span class="sd">        The input must have shape ``projection_shape`` and uses ``(views, U,</span>
-<span class="sd">        V)`` order for cone beams. The float32 volume is returned to</span>
-<span class="sd">        ``sinogram.device``. CPU data streams through CUDA automatically;</span>
-<span class="sd">        manual chunk limits override automatic sizing. Execution requires CUDA.</span>
-<span class="sd">        Views partitioning SUM-reduces the volume to every rank; space</span>
-<span class="sd">        partitioning returns only ``volume_slice`` in ``volume_shape`` order.</span>
-<span class="sd">        Divide replicated-output losses by ``world_size``.</span>
+<span class="sd">        Cone sinograms use ``(views, U, V)`` order after any leading</span>
+<span class="sd">        batch/channel dimensions. The result preserves those dimensions,</span>
+<span class="sd">        uses selected precision and stays on ``sinogram.device``. View ranks</span>
+<span class="sd">        SUM bounded volume contributions; spatial ranks return only the</span>
+<span class="sd">        owned ``volume_slice``. Divide replicated losses by ``view_world_size``.</span>
 <span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span><span class="o">.</span><span class="n">backproject</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">_C</span><span class="o">.</span><span class="n">_are_functorch_transforms_active</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">ReferenceProjector</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">validate</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">backproject</span><span class="p">(</span><span class="n">sinogram</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="ow">and</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">ndim</span> <span class="o">&gt;</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">projection_shape</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_native_batch</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">last_execution_stats</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_snapshot_d2h_bytes</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="n">plan</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_execution_plan</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
@@ -2113,10 +2159,23 @@
         <span class="k">return</span> <span class="n">_ProjectorAutograd</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="bp">self</span><span class="p">,</span> <span class="s2">"backproject"</span><span class="p">,</span> <span class="n">plan</span><span class="p">,</span> <span class="n">geometry_spec</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_participation</span><span class="p">(),</span> <span class="o">*</span><span class="n">geometry</span><span class="p">)</span></div>
 
 
+    <span class="k">def</span><span class="w"> </span><span class="nf">_native_batch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tensor</span><span class="p">,</span> <span class="n">is_project</span><span class="p">):</span>
+        <span class="n">shape</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">volume_shape</span> <span class="k">if</span> <span class="n">is_project</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">projection_shape</span>
+        <span class="k">if</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">shape</span><span class="p">):])</span> <span class="o">!=</span> <span class="n">shape</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"input trailing shape must be </span><span class="si">{</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">leading</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">shape</span><span class="p">)])</span>
+        <span class="n">output_shape</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">projection_shape</span> <span class="k">if</span> <span class="n">is_project</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">volume_shape</span>
+        <span class="k">if</span> <span class="n">math</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">leading</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">tensor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">*</span><span class="n">leading</span><span class="p">,</span> <span class="o">*</span><span class="n">output_shape</span><span class="p">)</span>
+        <span class="n">function</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">project</span> <span class="k">if</span> <span class="n">is_project</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">backproject</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">function</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">tensor</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">shape</span><span class="p">)])</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+            <span class="o">*</span><span class="n">leading</span><span class="p">,</span> <span class="o">*</span><span class="n">output_shape</span><span class="p">,</span>
+        <span class="p">)</span>
+
 <div class="viewcode-block" id="Projector.project_into">
 <a class="viewcode-back" href="../../api.html#diffct.Projector.project_into">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">project_into</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">output</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Numerically project tensor/block-store input into supplied float32 output.</span>
+<span class="w">        </span><span class="sd">"""Numerically project into supplied output matching ``self.dtype``.</span>
 
 <span class="sd">        Returns ``output``; no complete result is allocated. Direct tensors</span>
 <span class="sd">        requiring autograd must be detached or used under ``torch.no_grad()``.</span>
@@ -2128,7 +2187,7 @@
 <div class="viewcode-block" id="Projector.backproject_into">
 <a class="viewcode-back" href="../../api.html#diffct.Projector.backproject_into">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">backproject_into</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">output</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Write the matched numerical adjoint into supplied float32 block output.</span>
+<span class="w">        </span><span class="sd">"""Write the numerical adjoint into block output matching ``self.dtype``.</span>
 
 <span class="sd">        Accepts tensors or stores with read/write/shape/dtype/flush metadata.</span>
 <span class="sd">        Returns ``output`` after bounded view/pixel contributions complete.</span>
@@ -2139,7 +2198,19 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">_execute_into</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">output</span><span class="p">,</span> <span class="n">is_project</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">last_execution_stats</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_snapshot_d2h_bytes</span> <span class="o">=</span> <span class="mi">0</span>
-        <span class="n">source</span><span class="p">,</span> <span class="n">sink</span> <span class="o">=</span> <span class="n">_validate_stores</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">output</span><span class="p">,</span> <span class="n">is_project</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">error</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">source</span><span class="p">,</span> <span class="n">sink</span> <span class="o">=</span> <span class="n">_validate_stores</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">output</span><span class="p">,</span> <span class="n">is_project</span><span class="p">)</span>
+            <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">,</span> <span class="ne">RuntimeError</span><span class="p">,</span> <span class="ne">PermissionError</span><span class="p">)</span> <span class="k">as</span> <span class="n">failure</span><span class="p">:</span>
+                <span class="n">error</span> <span class="o">=</span> <span class="n">failure</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_partition</span><span class="o">.</span><span class="n">preflight</span><span class="p">(</span><span class="n">error</span><span class="p">,</span> <span class="p">(</span><span class="n">is_project</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">source</span><span class="p">,</span> <span class="n">sink</span> <span class="o">=</span> <span class="n">_validate_stores</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">output</span><span class="p">,</span> <span class="n">is_project</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_reference</span><span class="o">.</span><span class="n">into</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">sink</span><span class="p">,</span> <span class="n">is_project</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">output</span>
         <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
             <span class="n">plan</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_execution_plan</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">is_project</span><span class="p">,</span> <span class="n">sink</span><span class="p">)</span>
             <span class="n">geometry_spec</span><span class="p">,</span> <span class="n">geometry</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_effective_geometry</span><span class="p">(</span><span class="n">plan</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="s2">"device"</span><span class="p">,</span> <span class="s2">"cpu"</span><span class="p">)))</span>

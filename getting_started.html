@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Trajectories and Geometry" href="trajectories.html"><link rel="prev" title="diffct: Differentiable CT Operators" href="index.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Precision, training and reconstruction" href="execution.html"><link rel="prev" title="diffct: Differentiable CT Operators" href="index.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
         <title>Getting Started - diffct 2.2.1</title>
@@ -193,6 +193,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
@@ -255,9 +256,10 @@
 <h1>Getting Started<a class="headerlink" href="#getting-started" title="Link to this heading">¶</a></h1>
 <section id="install">
 <h2>Install<a class="headerlink" href="#install" title="Link to this heading">¶</a></h2>
-<p>diffct needs an NVIDIA CUDA GPU for projection and backprojection. Geometry
-construction runs on CPU. Install a CUDA-enabled PyTorch build that matches your
-driver first, then:</p>
+<p>Native execution uses an NVIDIA CUDA GPU. The portable PyTorch backend also
+supports CPU and PyTorch ROCm devices; see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a> for precision and
+hardware-validation limits. For native execution, install a CUDA-enabled
+PyTorch build that matches your driver first, then:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"diffct[cu12]"</span>
 python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import torch, diffct; print(diffct.__version__); print(torch.cuda.is_available())"</span>
 <span class="c1"># from a source checkout: python examples/quickstart.py</span>
@@ -265,8 +267,10 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import
 </div>
 <p>Use <code class="docutils literal notranslate"><span class="pre">diffct[cu13]</span></code> for CUDA 13. The extra installs the CUDA compiler libraries
 that Numba CUDA needs. A plain <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">diffct</span></code> does not install them; use it
-only if a CUDA Toolkit is already installed on the system. The NVVM and NVJitLink packages must match the
-CUDA libraries that PyTorch loads.</p>
+for the PyTorch backend, or if a CUDA Toolkit is already installed for native
+execution. Importing diffct and using the PyTorch backend require no CUDA
+runtime; Numba CUDA initializes on native use. The NVVM and NVJitLink packages
+must match the CUDA libraries that PyTorch loads.</p>
 </section>
 <section id="minimal-forward-adjoint-gradient-example">
 <h2>Minimal forward / adjoint / gradient example<a class="headerlink" href="#minimal-forward-adjoint-gradient-example" title="Link to this heading">¶</a></h2>
@@ -289,10 +293,11 @@ CUDA libraries that PyTorch loads.</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">Projector</span></code> defaults to <code class="docutils literal notranslate"><span class="pre">beam=&quot;cone&quot;</span></code>. Set <code class="docutils literal notranslate"><span class="pre">beam=&quot;parallel&quot;</span></code> or
 <code class="docutils literal notranslate"><span class="pre">beam=&quot;fan&quot;</span></code> for 2D data. Inputs must be floating-point CPU or CUDA tensors with
-exactly the configured volume or sinogram shape, without batch or channel
-dimensions. Outputs are float32 on the input device. CPU data automatically
-streams through CUDA tiles; see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>. Trajectory tensors can stay
-on CPU.</p>
+the configured volume or sinogram shape in their trailing dimensions. Leading
+batch/channel dimensions are preserved. Outputs use the selected precision on
+the input device. Native CPU data streams through CUDA tiles; the PyTorch
+backend computes on its input device. See <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a> and <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>.
+Trajectory tensors can stay on CPU.</p>
 </section>
 <section id="choose-a-workflow">
 <h2>Choose a workflow<a class="headerlink" href="#choose-a-workflow" title="Link to this heading">¶</a></h2>
@@ -325,12 +330,12 @@ cone sinograms. In distributed mode, use <code class="docutils literal notransla
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="trajectories.html">
+          <a class="next-page" href="execution.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Trajectories and Geometry</div>
+                <div class="title">Precision, training and reconstruction</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>

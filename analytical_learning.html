@@ -193,6 +193,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
@@ -258,8 +259,9 @@ Siddon forward operator and its matched adjoint. Analytical FBP and FDK use a
 different, voxel-driven interpolation operator. Its backward pass scatters the
 same interpolation coefficients, including distance weights and normalization.
 It does not substitute the Siddon projector for the analytical transpose.</p>
-<p>The reconstruction APIs return signed float32 CUDA images. Clamping is a caller
-decision. Low-precision measurements are promoted to float32 before geometry,
+<p>The reconstruction APIs return signed images in the selected precision on the
+input device. Clamping is a caller decision. In the default native fast mode,
+low-precision measurements are promoted to float32 before geometry,
 weighting and FFT operations; gradients retain the original input/parameter dtype.
 Sinogram, filter and explicit weight gradients propagate through the
 pipeline, including higher derivatives with respect to those tensors. Acquisition
@@ -279,10 +281,12 @@ bounds cannot be told apart from rounding: low-precision or far-translated
 coordinates that have a component along the checked direction widen the check.
 Helical slice centers use float64 independently of
 the angle dtype; low-precision angles do not round physical voxel coordinates.</p>
-<p>Flat detectors and one CUDA device are supported by these analytical APIs.
-They do not inherit the streamed, distributed or curved-detector execution of
-<code class="docutils literal notranslate"><span class="pre">Projector</span></code>. FDK is an approximate inverse even though its implemented
-discrete backward pass is the precise transpose to float32 rounding accuracy.</p>
+<p><code class="docutils literal notranslate"><span class="pre">fbp</span></code> and <code class="docutils literal notranslate"><span class="pre">fdk</span></code> support flat detectors, portable FP32/FP64 arithmetic,
+view/spatial chunks, several local devices, distributed views/space/hybrid
+ownership and numerical <code class="docutils literal notranslate"><span class="pre">fbp_into</span></code>/<code class="docutils literal notranslate"><span class="pre">fdk_into</span></code> stores; see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.
+The helical approximation and low-level CUDA helpers retain their original
+execution contracts. FDK is an approximate inverse even though its implemented
+discrete backward pass transposes the interpolation coefficients.</p>
 <p>Use the complete APIs with the same trajectory tensors as <code class="docutils literal notranslate"><span class="pre">Projector</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">fbp</span><span class="p">,</span> <span class="n">fdk</span><span class="p">,</span> <span class="n">helical_fdk</span>
 

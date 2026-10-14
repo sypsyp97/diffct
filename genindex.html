@@ -191,6 +191,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul>
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
@@ -294,6 +295,10 @@
   <h2>C</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api.html#diffct.solvers.cgls">cgls() (in module diffct.solvers)</a>
+</li>
+        <li><a href="api.html#diffct.solvers.cgls_into">cgls_into() (in module diffct.solvers)</a>
+</li>
         <li><a href="api.html#diffct.geometry.circular_trajectory_2d_fan">circular_trajectory_2d_fan() (in module diffct.geometry)</a>
 </li>
         <li><a href="api.html#diffct.geometry.circular_trajectory_2d_parallel">circular_trajectory_2d_parallel() (in module diffct.geometry)</a>
@@ -302,10 +307,10 @@
 </li>
         <li><a href="api.html#diffct.analytical.cone_cosine_weights">cone_cosine_weights() (in module diffct.analytical)</a>
 </li>
-        <li><a href="api.html#diffct.analytical.cone_weighted_backproject">cone_weighted_backproject() (in module diffct.analytical)</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api.html#diffct.analytical.cone_weighted_backproject">cone_weighted_backproject() (in module diffct.analytical)</a>
+</li>
         <li><a href="api.html#diffct.ConeBackprojectorFunction">ConeBackprojectorFunction (class in diffct)</a>
 </li>
         <li><a href="api.html#diffct.ConeProjectorFunction">ConeProjectorFunction (class in diffct)</a>
@@ -344,10 +349,14 @@
 </li>
         <li><a href="api.html#diffct.reconstruction.fbp">fbp() (in module diffct.reconstruction)</a>
 </li>
+        <li><a href="api.html#diffct.reconstruction.fbp_into">fbp_into() (in module diffct.reconstruction)</a>
+</li>
         <li><a href="api.html#diffct.reconstruction.fdk">fdk() (in module diffct.reconstruction)</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api.html#diffct.reconstruction.fdk_into">fdk_into() (in module diffct.reconstruction)</a>
+</li>
         <li><a href="api.html#diffct.ConeBackprojectorFunction.forward">forward() (diffct.ConeBackprojectorFunction static method)</a>
 
         <ul>
@@ -442,11 +451,15 @@
 </li>
         <li><a href="api.html#diffct.geometry.sinusoidal_trajectory_2d_fan">sinusoidal_trajectory_2d_fan() (in module diffct.geometry)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api.html#diffct.geometry.sinusoidal_trajectory_2d_parallel">sinusoidal_trajectory_2d_parallel() (in module diffct.geometry)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api.html#diffct.geometry.sinusoidal_trajectory_3d">sinusoidal_trajectory_3d() (in module diffct.geometry)</a>
+</li>
+        <li><a href="api.html#diffct.solvers.sirt">sirt() (in module diffct.solvers)</a>
+</li>
+        <li><a href="api.html#diffct.solvers.SolverResult">SolverResult (class in diffct.solvers)</a>
 </li>
         <li><a href="api.html#diffct.geometry.spiral_trajectory_3d">spiral_trajectory_3d() (in module diffct.geometry)</a>
 </li>
@@ -459,6 +472,12 @@
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api.html#diffct.TensorStore">TensorStore (class in diffct)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api.html#diffct.solvers.total_variation">total_variation() (in module diffct.solvers)</a>
+</li>
+        <li><a href="api.html#diffct.solvers.tv_reconstruction">tv_reconstruction() (in module diffct.solvers)</a>
 </li>
     </ul></td>
   </tr></table>

@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Large Volumes and Chunked Execution" href="chunking.html"><link rel="prev" title="Getting Started" href="getting_started.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Large Volumes and Chunked Execution" href="chunking.html"><link rel="prev" title="Precision, training and reconstruction" href="execution.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
         <title>Trajectories and Geometry - diffct 2.2.1</title>
@@ -193,6 +193,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Trajectories and Geometry</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
@@ -285,7 +286,8 @@ also pass measured or calibrated poses in the same layout.</p>
 <p>Coordinates are Cartesian <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y[,</span> <span class="pre">z])</span></code>. Volume indexing is <code class="docutils literal notranslate"><span class="pre">[y,</span> <span class="pre">x]</span></code> for 2D
 and <code class="docutils literal notranslate"><span class="pre">[z,</span> <span class="pre">y,</span> <span class="pre">x]</span></code> for 3D. The origin is the volume centre. Use one length unit
 for positions, voxel spacing and detector spacing. Voxel spacing is a single
-positive scalar.</p>
+positive scalar or a positive per-axis tuple in tensor order: <code class="docutils literal notranslate"><span class="pre">(dy,dx)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">(dz,dy,dx)</span></code>. Per-axis spacing uses the PyTorch backend; see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.</p>
 <p>Detector axes are unit direction vectors, not pixel-step vectors. The detector
 spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
 With the default flat detector, pixel <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v)</span></code> is at:</p>
@@ -320,11 +322,12 @@ coordinate system above.</p>
 count. <code class="docutils literal notranslate"><span class="pre">ray_dir</span></code> and <code class="docutils literal notranslate"><span class="pre">det_u</span></code> must be orthogonal for parallel beams. <code class="docutils literal notranslate"><span class="pre">det_u</span></code>
 and <code class="docutils literal notranslate"><span class="pre">det_v</span></code> must be orthogonal for cone beams. With flat fan/cone detectors,
 the source must not coincide with the detector centre or view the detector
-edge-on. The nearer of source and detector centre must lie within 1e6 voxel
-spacings of the origin. Surface detectors instead validate each actual
+edge-on. The native FP32 backend requires the nearer of source and detector
+centre to lie within 1e6 voxel spacings of the origin. Native surface detectors validate each actual
 source/pixel pair: the endpoints must remain distinct in float32, and the
 nearer endpoint of every ray must lie within 1e6 voxel spacings of the origin.
-Both endpoints must lie within 1e15 voxel spacings.</p>
+Both native endpoints must lie within 1e15 voxel spacings. Portable precision
+modes validate finite, nondegenerate rays in their selected dtype; see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.</p>
 <p>Arbitrary trajectories do not guarantee enough angular coverage for an inverse
 problem. Use iterative methods with regularization for sparse or incomplete
 acquisitions. The analytical helpers assume a circular orbit (see <a class="reference internal" href="api.html"><span class="doc">API Reference</span></a>).</p>
@@ -433,7 +436,7 @@ construction; sampled surface positions are also checked on every operation.</p>
 <li><p>Second derivatives with respect to geometry raise an error.</p></li>
 <li><p>Second derivatives with respect to the volume or sinogram are available,
 including when trajectory or surface parameters require gradients.</p></li>
-<li><p>Detector and voxel spacing are scalar settings, not differentiable parameters.</p></li>
+<li><p>Detector and voxel spacing are fixed physical settings, not differentiable parameters.</p></li>
 <li><p>Geometry derivatives are piecewise: at exact voxel edges or corners they are one-sided.</p></li>
 <li><p>Distributed geometry gradients are summed by the operator. See <a class="reference internal" href="multi_gpu.html"><span class="doc">Multiple GPUs and Nodes</span></a>
 for loss scaling.</p></li>
@@ -455,14 +458,14 @@ for loss scaling.</p></li>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="getting_started.html">
+          <a class="prev-page" href="execution.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Getting Started</div>
+                <div class="title">Precision, training and reconstruction</div>
                 
               </div>
             </a>

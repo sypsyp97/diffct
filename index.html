@@ -193,6 +193,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <ul>
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a></li>
 <li class="toctree-l1"><a class="reference internal" href="multi_gpu.html">Multiple GPUs and Nodes</a></li>
@@ -267,7 +268,8 @@ across several GPUs.</p>
 </div>
 <p>Use <code class="docutils literal notranslate"><span class="pre">diffct[cu13]</span></code> for CUDA 13. The extra installs the CUDA compiler libraries
 that Numba CUDA needs. A plain <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">diffct</span></code> does not install them; use it
-only if a CUDA Toolkit is already installed on the system.</p>
+for the PyTorch backend, or when a CUDA Toolkit is already present for native
+execution. Backend, precision and solver contracts are in <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.</p>
 </section>
 <section id="start-here">
 <h2>Start here<a class="headerlink" href="#start-here" title="Link to this heading">¶</a></h2>
@@ -278,6 +280,13 @@ only if a CUDA Toolkit is already installed on the system.</p>
 <li class="toctree-l2"><a class="reference internal" href="getting_started.html#minimal-forward-adjoint-gradient-example">Minimal forward / adjoint / gradient example</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started.html#choose-a-workflow">Choose a workflow</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started.html#troubleshooting">Troubleshooting</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="execution.html#batch-dimensions-and-axis-spacing">Batch dimensions and axis spacing</a></li>
+<li class="toctree-l2"><a class="reference internal" href="execution.html#streaming-analytical-reconstruction">Streaming analytical reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="execution.html#hybrid-ownership-and-losses">Hybrid ownership and losses</a></li>
+<li class="toctree-l2"><a class="reference internal" href="execution.html#numerical-solver-api">Numerical solver API</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="trajectories.html">Trajectories and Geometry</a><ul>
@@ -324,6 +333,7 @@ only if a CUDA Toolkit is already installed on the system.</p>
 <li class="toctree-l2"><a class="reference internal" href="api.html#geometry-helpers">Geometry Helpers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#analytical-reconstruction-helpers">Analytical Reconstruction Helpers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#complete-reconstruction-pipelines">Complete Reconstruction Pipelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#numerical-solvers">Numerical Solvers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api.html#ramp-filter-options">Ramp Filter Options</a></li>
 </ul>
 </li>
