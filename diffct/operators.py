@@ -6,7 +6,6 @@ from dataclasses import replace
 import time
 
 import torch
-from numba import cuda
 
 from .chunking import (_ChunkPlan, _host_geometry_bytes, _largest_buffer_bytes, _memory_budget,
                        _pipeline_buffers, _pipeline_bytes, _pixel_tiles, _reservation_budget,
@@ -15,6 +14,8 @@ from . import pipeline as _pipeline
 from .storage import TensorStore
 from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry
+from .backends import ReferenceProjector, select_backend, voxel_spacing_tuple
+from .distribution import Partition
 from .projectors import (
     _backproject_into,
     _geometry_vjp,
@@ -273,7 +274,7 @@ class _GeometryGradAutograd(torch.autograd.Function):
 
 
 class Projector:
-    """Project CPU or CUDA volumes along parallel, fan, or cone trajectories.
+    """Project floating tensors along parallel, fan, or cone trajectories.
 
     A parallel trajectory is ``(ray_dir, det_origin, det_u)`` and a fan
     trajectory is ``(src_pos, det_center, det_u)``; each component has shape
@@ -306,19 +307,34 @@ class Projector:
 
     Volumes use ``(H, W)`` for parallel and fan beams and ``(D, H, W)`` for
     cone beams. Sinograms use ``(views, detectors)`` or ``(views, U, V)``.
-    Results are float32 and returned to the input tensor's device. CPU inputs
-    stream spatial tiles and view batches through CUDA. CUDA inputs retain the
+    Any leading batch/channel dimensions are preserved. ``voxel_spacing`` is
+    a positive scalar or a tuple in volume tensor order: ``(y, x)`` or
+    ``(z, y, x)``. Physical coordinates retain the centred global volume frame.
+    Results stay on the input device. ``precision="fast"`` and ``"float32"``
+    return float32; ``"float64"`` computes geometry, ray lengths and
+    accumulations in float64. The selected ``backend``, ``precision`` and
+    ``dtype`` are public metadata.
+
+    ``backend="auto"`` selects the native ``"numba"`` backend for NVIDIA
+    CUDA, fast precision and scalar voxel spacing, except for hybrid
+    partitions. Other configurations use portable ``"torch"`` execution on
+    the input's CPU or supported PyTorch accelerator. Explicit ``"numba"``
+    requires a compatible native configuration. Data ``torch.func``
+    transforms use portable operations while preserving selected metadata.
+
+    Native CPU inputs stream spatial tiles and view batches through CUDA.
+    Native CUDA inputs retain the
     full-volume path when its additional working set fits every device;
     otherwise they stream too. ``volume_chunk_shape`` sets explicit spatial
     limits in tensor order; ``view_chunk_size`` sets an explicit view limit.
-    Either forces streaming. With no overrides, sizing uses live free memory,
+    Either forces native streaming. Native automatic sizing uses live free memory,
     reusable allocator cache and the observable per-process fraction ceiling,
     retaining 25% headroom. Automatic sizing compares fitting first-axis slabs
     and Cartesian blocks; view batches are at most 32 and shrink if needed. Older
     PyTorch without a public fraction getter cannot account for that ceiling.
     Concurrent external allocations can still cause an allocation error.
 
-    ``schedule="auto"`` selects spatial, view or bounded two-tile window order
+    For the native backend, ``schedule="auto"`` selects spatial, view or bounded two-tile window order
     using estimated full-workload time from short native pilots, with estimated
     copy bytes breaking ties. The same orders can be requested with
     ``"spatial"``, ``"views"`` or ``"window"``;
@@ -328,22 +344,28 @@ class Projector:
     independently of the resident GPU tile size. ``last_execution_stats``
     reports actual copy payloads, native launches/layouts, planned capacity
     and pilot metadata; it is None before execution, after errors, and on the
-    uninstrumented full-CUDA path. Reports and selection caches retain metadata.
+    uninstrumented native full-CUDA path. Portable execution reports actual
+    ray/tile pairs, store I/O, transfers and collective payloads, with
+    conservative automatic chunks targeting 8 MiB work arrays. Explicit
+    chunk hints take priority. Reports and selection caches retain metadata.
 
     Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
     bounded by the chosen tile and view batch. Caller-owned CUDA data/results
     and CUDA work inside a supplied callback are outside this memory bound.
-    Local devices launch their view batches concurrently, but each device
+    Native local devices launch their view batches concurrently, but each device
     receives every owned volume tile, so host transfers limit the speedup.
     Local devices split views in list order. ``partition="views"`` returns
     rank-local projections and replicated backprojections. ``partition="space"``
     assigns balanced first-axis slabs and returns replicated projections and
-    owned backprojections. ``global_volume_shape`` is the constructor shape;
+    owned backprojections. ``partition="hybrid"`` combines both with
+    ``partition_grid=(view_ranks, space_ranks)`` and parent-group rank
+    ``view_rank * space_world_size + space_rank``. ``global_volume_shape`` is the constructor shape;
     ``volume_slice`` identifies the owned global slab, and ``volume_shape``
     and ``local_volume_shape`` give its required tensor shape. Empty slabs are
     valid. Physical coordinates retain the global volume frame.
     For replicated outputs, count the loss once globally or divide each
-    rank's loss by ``world_size``. Geometry gradients already SUM over ranks;
+    rank's projection loss by ``space_world_size`` or backprojection loss by
+    ``view_world_size``. Geometry gradients already SUM over all parent ranks;
     do not apply an additional DDP reduction to them. Space ranks participate
     in backward even when their local input and geometry require no gradients.
     """
@@ -352,10 +374,15 @@ class Projector:
                  detector_spacing=1.0, voxel_spacing=1.0, devices=None,
                  distributed=False, process_group=None, detector_surface=None,
                  volume_chunk_shape=None, view_chunk_size=None, detector_chunk_shape=None,
-                 schedule="auto", partition="views"):
+                 schedule="auto", partition="views", backend="auto", precision="fast",
+                 partition_grid=None):
+        self.backend = select_backend(backend, precision, voxel_spacing, partition)
+        self.precision = precision
+        self.dtype = torch.float64 if precision == "float64" else torch.float32
+        self._reference = None
         self.partition = partition
-        if not isinstance(partition, str) or partition not in ("views", "space"):
-            raise ValueError("partition must be 'views' or 'space'")
+        if not isinstance(partition, str) or partition not in ("views", "space", "hybrid"):
+            raise ValueError("partition must be 'views', 'space', or 'hybrid'")
         self.schedule = schedule
         self.last_execution_stats = None
         if not isinstance(schedule, str) or schedule not in ("auto", "spatial", "views", "window"):
@@ -390,7 +417,8 @@ class Projector:
         )
 
         self.detector_spacing = _detector_spacing(detector_spacing, beam)
-        self.voxel_spacing = _positive_float(voxel_spacing, "voxel_spacing")
+        spacing = voxel_spacing_tuple(voxel_spacing, rank)
+        self.voxel_spacing = spacing if isinstance(voxel_spacing, (tuple, list)) else spacing[0]
         if detector_surface is not None and not callable(detector_surface):
             raise TypeError("detector_surface must be callable or None")
         self.detector_surface = detector_surface
@@ -402,7 +430,12 @@ class Projector:
             tuple(trajectory) if any(c.requires_grad for c in trajectory) else ()
         )
         surface_trainable = False
-        if isinstance(detector_surface, ParameterizedSurface):
+        if self.backend == "torch":
+            surface_trainable = (
+                isinstance(detector_surface, ParameterizedSurface)
+                and any(parameter.requires_grad for parameter in detector_surface.parameters)
+            )
+        elif isinstance(detector_surface, ParameterizedSurface):
             frames = tuple(component.detach().to(device="cpu") for component in self._trajectory)
             parameters = tuple(parameter.detach().to(device="cpu") for parameter in detector_surface.parameters)
             spec = _GeometrySpec("sampled", detector_surface.sampler)
@@ -419,13 +452,16 @@ class Projector:
                 )
                 surface_trainable = surface_offsets.requires_grad
         self._geometry_trainable = bool(self._learnable) or surface_trainable
-        if beam in ("fan", "cone") and detector_surface is None:
-            # The kernels set up each ray in float32 from the endpoint nearer the
-            # volume centre, which is the origin.
+        if self.dtype == torch.float32 and beam in ("fan", "cone") and detector_surface is None:
+            # Both FP32 backends set up each segment from the endpoint nearer
+            # the volume centre. Measure per-axis distances in voxel units.
             distances = torch.stack([
-                torch.linalg.vector_norm(component.double(), dim=1).cpu()
+                torch.linalg.vector_norm(
+                    component.double() / component.new_tensor(spacing[::-1], dtype=torch.float64),
+                    dim=1,
+                ).cpu()
                 for component in self._trajectory[:2]
-            ]) / self.voxel_spacing
+            ])
             if torch.any(distances.min(dim=0).values > 1e6).item():
                 raise ValueError(
                     "the source or the detector center must lie within 1e6 voxels "
@@ -438,24 +474,14 @@ class Projector:
                 )
         self._geometry_cache = {}
         self._devices = _normalize_devices(devices)
-        if not isinstance(distributed, bool):
-            raise TypeError("distributed must be a bool")
         self._distributed = distributed
-        if process_group is not None and not self._distributed:
-            raise ValueError("process_group requires distributed=True")
-        if self._distributed:
-            if not torch.distributed.is_available() or not torch.distributed.is_initialized():
-                raise RuntimeError("distributed=True requires an initialized process group")
-            try:
-                self.rank = torch.distributed.get_rank(process_group)
-                self.world_size = torch.distributed.get_world_size(process_group)
-            except (RuntimeError, ValueError) as error:
-                raise ValueError("process_group must include the calling rank") from error
-            if self.rank < 0 or self.world_size <= 0 or self.rank >= self.world_size:
-                raise ValueError("process_group must include the calling rank")
-        else:
-            self.rank = 0
-            self.world_size = 1
+        self._partition = Partition(self.global_volume_shape, n_views, distributed=distributed,
+                                    process_group=process_group, partition=partition,
+                                    partition_grid=partition_grid)
+        for name in ("rank", "world_size", "space_rank", "view_rank", "space_world_size",
+                     "view_world_size", "space_group", "view_group", "partition_grid",
+                     "volume_slice", "local_volume_shape", "view_slice"):
+            setattr(self, name, getattr(self._partition, name))
         self._process_group = process_group
         self._agree_geometry_layout()
         if self._distributed and self.world_size > 1:
@@ -478,20 +504,15 @@ class Projector:
             self._geometry_trainable = bool(bounds[0].item())
             if self.partition == "space" and self._geometry_trainable:
                 self._learnable = tuple(trajectory)
-        if self.partition == "space":
-            first = _balanced_slice(self.global_volume_shape[0], self.rank, self.world_size)
-            self.volume_slice = (first, *(slice(0, size) for size in self.global_volume_shape[1:]))
-            self.volume_shape = (first.stop - first.start, *self.global_volume_shape[1:])
-        self.local_volume_shape = self.volume_shape
-        self._planning_volume_shape = ((math.ceil(self.global_volume_shape[0] / self.world_size),
-                                       *self.global_volume_shape[1:]) if self.partition == "space"
-                                      else self.global_volume_shape)
-        self.view_slice = (slice(0, n_views) if self.partition == "space"
-                           else _balanced_slice(n_views, self.rank, self.world_size))
+        self.volume_shape = self.local_volume_shape
+        self._planning_volume_shape = (math.ceil(self.global_volume_shape[0] / self.space_world_size),
+                                       *self.global_volume_shape[1:])
         self.projection_shape = (
             self.view_slice.stop - self.view_slice.start,
             *self.detector_shape,
         )
+        if self.backend == "torch":
+            self._reference = ReferenceProjector(self)
 
     def _agree_geometry_layout(self):
         if not (self._distributed and self.world_size > 1):
@@ -502,14 +523,21 @@ class Projector:
             parameters = tuple((tuple(value.shape), str(value.dtype)) for value in surface.parameters)
         else:
             kind, parameters = ("points" if surface is not None else "flat"), ()
-        metadata = (self.partition, self.schedule, self.global_volume_shape, self.beam, self.voxel_spacing,
+        metadata = (self.partition, self.partition_grid, self.backend, self.precision, self.schedule,
+                    self.global_volume_shape, self.beam, self.voxel_spacing,
                     self.detector_spacing, self._n_views, self.detector_shape, kind, parameters)
+        if self.backend == "torch":
+            # Portable collectives follow the tile and ray-batch order, so
+            # every rank must derive the same chunks.
+            metadata += (self.volume_chunk_shape, self.view_chunk_size, self.detector_chunk_shape)
         layouts = [None] * self.world_size
         torch.distributed.all_gather_object(layouts, metadata, group=self._process_group)
         if any(layout != metadata for layout in layouts):
-            raise ValueError("distributed ranks must agree on geometry and surface parameter count, shapes and dtypes")
+            raise ValueError("distributed ranks must agree on geometry, surface layout and portable chunk hints")
 
     def _participation(self):
+        if self.backend == "torch" and self.world_size > 1 and torch.is_grad_enabled():
+            return torch.zeros((), dtype=self.dtype, device="cpu", requires_grad=True)
         if self.partition == "space" and self._distributed and self.world_size > 1 and torch.is_grad_enabled():
             return torch.zeros((), dtype=torch.float32, device="cpu", requires_grad=True)
         return None
@@ -734,6 +762,8 @@ class Projector:
             return self._run_streamed(tensor, is_project, reduce_cotangent, geometry, plan, geometry_spec)
         if not tensor.is_cuda:
             raise TypeError("input tensor must be on CUDA")
+        from numba import cuda
+
         input_device = tensor.device
         if reduce_cotangent and self._distributed and self.world_size > 1:
             tensor = tensor.detach().clone(memory_format=torch.contiguous_format)
@@ -1055,6 +1085,8 @@ class Projector:
     def _ray_job(self, source, native, geometry, centre, local, global_views, pixels,
                  spec, pipe, groups, index, is_project, before_launch=None,
                  geometry_vjp=False, cpu_geometry=None, cached_rays=None, after_launch=None):
+        from numba import cuda
+
         shape = (local.stop - local.start, *(value.stop - value.start for value in pixels))
         prefetch = groups.get(index, {}).pop("prefetch", None)
         cpu_geometry = (prefetch["geometry"] if prefetch is not None else
@@ -1649,6 +1681,8 @@ class Projector:
         """
         if plan is not None:
             return self._geometry_grad_streamed(volume, cotangent, geometry, plan, geometry_spec)
+        from numba import cuda
+
         devices = self._devices or (volume.device,)
         local_views = self.projection_shape[0]
         spacing = self.detector_spacing if self.beam == "cone" else self.detector_spacing[0]
@@ -1831,14 +1865,21 @@ class Projector:
         return self._process_group
 
     def project(self, volume):
-        """Project a floating ``(H, W)`` or ``(D, H, W)`` CPU/CUDA tensor.
+        """Project a floating tensor ending in the owned ``volume_shape``.
 
-        The output shape is ``projection_shape``; views partitioning uses this
-        rank's contiguous view slice, while space partitioning replicates all
-        views. The input shape is the owned ``volume_shape``. The result stays on
-        ``volume.device``. CPU data streams through CUDA automatically; manual
-        chunk limits override automatic sizing. Execution requires CUDA.
+        Leading batch/channel dimensions are preserved ahead of
+        ``projection_shape``. The result has the selected precision and stays
+        on ``volume.device``. View partitions own contiguous view slices;
+        spatial ranks SUM their ray contributions and replicate the result.
+        Portable execution supports CPU and PyTorch accelerator tensors;
+        native execution uses NVIDIA CUDA and streams CPU data when needed.
         """
+        if self._reference is not None:
+            return self._reference.project(volume)
+        if torch._C._are_functorch_transforms_active():
+            return ReferenceProjector(self, validate=False).project(volume)
+        if isinstance(volume, torch.Tensor) and volume.ndim > len(self.volume_shape):
+            return self._native_batch(volume, True)
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         plan = self._execution_plan(volume, True)
@@ -1846,24 +1887,41 @@ class Projector:
         return _ProjectorAutograd.apply(volume, self, "project", plan, geometry_spec, self._participation(), *geometry)
 
     def backproject(self, sinogram):
-        """Backproject a floating-point CPU/CUDA sinogram with the matched adjoint.
+        """Apply the matched adjoint to a tensor ending in ``projection_shape``.
 
-        The input must have shape ``projection_shape`` and uses ``(views, U,
-        V)`` order for cone beams. The float32 volume is returned to
-        ``sinogram.device``. CPU data streams through CUDA automatically;
-        manual chunk limits override automatic sizing. Execution requires CUDA.
-        Views partitioning SUM-reduces the volume to every rank; space
-        partitioning returns only ``volume_slice`` in ``volume_shape`` order.
-        Divide replicated-output losses by ``world_size``.
+        Cone sinograms use ``(views, U, V)`` order after any leading
+        batch/channel dimensions. The result preserves those dimensions,
+        uses selected precision and stays on ``sinogram.device``. View ranks
+        SUM bounded volume contributions; spatial ranks return only the
+        owned ``volume_slice``. Divide replicated losses by ``view_world_size``.
         """
+        if self._reference is not None:
+            return self._reference.backproject(sinogram)
+        if torch._C._are_functorch_transforms_active():
+            return ReferenceProjector(self, validate=False).backproject(sinogram)
+        if isinstance(sinogram, torch.Tensor) and sinogram.ndim > len(self.projection_shape):
+            return self._native_batch(sinogram, False)
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         plan = self._execution_plan(sinogram, False)
         geometry_spec, geometry = self._effective_geometry(plan, sinogram.device)
         return _ProjectorAutograd.apply(sinogram, self, "backproject", plan, geometry_spec, self._participation(), *geometry)
 
+    def _native_batch(self, tensor, is_project):
+        shape = self.volume_shape if is_project else self.projection_shape
+        if tuple(tensor.shape[-len(shape):]) != shape:
+            raise ValueError(f"input trailing shape must be {shape}")
+        leading = tuple(tensor.shape[:-len(shape)])
+        output_shape = self.projection_shape if is_project else self.volume_shape
+        if math.prod(leading) == 0:
+            return tensor.to(dtype=self.dtype).reshape(*leading, *output_shape)
+        function = self.project if is_project else self.backproject
+        return torch.stack([function(value) for value in tensor.reshape(-1, *shape)]).reshape(
+            *leading, *output_shape,
+        )
+
     def project_into(self, volume, output):
-        """Numerically project tensor/block-store input into supplied float32 output.
+        """Numerically project into supplied output matching ``self.dtype``.
 
         Returns ``output``; no complete result is allocated. Direct tensors
         requiring autograd must be detached or used under ``torch.no_grad()``.
@@ -1872,7 +1930,7 @@ class Projector:
         return self._execute_into(volume, output, True)
 
     def backproject_into(self, sinogram, output):
-        """Write the matched numerical adjoint into supplied float32 block output.
+        """Write the numerical adjoint into block output matching ``self.dtype``.
 
         Accepts tensors or stores with read/write/shape/dtype/flush metadata.
         Returns ``output`` after bounded view/pixel contributions complete.
@@ -1882,7 +1940,19 @@ class Projector:
     def _execute_into(self, value, output, is_project):
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
-        source, sink = _validate_stores(self, value, output, is_project)
+        if self._reference is not None and self.world_size > 1:
+            error = None
+            try:
+                source, sink = _validate_stores(self, value, output, is_project)
+            except (TypeError, ValueError, RuntimeError, PermissionError) as failure:
+                error = failure
+            self._partition.preflight(error, (is_project, self.dtype))
+        else:
+            source, sink = _validate_stores(self, value, output, is_project)
+        if self._reference is not None:
+            with torch.no_grad():
+                self._reference.into(source, sink, is_project)
+            return output
         with torch.no_grad():
             plan = self._execution_plan(source, is_project, sink)
             geometry_spec, geometry = self._effective_geometry(plan, torch.device(getattr(source, "device", "cpu")))

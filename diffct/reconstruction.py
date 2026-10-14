@@ -110,7 +110,7 @@ def _filter(sinogram, pitch, window, pad_factor, response):
     return filtered.narrow(1, left, n_u)
 
 
-def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_finfo):
+def _parker_setup(angles, sinogram, geometry, pitch, isocenter, geometry_finfo):
     source, detector, u = geometry[:3]
     vector = detector - source
     normal = (torch.stack((-u[:, 1], u[:, 0]), dim=1) if sinogram.ndim == 2
@@ -184,8 +184,13 @@ def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_finfo):
         raise ValueError("Parker weighting requires consistent detector-u orientation")
     direction = 1 if angles[-1] > angles[0] else -1
     fan_sign = direction * (1 if handedness[0] > 0 else -1)
-    weights = parker_weights(delta * direction, sinogram.shape[1], pitch[0], sdd,
-                              detector_offset=fan_sign * offset_u)
+    return delta * direction, sdd, fan_sign * offset_u, fan_sign
+
+
+def _parker(angles, sinogram, geometry, pitch, isocenter, geometry_finfo):
+    beta, sdd, offset_u, fan_sign = _parker_setup(
+        angles, sinogram, geometry, pitch, isocenter, geometry_finfo)
+    weights = parker_weights(beta, sinogram.shape[1], pitch[0], sdd, detector_offset=offset_u)
     if fan_sign < 0:
         weights = weights.flip(1)
     return weights[..., None] if sinogram.ndim == 3 else weights
@@ -209,13 +214,25 @@ def _pipeline(sinogram, geometry, angles, beam, pitch, window, pad_factor,
     return filtered * angular.reshape((len(angles),) + (1,) * (sinogram.ndim - 1))
 
 
+def _extended_execution(sinogram, backend, precision, devices, view_chunk_size,
+                        volume_chunk_shape, distributed, process_group, partition,
+                        partition_grid, voxel_spacing):
+    return (backend != "auto" or precision != "fast" or devices is not None
+            or view_chunk_size is not None or volume_chunk_shape is not None
+            or distributed or process_group is not None or partition != "views"
+            or partition_grid is not None or isinstance(voxel_spacing, (tuple, list))
+            or not getattr(sinogram, "is_cuda", False) or torch.version.hip is not None)
+
+
 def fbp(sinogram, trajectory, volume_shape, angles, *, beam="parallel",
         detector_spacing=1.0, voxel_spacing=1.0, window="ram-lak", pad_factor=2,
         projection_weights=None, angular_weights=None, filter_response=None,
-        short_scan=False, isocenter=None):
+        short_scan=False, isocenter=None, backend="auto", precision="fast", devices=None,
+        view_chunk_size=None, volume_chunk_shape=None, distributed=False, process_group=None,
+        partition="views", partition_grid=None):
     """Differentiable parallel/fan FBP for fixed flat-detector geometry.
 
-    ``sinogram`` is a CUDA tensor ``(views, bins)``; ``volume_shape`` is ``(H,W)``.
+    ``sinogram`` is a floating tensor ``(views, bins)``; ``volume_shape`` is ``(H,W)``.
     ``angles`` are explicit unwrapped radians. Detector/voxel spacings share the
     trajectory's physical unit. ``projection_weights`` and ``angular_weights``
     replace the default cosine and angular quadrature, respectively.
@@ -223,12 +240,26 @@ def fbp(sinogram, trajectory, volume_shape, angles, *, beam="parallel",
     its physical units; length is ``pad_factor*bins//2+1``. Its use ignores
     ``window``. These tensors retain autograd. ``short_scan=True`` adds Parker
     weighting before filtering for a circular fan scan with sufficient coverage.
-    Low-precision inputs are promoted to float32 for reconstruction, retaining
-    gradients to their original dtype. Output is signed float32; geometry
-    gradients are rejected.
+    ``precision="fast"`` preserves native FP32 execution; ``"float32"`` and
+    ``"float64"`` select PyTorch arithmetic in that dtype. Output is signed
+    and stays on the input device. View/spatial chunks, local devices and
+    views/space/hybrid rank ownership are supported. Provide full global
+    geometry/angles and the owned view data in distributed mode. Geometry
+    gradients are rejected. Use :func:`fbp_into` for numerical block stores.
     """
     if beam not in ("parallel", "fan"):
         raise ValueError("fbp beam must be 'parallel' or 'fan'; use fdk for cone data")
+    if _extended_execution(sinogram, backend, precision, devices, view_chunk_size, volume_chunk_shape,
+                           distributed, process_group, partition, partition_grid, voxel_spacing):
+        from .analytical_execution import reconstruct
+        return reconstruct(sinogram, trajectory, volume_shape, angles, beam=beam,
+                           detector_spacing=detector_spacing, voxel_spacing=voxel_spacing,
+                           window=window, pad_factor=pad_factor, projection_weights=projection_weights,
+                           angular_weights=angular_weights, filter_response=filter_response,
+                           short_scan=short_scan, isocenter=isocenter, backend=backend, precision=precision,
+                           devices=devices, view_chunk_size=view_chunk_size, volume_chunk_shape=volume_chunk_shape,
+                           distributed=distributed, process_group=process_group, partition=partition,
+                           partition_grid=partition_grid)
     sinogram, geometry, shape, pitch, spacing = _prepare(
         sinogram, trajectory, volume_shape, beam, detector_spacing, voxel_spacing, isocenter)
     angles = _angles(angles, len(geometry[0]), sinogram.device)
@@ -243,16 +274,30 @@ def fbp(sinogram, trajectory, volume_shape, angles, *, beam="parallel",
 def fdk(sinogram, trajectory, volume_shape, angles, *, detector_spacing=1.0,
         voxel_spacing=1.0, window="ram-lak", pad_factor=2,
         projection_weights=None, angular_weights=None, filter_response=None,
-        short_scan=False, isocenter=None):
+        short_scan=False, isocenter=None, backend="auto", precision="fast", devices=None,
+        view_chunk_size=None, volume_chunk_shape=None, distributed=False, process_group=None,
+        partition="views", partition_grid=None):
     """Differentiable flat-detector FDK; fixed geometry, approximate inversion.
 
-    ``sinogram`` is ``(views,U,V)`` on CUDA; ``volume_shape`` is ``(D,H,W)``.
+    ``sinogram`` is ``(views,U,V)``; ``volume_shape`` is ``(D,H,W)``.
     Filtering runs along U. ``detector_spacing`` is a scalar or ``(du,dv)``.
     The explicit weight/filter overrides and ``short_scan`` follow :func:`fbp`.
-    Returns signed float32 without clamping. The backward pass is the precise
+    Precision/backend, chunking and ownership follow :func:`fbp`. Voxel spacing
+    may be a scalar or ``(dz,dy,dx)``. The backward pass is the precise
     discrete interpolation transpose; it does not make FDK an exact inverse.
     Use :func:`helical_fdk` for slice-centered integration of an axial helix.
     """
+    if _extended_execution(sinogram, backend, precision, devices, view_chunk_size, volume_chunk_shape,
+                           distributed, process_group, partition, partition_grid, voxel_spacing):
+        from .analytical_execution import reconstruct
+        return reconstruct(sinogram, trajectory, volume_shape, angles, beam="cone",
+                           detector_spacing=detector_spacing, voxel_spacing=voxel_spacing,
+                           window=window, pad_factor=pad_factor, projection_weights=projection_weights,
+                           angular_weights=angular_weights, filter_response=filter_response,
+                           short_scan=short_scan, isocenter=isocenter, backend=backend, precision=precision,
+                           devices=devices, view_chunk_size=view_chunk_size, volume_chunk_shape=volume_chunk_shape,
+                           distributed=distributed, process_group=process_group, partition=partition,
+                           partition_grid=partition_grid)
     sinogram, geometry, shape, pitch, spacing = _prepare(
         sinogram, trajectory, volume_shape, "cone", detector_spacing, voxel_spacing, isocenter)
     angles = _angles(angles, len(geometry[0]), sinogram.device)
@@ -260,6 +305,29 @@ def fdk(sinogram, trajectory, volume_shape, angles, *, detector_spacing=1.0,
                          projection_weights, angular_weights, filter_response, short_scan, isocenter,
                          tuple(torch.finfo(component.dtype) for component in trajectory))
     return cone_weighted_backproject(filtered, *geometry, *shape, *pitch, spacing, isocenter=isocenter)
+
+
+def fbp_into(source, output, trajectory, volume_shape, angles, **kwargs):
+    """Numerical streamed FBP into caller tensor/file storage; return ``output``.
+
+    Options follow :func:`fbp`. Output dtype follows the precision mode;
+    autograd inputs/outputs/weights and overlapping output storage are rejected
+    before data I/O. Filtering reads complete detector rows in view batches.
+    """
+    from .analytical_execution import reconstruct_into
+    beam = kwargs.pop("beam", "parallel")
+    if beam not in ("parallel", "fan"):
+        raise ValueError("fbp beam must be 'parallel' or 'fan'; use fdk_into for cone data")
+    return reconstruct_into(source, output, trajectory, volume_shape, angles, beam=beam, **kwargs)
+
+
+def fdk_into(source, output, trajectory, volume_shape, angles, **kwargs):
+    """Numerical streamed FDK into caller tensor/file storage; return ``output``.
+
+    Options follow :func:`fdk`; validation and storage follow :func:`fbp_into`.
+    """
+    from .analytical_execution import reconstruct_into
+    return reconstruct_into(source, output, trajectory, volume_shape, angles, beam="cone", **kwargs)
 
 
 def helical_view_weights(angles, source_z, slice_z):

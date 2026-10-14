@@ -6,7 +6,6 @@ precision parameters.
 """
 
 import numpy as np
-from numba import cuda
 
 # ---------------------------------------------------------------------------
 # Data Types and Numerical Constants
@@ -61,12 +60,18 @@ _TPB_3D = (8, 8, 8)
 # CUDA fastmath optimization: enables aggressive floating-point optimizations
 # Trades numerical precision for performance in ray-tracing calculations
 # Safe for CT reconstruction where slight precision loss is acceptable for speed gains
-_FASTMATH_DECORATOR = cuda.jit(cache=True, fastmath=True)
-"""Numba CUDA JIT decorator with fastmath enabled for forward kernels."""
+def _FASTMATH_DECORATOR(function):
+    """Create a fastmath CUDA dispatcher when a native kernel is defined."""
+    from numba import cuda
+
+    return cuda.jit(cache=True, fastmath=True)(function)
 
 # Analytical reconstruction kernels (FBP / FDK voxel-driven gather) run at
 # the tightest available precision - the Fourier-convention constant and
 # the (sid/U)^2 weight amplify rounding errors, and the kernels are only
 # called once per reconstruction so the speed penalty is negligible.
-_FDK_ACCURACY_DECORATOR = cuda.jit(cache=True, fastmath=False)
-"""Numba CUDA JIT decorator with fastmath disabled for FBP/FDK gather kernels."""
+def _FDK_ACCURACY_DECORATOR(function):
+    """Create an accurate CUDA dispatcher when a native kernel is defined."""
+    from numba import cuda
+
+    return cuda.jit(cache=True, fastmath=False)(function)

@@ -27,7 +27,8 @@ also pass measured or calibrated poses in the same layout.
 Coordinates are Cartesian ``(x, y[, z])``. Volume indexing is ``[y, x]`` for 2D
 and ``[z, y, x]`` for 3D. The origin is the volume centre. Use one length unit
 for positions, voxel spacing and detector spacing. Voxel spacing is a single
-positive scalar.
+positive scalar or a positive per-axis tuple in tensor order: ``(dy,dx)`` or
+``(dz,dy,dx)``. Per-axis spacing uses the PyTorch backend; see :doc:`execution`.
 
 Detector axes are unit direction vectors, not pixel-step vectors. The detector
 spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
@@ -68,11 +69,12 @@ All components must be finite floating-point tensors with the same nonzero view
 count. ``ray_dir`` and ``det_u`` must be orthogonal for parallel beams. ``det_u``
 and ``det_v`` must be orthogonal for cone beams. With flat fan/cone detectors,
 the source must not coincide with the detector centre or view the detector
-edge-on. The nearer of source and detector centre must lie within 1e6 voxel
-spacings of the origin. Surface detectors instead validate each actual
+edge-on. The native FP32 backend requires the nearer of source and detector
+centre to lie within 1e6 voxel spacings of the origin. Native surface detectors validate each actual
 source/pixel pair: the endpoints must remain distinct in float32, and the
 nearer endpoint of every ray must lie within 1e6 voxel spacings of the origin.
-Both endpoints must lie within 1e15 voxel spacings.
+Both native endpoints must lie within 1e15 voxel spacings. Portable precision
+modes validate finite, nondegenerate rays in their selected dtype; see :doc:`execution`.
 
 Arbitrary trajectories do not guarantee enough angular coverage for an inverse
 problem. Use iterative methods with regularization for sparse or incomplete
@@ -201,7 +203,7 @@ Limits:
 - Second derivatives with respect to geometry raise an error.
 - Second derivatives with respect to the volume or sinogram are available,
   including when trajectory or surface parameters require gradients.
-- Detector and voxel spacing are scalar settings, not differentiable parameters.
+- Detector and voxel spacing are fixed physical settings, not differentiable parameters.
 - Geometry derivatives are piecewise: at exact voxel edges or corners they are one-sided.
 - Distributed geometry gradients are summed by the operator. See :doc:`multi_gpu`
   for loss scaling.

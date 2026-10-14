@@ -131,6 +131,9 @@ def _numpy_blocks(maximum):
                 result = _original(*args, **kwargs)
                 if isinstance(result, np.ndarray) and result.size > maximum and not isinstance(result, np.memmap):
                     source = args[0] if args else None
+                    if not isinstance(source, np.ndarray):
+                        # as_strided's array-interface wrapper retains its real ndarray owner.
+                        source = getattr(source, "base", None)
                     assert isinstance(source, np.ndarray) and np.shares_memory(result, source), \
                         ("whole NumPy copy/cast", _name, result.shape)
                 return result
@@ -146,6 +149,53 @@ def _numpy_blocks(maximum):
                 return result
             patches.enter_context(mock.patch.object(module, name, mapping))
         yield
+
+
+@pytest.mark.parametrize("kind", ["broadcast", "strided"])
+def test_numpy_block_guard_accepts_zero_copy_stride_views(kind):
+    source = np.arange(3, dtype=np.float64)
+    with _numpy_blocks(5):
+        actual = (np.broadcast_to(source, (2, 3)) if kind == "broadcast" else
+                  np.lib.stride_tricks.as_strided(source, shape=(2, 3), strides=(0, source.strides[0])))
+        assert actual.shape == (2, 3) and not actual.flags.owndata
+        assert np.shares_memory(actual, source)
+    np.testing.assert_array_equal(actual, [[0, 1, 2], [0, 1, 2]])
+
+
+@pytest.mark.parametrize("kind", ["allocation", "array-copy", "cast", "contiguous-copy", "copy", "interface-cast"])
+def test_numpy_block_guard_rejects_complete_allocations_and_copies(kind):
+    source = np.arange(6, dtype=np.float64).reshape(2, 3)
+    interface = np.lib.stride_tricks.as_strided(source, shape=source.shape, strides=source.strides).base
+    with _numpy_blocks(5), pytest.raises(AssertionError, match="whole NumPy"):
+        if kind == "allocation":
+            np.empty(source.shape)
+        elif kind == "array-copy":
+            np.array(source, copy=True)
+        elif kind == "cast":
+            np.asarray(source, dtype=np.float32)
+        elif kind == "contiguous-copy":
+            np.ascontiguousarray(source.T)
+        elif kind == "copy":
+            np.copy(source)
+        else:
+            np.asarray(interface, dtype=np.float32)
+
+
+def test_numpy_block_guard_retains_mapped_state_bounds(tmp_path):
+    path = tmp_path / "guard.npy"
+    np.save(path, np.arange(6, dtype=np.float64).reshape(2, 3))
+    with _numpy_blocks(5):
+        mapped = np.load(path, mmap_mode="r+")
+        assert isinstance(mapped, np.memmap)
+        assert mapped[:1].copy().shape == (1, 3)
+        with pytest.raises(AssertionError, match="whole mmap"):
+            mapped.copy()
+        with pytest.raises(AssertionError, match="whole mmap"):
+            mapped.astype(np.float32)
+        with pytest.raises(AssertionError, match="whole mmap"):
+            mapped += 1
+        with pytest.raises(AssertionError, match="whole NumPy|complete RAM array"):
+            np.load(path)
 
 
 @contextmanager
@@ -385,7 +435,7 @@ def test_into_rejects_known_aliases_before_execution(operation, kind, tmp_path):
 def test_into_npy_file_identity_checked_before_io_or_backend(operation, path_kind, tmp_path):
     case = _case("parallel", views=5)
     case.shape, case.detector = (5, 7), (7,)
-    projector = _projector(case, volume_chunk_shape=(3, 4), view_chunk_size=2)
+    projector = _projector(case, backend="torch", volume_chunk_shape=(3, 4), view_chunk_size=2)
     source_path, output_path = tmp_path / "source.npy", tmp_path / "output.npy"
     values = np.linspace(-.4, .7, 35, dtype=np.float32).reshape(5, 7)
     np.save(source_path, values)
@@ -414,16 +464,22 @@ def test_into_npy_file_identity_checked_before_io_or_backend(operation, path_kin
             if alias:
                 with _rejection("alias|overlap|same|distinct|backing"):
                     getattr(projector, f"{operation}_into")(source, output)
-                backend_probe.assert_not_called()
+                reads.assert_not_called()
+                writes.assert_not_called()
+                assert (source_path.read_bytes(), output_path.read_bytes()) == before
             else:
-                with pytest.raises(RuntimeError, match="CUDA is required"):
-                    getattr(projector, f"{operation}_into")(source, output)
-                backend_probe.assert_called_once_with()
+                assert getattr(projector, f"{operation}_into")(source, output) is output
+                reads.assert_called()
+                writes.assert_called()
         finally:
-            reads.assert_not_called()
-            writes.assert_not_called()
+            backend_probe.assert_not_called()
             assert not launches.records
-            assert (source_path.read_bytes(), output_path.read_bytes()) == before
+            assert source_path.read_bytes() == before[0]
+            assert source_path.samefile(output_path) == alias
+    if not alias:
+        matrix = _matrix(case, _offsets(case, flat=True))
+        operator = matrix if operation == "project" else matrix.T
+        _close(output.read((slice(None), slice(None))), (operator @ values.ravel()).reshape(values.shape))
 
 
 @pytest.mark.cuda
@@ -496,7 +552,7 @@ def test_empty_rank_block_outputs_and_bounded_backprojection_sum(beam, tmp_path)
 def _independently_wrapped_cpu_alias_case(operation, overlap):
     case = _case("parallel", views=3)
     case.shape, case.detector = (3, 5), (7,)
-    projector = _projector(case, volume_chunk_shape=(2, 3), view_chunk_size=2)
+    projector = _projector(case, backend="torch", volume_chunk_shape=(2, 3), view_chunk_size=2)
     input_shape, output_shape = ((case.shape, case.sino_shape) if operation == "project" else
                                  (case.sino_shape, case.shape))
     input_count, output_count = math.prod(input_shape), math.prod(output_shape)
@@ -511,15 +567,16 @@ def _independently_wrapped_cpu_alias_case(operation, overlap):
     assert (max(span[0] for span in spans) < min(span[1] for span in spans)) == overlap
     if not overlap:
         assert spans[0][1] == spans[1][0], "adjacent backing intervals are disjoint"
-    return projector, backing, source, output
+    return case, projector, backing, source, output
 
 
 @pytest.mark.parametrize("operation", ["project", "backproject"])
 @pytest.mark.parametrize("backend", ["tensor", "tensor-store"])
 @pytest.mark.parametrize("overlap", [True, False], ids=["overlap", "disjoint"])
 def test_into_independently_wrapped_cpu_bytes_validate_before_backend(operation, backend, overlap):
-    projector, backing, source, output = _independently_wrapped_cpu_alias_case(operation, overlap)
+    case, projector, backing, source, output = _independently_wrapped_cpu_alias_case(operation, overlap)
     original = backing.copy()
+    source_tensor, output_tensor = source, output
     store_type = _api("TensorStore")
     if backend == "tensor-store":
         source, output = store_type(source), store_type(output)
@@ -531,15 +588,18 @@ def test_into_independently_wrapped_cpu_bytes_validate_before_backend(operation,
             if overlap:
                 with _rejection("alias|overlap|distinct|backing"):
                     getattr(projector, f"{operation}_into")(source, output)
-                backend_probe.assert_not_called()
+                np.testing.assert_array_equal(backing, original)
+                reads.assert_not_called()
+                writes.assert_not_called()
             else:
-                # CPU-only admission control: valid disjoint data reaches the real
-                # backend requirement without executing any projection or copies.
-                with pytest.raises(RuntimeError, match="CUDA is required"):
-                    getattr(projector, f"{operation}_into")(source, output)
-                backend_probe.assert_called_once_with()
+                assert getattr(projector, f"{operation}_into")(source, output) is output
+                reads.assert_called()
+                writes.assert_called()
         finally:
-            np.testing.assert_array_equal(backing, original)
-            reads.assert_not_called()
-            writes.assert_not_called()
+            np.testing.assert_array_equal(source_tensor.numpy().ravel(), original[:source_tensor.numel()])
+            backend_probe.assert_not_called()
             assert not launches.records
+    if not overlap:
+        matrix = _matrix(case, _offsets(case, flat=True))
+        operator = matrix if operation == "project" else matrix.T
+        _close(output_tensor, (operator @ original[:source_tensor.numel()]).reshape(output_tensor.shape))

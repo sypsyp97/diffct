@@ -233,6 +233,40 @@ jobs:
           path: ${{ runner.temp }}/wheel-tests/results.xml
           if-no-files-found: warn
 
+  clean-cpu:
+    name: Plain installed wheel / no CUDA runtime
+    needs: package
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    timeout-minutes: 20
+    env:
+      DIFFCT_REQUIRE_CLEAN_CPU: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Install CPU PyTorch and the plain wheel
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "$(ls dist/*.whl)" pytest
+          python -m pip check
+      - name: Exercise public CPU APIs outside the checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/clean-cpu-wheel-tests"
+          cp tests/test_cpu_install.py "$RUNNER_TEMP/clean-cpu-wheel-tests/"
+          cd "$RUNNER_TEMP/clean-cpu-wheel-tests"
+          python -m pytest -c /dev/null --rootdir=. --confcutdir=. test_cpu_install.py -q --strict-markers --junitxml=results.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pytest-clean-cpu
+          path: ${{ runner.temp }}/clean-cpu-wheel-tests/results.xml
+          if-no-files-found: warn
+
   docs:
     name: Documentation warnings
     runs-on: ubuntu-latest
@@ -258,7 +292,7 @@ jobs:
   required:
     name: CI passed
     if: always()
-    needs: [lint, package, cpu, docs]
+    needs: [lint, package, cpu, clean-cpu, docs]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

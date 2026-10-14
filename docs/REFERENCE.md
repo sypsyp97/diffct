@@ -6,8 +6,8 @@
 |---|---|---|
 | Acquisition | 2D parallel/fan and 3D cone beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
 | Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives raise an error; surface samples are checked on every call |
-| Execution | CUDA computation with CPU or CUDA data; one-process multi-GPU or distributed ranks | Outputs are float32 on the input device; CPU data uses streamed CUDA tiles |
-| Reconstruction | Matched adjoint plus differentiable `fbp`, `fdk`, approximate `helical_fdk` and composable helpers | Analytical APIs use fixed flat geometry on one CUDA device; `backproject()` is not an inverse |
+| Execution | Native NVIDIA CUDA or portable PyTorch; explicit FP32/FP64, leading batch dimensions, per-axis spacing, devices and distributed ownership | Native fast mode remains FP32; strict/hybrid/per-axis execution uses PyTorch; see [precision and execution](EXECUTION.md) |
+| Reconstruction | Library CGLS/SIRT/TV; streamed differentiable `fbp`/`fdk`, numerical store outputs, approximate `helical_fdk` and composable helpers | Analytical geometry is fixed and flat; helical/low-level helpers retain their original CUDA contract; `backproject()` is not an inverse |
 | Memory | Automatic spatial/view/pixel blocks, bounded transfers, numerical tensor/file stores and rank-owned volume slabs | Tensor autograd still holds complete inputs/outputs/gradients; disk solvers must keep their vector operations blockwise |
 
 Analytical helpers use flat detectors. Analytical fan/cone backprojection infers the physical isocenter from source
@@ -172,19 +172,19 @@ memory ceilings independent of GPU capacity.
 
 When complete arrays exceed RAM, use `TensorStore`, `NpyStore` or a structural
 block backend with `project_into`/`backproject_into`. These methods overwrite
-caller-provided float32 output blocks, return the output object and do not build
+caller-provided output blocks matching `Projector.dtype`, return the output object and do not build
 autograd graphs. Known read-only and aliased outputs are rejected before
 execution; hidden custom-store aliases are the caller's responsibility.
 The disk CGLS example updates `x,s,p,r,q` blockwise and saves rank-local
 completed-iteration checkpoints. It does not materialize complete residuals
 or volumes. See [the full memory guide](https://sypsyp97.github.io/diffct/chunking.html).
 
-`Projector` accepts floating CPU data by default. Projection and matched
-backprojection execute on CUDA while the full volume, sinogram and returned
-data gradients remain on the input device. Keep these arrays on CPU when they
-exceed GPU memory. CPU execution still requires a CUDA device.
+`Projector` accepts floating CPU data by default. The native backend streams
+through NVIDIA CUDA while full arrays and returned gradients stay on the input
+device. The PyTorch backend also executes directly on CPU or supported
+accelerators. See [precision and execution](EXECUTION.md) for backend selection.
 
-`volume_chunk_shape=None` (default) chooses an execution plan per call. CPU
+For the native backend, `volume_chunk_shape=None` chooses an execution plan per call. CPU
 inputs always stream. CUDA inputs use the original full-volume path when a
 conservative additional working-set estimate fits each selected card and the
 output device; otherwise they stream. Memory is sized against the smallest
@@ -318,14 +318,14 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   `sinusoidal_*`, `saddle_*`, `random_*`, `custom_*`), or pass calibrated
   tensors.
 - Geometry rows use world `(x, y)` or `(x, y, z)` coordinates. Volume axes
-  run in `(y, x)` or `(z, y, x)` order. There are no batch/channel dimensions.
+  run in `(y, x)` or `(z, y, x)` order. Leading batch/channel dimensions are preserved.
 - Direction vectors have unit length. `ray_dir` is orthogonal to `det_u`, and
   `det_u` is orthogonal to `det_v`. Detector pitch is a separate argument:
   a scalar in 2D, a scalar or `(du, dv)` pair for cone beams.
   `detector_shape=(U, V)` and cone sinograms always follow `(views, U, V)`.
 - The volume is centred on the origin. Voxel `i` of an axis with `N` voxels has
-  its centre at `(i + 0.5 - N / 2) * voxel_spacing`. Voxel spacing is one
-  isotropic value.
+  its centre at `(i + 0.5 - N / 2) * axis_spacing`. Voxel spacing is a scalar
+  or a tuple `(dy, dx)` / `(dz, dy, dx)` in tensor axis order.
 - The default flat detector array is centred. Pixel `k` of `N_det` pixels lies at
   `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`
   (`det_origin` for parallel beams), the same convention as `main`. For cone
@@ -334,11 +334,11 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   detectors, `Projector` rejects views where the source equals the detector
   centre, or the detector is edge-on to the source. Surface detectors check the
   actual pixel positions instead.
-- The kernels work in float32. In fan and cone beams, the source or the
+- The native kernels work in float32. In native fan and cone beams, the source or the
   detector centre must be within 1e6 voxels of the volume centre in each view;
   both must be within 1e15 voxels. For surfaces these bounds apply to every
   source/pixel pair. Geometry and floating-point volume/sinogram inputs may be
-  on CPU or CUDA. CPU inputs use streamed CUDA computation.
+  on CPU or CUDA. Native CPU inputs use streamed CUDA computation.
   Ray positions are accurate to about 6e-8 times that nearer distance.
 
 **Gradient edge cases:**

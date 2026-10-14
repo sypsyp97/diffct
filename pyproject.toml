@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "diffct"
 version = "2.2.1"
-description = "Differentiable CUDA projectors for CT: arbitrary trajectories, multi-GPU and multi-node execution, geometry gradients"
+description = "Differentiable CT projection and reconstruction: precision modes, streaming, distributed execution and geometry gradients"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -13,7 +13,7 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-keywords = ["computed tomography", "CT reconstruction", "differentiable programming", "CUDA", "PyTorch"]
+keywords = ["computed tomography", "CT reconstruction", "differentiable programming", "CUDA", "ROCm", "PyTorch"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",

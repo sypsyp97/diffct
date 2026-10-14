@@ -2,8 +2,26 @@
 
 import numpy as np
 import torch
+from pathlib import Path
 
 from .storage import TensorStore, NpyStore
+
+
+def _backing_store(value):
+    """Inspect delegated store metadata without reading numerical blocks."""
+    seen = set()
+    while id(value) not in seen:
+        seen.add(id(value))
+        nested = getattr(value, "store", None)
+        if nested is None:
+            break
+        value = nested
+    return value
+
+
+def _backing_tensor(value):
+    value = _backing_store(value)
+    return value if isinstance(value, torch.Tensor) else getattr(value, "tensor", None)
 
 
 def _as_store(value):
@@ -92,22 +110,31 @@ def _validate_stores(projector, source, output, is_project):
         raise ValueError("input and output stores must have distinct backing data")
     if torch.is_grad_enabled():
         for value in (source, output):
-            if isinstance(value, torch.Tensor) and value.requires_grad:
+            tensor = _backing_tensor(value)
+            if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
                 raise ValueError("into methods are numerical; detach autograd inputs and outputs")
     source, output = _as_store(source), _as_store(output)
     expected_input = projector.volume_shape if is_project else projector.projection_shape
     expected_output = projector.projection_shape if is_project else projector.volume_shape
     if tuple(source.shape) != expected_input or tuple(output.shape) != expected_output:
         raise ValueError("input/output store shape does not match the projector")
-    if source.dtype not in (torch.float32, torch.float64) or output.dtype != torch.float32:
-        raise TypeError("input must be floating point and output dtype must be float32")
-    if not getattr(output, "writable", True):
+    dtype = getattr(projector, "dtype", torch.float32)
+    if source.dtype not in (torch.float32, torch.float64) or output.dtype != dtype:
+        raise TypeError(f"input must be floating point and output dtype must be {dtype}")
+    if not getattr(output, "writable", True) or not getattr(_backing_store(output), "writable", True):
         raise PermissionError("output store is read-only")
-    if isinstance(output, TensorStore) and _tensor_internal_overlap(output.tensor):
+    source_tensor, output_tensor = _backing_tensor(source), _backing_tensor(output)
+    if isinstance(output_tensor, torch.Tensor) and _tensor_internal_overlap(output_tensor):
         raise ValueError("output tensor store has internal overlap")
-    if isinstance(source, TensorStore) and isinstance(output, TensorStore):
-        if _tensor_overlap(source.tensor, output.tensor):
+    if isinstance(source_tensor, torch.Tensor) and isinstance(output_tensor, torch.Tensor):
+        if _tensor_overlap(source_tensor, output_tensor):
             raise ValueError("input and output tensor stores overlap")
-    if isinstance(source, NpyStore) and isinstance(output, NpyStore) and source.path.samefile(output.path):
-        raise ValueError("input and output NpyStore paths alias")
+    source_backing, output_backing = _backing_store(source), _backing_store(output)
+    if source_backing is output_backing:
+        raise ValueError("input and output stores must have distinct backing data")
+    source_path, output_path = getattr(source_backing, "path", None), getattr(output_backing, "path", None)
+    if source_path is not None and output_path is not None:
+        first, second = Path(source_path), Path(output_path)
+        if first.is_file() and second.is_file() and first.samefile(second):
+            raise ValueError("input and output NpyStore paths alias")
     return source, output
