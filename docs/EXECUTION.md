@@ -20,6 +20,17 @@ casting an already rounded trajectory cannot recover its original precision.
 Matched interpolation/traversal coefficients do not promise bitwise
 determinism of floating-point scatter accumulation.
 
+FP32 fan/cone modes retain the acquisition distance guards: each view (or
+sampled surface ray) needs one endpoint within `1e6` voxels of the volume
+center, and both endpoints within `1e15`. With per-axis pitches, distance is
+`norm((x/dx, y/dy[, z/dz]))`. FP64 validates finite, distinct endpoints without
+these FP32 cutoffs. Segment setup starts from the endpoint nearer the volume
+center in both precision modes to avoid cancellation at distant sources.
+Native surface preprocessing can preserve a higher-precision geometry dtype
+before staging completed rays to FP32; its data transforms retain that behavior.
+Explicit PyTorch FP32 validates component arithmetic in FP32. Use FP64 when
+that arithmetic rounds distinct source/pixel coordinates together.
+
 Install the appropriate PyTorch build first. `pip install diffct` suffices for
 the PyTorch backend; the CUDA compiler extras are needed for native Numba
 execution. ROCm uses PyTorch's `"cuda"` device namespace, as described in the

@@ -453,13 +453,16 @@ class Projector:
                 )
                 surface_trainable = surface_offsets.requires_grad
         self._geometry_trainable = bool(self._learnable) or surface_trainable
-        if self.backend == "numba" and beam in ("fan", "cone") and detector_surface is None:
-            # The kernels set up each ray in float32 from the endpoint nearer the
-            # volume centre, which is the origin.
+        if self.dtype == torch.float32 and beam in ("fan", "cone") and detector_surface is None:
+            # Both FP32 backends set up each segment from the endpoint nearer
+            # the volume centre. Measure per-axis distances in voxel units.
             distances = torch.stack([
-                torch.linalg.vector_norm(component.double(), dim=1).cpu()
+                torch.linalg.vector_norm(
+                    component.double() / component.new_tensor(spacing[::-1], dtype=torch.float64),
+                    dim=1,
+                ).cpu()
                 for component in self._trajectory[:2]
-            ]) / self.voxel_spacing
+            ])
             if torch.any(distances.min(dim=0).values > 1e6).item():
                 raise ValueError(
                     "the source or the detector center must lie within 1e6 voxels "
