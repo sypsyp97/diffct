@@ -105,10 +105,11 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     if n == 1:
         return torch.ones_like(angles) * (math.pi if redundant_full_scan else 1.0)
 
-    # Remove the absolute origin in the input precision before computing gaps.
-    angles = angles - angles[0]
     device = angles.device
     angles_sorted, sort_idx = torch.sort(angles)
+    # Sort before removing a deterministic origin: shifting from an arbitrary
+    # endpoint can collapse distinct angles and change their quadrature order.
+    angles_sorted = angles_sorted - angles_sorted[0]
     diffs = angles_sorted[1:] - angles_sorted[:-1]
 
     # Endpoint-excluded uniform circular scans are periodic quadrature
