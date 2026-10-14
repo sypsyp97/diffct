@@ -5,7 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.3.0] - 2026-10-14
+
+### Added
+
+- `backend="auto"`, `"numba"` or `"torch"` and `precision="fast"`, `"float32"` or `"float64"` on `Projector`, `fbp` and `fdk`. These settings are opt-in. Default calls keep native FP32 execution where compatible.
+- `backend="auto"` selects the PyTorch backend for `precision="float32"`, `precision="float64"`, per-axis `voxel_spacing` and hybrid partitions. An incompatible explicit `backend="numba"` request raises an error.
+- `backend="torch"` runs on CPU, NVIDIA CUDA and PyTorch ROCm. `precision="float64"` runs the data operations in FP64.
+- Portable FP32 ray setup clips rays and locates tile entries in FP64. Traversal measures distances from each entry, so distant endpoints keep voxel widths.
+- Per-axis `voxel_spacing`, such as `(dy, dx)` or `(dz, dy, dx)`, in tensor axis order.
+- Leading batch and channel dimensions for projection and adjoint, including empty batches.
+- Data gradients, JVP, `vmap`, `jacrev`, `jacfwd` and second data derivatives for the PyTorch projector. Dense Jacobians need a single-process projector.
+- `view_chunk_size` and `volume_chunk_shape` on `fbp` and `fdk` stream view batches and spatial tiles. `devices` schedules tiles across local devices.
+- `fbp_into` and `fdk_into` write into `TensorStore`, `NpyStore` or compatible block stores.
+- `partition="hybrid"` with `partition_grid=(view_ranks, space_ranks)` for projectors and analytical reconstruction. Uneven and empty shards are supported.
+- `cgls`, `sirt`, `tv_reconstruction` and `SolverResult`, with residual thresholds, residual history, callbacks and optional `x0`.
+- `cgls_into` keeps solver state in mapped files. It rejects non-finite measurements in bounded blocks before any output write.
+- `checkpoint_directory` and `resume` for `cgls`, `sirt` and `tv_reconstruction`. Fingerprints bind the acquisition, measurements, precision, ownership and settings.
+- `total_variation` with `reduction="mean"` or `"sum"`. Spatial and hybrid runs exchange neighbouring faces.
+- `docs/EXECUTION.md` documents precision, memory bounds, distributed loss replica divisors and checkpoint contracts.
+
+### Changed
+
+- Importing `diffct` and using `backend="torch"` no longer loads Numba CUDA or requires a CUDA runtime. Native execution initializes them on first use.
+- `pip install diffct` is enough for `backend="torch"`. Native Numba execution needs the CUDA extras `diffct[cu12]` or `diffct[cu13]`.
+- Distributed PyTorch-backend projectors require the same `volume_chunk_shape`, `view_chunk_size` and `detector_chunk_shape` on every rank.
+- The source distribution includes the four example helpers used by its shipped tests.
 
 ### Fixed
 
@@ -14,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   absolute coordinate size.
   A bfloat16 or float16 detector-v axis made a 50-unit change in detector distance
   pass, and the Parker weights then used the first view's distance.
+- Fan and cone normalization in the analytical gather and its transpose uses each view's SID and SDD. Inactive views no longer rescale active views.
+- `angular_integration_weights` and `parker_weights` keep FP32 and FP64 input precision. FP16 and BF16 angles are computed in FP32.
+- Angular gaps come directly from sorted neighbouring angles. Float32 neighbours one ulp apart no longer get a zero weight, and Parker rows no longer depend on the input order.
+- Valid low-precision Parker short scans keep finite weights and angle gradients.
+- Output stores that overlap internally raise before any I/O. Disjoint interleaved `TensorStore` slices are accepted.
 
 ## [2.2.1] - 2026-10-13
 
