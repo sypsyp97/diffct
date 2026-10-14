@@ -1464,7 +1464,8 @@ which is exactly what a voxel-driven gather backprojector with the
 handles their redundancy at the sinogram-filtering stage. Leave
 <code class="docutils literal notranslate"><span class="pre">redundant_full_scan=True</span></code> for automatic fan/cone scan classification.
 Setting it to <code class="docutils literal notranslate"><span class="pre">False</span></code> explicitly disables the full-turn <code class="docutils literal notranslate"><span class="pre">1/2</span></code> factor.
-Parker and angular quadrature share the same periodic-scan decision.</p>
+Parker and angular quadrature share the same periodic-scan decision.
+FP16 and BF16 angles are promoted to FP32; FP64 angles retain their precision.</p>
 </dd></dl>
 
 <dl class="py function">
@@ -1498,7 +1499,8 @@ usual redundancy <code class="docutils literal notranslate"><span class="pre">1/
 <code class="docutils literal notranslate"><span class="pre">angular_integration_weights</span></code> instead).</p>
 <p>Only meaningful for circular (fan-shaped) trajectories — when using
 non-circular trajectories you typically want either a constant weight
-(full-coverage) or a custom redundancy scheme.</p>
+(full-coverage) or a custom redundancy scheme.
+FP16 and BF16 angles are promoted to FP32; FP64 angles retain their precision.</p>
 </dd></dl>
 
 <dl class="py function">
@@ -1549,10 +1551,10 @@ to amplitude 1.</p>
 <dd><p>Voxel-driven fan-beam FBP backprojection with analytical constant.</p>
 <p>Runs the dedicated fan-beam FBP gather kernel (one thread per output
 pixel, <code class="docutils literal notranslate"><span class="pre">(sid_n/U_n)^2</span></code> distance weighting, linear interpolation of
-the filtered sinogram) and multiplies by the analytical constant
-<code class="docutils literal notranslate"><span class="pre">sdd_mean</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid_mean)</span></code> so a unit-density disk reconstructs
-to amplitude 1. Both means are measured in the direction of the
-detector normal per view, so the helper reduces to the classical
+the filtered sinogram), applying the analytical factor
+<code class="docutils literal notranslate"><span class="pre">sdd_n</span> <span class="pre">/</span> <span class="pre">(2</span> <span class="pre">*</span> <span class="pre">pi</span> <span class="pre">*</span> <span class="pre">sid_n)</span></code> to each view so a unit-density disk
+reconstructs to amplitude 1. Both distances are measured in the
+detector-normal direction per view, so the helper reduces to the classical
 <code class="docutils literal notranslate"><span class="pre">sdd/(2*pi*sid)</span></code> on a circular orbit. <code class="docutils literal notranslate"><span class="pre">isocenter</span></code> is a physical
 coordinate pair; by default it is inferred from the source lines along
 detector normals. Supply it explicitly for an ambiguous or non-circular
@@ -1565,9 +1567,9 @@ acquisition. Analytical FBP remains acquisition-specific.</p>
 <dd><p>Voxel-driven cone-beam FDK backprojection with analytical constant.</p>
 <p>Runs the dedicated cone-beam FDK gather kernel (one thread per output
 voxel, <code class="docutils literal notranslate"><span class="pre">(sid_n/U_n)^2</span></code> distance weighting, bilinear interpolation of
-the filtered sinogram) and multiplies by <code class="docutils literal notranslate"><span class="pre">sdd_mean/(2*pi*sid_mean)</span></code>
-so a unit-density sphere reconstructs to amplitude 1. Both means are
-taken in the per-view detector-normal direction, so the helper
+the filtered sinogram), applying <code class="docutils literal notranslate"><span class="pre">sdd_n/(2*pi*sid_n)</span></code> to each view
+so a unit-density sphere reconstructs to amplitude 1. Both distances are
+measured in the per-view detector-normal direction, so the helper
 reduces to the classical <code class="docutils literal notranslate"><span class="pre">sdd/(2*pi*sid)</span></code> on a circular orbit.
 <code class="docutils literal notranslate"><span class="pre">isocenter</span></code> is a physical coordinate triple, inferred from source
 lines along detector normals by default. Supply it explicitly for an
