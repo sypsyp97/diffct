@@ -8,7 +8,7 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 |---|---|---|
 | `backend="auto", precision="fast"` | Native FP32 for scalar spacing and views/space partitions; otherwise PyTorch FP32 | NVIDIA CUDA, or the input's PyTorch device |
 | `backend="numba"` | Native FP32 with its existing fast-math traversal | NVIDIA CUDA; scalar voxel spacing, `precision="fast"`, views/space |
-| `backend="torch", precision="float32"` | PyTorch FP32 without the native fast-math decorator | CPU, NVIDIA CUDA, PyTorch ROCm |
+| `backend="torch", precision="float32"` | PyTorch FP32 data and local traversal, with FP64 ray clipping and entry setup | CPU, NVIDIA CUDA, PyTorch ROCm |
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
 `backend="auto"` selects PyTorch for either strict precision mode, per-axis
@@ -25,15 +25,19 @@ sampled surface ray) needs one endpoint within `1e6` voxels of the volume
 center, and both endpoints within `1e15`. With per-axis pitches, distance is
 `norm((x/dx, y/dy[, z/dz]))`. FP64 validates finite, distinct endpoints without
 these FP32 cutoffs. Segment setup starts from the endpoint nearer the volume
-center in both precision modes to avoid cancellation at distant sources.
+center, then clips and locates each tile's entry using bounded per-ray FP64
+vectors. Traversal parameters are measured locally from that entry in the
+selected precision, preserving voxel widths when both endpoints are distant.
 Native surface preprocessing can preserve a higher-precision geometry dtype
 before staging completed rays to FP32; its data transforms retain that behavior.
 Explicit PyTorch FP32 validates component arithmetic in FP32. Use FP64 when
 that arithmetic rounds distinct source/pixel coordinates together.
 
 Install the appropriate PyTorch build first. `pip install diffct` suffices for
-the PyTorch backend; the CUDA compiler extras are needed for native Numba
-execution. ROCm uses PyTorch's `"cuda"` device namespace, as described in the
+the PyTorch backend. Importing the library and using this backend do not load
+Numba CUDA or require a CUDA runtime; native execution initializes them on
+first use. The CUDA compiler extras are needed for native Numba execution.
+ROCm uses PyTorch's `"cuda"` device namespace, as described in the
 [PyTorch HIP notes](https://docs.pytorch.org/docs/stable/notes/hip.html).
 Local regression evidence covers CPU, one NVIDIA GPU and four-process Gloo.
 ROCm hardware, several physical GPUs, NCCL and cross-node execution need the
@@ -158,7 +162,9 @@ their backward contributions, including uneven and empty slabs.
 `cgls_into(A, measurements, output, iterations, workspace=..., block_elements=...)`
 keeps state in mapped files and returns `SolverResult.volume is output`.
 The workspace must be new; initialization, vector operations, norms,
-fingerprints and checkpoint copies operate on bounded blocks.
+fingerprints and checkpoint copies operate on bounded blocks. Measurements
+are checked for finite values in bounded blocks before creating the workspace
+or writing the output; every rank agrees on admission before execution.
 
 Checkpoint paths are `step-000002/rank-00000/metadata.json`, for example.
 Resume from the corresponding rank directory using `resume=...`; `iterations`
@@ -166,7 +172,9 @@ is the total target, including saved steps. Complete CGLS/SIRT/Adam state and
 residual history are restored. Fingerprints bind the acquisition, measurements,
 precision, ownership and algorithm settings. Ranks validate consistency before
 numerical execution, flush state before publishing completed metadata, and
-reject mismatched/incomplete snapshots together. A different rank layout needs
+reject mismatched/incomplete snapshots together. Every rank must agree on
+whether `x0`, `resume` and `checkpoint_directory` are supplied; checkpoint and
+resume paths may be rank-local. A different rank layout needs
 a new solve rather than an implicit redistribution of the saved state.
 
 Checkpoints fingerprint the actual sampled detector rays. Legacy surface

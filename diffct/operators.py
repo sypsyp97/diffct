@@ -6,7 +6,6 @@ from dataclasses import replace
 import time
 
 import torch
-from numba import cuda
 
 from .chunking import (_ChunkPlan, _host_geometry_bytes, _largest_buffer_bytes, _memory_budget,
                        _pipeline_buffers, _pipeline_bytes, _pixel_tiles, _reservation_budget,
@@ -759,6 +758,8 @@ class Projector:
             return self._run_streamed(tensor, is_project, reduce_cotangent, geometry, plan, geometry_spec)
         if not tensor.is_cuda:
             raise TypeError("input tensor must be on CUDA")
+        from numba import cuda
+
         input_device = tensor.device
         if reduce_cotangent and self._distributed and self.world_size > 1:
             tensor = tensor.detach().clone(memory_format=torch.contiguous_format)
@@ -1080,6 +1081,8 @@ class Projector:
     def _ray_job(self, source, native, geometry, centre, local, global_views, pixels,
                  spec, pipe, groups, index, is_project, before_launch=None,
                  geometry_vjp=False, cpu_geometry=None, cached_rays=None, after_launch=None):
+        from numba import cuda
+
         shape = (local.stop - local.start, *(value.stop - value.start for value in pixels))
         prefetch = groups.get(index, {}).pop("prefetch", None)
         cpu_geometry = (prefetch["geometry"] if prefetch is not None else
@@ -1674,6 +1677,8 @@ class Projector:
         """
         if plan is not None:
             return self._geometry_grad_streamed(volume, cotangent, geometry, plan, geometry_spec)
+        from numba import cuda
+
         devices = self._devices or (volume.device,)
         local_views = self.projection_shape[0]
         spacing = self.detector_spacing if self.beam == "cone" else self.detector_spacing[0]

@@ -10,10 +10,10 @@ import contextlib
 import functools
 import inspect
 import math
+import sys
 import weakref
 import numpy as np
 import torch
-from numba import cuda
 
 from .constants import _DTYPE, _TPB_2D, _TPB_3D, _INF, _EPSILON
 
@@ -112,6 +112,8 @@ class TorchCUDABridge:
         """
         if not tensor.is_cuda:
             raise ValueError("Tensor must be on CUDA device")
+        from numba import cuda
+
         return cuda.as_cuda_array(tensor.detach())
 
 
@@ -149,6 +151,8 @@ def _get_numba_external_stream_for(pt_stream=None):
     key = (device_index, ptr)
     if _cached_stream_ptr == key and _cached_numba_stream is not None:
         return _cached_numba_stream
+    from numba import cuda
+
     numba_stream = cuda.external_stream(pt_stream.cuda_stream)
     _cached_stream_ptr = key
     _cached_numba_stream = numba_stream
@@ -162,6 +166,8 @@ def _cuda_context(device):
     Kernel launches then use the CUDA context and the current stream of the
     device that holds the data, not of the device that happens to be current.
     """
+    from numba import cuda
+
     device = torch.device(device)
     with torch.cuda.device(device), cuda.gpus[device.index]:
         yield
@@ -202,6 +208,8 @@ def _keep_cuda_modules_at_exit():
     while a queue is disabled, so disable every queue for the rest of the exit.
     The CUDA simulator loads no modules and has no deallocation queues.
     """
+    if "numba.cuda.cudadrv.driver" not in sys.modules:
+        return
     from numba.core import config
 
     if config.ENABLE_CUDASIM:

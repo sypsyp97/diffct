@@ -8,17 +8,7 @@ import torch
 import numpy as np
 
 from .constants import _DTYPE
-from .kernels import (
-    _parallel_2d_forward_kernel,
-    _parallel_2d_backward_kernel,
-    _fan_2d_forward_kernel,
-    _fan_2d_backward_kernel,
-    _cone_3d_forward_kernel,
-    _cone_3d_backward_kernel,
-    _parallel_2d_geometry_vjp_kernel,
-    _fan_2d_geometry_vjp_kernel,
-    _cone_3d_geometry_vjp_kernel,
-)
+from . import kernels as _kernels
 from .utils import (
     DeviceManager,
     TorchCUDABridge,
@@ -30,6 +20,31 @@ from .utils import (
     _grid_2d,
     _grid_3d,
 )
+
+
+_KERNEL_NAMES = (
+    '_parallel_2d_forward_kernel',
+    '_parallel_2d_backward_kernel',
+    '_fan_2d_forward_kernel',
+    '_fan_2d_backward_kernel',
+    '_cone_3d_forward_kernel',
+    '_cone_3d_backward_kernel',
+    '_parallel_2d_geometry_vjp_kernel',
+    '_fan_2d_geometry_vjp_kernel',
+    '_cone_3d_geometry_vjp_kernel',
+)
+
+
+def _resolve_kernel(name):
+    # Explicit private patches take precedence; namespace observers stay scoped.
+    return globals()[name] if name in globals() else getattr(_kernels, name)
+
+
+def __getattr__(name):
+    # Preserve the private dispatcher aliases used by native launch observers.
+    if name not in _KERNEL_NAMES:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(_kernels, name)
 
 
 def _empty_detector_positions(device, beam):
@@ -74,7 +89,7 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
                 if backproject else
                 (d_volume, W, H, D, d_sino, n_views, n_u, n_v)
             )
-            kernel = _cone_3d_backward_kernel if backproject else _cone_3d_forward_kernel
+            kernel = _resolve_kernel('_cone_3d_backward_kernel' if backproject else '_cone_3d_forward_kernel')
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(du), _DTYPE(dv), *d_geom,
                 _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
@@ -91,9 +106,10 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
                 (d_volume, W, H, d_sino, n_views, n_det)
             )
             if beam == "parallel":
-                kernel = _parallel_2d_backward_kernel if backproject else _parallel_2d_forward_kernel
+                kernel = _resolve_kernel('_parallel_2d_backward_kernel' if backproject
+                                         else '_parallel_2d_forward_kernel')
             else:
-                kernel = _fan_2d_backward_kernel if backproject else _fan_2d_forward_kernel
+                kernel = _resolve_kernel('_fan_2d_backward_kernel' if backproject else '_fan_2d_forward_kernel')
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(spacing), *d_geom,
                 _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(voxel_spacing), d_positions,
@@ -169,7 +185,7 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
         du, dv = detector_spacing
         d_vol = TorchCUDABridge.tensor_to_cuda_array(vol)
         grid, tpb = _grid_3d(n_v, n_u, n_views)
-        _cone_3d_geometry_vjp_kernel[grid, tpb, numba_stream](
+        _resolve_kernel('_cone_3d_geometry_vjp_kernel')[grid, tpb, numba_stream](
             d_vol, W, H, D, TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), *d_geom,
             _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5), _DTYPE(voxel_spacing),
@@ -178,7 +194,8 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
     else:
         Ny, Nx = vol.shape
         n_views, n_det = cot.shape
-        kernel = _parallel_2d_geometry_vjp_kernel if beam == "parallel" else _fan_2d_geometry_vjp_kernel
+        kernel = _resolve_kernel('_parallel_2d_geometry_vjp_kernel' if beam == "parallel"
+                                 else '_fan_2d_geometry_vjp_kernel')
         grid, tpb = _grid_2d(n_views, n_det)
         kernel[grid, tpb, numba_stream](
             TorchCUDABridge.tensor_to_cuda_array(vol), Nx, Ny,

@@ -18,8 +18,9 @@ PyTorch build that matches your driver first, then:
 Use ``diffct[cu13]`` for CUDA 13. The extra installs the CUDA compiler libraries
 that Numba CUDA needs. A plain ``pip install diffct`` does not install them; use it
 for the PyTorch backend, or if a CUDA Toolkit is already installed for native
-execution. The NVVM and NVJitLink packages must match the
-CUDA libraries that PyTorch loads.
+execution. Importing diffct and using the PyTorch backend require no CUDA
+runtime; Numba CUDA initializes on native use. The NVVM and NVJitLink packages
+must match the CUDA libraries that PyTorch loads.
 
 Minimal forward / adjoint / gradient example
 --------------------------------------------

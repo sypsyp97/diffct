@@ -61,7 +61,7 @@ pip install "diffct[cu12]"    # PyTorch built for CUDA 12
 pip install "diffct[cu13]"    # PyTorch built for CUDA 13
 ```
 
-The extra installs the CUDA compiler libraries Numba needs. For CPU or PyTorch ROCm execution, install the appropriate PyTorch build and plain `pip install diffct`, then select `backend="torch"`. Plain installation also works for native execution when a compatible CUDA Toolkit is already present.
+The extra installs the CUDA compiler libraries Numba needs. For CPU or PyTorch ROCm execution, install the appropriate PyTorch build and plain `pip install diffct`, then select `backend="torch"`. Importing diffct and using this backend require no CUDA runtime; Numba CUDA initializes when native execution is used. Plain installation also works for native execution when a compatible CUDA Toolkit is already present.
 
 From source, with the examples:
 

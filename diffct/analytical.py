@@ -36,14 +36,27 @@ from .utils import (
     _grid_3d,
     _on_device_of,
 )
-from .kernels import (
-    _parallel_2d_fbp_backproject_kernel,
-    _fan_2d_fbp_backproject_kernel,
-    _cone_3d_fdk_backproject_kernel,
-    _parallel_2d_fbp_transpose_kernel,
-    _fan_2d_fbp_transpose_kernel,
-    _cone_3d_fdk_transpose_kernel,
+from . import kernels as _kernels
+
+
+_KERNEL_NAMES = (
+    '_parallel_2d_fbp_backproject_kernel',
+    '_fan_2d_fbp_backproject_kernel',
+    '_cone_3d_fdk_backproject_kernel',
+    '_parallel_2d_fbp_transpose_kernel',
+    '_fan_2d_fbp_transpose_kernel',
+    '_cone_3d_fdk_transpose_kernel',
 )
+
+
+def _resolve_kernel(name):
+    return globals()[name] if name in globals() else getattr(_kernels, name)
+
+
+def __getattr__(name):
+    if name not in _KERNEL_NAMES:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(_kernels, name)
 
 
 # ============================================================================
@@ -417,7 +430,7 @@ def _parallel_weighted_backproject_raw(sinogram, ray_dir, det_origin, det_u_vec,
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
 
-    _parallel_2d_fbp_backproject_kernel[grid, tpb, numba_stream](
+    _resolve_kernel('_parallel_2d_fbp_backproject_kernel')[grid, tpb, numba_stream](
         d_sino, n_views, n_det, d_reco, Nx, Ny,
         _DTYPE(detector_spacing), d_ray_dir, d_det_origin, d_det_u_vec,
         cx, cy, _DTYPE(voxel_spacing),
@@ -508,7 +521,7 @@ def _fan_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec,
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
 
-    _fan_2d_fbp_backproject_kernel[grid, tpb, numba_stream](
+    _resolve_kernel('_fan_2d_fbp_backproject_kernel')[grid, tpb, numba_stream](
         d_sino, n_views, n_det, d_reco, Nx, Ny,
         _DTYPE(detector_spacing), d_src_pos, d_det_center, d_det_u_vec,
         cx, cy, _DTYPE(voxel_spacing),
@@ -570,7 +583,7 @@ def _cone_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec, det
     pt_stream = torch.cuda.current_stream()
     numba_stream = _get_numba_external_stream_for(pt_stream)
 
-    _cone_3d_fdk_backproject_kernel[grid, tpb, numba_stream](
+    _resolve_kernel('_cone_3d_fdk_backproject_kernel')[grid, tpb, numba_stream](
         d_sino, n_views, n_u, n_v, d_reco, Nx, Ny, Nz,
         _DTYPE(du), _DTYPE(dv),
         d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
@@ -636,7 +649,7 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
         image = image.permute(2, 1, 0).contiguous()
         d_image = TorchCUDABridge.tensor_to_cuda_array(image)
         grid, tpb = _grid_3d(D, H, W)
-        _cone_3d_fdk_transpose_kernel[grid, tpb, stream](
+        _resolve_kernel('_cone_3d_fdk_transpose_kernel')[grid, tpb, stream](
             d_sino, *sinogram_shape, d_image, W, H, D, _DTYPE(du), _DTYPE(dv),
             *d_geometry, _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
             _DTYPE(spacing), *iso,
@@ -645,8 +658,8 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
         pitch, H, W, spacing = parameters
         d_image = TorchCUDABridge.tensor_to_cuda_array(image)
         grid, tpb = _grid_2d(W, H)
-        kernel = (_parallel_2d_fbp_transpose_kernel if beam == "parallel"
-                  else _fan_2d_fbp_transpose_kernel)
+        kernel = _resolve_kernel('_parallel_2d_fbp_transpose_kernel' if beam == "parallel"
+                                 else '_fan_2d_fbp_transpose_kernel')
         kernel[grid, tpb, stream](
             d_sino, *sinogram_shape, d_image, W, H, _DTYPE(pitch), *d_geometry,
             _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(spacing), *iso,
