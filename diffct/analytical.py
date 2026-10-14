@@ -121,9 +121,8 @@ def angular_integration_weights(angles, redundant_full_scan=True):
 
     device = angles.device
     angles_sorted, sort_idx = torch.sort(angles)
-    # Sort before removing a deterministic origin: shifting from an arbitrary
-    # endpoint can collapse distinct angles and change their quadrature order.
-    angles_sorted = angles_sorted - angles_sorted[0]
+    # Take gaps between sorted neighbours directly. Removing an origin first
+    # rounds every angle again and can collapse distinct neighbours.
     diffs = angles_sorted[1:] - angles_sorted[:-1]
 
     # Endpoint-excluded uniform circular scans are periodic quadrature
@@ -220,7 +219,6 @@ def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset
     angles = angles.contiguous()
     n_ang = angles.shape[0]
     device = angles.device
-    angles = angles - angles[0]
 
     u = detector_coordinates_1d(
         num_detectors, detector_spacing, detector_offset,
