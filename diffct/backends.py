@@ -17,6 +17,11 @@ from .surfaces import ParameterizedSurface
 _REFERENCE_WORK_BYTES = 8 * 1024 * 1024
 
 
+def _zero_dependency(value):
+    """Connect a zero scalar without reading values or copying strided data."""
+    return value.unsqueeze(0)[:0].sum()
+
+
 def voxel_spacing_tuple(spacing, rank):
     """Return positive physical pitches in tensor axis order."""
     values = spacing if isinstance(spacing, (tuple, list)) else (spacing,) * rank
@@ -346,6 +351,14 @@ class ReferenceProjector:
         world_tile = tile[::-1]
         shape = owner.global_volume_shape[::-1]
         spacing = self.spacing[::-1]
+        # Clip and locate the tile entry using bounded per-ray FP64 vectors.
+        # Global FP32 segment parameters lose voxel widths when both endpoints
+        # are distant. Plane tables below use local physical distances and the
+        # chosen precision, including for native data-transform dispatch.
+        origins = origins.to(dtype=torch.float64)
+        directions = directions.to(dtype=torch.float64)
+        ray_length = torch.linalg.vector_norm(directions, dim=-1)
+        directions = directions / ray_length[:, None]
         lower = origins.new_tensor([(part.start - size / 2) * pitch
                                     for part, size, pitch in zip(world_tile, shape, spacing)])
         upper = origins.new_tensor([(part.stop - size / 2) * pitch
@@ -356,10 +369,16 @@ class ReferenceProjector:
         enter = torch.where(constant, -torch.inf, torch.minimum(first, last)).amax(dim=-1)
         leave = torch.where(constant, torch.inf, torch.maximum(first, last)).amin(dim=-1)
         if owner.beam != "parallel":
-            enter, leave = enter.clamp_min(0), leave.clamp_max(1)
+            enter, leave = enter.clamp_min(0), torch.minimum(leave, ray_length)
         inside = (~constant | ((origins >= lower) & (origins < upper))).all(dim=-1)
         valid = inside & (leave > enter)
         enter, leave = torch.where(valid, enter, 0), torch.where(valid, leave, 0)
+        origins = (origins + directions * enter[:, None]).to(dtype=owner.dtype)
+        directions = directions.to(dtype=owner.dtype)
+        leave = (leave - enter).to(dtype=owner.dtype)
+        enter = torch.zeros_like(leave)
+        constant = directions == 0
+        safe_direction = torch.where(constant, torch.ones_like(directions), directions)
         crossings = [enter[:, None], leave[:, None]]
         for axis, (part, size, pitch) in enumerate(zip(world_tile, shape, spacing)):
             planes = (torch.arange(part.start, part.stop + 1, device=origins.device,
@@ -494,7 +513,7 @@ class ReferenceProjector:
                 return result
         output = torch.zeros((*leading, math.prod(output_shape)), device=tensor.device, dtype=owner.dtype)
         # Empty ownership and empty leading dimensions retain a differentiable seam.
-        output = output + tensor.sum().to(dtype=owner.dtype) * 0
+        output = output + _zero_dependency(tensor).to(dtype=owner.dtype)
         if is_project:
             for tile, world in self._tiles(plan[0]):
                 values = tensor[(..., *tile)]
@@ -580,7 +599,7 @@ class ReferenceProjector:
             local = self._tensor_apply(tensor.detach(), is_project, reduce_cotangent,
                                        geometry=leaves, reduce_output=False)
             loss = (local * reduced.reshape_as(cotangent)).sum()
-            loss = loss + sum(value.sum() * 0 for value in leaves)
+            loss = loss + sum(_zero_dependency(value) for value in leaves)
             gradients = torch.autograd.grad(loss, leaves)
         result = []
         for value in gradients:

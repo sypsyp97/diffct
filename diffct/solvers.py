@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 
+from .pipeline import _fragments
 from .storage import NpyStore, TensorStore
 from .streaming import _validate_stores
 from ._solver_state import (
@@ -55,7 +56,8 @@ def _request(operator, measurements, iterations, x0, rtol, atol, callback,
                 finite(value, name, positive=name in ("relaxation", "lr"))
     except (ValueError, TypeError, OSError) as caught:
         error = caught
-    agreement(operator, error, (controls, settings))
+    agreement(operator, error, (controls, settings, x0 is not None,
+                                resume is not None, checkpoint_directory is not None))
     return controls
 
 
@@ -237,12 +239,16 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
         block_elements = count(block_elements, "block_elements", positive=True)
         numerical = measurements.detach() if isinstance(measurements, torch.Tensor) else measurements
         source, x = _validate_stores(operator, numerical, output, False)
+        for selected in _fragments(tuple(source.shape), block_elements):
+            if not torch.isfinite(source.read(selected)).all():
+                raise ValueError("measurements must be finite")
         directory = Path(workspace).resolve()
         if directory.exists():
             raise ValueError("workspace must be a new directory")
-    except (ValueError, TypeError, OSError) as caught:
+    except Exception as caught:
         error = caught
-    agreement(operator, error, (controls, block_elements))
+    agreement(operator, error, (controls, block_elements,
+                                resume is not None, checkpoint_directory is not None))
     iterations, rtol, atol = controls
     metadata = signature(operator, source, "cgls_into", {}, block_elements, compute_dtype=x.dtype) if checkpoint_directory is not None or resume is not None else None
     previous = (load_checkpoint(operator, resume, metadata, iterations, block_elements, ("x", "s", "p", "r", "q"))

@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 
 from ._solver_state import finite, scalar_sum
+from .backends import _zero_dependency
 
 
 def _peers(operator, nonempty):
@@ -99,7 +100,7 @@ def total_variation(volume, *, operator=None, voxel_spacing=1., eps=1e-6, reduct
     if halo is not None:
         # The final slab also needs backward to receive the previous slab's
         # contribution, even though its own global outer difference is zero.
-        local = local + halo.sum() * 0
+        local = local + _zero_dependency(halo)
     total = local
     elements = volume.numel()
     if operator is not None:

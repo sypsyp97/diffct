@@ -15,7 +15,7 @@ from .analytical import (
     angular_integration_weights, cone_weighted_backproject,
     fan_weighted_backproject, parallel_weighted_backproject,
 )
-from .backends import select_backend, voxel_spacing_tuple
+from .backends import _zero_dependency, select_backend, voxel_spacing_tuple
 from .chunking import _memory_budget, _pixel_tiles
 from .distribution import Partition, preflight
 from .operators import _detector_spacing, _normalize_devices, _positive_int, _shape, _validate_trajectory
@@ -112,8 +112,9 @@ class AnalyticalExecution:
             weights = (self.projection_weights, self.angular_weights, self.filter_response)
             schema = tuple((tuple(value.shape), str(value.dtype), value.requires_grad)
                            if value is not None else None for value in weights)
-            acquisition = tuple(hashlib.sha256(value.contiguous().numpy().tobytes()).hexdigest()
-                                for value in (*self.geometry, self.angles))
+            acquisition = tuple((tuple(value.shape), str(value.dtype), hashlib.sha256(
+                value.contiguous().reshape(-1).view(torch.uint8).numpy().tobytes()).hexdigest())
+                for value in (*self.geometry, self.angles))
             metadata = (self.beam, str(self.dtype), self.backend, self.spacing, self.pitch,
                         self.detector_shape, self.view_chunk_size, self.chunk_shape,
                         self.window if self.filter_response is None else None, self.pad_factor,
@@ -387,11 +388,11 @@ class AnalyticalExecution:
         # Every owned tile's backward collective precedes the bundled input
         # transpose, even when this rank owns no data views. Empty space groups
         # have no tile collectives but still contribute zero input cotangents.
-        self.input_dependency = self.source.sum().to(device=self.output_device, dtype=self.dtype) * 0
+        self.input_dependency = _zero_dependency(self.source).to(device=self.output_device, dtype=self.dtype)
         for option in (self.projection_weights, self.angular_weights, self.filter_response):
             if option is not None and option.requires_grad:
-                self.input_dependency = self.input_dependency + option.sum().to(
-                    device=self.output_device, dtype=self.dtype) * 0
+                self.input_dependency = self.input_dependency + _zero_dependency(option).to(
+                    device=self.output_device, dtype=self.dtype)
         result = result + self.input_dependency
         for spatial, _ in _pixel_tiles(self.volume_shape, self.chunk_shape):
             result[spatial] = self._tile(spatial)
