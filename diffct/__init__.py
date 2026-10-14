@@ -20,10 +20,14 @@ from .surfaces import ParameterizedSurface
 from .reconstruction import (
     fbp,
     fdk,
+    fbp_into,
+    fdk_into,
     helical_fdk,
     helical_view_weights,
     helical_weighted_backproject,
 )
+
+from .solvers import SolverResult, cgls, sirt, tv_reconstruction, cgls_into, total_variation
 
 from .geometry import (
     circular_trajectory_3d,
@@ -67,6 +71,14 @@ __all__ = [
     'ParameterizedSurface',
     'fbp',
     'fdk',
+    'fbp_into',
+    'fdk_into',
+    'SolverResult',
+    'cgls',
+    'sirt',
+    'tv_reconstruction',
+    'cgls_into',
+    'total_variation',
     'helical_fdk',
     'helical_view_weights',
     'helical_weighted_backproject',

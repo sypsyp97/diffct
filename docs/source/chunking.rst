@@ -163,7 +163,8 @@ writes do not materialize a complete mapped array.
 ``project_into`` and ``backproject_into`` return the supplied output. They
 accept tensors, these stores, or structural backends with ``shape``, ``dtype``,
 ``read(slices)``, ``write(slices,value,accumulate=False)`` and ``flush()``. Outputs must be
-float32 and writable. Each completed output region overwrites its prior
+match ``A.dtype`` and be writable. Native fast output is float32; explicit
+``precision="float64"`` output is float64. Each completed output region overwrites its prior
 contents; no full result is allocated internally. These numerical methods do
 not build an autograd graph. Use tensor ``project``/``backproject`` for
 differentiation.

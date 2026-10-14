@@ -7,8 +7,9 @@ different, voxel-driven interpolation operator. Its backward pass scatters the
 same interpolation coefficients, including distance weights and normalization.
 It does not substitute the Siddon projector for the analytical transpose.
 
-The reconstruction APIs return signed float32 CUDA images. Clamping is a caller
-decision. Low-precision measurements are promoted to float32 before geometry,
+The reconstruction APIs return signed images in the selected precision on the
+input device. Clamping is a caller decision. In the default native fast mode,
+low-precision measurements are promoted to float32 before geometry,
 weighting and FFT operations; gradients retain the original input/parameter dtype.
 Sinogram, filter and explicit weight gradients propagate through the
 pipeline, including higher derivatives with respect to those tensors. Acquisition
@@ -30,10 +31,12 @@ coordinates that have a component along the checked direction widen the check.
 Helical slice centers use float64 independently of
 the angle dtype; low-precision angles do not round physical voxel coordinates.
 
-Flat detectors and one CUDA device are supported by these analytical APIs.
-They do not inherit the streamed, distributed or curved-detector execution of
-``Projector``. FDK is an approximate inverse even though its implemented
-discrete backward pass is the precise transpose to float32 rounding accuracy.
+``fbp`` and ``fdk`` support flat detectors, portable FP32/FP64 arithmetic,
+view/spatial chunks, several local devices, distributed views/space/hybrid
+ownership and numerical ``fbp_into``/``fdk_into`` stores; see :doc:`execution`.
+The helical approximation and low-level CUDA helpers retain their original
+execution contracts. FDK is an approximate inverse even though its implemented
+discrete backward pass transposes the interpolation coefficients.
 
 Use the complete APIs with the same trajectory tensors as ``Projector``:
 

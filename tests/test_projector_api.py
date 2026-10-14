@@ -76,7 +76,7 @@ def _base_constructor_args(beam: str = "parallel"):
         ("parallel", {"detector_spacing": 0.0}),
         ("parallel", {"detector_spacing": -1.0}),
         ("parallel", {"voxel_spacing": 0.0}),
-        ("parallel", {"voxel_spacing": (1.0, 2.0)}),
+        ("parallel", {"voxel_spacing": (1.0,)}),
         ("fan", {"detector_shape": (5, 3)}),
         ("cone", {"detector_shape": (5,)}),
         ("cone", {"detector_spacing": (1.0, 0.0)}),

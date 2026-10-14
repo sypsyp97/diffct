@@ -47,19 +47,21 @@
 - **大体积。** 按空间、视角和像素自动分块，传输缓冲有容量上限。`project_into`/`backproject_into` 可写入调用方的张量或磁盘存储；张量 autograd 接口仍保留完整输入、输出和梯度。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
 - **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或用 torchrun 与 NCCL。默认 `partition="views"` 分片视角并复制体数据；`partition="space"` 让每个 rank 固定拥有一部分体积，合并射线贡献。加速比取决于工作负载和通信开销。
 - **可微 FBP 和 FDK。** `fbp`、`fdk` 和近似螺旋重建 `helical_fdk` 组合公开的滤波器、权重和解析反投影。反向 kernel 转置实际的插值算子，可学习自定义 filter 和 weight。见[解析重建指南](docs/source/analytical_learning.rst)（英文）。
+- **精度与训练。** 显式选择原生/PyTorch 后端及 FP32/FP64 模式，支持各轴体素间距、batch/channel 和数据 `torch.func` 变换。可移植路径使用 CPU 或 PyTorch CUDA/ROCm；实卡验证范围见[执行指南](docs/EXECUTION.md)（英文）。
+- **求解器。** 库级 `cgls`、`sirt`、`tv_reconstruction` 支持残差历史、收敛阈值、回调和完整 checkpoint；`cgls_into` 使用有界磁盘状态。混合分区可同时分片视角和体积。
 
 功能边界、限制和等中心规则见 [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits)（英文）。
 
 ## 安装
 
-需要 NVIDIA GPU。先按你的 CUDA 版本安装 PyTorch，再按同一 CUDA 大版本安装 diffct：
+使用原生路径时，先安装 NVIDIA CUDA 版 PyTorch，再按同一 CUDA 大版本安装 diffct：
 
 ```bash
 pip install "diffct[cu12]"    # PyTorch 为 CUDA 12 构建
 pip install "diffct[cu13]"    # PyTorch 为 CUDA 13 构建
 ```
 
-extra 会装上 Numba CUDA 编译内核所需的 CUDA 编译库。只运行 `pip install diffct` 不会装这些库，仅适用于系统已装 CUDA Toolkit 的情况。
+extra 安装 Numba 编译内核所需的 CUDA 库。CPU 或 PyTorch ROCm 路径先安装对应 PyTorch，再运行 `pip install diffct` 并选择 `backend="torch"`；原生路径已有兼容 CUDA Toolkit 时也可使用普通安装。
 
 从源码安装（含示例）：
 

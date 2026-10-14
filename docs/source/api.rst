@@ -17,7 +17,10 @@ multiple GPUs and nodes, see :doc:`multi_gpu`.
 matched backprojection. See :ref:`detector-surfaces` for its coordinate and
 shape contract, and :doc:`examples` for a runnable cylindrical detector.
 
-CPU data automatically uses streamed CUDA execution. ``volume_chunk_shape``,
+Native CPU data uses streamed CUDA execution; ``backend="torch"`` computes
+on its PyTorch device. ``precision`` selects fast FP32 or strict FP32/FP64.
+Leading batch/channel axes and per-axis voxel spacing are supported; see
+:doc:`execution`. ``volume_chunk_shape``,
 ``view_chunk_size`` and ``detector_chunk_shape`` specify optional limits;
 ``schedule`` allows operation-specific comparisons. ``partition="space"``
 assigns rank-local volume slabs. See :doc:`chunking` for memory, storage,
@@ -161,11 +164,33 @@ Complete Reconstruction Pipelines
 
 .. autofunction:: fdk
 
+.. autofunction:: fbp_into
+
+.. autofunction:: fdk_into
+
 .. autofunction:: helical_fdk
 
 .. autofunction:: helical_view_weights
 
 .. autofunction:: helical_weighted_backproject
+
+Numerical Solvers
+-----------------
+
+.. currentmodule:: diffct.solvers
+
+.. autoclass:: SolverResult
+   :members:
+
+.. autofunction:: cgls
+
+.. autofunction:: sirt
+
+.. autofunction:: tv_reconstruction
+
+.. autofunction:: cgls_into
+
+.. autofunction:: total_variation
 
 Ramp Filter Options
 -------------------

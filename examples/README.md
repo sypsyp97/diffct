@@ -87,8 +87,11 @@ Use `diffct.fbp`, `diffct.fdk` or `diffct.helical_fdk` for a complete pipeline.
 The low-level `*_weighted_backproject` functions now support sinogram gradients
 and higher derivatives through dedicated interpolation-transpose kernels.
 Filter and explicit projection/angular weights remain ordinary trainable
-PyTorch tensors. Geometry is fixed in the analytical APIs. They use one CUDA
-device and flat detectors; they do not share Projector's streamed execution.
+PyTorch tensors. Geometry is fixed and flat in the analytical APIs. `fbp`/`fdk`
+also support explicit precision/backend modes, view/spatial chunks, devices,
+distributed ownership and `fbp_into`/`fdk_into` stores. The helical approximation
+retains its original execution contract. See [execution](../docs/EXECUTION.md)
+for the library solvers, batch transforms and hybrid loss rules.
 See the [guide](../docs/source/analytical_learning.rst) for stage replacement
 semantics and the helical approximation's coverage limits.
 
