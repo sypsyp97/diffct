@@ -96,13 +96,17 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     Setting it to ``False`` explicitly disables the full-turn ``1/2`` factor.
     Parker and angular quadrature share the same periodic-scan decision.
     """
-    angles = angles.to(dtype=torch.float32).contiguous()
+    if not torch.is_floating_point(angles):
+        angles = angles.to(dtype=torch.float32)
+    angles = angles.contiguous()
     n = angles.shape[0]
     if n == 0:
         return torch.zeros_like(angles)
     if n == 1:
         return torch.ones_like(angles) * (math.pi if redundant_full_scan else 1.0)
 
+    # Remove the absolute origin in the input precision before computing gaps.
+    angles = angles - angles[0]
     device = angles.device
     angles_sorted, sort_idx = torch.sort(angles)
     diffs = angles_sorted[1:] - angles_sorted[:-1]
@@ -195,9 +199,12 @@ def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset
     non-circular trajectories you typically want either a constant weight
     (full-coverage) or a custom redundancy scheme.
     """
-    angles = angles.to(dtype=torch.float32).contiguous()
+    if not torch.is_floating_point(angles):
+        angles = angles.to(dtype=torch.float32)
+    angles = angles.contiguous()
     n_ang = angles.shape[0]
     device = angles.device
+    angles = angles - angles[0]
 
     u = detector_coordinates_1d(
         num_detectors, detector_spacing, detector_offset,
@@ -450,7 +457,7 @@ def _analytical_geometry(src_pos, det_center, n, isocenter):
     if not (torch.isfinite(sid_n).all() and torch.isfinite(sdd_n).all()
             and (sid_n > 1e-6).all() and (sdd_n > 1e-6).all()):
         raise ValueError("Source-to-isocenter and source-to-detector distances must be positive")
-    return isocenter, float(sid_n.mean().item()), float(sdd_n.mean().item())
+    return isocenter, sid_n, sdd_n
 
 
 @_on_device_of("sinogram")
@@ -460,10 +467,10 @@ def _fan_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec,
 
     Runs the dedicated fan-beam FBP gather kernel (one thread per output
     pixel, ``(sid_n/U_n)^2`` distance weighting, linear interpolation of
-    the filtered sinogram) and multiplies by the analytical constant
-    ``sdd_mean / (2 * pi * sid_mean)`` so a unit-density disk reconstructs
-    to amplitude 1. Both means are measured in the direction of the
-    detector normal per view, so the helper reduces to the classical
+    the filtered sinogram), applying the analytical factor
+    ``sdd_n / (2 * pi * sid_n)`` to each view so a unit-density disk
+    reconstructs to amplitude 1. Both distances are measured in the
+    detector-normal direction per view, so the helper reduces to the classical
     ``sdd/(2*pi*sid)`` on a circular orbit. ``isocenter`` is a physical
     coordinate pair; by default it is inferred from the source lines along
     detector normals. Supply it explicitly for an ambiguous or non-circular
@@ -477,9 +484,10 @@ def _fan_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec,
     det_center = _as_contig_f32(det_center, device)
     det_u_vec = _as_contig_f32(det_u_vec, device)
     normal = torch.stack((-det_u_vec[:, 1], det_u_vec[:, 0]), dim=1)
-    isocenter, sid_mean, sdd_mean = _analytical_geometry(
+    isocenter, sid_n, sdd_n = _analytical_geometry(
         src_pos, det_center, normal, isocenter,
     )
+    sinogram = sinogram * (sdd_n / (2.0 * math.pi * sid_n)).view(-1, 1)
 
     n_views, n_det = sinogram.shape
     Ny, Nx = H, W
@@ -505,8 +513,7 @@ def _fan_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec,
         _DTYPE(isocenter[1].item() / voxel_spacing),
     )
 
-    scale = sdd_mean / (2.0 * math.pi * sid_mean)
-    return reco * scale
+    return reco
 
 
 @_on_device_of("sinogram")
@@ -516,9 +523,9 @@ def _cone_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec, det
 
     Runs the dedicated cone-beam FDK gather kernel (one thread per output
     voxel, ``(sid_n/U_n)^2`` distance weighting, bilinear interpolation of
-    the filtered sinogram) and multiplies by ``sdd_mean/(2*pi*sid_mean)``
-    so a unit-density sphere reconstructs to amplitude 1. Both means are
-    taken in the per-view detector-normal direction, so the helper
+    the filtered sinogram), applying ``sdd_n/(2*pi*sid_n)`` to each view
+    so a unit-density sphere reconstructs to amplitude 1. Both distances are
+    measured in the per-view detector-normal direction, so the helper
     reduces to the classical ``sdd/(2*pi*sid)`` on a circular orbit.
     ``isocenter`` is a physical coordinate triple, inferred from source
     lines along detector normals by default. Supply it explicitly for an
@@ -534,9 +541,10 @@ def _cone_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec, det
     det_u_vec = _as_contig_f32(det_u_vec, device)
     det_v_vec = _as_contig_f32(det_v_vec, device)
     normal = torch.cross(det_u_vec, det_v_vec, dim=1)
-    isocenter, sid_mean, sdd_mean = _analytical_geometry(
+    isocenter, sid_n, sdd_n = _analytical_geometry(
         src_pos, det_center, normal, isocenter,
     )
+    sinogram = sinogram * (sdd_n / (2.0 * math.pi * sid_n)).view(-1, 1, 1)
 
     n_views, n_u, n_v = sinogram.shape
     Nx, Ny, Nz = W, H, D
@@ -569,10 +577,8 @@ def _cone_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec, det
         _DTYPE(isocenter[2].item() / voxel_spacing),
     )
 
-    scale = sdd_mean / (2.0 * math.pi * sid_mean)
-
     # Convert back to (D, H, W) layout for the user.
-    reco = reco_perm.permute(2, 1, 0).contiguous() * scale
+    reco = reco_perm.permute(2, 1, 0).contiguous()
     return reco
 
 
@@ -616,10 +622,11 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
         source, detector, u = geometry[:3]
         normal = (torch.stack((-u[:, 1], u[:, 0]), dim=1) if beam == "fan"
                   else torch.cross(u, geometry[3], dim=1))
-        isocenter, sid_mean, sdd_mean = _analytical_geometry(source, detector, normal, isocenter)
-        scale = sdd_mean / (2.0 * math.pi * sid_mean)
+        isocenter, sid_n, sdd_n = _analytical_geometry(source, detector, normal, isocenter)
+        scale = (sdd_n / (2.0 * math.pi * sid_n)).view(
+            (-1,) + (1,) * (len(sinogram_shape) - 1)
+        )
         iso = tuple(_DTYPE(value.item() / parameters[-1]) for value in isocenter)
-    image = image * scale
 
     if beam == "cone":
         D, H, W, du, dv, spacing = parameters
@@ -641,7 +648,7 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
             d_sino, *sinogram_shape, d_image, W, H, _DTYPE(pitch), *d_geometry,
             _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(spacing), *iso,
         )
-    return sinogram
+    return sinogram * scale
 
 
 class _AnalyticalGather(torch.autograd.Function):

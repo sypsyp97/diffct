@@ -196,7 +196,19 @@ cross-node checks and memory constraints.
 
 ## Rules for distributed losses
 
-These rules apply when you write your own loss with `Projector(..., distributed=True)`. The examples follow them.
+The reconstruction/calibration examples use `Projector(..., distributed=True,
+partition="views")`. Loss scaling depends on which domain is replicated:
+
+| Partition | Projection output | Backprojection output | Loss scaling before `backward()` |
+| --- | --- | --- | --- |
+| `views` | Owned view shard | Replicated full volume | Divide replicated backprojection losses by `world_size`; keep owned projection sums unscaled. |
+| `space` | Replicated full projection | Owned volume slab | Divide replicated projection losses by `world_size`; keep owned backprojection sums unscaled. |
+
+For a global mean, divide the resulting sums by the global domain size, in
+addition to the replication factor above. A local `.mean()` gives the wrong
+weight for unequal shards and is undefined for empty shards.
+
+The remaining rules describe `partition="views"`:
 
 - Projection losses: each rank computes a sum on its own view shard. For a global mean, divide each local sum by the global ray count; a local `.mean()` is wrong for unequal shards and undefined for empty shards. The projector sums image and learnable-geometry gradients across ranks.
 - For reporting a global data loss, `dist.all_reduce` a detached clone of the local scalar. Do not all-reduce the loss used for `backward()` yourself.

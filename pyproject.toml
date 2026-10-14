@@ -46,4 +46,4 @@ Issues = "https://github.com/sypsyp97/diffct/issues"
 packages = ["diffct"]
 
 [tool.hatch.build.targets.sdist]
-include = ["diffct", "tests", "pytest.ini", "README.md", "CHANGELOG.md", "CITATION.cff", "LICENSE", "NOTICE"]
+include = ["diffct", "tests", "examples/_common.py", "examples/_block_cgls.py", "examples/data/preprocess_walnut.py", "examples/walnut_reconstruction.py", "pytest.ini", "README.md", "CHANGELOG.md", "CITATION.cff", "LICENSE", "NOTICE"]
