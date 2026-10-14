@@ -1,4 +1,4 @@
-"""diffct 2.0 film: full feature story, restrained typography, measured walnut data.
+"""diffct 2.3.0 film: tiled execution, rank ownership and measured walnut data.
 
 See README.md for input provenance and render commands. The 3D walnut is an
 isosurface of a real FDK reconstruction. Scan rigs and pose errors are schematics.
@@ -190,7 +190,7 @@ class DiffCTIntro(Scene):
         walnut = self.walnut(3.3, [0, .05, 0], turn)
         self.show(walnut, duration=1)
         name = T('diffct', 72).move_to([0,2.65,0])
-        version = T('2.0', 24, GREEN).next_to(name, RIGHT, buff=.22).align_to(name, UP)
+        version = T('2.3.0', 24, GREEN).next_to(name, RIGHT, buff=.22).align_to(name, UP)
         brand = VGroup(name, version)
         self.show(brand)
         self.show(T('Differentiable CT, built on PyTorch.', 28).move_to([0, 1.78, 0]))
@@ -266,7 +266,7 @@ class DiffCTIntro(Scene):
         api.move_to([3.15,-2.04,0])
         self.show(api)
         self.show(T('Scan geometry schematic',20,SUB).move_to([-3.15,-2.65,0]))
-        self.note('The same Projector interface accepts every list of per-view poses')
+        self.note('Valid per-view poses share the same Projector interface')
         self.wait(2.1)
         self.reset()
 
@@ -295,7 +295,7 @@ class DiffCTIntro(Scene):
         gradient=MathTex(r'\nabla_x\mathcal L=A^{\mathsf T}(Ax-y)',font_size=29,color=GREEN).move_to([3.1,-2.2,0])
         backward=code('loss.backward()',22,GREEN).move_to([0,-2.77,0])
         self.show(loss,gradient,backward)
-        self.note('Autograd for volumes and sinograms, including second derivatives')
+        self.note('Data autograd: batches and second derivatives')
         self.mark('autograd_full')
         self.wait(2.6)
         self.reset()
@@ -345,57 +345,109 @@ class DiffCTIntro(Scene):
 
     def multigpu(self):
         self.mark('multigpu_start')
-        self.heading(4,'Distribute views, keep the volume')
-        self.note('Each GPU holds the full volume; projection views are partitioned')
-        blocks=VGroup(*[Rectangle(width=.25,height=.4,stroke_width=0,fill_color=GPU_COLORS[(i//4)%4],
-                                   fill_opacity=.85) for i in range(32)]).arrange(RIGHT,buff=.06).move_to([0,1.85,0])
-        views = T('Projection views',24,SUB).move_to([0,2.4,0])
-        self.show(blocks,views)
+        self.heading(4,'Stream tiles to local GPUs')
+        self.note('CPU / disk inputs stream tiles; GPUs need not hold the full volume')
+        host=VGroup(*[Rectangle(width=.48,height=.48,color=LINE,stroke_width=1,
+                                fill_color=GREEN,fill_opacity=.15) for _ in range(9)])
+        host.arrange_in_grid(rows=3,cols=3,buff=.04).move_to([-4.3,.85,0])
+        gpus=VGroup();targets=[]
+        for gpu,x in enumerate([.55,2.1,3.65,5.2]):
+            frame=RoundedRectangle(width=1.3,height=1.45,corner_radius=.08,
+                                   color=GPU_COLORS[gpu],stroke_width=1.1,
+                                   fill_color=PALE,fill_opacity=1).move_to([x,.85,0])
+            label=T(f'GPU {gpu}',20,SUB).move_to([x,1.24,0])
+            targets.append(np.array([x,.6,0]))
+            gpus.add(VGroup(frame,label))
+        arrow=Arrow([-3.35,.85,0],[-.35,.85,0],buff=0,color=GREEN,stroke_width=2)
+        api=code('A = Projector(..., devices=[0, 1, 2, 3],\n'
+                 '    volume_chunk_shape=(32, 64, 64), view_chunk_size=16)\n'
+                 'A.project_into(volume_store, sinogram_store)',20,GREEN,width=11.8,height=1.45)
+        api.move_to([0,-1.92,0])
+        self.show(host,gpus,arrow,api,
+                  T('Host volume / disk store',24,SUB).move_to([-4.3,2.05,0]),
+                  T('Tile + view batch',20,GREEN).move_to([-1.85,1.35,0]))
+        resident=VGroup(*[host[6].copy().set_fill(GPU_COLORS[gpu],opacity=.7).move_to(p)
+                         for gpu,p in enumerate(targets)])
+        # Start below the labels so moving tiles never cover their text.
+        self.play(*[TransformFromCopy(host[6],tile) for tile in resident],run_time=1.1)
+        self.mark('streaming_tiles')
+        self.wait(2)
+        for index in [4,2]:
+            self.play(*[tile.animate.set_fill(GPU_COLORS[gpu],opacity=.3 if index==4 else .7)
+                        for gpu,tile in enumerate(resident)],
+                      Indicate(host[index],color=GREEN),run_time=.7)
+        self.note('Caller-owned CUDA tensors are outside this working-memory bound')
+        self.mark('streaming_scope')
+        self.wait(2.4)
+        self.reset()
+
+        self.heading(4,'Choose distributed ownership')
+        self.note('Partition controls rank ownership; chunking controls GPU working memory')
+        self.show(T('Distributed ownership',28,SUB).move_to([0,2.2,0]))
+        headers=VGroup(*[T(text,24,SUB).move_to([x,1.45,0]) for text,x in
+                        [('Partition',-4.35),('Views per rank',-.2),('Volume per rank',3.95)]])
+        rows=VGroup()
+        for y,(mode,views,volume) in zip([.55,-.35,-1.25],
+                                       [('views','View shard','Full volume'),
+                                        ('space','Full views','First-axis slab'),
+                                        ('hybrid','View shard','First-axis slab')]):
+            rows.add(VGroup(code(f'partition="{mode}"',20,GREEN).move_to([-4.35,y,0]),
+                            T(views,28).move_to([-.2,y,0]),T(volume,28).move_to([3.95,y,0])))
+        self.show(headers,rows)
+        self.mark('partition_modes')
+        self.wait(5)
+        self.reset()
+
+        self.heading(4,'Hybrid ownership across nodes')
+        self.note('Each rank owns one volume slab and one view shard')
+        self.show(T('Hybrid grid (2, 4): 2 view shards × 4 volume slabs',24,SUB).move_to([0,2.4,0]))
+        blocks=VGroup(*[Rectangle(width=.22,height=.22,stroke_width=0,
+                                  fill_color=GREEN if i<16 else WARM,fill_opacity=.85)
+                       for i in range(32)])
+        for node,x in enumerate([-3.15,3.15]):
+            VGroup(*blocks[node*16:(node+1)*16]).arrange(RIGHT,buff=.025).move_to([x,1.85,0])
         nodes=VGroup();gpu_centres=[]
         for node,x in enumerate([-3.15,3.15]):
             gpus=VGroup()
             for gpu in range(4):
                 p=np.array([x+(gpu-1.5)*1.13,.15,0]);gpu_centres.append(p)
                 frame=RoundedRectangle(width=1.02,height=1.35,corner_radius=.08,color=GPU_COLORS[gpu],stroke_width=1.1,fill_color=PALE,fill_opacity=1).move_to(p)
-                label=T(f'GPU {gpu}',20,SUB).move_to(p+UP*.4)
+                label=T(f'Rank {node*4+gpu}',20,SUB).move_to(p+UP*.4)
                 # Keep GPU identifiers readable while view blocks enter the card.
                 label.add_background_rectangle(color=PALE,opacity=1,buff=.025)
                 label.set_z_index(2)
-                # Every GPU visibly receives the same volume icon.
-                cube=Cube(side_length=.25,fill_color=GPU_COLORS[gpu],fill_opacity=.15,stroke_color=GPU_COLORS[gpu],stroke_width=1)
-                cube.rotate(PI/6,axis=RIGHT).rotate(PI/5,axis=UP).move_to(p+DOWN*.1)
-                gpus.add(VGroup(frame,label,cube))
-            label=T(f'Node {node+1}',28).move_to([x,1.23,0])
+                # Lower-to-upper first-axis slabs, repeated across view groups.
+                slabs=VGroup(*[Rectangle(width=.57,height=.115,
+                                         color=GPU_COLORS[slab] if slab==gpu else LINE,
+                                         stroke_width=1,fill_color=GPU_COLORS[slab],
+                                         fill_opacity=.8 if slab==gpu else 0) for slab in range(4)])
+                slabs.arrange(UP,buff=.025).move_to(p+DOWN*.07)
+                gpus.add(VGroup(frame,label,slabs))
+            label=T(f'Node {node+1} · view shard {node}',26).move_to([x,1.23,0])
             nodes.add(VGroup(gpus,label))
-        self.show(nodes[0][0])
-        def move_groups(start,end):
-            result=[]
-            for g in range(start,end):
-                group=VGroup(*blocks[g*4:(g+1)*4]);target=group.copy().scale(.61).arrange(RIGHT,buff=.035)
-                target.move_to(gpu_centres[g]+DOWN*.44)
-                result.append(Transform(group,target))
-            return result
-        one=code('Projector(...,\n    devices=[0, 1, 2, 3])',20,GREEN,width=5.4,height=1.12).move_to([-3.15,-1.55,0])
-        self.play(*move_groups(0,4),run_time=1.4)
-        self.show(nodes[0][1],one,duration=.4)
-        self.wait(1.1)
-        self.show(nodes[1][0])
+        self.show(blocks,nodes[0][0],nodes[1][0])
+        batches=[]
+        for rank,p in enumerate(gpu_centres):
+            source=VGroup(*blocks[(rank//4)*16:(rank//4+1)*16])
+            target=source.copy().scale(.18).arrange(RIGHT,buff=.008).move_to(p+DOWN*.44)
+            batches.append(TransformFromCopy(source,target))
+        self.play(*batches,run_time=1.4)
         link=Line([-.92,.15,0],[.92,.15,0],color=GREEN,stroke_width=2)
         link_label=T('NCCL',20,GREEN).next_to(link,UP,buff=.15)
-        self.play(Create(link),FadeIn(link_label),FadeOut(views),*move_groups(4,8),run_time=1.4)
-        many=code('torchrun ...\nProjector(..., distributed=True)',20,GREEN,width=5.4,height=1.12).move_to([3.15,-1.55,0])
-        assert np.allclose(one[0].get_center(),[-3.15,-1.55,0])
-        assert np.allclose(many[0].get_center(),[3.15,-1.55,0])
-        self.show(nodes[1][1],many)
-        self.note('One process with several GPUs, or one process per GPU across nodes')
+        self.play(Create(link),FadeIn(link_label),FadeOut(blocks),run_time=.6)
+        one=code('# one process per GPU\ndist.init_process_group("nccl")',18,GREEN,width=5.4,height=1.15).move_to([-3.15,-1.55,0])
+        many=code('Projector(..., distributed=True,\n    partition="hybrid",\n    partition_grid=(2, 4))',18,GREEN,width=5.4,height=1.15).move_to([3.15,-1.55,0])
+        self.show(nodes[0][1],nodes[1][1],one,many,
+                  T('Project: SUM space · Backproject: SUM views',24,SUB).move_to([0,-2.6,0]))
         self.mark('multigpu_distribution')
-        self.wait(2.1)
+        self.wait(4)
         self.reset()
         self.heading(4,'Measured multi-GPU scaling')
         self.note('Circular cone beam · 128³ volume · 360 views · A100-SXM-64GB')
         data=json.loads((HERE/'scaling.json').read_text()); timings=data['timings']['128']
         baseline=timings['gpus_1']['cgls_ms_per_iter']
-        chart_title=left(T('One CGLS iteration',28,SUB),-6.05).set_y(2.08)
+        chart_title=left(T('Archived view-partition benchmark · diffct 2.0.2',24,SUB),-6.05).set_y(2.35)
+        metric=left(T('One CGLS iteration',28,SUB),-6.05).set_y(1.8)
         for i,cfg in enumerate(data['configurations']):
             value=timings[cfg['key']]['cgls_ms_per_iter'];y=1.05-i*1.13
             label=T(cfg['label'],28,SUB).move_to([-4.3,y,0])
@@ -403,13 +455,13 @@ class DiffCTIntro(Scene):
             left(bar,-2.05).set_y(y)
             value_label=T(f'{value:.2f} ms',28).next_to(bar,RIGHT,buff=.2)
             if i == 0:
-                self.show(chart_title,label,bar,value_label)
+                self.show(chart_title,metric,label,bar,value_label)
             else:
                 self.show(label,duration=.25)
                 self.play(GrowFromEdge(bar,LEFT),FadeIn(value_label),run_time=.7)
             if i:
                 speed=T(f'{baseline/value:.1f}×',36,GREEN).move_to([4.75,y,0]);self.show(speed,duration=.3)
-        self.show(T('Speedup depends on workload and communication.',24,SUB).move_to([0,-2.4,0]))
+        self.show(T('These timings do not measure the new hybrid backend.',24,SUB).move_to([0,-2.4,0]))
         self.mark('scaling_full')
         self.wait(3)
         self.reset()
@@ -457,9 +509,12 @@ class DiffCTIntro(Scene):
         walnut=self.walnut(3.3,[0,.05,0],turn)
         self.show(walnut,T('diffct',72).move_to([0,2.65,0]))
         self.show(T('From your geometry to your reconstruction.',28,SUB).move_to([0,1.78,0]))
-        self.show(code('pip install "diffct[cu12]"',22,GREEN).move_to([0,-1.8,0]),
-                  T('Install PyTorch first · cu13 extra also available',20,SUB).move_to([0,-2.36,0]))
-        self.show(T('sypsyp97.github.io/diffct',24).move_to([0,-2.94,0]),
+        self.show(code('pip install diffct',22,GREEN).move_to([-3.15,-1.8,0]),
+                  code('pip install "diffct[cu12]"',22,GREEN).move_to([3.15,-1.8,0]),
+                  T('CPU / ROCm: backend="torch"',20,SUB).move_to([-3.15,-2.36,0]),
+                  T('Native NVIDIA · cu13 extra also available',20,SUB).move_to([3.15,-2.36,0]))
+        self.show(T('Install the matching PyTorch build first',20,SUB).move_to([0,-2.7,0]))
+        self.show(T('sypsyp97.github.io/diffct',24).move_to([0,-3.03,0]),
                   T('github.com/sypsyp97/diffct',24,SUB).move_to([0,-3.43,0]))
         self.mark('ending_full')
         self.play(turn.animate.set_value(180),run_time=5.5,rate_func=linear)
