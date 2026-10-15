@@ -531,9 +531,11 @@ class Projector:
             parameters = tuple((tuple(value.shape), str(value.dtype)) for value in surface.parameters)
         else:
             kind, parameters = ("points" if surface is not None else "flat"), ()
+        # native_volume_layout sets the element order of reduced backprojections, so ranks must agree on it.
         metadata = (self.partition, self.partition_grid, self.backend, self.precision, self.schedule,
                     self.global_volume_shape, self.beam, self.voxel_spacing,
-                    self.detector_spacing, self._n_views, self.detector_shape, kind, parameters)
+                    self.detector_spacing, self._n_views, self.detector_shape, kind, parameters,
+                    self.native_volume_layout)
         if self.backend == "torch":
             # Portable collectives follow the tile and ray-batch order, so
             # every rank must derive the same chunks.
@@ -541,7 +543,8 @@ class Projector:
         layouts = [None] * self.world_size
         torch.distributed.all_gather_object(layouts, metadata, group=self._process_group)
         if any(layout != metadata for layout in layouts):
-            raise ValueError("distributed ranks must agree on geometry, surface layout and portable chunk hints")
+            raise ValueError("distributed ranks must agree on geometry, surface layout, native volume layout "
+                             "and portable chunk hints")
 
     def _participation(self):
         if self.backend == "torch" and self.world_size > 1 and torch.is_grad_enabled():
