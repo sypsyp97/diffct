@@ -299,12 +299,26 @@
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_prepare_volume</span><span class="p">(</span><span class="n">beam</span><span class="p">,</span> <span class="n">volume</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">"""Prepare one contiguous native HW/WHD tile for repeated ray launches."""</span>
-    <span class="n">volume</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">"""Prepare one contiguous native HW/WHD tile for repeated ray launches.</span>
+
+<span class="sd">    A cone volume that is a ``(D, H, W)`` view of a ``(W, H, D)``-contiguous buffer, as returned with</span>
+<span class="sd">    ``native_volume_layout=True``, already has the native layout and is used without a copy.</span>
+<span class="sd">    """</span>
+    <span class="n">volume</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">beam</span> <span class="o">==</span> <span class="s2">"cone"</span><span class="p">:</span>
+        <span class="n">native</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">native</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">native</span>
+        <span class="n">volume</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
         <span class="n">_validate_3d_memory_layout</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">expected_order</span><span class="o">=</span><span class="s2">"DHW"</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">volume</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">volume</span>
+    <span class="k">return</span> <span class="n">volume</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_cone_volume</span><span class="p">(</span><span class="n">volume</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""float32 cone volume, contiguous unless it is already a view of a native (W, H, D) buffer."""</span>
+    <span class="n">volume</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">volume</span> <span class="k">if</span> <span class="n">volume</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">is_contiguous</span><span class="p">()</span> <span class="k">else</span> <span class="n">volume</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_launch_ray_kernel</span><span class="p">(</span><span class="n">beam</span><span class="p">,</span> <span class="n">native_volume</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">geometry</span><span class="p">,</span> <span class="n">detector_spacing</span><span class="p">,</span>
@@ -1073,7 +1087,7 @@
         <span class="n">det_u_vec</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">det_u_vec</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
         <span class="n">det_v_vec</span> <span class="o">=</span> <span class="n">DeviceManager</span><span class="o">.</span><span class="n">ensure_device</span><span class="p">(</span><span class="n">det_v_vec</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
-        <span class="n">volume</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+        <span class="n">volume</span> <span class="o">=</span> <span class="n">_cone_volume</span><span class="p">(</span><span class="n">volume</span><span class="p">)</span>
         <span class="n">src_pos</span> <span class="o">=</span> <span class="n">src_pos</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
         <span class="n">det_center</span> <span class="o">=</span> <span class="n">det_center</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
         <span class="n">det_u_vec</span> <span class="o">=</span> <span class="n">det_u_vec</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
@@ -1153,7 +1167,8 @@
 <a class="viewcode-back" href="../../api.html#diffct.ConeBackprojectorFunction.forward">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="nd">@_on_device_of</span><span class="p">(</span><span class="s2">"sinogram"</span><span class="p">)</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">det_v_vec</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">det_v_vec</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+                <span class="n">native_layout</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Compute the 3D cone beam backprojection with arbitrary trajectories using CUDA acceleration.</span>
 
 <span class="sd">        Parameters</span>
@@ -1180,6 +1195,9 @@
 <span class="sd">            Physical spacing between detector elements along the v-axis.</span>
 <span class="sd">        voxel_spacing : float, optional</span>
 <span class="sd">            Physical size of one voxel (in same units as positions, default: 1.0).</span>
+<span class="sd">        native_layout : bool, optional</span>
+<span class="sd">            If True, return a (D, H, W) tensor with the kernel's native (W, H, D)-contiguous strides</span>
+<span class="sd">            instead of a contiguous copy (default: False). Projections accept such tensors without a copy.</span>
 
 <span class="sd">        Returns</span>
 <span class="sd">        -------</span>
@@ -1224,15 +1242,20 @@
         <span class="c1"># Validate memory layout to prevent coordinate system inconsistencies</span>
         <span class="n">_validate_3d_memory_layout</span><span class="p">(</span><span class="n">sinogram</span><span class="p">,</span> <span class="n">expected_order</span><span class="o">=</span><span class="s1">'VHW'</span><span class="p">)</span>
 
-        <span class="n">vol_perm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">native_layout</span><span class="p">:</span>
+            <span class="c1"># A (D, H, W) tensor with the native (W, H, D) strides, not a view: the kernel writes its</span>
+            <span class="c1"># contiguous permutation, and in-place operations on the result stay valid under autograd.</span>
+            <span class="n">vol</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_strided</span><span class="p">((</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">D</span> <span class="o">*</span> <span class="n">H</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+            <span class="n">vol_perm</span> <span class="o">=</span> <span class="n">vol</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">vol_perm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">sinogram</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
         <span class="n">_backproject_into</span><span class="p">(</span>
             <span class="s2">"cone"</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span> <span class="p">(</span><span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">det_v_vec</span><span class="p">),</span>
             <span class="p">(</span><span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">),</span> <span class="n">voxel_spacing</span><span class="p">,</span> <span class="n">vol_perm</span><span class="p">,</span>
         <span class="p">)</span>
 
         <span class="n">ctx</span><span class="o">.</span><span class="n">intermediate</span> <span class="o">=</span> <span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">n_u</span><span class="p">,</span> <span class="n">n_v</span><span class="p">,</span> <span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">,</span> <span class="n">voxel_spacing</span><span class="p">)</span>
-        <span class="n">vol</span> <span class="o">=</span> <span class="n">vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
-        <span class="k">return</span> <span class="n">vol</span></div>
+        <span class="k">return</span> <span class="n">vol</span> <span class="k">if</span> <span class="n">native_layout</span> <span class="k">else</span> <span class="n">vol_perm</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span></div>
 
 
 <div class="viewcode-block" id="ConeBackprojectorFunction.backward">
@@ -1251,7 +1274,7 @@
             <span class="n">ctx</span><span class="o">.</span><span class="n">needs_input_grad</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">5</span><span class="p">],</span> <span class="s2">"cone"</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">,</span> <span class="n">sinogram</span><span class="p">,</span>
             <span class="p">(</span><span class="n">src_pos</span><span class="p">,</span> <span class="n">det_center</span><span class="p">,</span> <span class="n">det_u_vec</span><span class="p">,</span> <span class="n">det_v_vec</span><span class="p">),</span> <span class="p">(</span><span class="n">du</span><span class="p">,</span> <span class="n">dv</span><span class="p">),</span> <span class="n">voxel_spacing</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="k">return</span> <span class="p">(</span><span class="n">grad_sino</span><span class="p">,</span> <span class="o">*</span><span class="n">geometry_grads</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span></div>
+        <span class="k">return</span> <span class="p">(</span><span class="n">grad_sino</span><span class="p">,</span> <span class="o">*</span><span class="n">geometry_grads</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span></div>
 </div>
 
 </pre></div>
