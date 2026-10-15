@@ -51,8 +51,11 @@ The saved `gpu_example.npz` lets the film render without PyTorch or a GPU.
    different image halves (`space`); their overlapping projections add. Four GPUs
    combine both splits (`hybrid`, grid `(2, 2)`): columns own view groups and rows
    own image halves. Backprojection reverses the visible data flow and adds
-   view-group contributions to each image half. The final chart retains explicitly
-   archived view-partition timings, which do not measure the hybrid backend.
+   view-group contributions to each image half. The result is labelled unfiltered
+   backprojection (matched adjoint); its caption explains that spreading values
+   along rays produces blur and a raised background, rather than a reconstruction.
+   The final chart retains explicitly archived view-partition timings, which do
+   not measure the hybrid backend.
 6. **Measured reconstruction:** four real projections, then FDK / SIRT / CGLS /
    TV as a four-column, two-row axial/coronal comparison with iteration counts.
 7. **Ending:** rotating walnut, plain installation for CPU/PyTorch ROCm and CUDA
@@ -99,27 +102,28 @@ reconstruction panels retain their recorded inputs.
 
 ## Render review (2026-10-15)
 
-The exported film is 147.967 s: **4,439 MP4 frames**, 1920 × 1080 at constant
+The exported film is 151.367 s: **4,541 MP4 frames**, 1920 × 1080 at constant
 30 fps. A Cairo render observer recorded visible Tex/MathTex identities and
-glyph bounds for every written frame, including 1,182 repeated wait frames.
+glyph bounds for every written frame, including 1,272 repeated wait frames.
 Complete decoding confirms source/trace/export counts agree. No text violates
 the 0.1-scene-unit viewport margin; no distinct text bounding boxes overlap.
 
-The 800 × 450 GIF decodes into **1,052 frames**, covering all **1,184** 8 fps source
+The 800 × 450 GIF decodes into **1,061 frames**, covering all **1,211** 8 fps source
 samples with exact palette-image/delay mapping; identical samples merge. Its
-148.0 s duration differs by less than one sampling interval. Two MP4 frames
-(9.100 s and 138.567 s) are background-only at sequential chapter fade midpoints;
+151.37 s duration differs by less than one sampling interval. Two MP4 frames
+(9.100 s and 141.967 s) are background-only at sequential chapter fade midpoints;
 these are the retained transition style. No GIF frame is background-only.
 
-Manual exported-pixel review covers all **98 text compositions** at fade/solid
-states, all 189 animation midpoints, ten chapter transitions and 2 s animation
-samples (28 final contact sheets), plus nine full-resolution render keyframes.
-The GPU preview was also reviewed before the full render. Moving packets pass
-behind protected GPU identifiers and operation labels; label changes fade out
-before the replacement fades in. Bounds/provenance checks do not prove semantics
-or occlusion; the content table above and pixel review provide those checks.
-Local detailed traces/contact sheets live under ignored
-`.validation/video-intuitive/final-v4/`.
+Manual pixel review covers text compositions at fade/solid states, animation
+midpoints, chapter transitions, regular animation samples and full-resolution
+keyframes. The unfiltered-backprojection label and explanation were also checked
+in a preview, including their fade and five-second reading hold. Moving packets
+pass behind protected GPU identifiers and operation labels; label changes fade
+out before the replacement fades in. Bounds/provenance checks do not prove
+semantics or occlusion; the content table above and pixel review provide those
+checks. Local full-story review sheets remain under ignored
+`.validation/video-intuitive/final-v4/`; the latest render and caption checks are
+under `.validation/video-intuitive/adjoint-final/`.
 
 The GPU illustration numeric checks passed (7 tests), including regeneration of
 the saved fixture. Existing depth checks passed (5 tests). Main's measured input
@@ -155,9 +159,11 @@ not newly measured 2.3.0 solver/accuracy results.
   pairs form the two 32-row spatial owners. View groups contain 32 rows each.
   `tile_projection` sums to the full sinogram, and `view_backprojection` sums to
   its matched adjoint. All projected panels share the full sinogram's maximum;
-  all adjoint panels share the complete adjoint's maximum. A matched adjoint is
-  deliberately blurred, not an inverse reconstruction. The seven numeric checks
-  include independent axis-aligned row/column path sums and regeneration of the
+  all adjoint panels share the complete adjoint's maximum. In this example, the
+  unfiltered adjoint is blurred with a raised background because ray values
+  spread across the image. The video labels it as unfiltered backprojection and
+  explains its appearance. The seven numeric checks include independent
+  axis-aligned row/column path sums and regeneration of the
   committed fixture. This introduces no new acquisition, solver or GPU benchmark.
 - `calib_history.json` is the saved, separate 64³ calibration run. Its seven
   samples are plotted on a labelled log10 axis, with steps 0–149 (150 steps).
