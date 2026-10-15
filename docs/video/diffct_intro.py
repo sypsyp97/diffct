@@ -1,4 +1,4 @@
-"""diffct 2.0 film: full feature story, restrained typography, measured walnut data.
+"""diffct 2.3.0 film: tiled execution, rank ownership and measured walnut data.
 
 See README.md for input provenance and render commands. The 3D walnut is an
 isosurface of a real FDK reconstruction. Scan rigs and pose errors are schematics.
@@ -190,7 +190,7 @@ class DiffCTIntro(Scene):
         walnut = self.walnut(3.3, [0, .05, 0], turn)
         self.show(walnut, duration=1)
         name = T('diffct', 72).move_to([0,2.65,0])
-        version = T('2.0', 24, GREEN).next_to(name, RIGHT, buff=.22).align_to(name, UP)
+        version = T('2.3.0', 24, GREEN).next_to(name, RIGHT, buff=.22).align_to(name, UP)
         brand = VGroup(name, version)
         self.show(brand)
         self.show(T('Differentiable CT, built on PyTorch.', 28).move_to([0, 1.78, 0]))
@@ -266,7 +266,7 @@ class DiffCTIntro(Scene):
         api.move_to([3.15,-2.04,0])
         self.show(api)
         self.show(T('Scan geometry schematic',20,SUB).move_to([-3.15,-2.65,0]))
-        self.note('The same Projector interface accepts every list of per-view poses')
+        self.note('Valid per-view poses share the same Projector interface')
         self.wait(2.1)
         self.reset()
 
@@ -295,7 +295,7 @@ class DiffCTIntro(Scene):
         gradient=MathTex(r'\nabla_x\mathcal L=A^{\mathsf T}(Ax-y)',font_size=29,color=GREEN).move_to([3.1,-2.2,0])
         backward=code('loss.backward()',22,GREEN).move_to([0,-2.77,0])
         self.show(loss,gradient,backward)
-        self.note('Autograd for volumes and sinograms, including second derivatives')
+        self.note('Data autograd: batches and second derivatives')
         self.mark('autograd_full')
         self.wait(2.6)
         self.reset()
@@ -345,57 +345,252 @@ class DiffCTIntro(Scene):
 
     def multigpu(self):
         self.mark('multigpu_start')
-        self.heading(4,'Distribute views, keep the volume')
-        self.note('Each GPU holds the full volume; projection views are partitioned')
-        blocks=VGroup(*[Rectangle(width=.25,height=.4,stroke_width=0,fill_color=GPU_COLORS[(i//4)%4],
-                                   fill_opacity=.85) for i in range(32)]).arrange(RIGHT,buff=.06).move_to([0,1.85,0])
-        views = T('Projection views',24,SUB).move_to([0,2.4,0])
-        self.show(blocks,views)
-        nodes=VGroup();gpu_centres=[]
-        for node,x in enumerate([-3.15,3.15]):
-            gpus=VGroup()
-            for gpu in range(4):
-                p=np.array([x+(gpu-1.5)*1.13,.15,0]);gpu_centres.append(p)
-                frame=RoundedRectangle(width=1.02,height=1.35,corner_radius=.08,color=GPU_COLORS[gpu],stroke_width=1.1,fill_color=PALE,fill_opacity=1).move_to(p)
-                label=T(f'GPU {gpu}',20,SUB).move_to(p+UP*.4)
-                # Keep GPU identifiers readable while view blocks enter the card.
-                label.add_background_rectangle(color=PALE,opacity=1,buff=.025)
-                label.set_z_index(2)
-                # Every GPU visibly receives the same volume icon.
-                cube=Cube(side_length=.25,fill_color=GPU_COLORS[gpu],fill_opacity=.15,stroke_color=GPU_COLORS[gpu],stroke_width=1)
-                cube.rotate(PI/6,axis=RIGHT).rotate(PI/5,axis=UP).move_to(p+DOWN*.1)
-                gpus.add(VGroup(frame,label,cube))
-            label=T(f'Node {node+1}',28).move_to([x,1.23,0])
-            nodes.add(VGroup(gpus,label))
-        self.show(nodes[0][0])
-        def move_groups(start,end):
-            result=[]
-            for g in range(start,end):
-                group=VGroup(*blocks[g*4:(g+1)*4]);target=group.copy().scale(.61).arrange(RIGHT,buff=.035)
-                target.move_to(gpu_centres[g]+DOWN*.44)
-                result.append(Transform(group,target))
+        example=dict(np.load(HERE/'gpu_example.npz'))
+        image,projection=example['image'],example['projection']
+        partials=example['tile_projection']
+        vmax=float(projection.max())
+
+        def photo(array,width,vmax=1,color=LINE):
+            result=gray(array,1,vmax).scale_to_fit_width(width)
+            result[1].set_color(color)
             return result
-        one=code('Projector(...,\n    devices=[0, 1, 2, 3])',20,GREEN,width=5.4,height=1.12).move_to([-3.15,-1.55,0])
-        self.play(*move_groups(0,4),run_time=1.4)
-        self.show(nodes[0][1],one,duration=.4)
-        self.wait(1.1)
-        self.show(nodes[1][0])
-        link=Line([-.92,.15,0],[.92,.15,0],color=GREEN,stroke_width=2)
-        link_label=T('NCCL',20,GREEN).next_to(link,UP,buff=.15)
-        self.play(Create(link),FadeIn(link_label),FadeOut(views),*move_groups(4,8),run_time=1.4)
-        many=code('torchrun ...\nProjector(..., distributed=True)',20,GREEN,width=5.4,height=1.12).move_to([3.15,-1.55,0])
-        assert np.allclose(one[0].get_center(),[-3.15,-1.55,0])
-        assert np.allclose(many[0].get_center(),[3.15,-1.55,0])
-        self.show(nodes[1][1],many)
-        self.note('One process with several GPUs, or one process per GPU across nodes')
-        self.mark('multigpu_distribution')
-        self.wait(2.1)
+
+        def crop_frame(picture,start,stop,total,color):
+            height=picture.height*(stop-start)/total
+            y=picture.get_top()[1]-picture.height*(start+stop)/(2*total)
+            return Rectangle(width=picture.width,height=height,color=color,
+                             stroke_width=2).move_to([picture.get_x(),y,0])
+
+        def chip(index,centre,width=3.5,height=1.6,color=GREEN):
+            frame=RoundedRectangle(width=width,height=height,corner_radius=.1,
+                                   color=color,stroke_width=1.5,fill_color=PALE,fill_opacity=1)
+            frame.move_to(centre)
+            pins=VGroup(*[Line(frame.get_left()+[0,dy,0],frame.get_left()+[-.12,dy,0],
+                              color=color,stroke_width=2) for dy in [-.45,-.15,.15,.45]])
+            label=T(f'GPU {index}',22,color).next_to(frame,UP,buff=.1)
+            label.add_background_rectangle(color=PALE,opacity=1,buff=.035)
+            label.set_z_index(3)
+            return VGroup(frame,pins,label)
+
+        # One GPU first: the visible buffer is replaced, while the CPU result grows.
+        self.heading(4,'Stream one tile at a time')
+        self.note('2D walnut illustration · simulated projections computed with diffct')
+        host=photo(image,2.6).move_to([-4.7,.4,0])
+        output=photo(np.zeros_like(projection),2.6,vmax).move_to([4.7,.4,0])
+        gpu=chip(0,[0,.4,0],width=3,height=2.65)
+        self.show(T('1. A large scan, a small GPU buffer',30).move_to([0,2.6,0]),
+                  host,output,gpu,
+                  T('CPU / disk input',24,SUB).move_to([-4.7,2.03,0]),
+                  T('CPU / disk output',24,SUB).move_to([4.7,2.03,0]),
+                  T('Full walnut slice',20,SUB).move_to([-4.7,-1.25,0]),
+                  T('Views × detector bins',20,SUB).move_to([4.7,-.85,0]),
+                  T('Read',22,GREEN).move_to([-2.45,1.65,0]),
+                  T('Add',22,WARM).move_to([2.45,1.65,0]))
+        compute_label=T('Project this tile',22,SUB).move_to([0,.05,0])
+        compute_label.add_background_rectangle(color=PALE,opacity=1,buff=.035)
+        compute_label.set_z_index(3)
+        self.show(Arrow([-3.22,.4,0],[-1.65,.4,0],buff=0,color=GREEN),
+                  Arrow([1.65,-.5,0],[3.22,.4,0],buff=0,color=WARM),
+                  compute_label)
+        outlines=VGroup(*[crop_frame(host,i*16,(i+1)*16,64,GPU_COLORS[i]) for i in range(4)])
+        self.play(Create(outlines),run_time=.6)
+        batch=crop_frame(output,0,16,64,GREEN)
+        view_label=T('First 16 views',20,GREEN).move_to([4.7,-1.3,0])
+        self.show(batch,view_label)
+        total=np.zeros_like(projection)
+        for tile in range(4):
+            colour=GPU_COLORS[tile]
+            source=photo(image[tile*16:(tile+1)*16],host.width,color=colour).move_to(outlines[tile])
+            resident=source.copy().scale_to_fit_width(2.35).move_to([0,.7,0])
+            contribution=photo(partials[tile,:16],2.35,vmax,colour).move_to([0,-.55,0])
+            tile_label=T(f'Tile {tile+1} of 4',18,colour).move_to([0,1.22,0])
+            tile_label.add_background_rectangle(color=PALE,opacity=1,buff=.02)
+            tile_label.set_z_index(3)
+            self.play(Indicate(outlines[tile],color=colour,scale_factor=1.04),FadeIn(tile_label),
+                      TransformFromCopy(source,resident),run_time=.7)
+            self.show(contribution,duration=.3)
+            total[:16]+=partials[tile,:16]
+            target=photo(total,output.width,vmax).move_to(output)
+            packet=contribution.copy()
+            self.add(packet)
+            destination=photo(partials[tile,:16],output.width,vmax,colour).move_to(batch)
+            self.play(Transform(packet,destination),run_time=.55)
+            self.remove(packet)
+            self.play(Transform(output,target),run_time=.3)
+            self.mark(f'stream_tile_{tile}')
+            self.play(FadeOut(resident),FadeOut(contribution),FadeOut(tile_label),run_time=.2)
+        self.note('The next tile replaces the previous one in the same GPU buffer')
+        self.mark('streaming_tiles')
+        self.wait(1.6)
+        self.play(FadeOut(batch),FadeOut(view_label),run_time=.25)
+        self.show(code('volume_chunk_shape=(16, 64), view_chunk_size=16',20,GREEN).move_to([0,-2.35,0]))
+        self.note('Repeat for the remaining views; keep the complete result on CPU / disk')
+        for view_start in [16,32,48]:
+            resident=None
+            for tile in range(4):
+                next_tile=photo(image[tile*16:(tile+1)*16],2.35,color=GPU_COLORS[tile]).move_to([0,.7,0])
+                total[view_start:view_start+16]+=partials[tile,view_start:view_start+16]
+                animations=[Indicate(outlines[tile],color=GPU_COLORS[tile],scale_factor=1.02),
+                            Transform(output,photo(total,output.width,vmax).move_to(output))]
+                animations.append(FadeIn(next_tile) if resident is None else ReplacementTransform(resident,next_tile))
+                self.play(*animations,run_time=.2)
+                resident=next_tile
+            self.play(FadeOut(resident),run_time=.15)
+        self.mark('streaming_complete')
+        self.show(T('All 64 views',20,GREEN).move_to([4.7,-1.3,0]),duration=.3)
+        self.note('GPU working memory holds tiles; caller-owned CUDA tensors are separate')
+        self.wait(2)
+        self.reset()
+
+        # The same image/result stay at the sides; only the division of work changes.
+        for mode in ['views','space']:
+            self.heading(4,'Split views' if mode=='views' else 'Split the volume')
+            title='2. Two GPUs: different angles' if mode=='views' else '3. Two GPUs: different parts of the walnut'
+            self.note('Owned inputs are shown; each GPU still computes in tiles')
+            host=photo(image,2.5).move_to([-4.7,.3,0])
+            output=photo(np.zeros_like(projection),2.5,vmax).move_to([4.7,.3,0])
+            self.show(T(title,30).move_to([0,2.6,0]),host,output,
+                      T('Input',24,SUB).move_to([-4.7,1.9,0]),
+                      T('Assemble on CPU',24,SUB).move_to([4.7,1.9,0]),
+                      code(f'Projector(..., distributed=True, partition="{mode}")',20,GREEN).move_to([0,-2.45,0]))
+            results=[]
+            for rank,y in enumerate([.95,-1.1]):
+                colour=[GREEN,WARM][rank]
+                card=chip(rank,[0,y,0],color=colour)
+                self.show(card,duration=.3)
+                if mode=='views':
+                    value=image
+                    result=projection[rank*32:(rank+1)*32]
+                    source=host
+                else:
+                    value=image[rank*32:(rank+1)*32]
+                    result=partials[rank*2:rank*2+2].sum(0)
+                    source=photo(value,host.width,color=colour).move_to(
+                        crop_frame(host,rank*32,(rank+1)*32,64,colour))
+                    self.show(crop_frame(host,rank*32,(rank+1)*32,64,colour),duration=.2)
+                local=photo(value,1.25,color=colour).move_to([-.85,y,0])
+                projected=photo(result,1.4,vmax,colour).move_to([.9,y,0])
+                self.play(TransformFromCopy(source,local),run_time=.7)
+                views_label=f'Views {rank*32+1}–{(rank+1)*32}' if mode=='views' else 'All 64 views'
+                self.show(projected,T(views_label,17,colour).move_to([.9,y+.64,0]),duration=.45)
+                results.append(projected)
+            self.mark(f'partition_{mode}_inputs')
+            self.wait(1.2)
+            self.note('Same volume, different views: stack the results' if mode=='views' else
+                      'Different volume parts, same views: add the results')
+            if mode=='views':
+                for rank,result in enumerate(results):
+                    target=photo(projection[rank*32:(rank+1)*32],output.width,vmax,[GREEN,WARM][rank])
+                    target.move_to(crop_frame(output,rank*32,(rank+1)*32,64,[GREEN,WARM][rank]))
+                    self.play(TransformFromCopy(result,target),run_time=.8)
+                self.show(T('Views 1–32',19,GREEN).move_to([4.7,1.42,0]),
+                          T('Views 33–64',19,WARM).move_to([4.7,-.85,0]),duration=.3)
+            else:
+                junction=VGroup(Circle(.24,color=WARM,fill_color=BG,fill_opacity=1),
+                                MathTex('+',font_size=30,color=WARM)).move_to([2.65,.3,0])
+                self.show(junction,duration=.3)
+                accumulated=np.zeros_like(projection)
+                for rank,result in enumerate(results):
+                    packet=result.copy();self.add(packet)
+                    self.play(packet.animate.scale(.45).move_to(junction),run_time=.65)
+                    self.remove(packet)
+                    accumulated+=partials[rank*2:rank*2+2].sum(0)
+                    self.play(Transform(output,photo(accumulated,output.width,vmax).move_to(output)),
+                              Indicate(junction[1],color=INK,scale_factor=1.12),run_time=.45)
+            self.mark(f'partition_{mode}_complete')
+            self.wait(2.1)
+            self.reset()
+
+        # Four readable GPU cards: columns own view groups; rows own real image parts.
+        self.heading(4,'Combine both splits')
+        self.note('Hybrid: split both inputs; GPU computation stays tiled')
+        self.show(T('4. Four GPUs: split both the volume and the views',29).move_to([0,2.6,0]))
+        host=photo(image,2.1).move_to([-5.05,.05,0])
+        output=photo(np.zeros_like(projection),2.1,vmax).move_to([5.05,.05,0])
+        host_label=T('Input',22,SUB).move_to([-5.05,1.5,0])
+        output_label=T('Assemble on CPU',22,SUB).move_to([5.05,1.5,0])
+        self.show(host,output,host_label,output_label,
+                  T('Views 1–32',22,GREEN).move_to([-1.4,1.95,0]),
+                  T('Views 33–64',22,WARM).move_to([1.4,1.95,0]),
+                  code('Projector(..., distributed=True,\n    partition="hybrid", partition_grid=(2, 2))',20,GREEN).move_to([0,-2.55,0]))
+        locals={};computed={}
+        for space,y in enumerate([.8,-1.2]):
+            colour=[GREEN,WARM][space]
+            value=image[space*32:(space+1)*32]
+            source=photo(value,host.width,color=colour).move_to(crop_frame(host,space*32,(space+1)*32,64,colour))
+            self.show(crop_frame(host,space*32,(space+1)*32,64,colour),duration=.2)
+            animations=[]
+            for view,x in enumerate([-1.4,1.4]):
+                rank=view*2+space
+                frame=chip(rank,[x,y,0],width=2.35,height=1.5,color=colour)
+                # Compact labels sit inside the card, away from the view headers.
+                frame[2].move_to([x,y+.51,0])
+                local=photo(value,1.65,color=colour).move_to([x,y-.15,0])
+                self.show(frame,duration=.25)
+                animations.append(TransformFromCopy(source,local))
+                locals[rank]=local
+            self.play(*animations,run_time=.8)
+        self.mark('hybrid_inputs')
+        self.wait(1.5)
+        self.note('Each GPU projects its own part; add the two parts within each view group')
+        for view,x in enumerate([-1.4,1.4]):
+            for space,y in enumerate([.8,-1.2]):
+                rank=view*2+space
+                result=partials[space*2:space*2+2,view*32:(view+1)*32].sum(0)
+                projected=photo(result,1.65,vmax,[GREEN,WARM][space]).move_to(locals[rank])
+                self.play(Succession(FadeOut(locals[rank]),FadeIn(projected)),run_time=.55)
+                computed[rank]=projected
+            self.mark(f'hybrid_partials_{view}')
+            target=photo(projection[view*32:(view+1)*32],output.width,vmax,[GREEN,WARM][view])
+            target.move_to(crop_frame(output,view*32,(view+1)*32,64,[GREEN,WARM][view]))
+            plus=MathTex('+',font_size=30,color=INK).move_to([x,-.2,0])
+            self.show(plus,duration=.2)
+            packets=[computed[view*2+space].copy() for space in range(2)]
+            self.add(*packets)
+            self.play(*[packet.animate.scale(.5).move_to(plus) for packet in packets],run_time=.65)
+            self.remove(*packets)
+            combined=photo(projection[view*32:(view+1)*32],.8,vmax).move_to(plus)
+            self.play(TransformFromCopy(combined,target),FadeOut(plus),run_time=.8)
+        self.mark('hybrid_forward')
+        self.wait(2.2)
+        self.note('Backprojection reverses the flow: add view-group contributions for each part')
+        self.play(FadeOut(host),
+                  Succession(FadeOut(host_label),FadeIn(T('Add on CPU',22,SUB).move_to(host_label))),
+                  Succession(FadeOut(output_label),FadeIn(T('Sinogram input',22,SUB).move_to(output_label))),run_time=.3)
+        back=example['backprojection'];bmax=float(back.max())
+        for space in range(2):
+            y=[.8,-1.2][space]
+            pieces=[]
+            for view,x in enumerate([-1.4,1.4]):
+                rank=view*2+space
+                part=example['view_backprojection'][view,space*32:(space+1)*32]
+                contribution=photo(part,1.65,bmax,[GREEN,WARM][space]).move_to(computed[rank])
+                source=photo(projection[view*32:(view+1)*32],output.width,vmax)
+                source.move_to(crop_frame(output,view*32,(view+1)*32,64,[GREEN,WARM][view]))
+                incoming=photo(projection[view*32:(view+1)*32],1.65,vmax).move_to(computed[rank])
+                self.play(FadeOut(computed[rank]),TransformFromCopy(source,incoming),run_time=.55)
+                self.play(Succession(FadeOut(incoming),FadeIn(contribution)),run_time=.5)
+                pieces.append(contribution)
+            final=photo(back[space*32:(space+1)*32],2.1,bmax,[GREEN,WARM][space])
+            final.move_to([-5.05,.05+(.525 if space==0 else -.525),0])
+            plus=MathTex('+',font_size=30,color=INK).move_to([0,y-.15,0])
+            self.show(plus,duration=.2)
+            packets=[part.copy() for part in pieces];self.add(*packets)
+            self.play(*[packet.animate.scale(.5).move_to(plus) for packet in packets],run_time=.6)
+            self.remove(*packets)
+            combined=photo(back[space*32:(space+1)*32],.8,bmax).move_to(plus)
+            self.play(TransformFromCopy(combined,final),FadeOut(plus),run_time=.7)
+        self.show(T('Unfiltered backprojection\n(matched adjoint)',17,SUB).move_to([-5.05,-1.48,0]),duration=.3)
+        self.note('Values spread along rays: blur and raised background, not a reconstruction')
+        self.mark('hybrid_adjoint')
+        self.wait(5)
         self.reset()
         self.heading(4,'Measured multi-GPU scaling')
         self.note('Circular cone beam · 128³ volume · 360 views · A100-SXM-64GB')
         data=json.loads((HERE/'scaling.json').read_text()); timings=data['timings']['128']
         baseline=timings['gpus_1']['cgls_ms_per_iter']
-        chart_title=left(T('One CGLS iteration',28,SUB),-6.05).set_y(2.08)
+        chart_title=left(T('Archived view-partition benchmark · diffct 2.0.2',24,SUB),-6.05).set_y(2.35)
+        metric=left(T('One CGLS iteration',28,SUB),-6.05).set_y(1.8)
         for i,cfg in enumerate(data['configurations']):
             value=timings[cfg['key']]['cgls_ms_per_iter'];y=1.05-i*1.13
             label=T(cfg['label'],28,SUB).move_to([-4.3,y,0])
@@ -403,13 +598,13 @@ class DiffCTIntro(Scene):
             left(bar,-2.05).set_y(y)
             value_label=T(f'{value:.2f} ms',28).next_to(bar,RIGHT,buff=.2)
             if i == 0:
-                self.show(chart_title,label,bar,value_label)
+                self.show(chart_title,metric,label,bar,value_label)
             else:
                 self.show(label,duration=.25)
                 self.play(GrowFromEdge(bar,LEFT),FadeIn(value_label),run_time=.7)
             if i:
                 speed=T(f'{baseline/value:.1f}×',36,GREEN).move_to([4.75,y,0]);self.show(speed,duration=.3)
-        self.show(T('Speedup depends on workload and communication.',24,SUB).move_to([0,-2.4,0]))
+        self.show(T('These timings do not measure the new hybrid backend.',24,SUB).move_to([0,-2.4,0]))
         self.mark('scaling_full')
         self.wait(3)
         self.reset()
@@ -457,9 +652,12 @@ class DiffCTIntro(Scene):
         walnut=self.walnut(3.3,[0,.05,0],turn)
         self.show(walnut,T('diffct',72).move_to([0,2.65,0]))
         self.show(T('From your geometry to your reconstruction.',28,SUB).move_to([0,1.78,0]))
-        self.show(code('pip install "diffct[cu12]"',22,GREEN).move_to([0,-1.8,0]),
-                  T('Install PyTorch first · cu13 extra also available',20,SUB).move_to([0,-2.36,0]))
-        self.show(T('sypsyp97.github.io/diffct',24).move_to([0,-2.94,0]),
+        self.show(code('pip install diffct',22,GREEN).move_to([-3.15,-1.8,0]),
+                  code('pip install "diffct[cu12]"',22,GREEN).move_to([3.15,-1.8,0]),
+                  T('CPU / ROCm: backend="torch"',20,SUB).move_to([-3.15,-2.36,0]),
+                  T('Native NVIDIA · cu13 extra also available',20,SUB).move_to([3.15,-2.36,0]))
+        self.show(T('Install the matching PyTorch build first',20,SUB).move_to([0,-2.7,0]))
+        self.show(T('sypsyp97.github.io/diffct',24).move_to([0,-3.03,0]),
                   T('github.com/sypsyp97/diffct',24,SUB).move_to([0,-3.43,0]))
         self.mark('ending_full')
         self.play(turn.animate.set_value(180),run_time=5.5,rate_func=linear)

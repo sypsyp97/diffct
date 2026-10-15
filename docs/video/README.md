@@ -1,4 +1,4 @@
-# diffct 2.0 introduction
+# diffct 2.3.0 introduction
 
 The film preserves the upstream dark, serif presentation: LaTeX typography,
 numbered chapters, a thin progress rule, framed CT images and monospace code
@@ -23,6 +23,16 @@ render under `.validation/video-review/final/` for shot-by-shot review.
 Manim CE 0.20.1 and PyAV 17.0.0 were used. Saved assets render without CUDA.
 Layout bounds are checked during rendering.
 
+The GPU chapter also uses computed 2D illustration inputs. To regenerate them
+with the repository's matching PyTorch environment:
+
+```powershell
+python docs/video/make_gpu_example.py
+python -m unittest discover -s docs/video -p test_gpu_example.py
+```
+
+The saved `gpu_example.npz` lets the film render without PyTorch or a GPU.
+
 ## Story and coverage
 
 1. **Opening:** rotating 3D walnut, project name, PyTorch and feature overview.
@@ -33,33 +43,144 @@ Layout bounds are checked during rendering.
    inner-product identity, loss/backward code, volume/sinogram second derivatives.
 4. **Geometry gradients:** a clearly labelled pose-correction schematic alongside
    the recorded calibration loss, angle error and first-order geometry scope.
-5. **Multi-GPU:** partition views, replicate the volume, distribute to eight GPUs
-   on two nodes, show local/distributed API usage and NCCL, then measured timings
-   and speedups with workload and hardware stated.
+5. **Multi-GPU:** one walnut slice stays on the left and its simulated sinogram
+   on the right. Four numbered image tiles move through one GPU buffer; their
+   computed projections accumulate in the CPU output, then the next view batches
+   fill the rest. Two GPUs first receive copies of the whole image and compute
+   separate view ranges (`views`); their result rows stack. Next they receive
+   different image halves (`space`); their overlapping projections add. Four GPUs
+   combine both splits (`hybrid`, grid `(2, 2)`): columns own view groups and rows
+   own image halves. Backprojection reverses the visible data flow and adds
+   view-group contributions to each image half. The result is labelled unfiltered
+   backprojection (matched adjoint); its caption explains that spreading values
+   along rays produces blur and a raised background, rather than a reconstruction.
+   The final chart retains explicitly archived view-partition timings, which do
+   not measure the hybrid backend.
 6. **Measured reconstruction:** four real projections, then FDK / SIRT / CGLS /
    TV as a four-column, two-row axial/coronal comparison with iteration counts.
-7. **Ending:** rotating walnut, installation (PyTorch prerequisite, CUDA extras),
+7. **Ending:** rotating walnut, plain installation for CPU/PyTorch ROCm and CUDA
+   extras for native NVIDIA execution, the matching PyTorch prerequisite,
    documentation and repository links.
+
+The first shot shows **GPU buffer residency**. The later worker cards show
+logical data per **rank**, which may themselves be streamed in tiles as in the
+first shot. `views` still replicates the rank volume; `space` and `hybrid` own
+only first-axis slabs. Caller-owned CUDA inputs/results and autograd graph
+storage are outside the bounded streaming buffers. The complete sinogram or
+adjoint at the side is explicitly **assembled on CPU for this illustration**;
+distributed projection normally returns owned view rows replicated within each
+space group, while the adjoint returns an owned image slab replicated across
+view groups. The clip does not imply an automatic global gather.
+
+GPU cards are a data-flow schematic, not measured execution time or memory use.
+The distributed API excerpts assume one process per GPU, local device binding,
+and an initialized process group. Hybrid selects the PyTorch backend automatically.
+All ranks must use consistent shapes, partitions and chunk hints. The loss formula in the
+autograd chapter is the ordinary single-process loss; distributed replica
+divisors are documented in [EXECUTION.md](../EXECUTION.md#hybrid-ownership-and-losses).
+Code cards are API excerpts: `...` stands for the acquisition/shape arguments.
+Set geometry `requires_grad` before constructing the projector.
+
+## Content cross-check
+
+Every visible caption, code card, formula, label and plotted value was checked
+within these shot groups. Schematics explain API behavior; archived plots and
+reconstruction panels retain their recorded inputs.
+
+| Shot | Content checked | Evidence |
+|---|---|---|
+| Opening | 2.3.0 title, five chapters, measured CT surface | `pyproject.toml`, `walnut_surface.npz` |
+| Trajectories | Five schematic paths; source/centre/u/v tuple; valid per-view poses | [Projector](../../diffct/operators.py), unchanged [ScanDiagram](scan_diagram.py) |
+| Autograd | Simulated parallel sinogram; Siddon path sum; matched adjoint; ordinary squared-loss gradient; batch/second data derivatives | [Projector](../../diffct/operators.py), [portable traversal](../../diffct/backends.py), `make_inputs.py`, `data2d.npz` |
+| Geometry | First-order source/centre/axis gradients; schematic pose dots; log10 loss, 150 steps, angle RMSE 0.55° to 0.006° | [geometry VJP](../../diffct/kernels/geometry_vjp.py), `calib_history.json` |
+| Streaming | Four actual image tiles, one GPU buffer; first 16 views accumulate tile contributions, then repeat for all 64 views | `gpu_example.npz`, [generator](make_gpu_example.py), [Projector streamed execution](../../diffct/operators.py) |
+| Views / space | Same image copies with different view rows stack; different image halves with the same views add | [Partition](../../diffct/distribution.py), computed `tile_projection` |
+| Hybrid | `(2, 2)` ordering: GPUs 0/1 own views 1–32, GPUs 2/3 views 33–64; 0/2 own the first image half, 1/3 the second; projection adds vertically, adjoint horizontally | [Partition](../../diffct/distribution.py), [portable reductions](../../diffct/backends.py), computed `view_backprojection` |
+| Scaling | Archived 2.0.2 views timings: 30.08 / 8.08 / 5.59 ms, calculated 3.7× / 5.4×; 128³, 360 views, A100 | `docs/video/scaling.json`; separate from the 2.2.0 README chart |
+| Measured data | Four transposed measured projections; existing axial/coronal orientation, common [0, 1] range; FDK / SIRT 200 / CGLS 20 / Adam TV 300; dataset attribution | Unchanged `measured()` and `walnut_measured.npz`, `make_inputs.py`, `WALNUT_NOTICE.txt` |
+| Ending | CPU/PyTorch ROCm installation, native CUDA 12/13 extras, matching PyTorch prerequisite and project URLs | [Install guide](../../README.md#install), `pyproject.toml`, [backend selection](../../diffct/backends.py) |
+
+## Render review (2026-10-15)
+
+The exported film is 151.367 s: **4,541 MP4 frames**, 1920 × 1080 at constant
+30 fps. A Cairo render observer recorded visible Tex/MathTex identities and
+glyph bounds for every written frame, including 1,272 repeated wait frames.
+Complete decoding confirms source/trace/export counts agree. No text violates
+the 0.1-scene-unit viewport margin; no distinct text bounding boxes overlap.
+
+The 800 × 450 GIF decodes into **1,123 frames**, covering all **1,211** 8 fps source
+samples; identical samples merge. Its 151.37 s duration differs by less than one
+sampling interval. All frames share one 255-colour palette, and pixels unchanged
+from the previous frame are stored as transparent, so the file is 12.1 MB (41.2 MB
+with a separate 64-colour palette per frame). Against the MP4 at the same sample
+times, every displayed GIF frame reaches at least 41.6 dB PSNR (median 42.7 dB).
+To rebuild only the GIF from the committed MP4, run
+`python docs/video/render.py --gif-only`. Two MP4 frames (9.100 s and 141.967 s)
+are background-only at sequential chapter fade midpoints; these are the retained
+transition style.
+
+Manual pixel review covers text compositions at fade/solid states, animation
+midpoints, chapter transitions, regular animation samples and full-resolution
+keyframes. The unfiltered-backprojection label and explanation were also checked
+in a preview, including their fade and five-second reading hold. Moving packets
+pass behind protected GPU identifiers and operation labels; label changes fade
+out before the replacement fades in. Bounds/provenance checks do not prove
+semantics or occlusion; the content table above and pixel review provide those
+checks. Local full-story review sheets remain under ignored
+`.validation/video-intuitive/final-v4/`; the latest render and caption checks are
+under `.validation/video-intuitive/adjoint-final/`.
+
+The GPU illustration numeric checks passed (7 tests), including regeneration of
+the saved fixture. Existing depth checks passed (5 tests). Main's measured input
+arrays and display transforms are unchanged. Python compilation and
+`git diff --check` passed. No new ROCm/NCCL/cross-node performance measurements
+were made for this video.
 
 ## Data and provenance
 
-The API and archived measurements were checked against upstream main
-`50a897f8860346ef906d4c909db081452c411657` (2.0.2). This worktree is based on that upstream commit; library behavior is unchanged.
+The API/ownership story is checked against released main
+`db2daa954012500c05549deb833206a83bc10f44` (2.3.0). The video source and existing
+orientation/depth fixes start from that commit. This PR changes no library code,
+measured arrays, slice transforms or scan-diagram geometry.
 
-- `walnut_measured.npz` and `data2d.npz` are copied byte-for-byte from that commit.
-  The former contains four measured cone-beam projections plus FDK, SIRT (200),
+Archived reconstruction/calibration inputs originate from
+`50a897f8860346ef906d4c909db081452c411657` (2.0.2); these are retained results,
+not newly measured 2.3.0 solver/accuracy results.
+
+- `data2d.npz` is byte-identical to that commit. `walnut_measured.npz` retains
+  the same recorded values with main's coronal display correction (`c6d6ced`):
+  its four coronal fields are vertical flips of the archived arrays, while the
+  four axial fields and projections match exactly. Main's `4ac2e15` additionally
+  displays projections as `p.T` without an extra vertical flip. Both corrections
+  are retained. The file contains four measured cone-beam projections plus FDK, SIRT (200),
   CGLS (20), and TV (300, weight 0.3) axial/coronal slices at 256³. All reconstruction
   panels use [0, 1]. `data2d.npz` contains a walnut slice and a SciPy rotate/sum
   **display simulation** of a parallel sinogram; the film labels it accordingly.
+- `gpu_example.npz` is a separate **computed 2D data-flow illustration**, generated
+  by [make_gpu_example.py](make_gpu_example.py) with the released library's CPU
+  PyTorch float64 Siddon projector. The measured 256² axial slice is mean-pooled
+  by 4 × 4 to 64². Geometry has 64 parallel views on [0, π), 96 detector bins,
+  unit voxel/detector spacing. Four 16-row contributions keep global coordinates;
+  pairs form the two 32-row spatial owners. View groups contain 32 rows each.
+  `tile_projection` sums to the full sinogram, and `view_backprojection` sums to
+  its matched adjoint. All projected panels share the full sinogram's maximum;
+  all adjoint panels share the complete adjoint's maximum. In this example, the
+  unfiltered adjoint is blurred with a raised background because ray values
+  spread across the image. The video labels it as unfiltered backprojection and
+  explains its appearance. The seven numeric checks include independent
+  axis-aligned row/column path sums and regeneration of the
+  committed fixture. This introduces no new acquisition, solver or GPU benchmark.
 - `calib_history.json` is the saved, separate 64³ calibration run. Its seven
   samples are plotted on a labelled log10 axis, with steps 0–149 (150 steps).
   Pose dots are a schematic, not recovered measurements or saved optimizer poses.
   Displayed angle errors come directly from this JSON. Geometry gradients are
   first order; volume/sinogram gradients also support second derivatives.
-- `docs/assets/scaling.json` is byte-identical to upstream. The film reads its
-  CGLS 128³/360-view timings and calculates speedup from them. Hardware:
-  A100-SXM-64GB. The bars are archived benchmarks, not this workstation's timings.
-- `walnut_surface.npz` is newly derived from the **real measured dataset**, not
+- `docs/video/scaling.json` retains the archived CGLS 128³/360-view timings from
+  2.0.2 and calculates speedup from them. Hardware: A100-SXM-64GB. The film labels
+  the version and `views` partition explicitly. `docs/assets/scaling.json` holds
+  the separate 2.2.0/512³ README benchmark; it is not the film's input. Neither
+  benchmark measures portable/hybrid execution in 2.3.0.
+- `walnut_surface.npz` is derived from the **real measured dataset**, not
   generated imagery. Upstream 2.0.2's `walnut_reconstruction.py` reconstructed all
   240 views at 128³ using FDK with the Hann window on an RTX 4070 SUPER. The stored
   field of view is 39 mm (0.3043 mm/voxel). Rendering flips the z array for an upright
@@ -93,18 +214,19 @@ reconstruction displays and the surface-rendering transformations described abov
   Trajectory curves and source positions interpolate between scan types.
 - Text returns to upstream's `Tex` and `MathTex` rendering rather than Pango
   `Text`. The original Latin Modern serif/monospace family handles kerning and
-  ligatures in LaTeX. The scene's 20 / 24 / 28 / 36 typography scale maps to
-  25 / 30 / 35 / 45 TeX points; code cards use 24 or 26.4 points. List, table and caption
-  rows share baselines using the upstream baseline helper. Code spaces are
+  ligatures in LaTeX. Body text and headings use the original 20 / 24 / 28 / 36
+  scale (25 / 30 / 35 / 45 TeX points); compact GPU annotations use 17–22.
+  List and caption rows share baselines using the upstream baseline helper. Code spaces are
   explicitly preserved in TeX. No per-character tracking or system font fallback
   is used. This also avoids the old small-size Pango spacing path documented in
   [Manim's 0.22 release notes](https://docs.manim.community/en/stable/changelog/0.22.0-changelog.html).
 - Opening and ending share a centered title, subtitle and walnut, with identical
   positions and type sizes. The opening chapter map uses the upstream centered
   three-plus-two arrangement. Trajectory content follows equal-width columns.
-  GPU nodes use mirrored centers and equal-size two-line code cards. Node titles
-  enter after the blocks arrive, so the moving views do not cross visible text;
-  the view heading exits when its blocks have finished distributing.
+  GPU inputs and assembled outputs keep fixed positions as the division of work
+  changes. GPU cards contain actual walnut regions and computed sinograms rather
+  than anonymous blocks. Forward contributions visibly accumulate; the hybrid
+  adjoint moves data in the reverse direction and adds across the view groups.
 - The opening restores the five-chapter overview, the scan rig keeps an amber
   source marker, and trajectory/GPU colors identify the active path or partition.
   Projection and adjoint use cyan and amber with a shared serif formula style.
