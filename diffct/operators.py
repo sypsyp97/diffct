@@ -349,6 +349,11 @@ class Projector:
     conservative automatic chunks targeting 8 MiB work arrays. Explicit
     chunk hints take priority. Reports and selection caches retain metadata.
 
+    ``native_volume_layout=True`` makes native full-CUDA cone backprojections return the ``(D, H, W)``
+    view of the kernel's ``(W, H, D)``-contiguous buffer instead of a contiguous copy. Projections always
+    accept such views without a copy, so an iterative solver that keeps its volumes in this layout
+    avoids two whole-volume copies per normal-operator application. Values are identical.
+
     Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
     bounded by the chosen tile and view batch. Caller-owned CUDA data/results
     and CUDA work inside a supplied callback are outside this memory bound.
@@ -375,8 +380,9 @@ class Projector:
                  distributed=False, process_group=None, detector_surface=None,
                  volume_chunk_shape=None, view_chunk_size=None, detector_chunk_shape=None,
                  schedule="auto", partition="views", backend="auto", precision="fast",
-                 partition_grid=None):
+                 partition_grid=None, native_volume_layout=False):
         self.backend = select_backend(backend, precision, voxel_spacing, partition)
+        self.native_volume_layout = bool(native_volume_layout)
         self.precision = precision
         self.dtype = torch.float64 if precision == "float64" else torch.float32
         self._reference = None
@@ -808,9 +814,10 @@ class Projector:
             )
             source = tensor if is_project else tensor[local_slice]
             with torch.cuda.device(device):
-                staged_input = source.to(
-                    device=device, dtype=torch.float32, non_blocking=True
-                ).contiguous()
+                staged_input = source.to(device=device, dtype=torch.float32, non_blocking=True)
+                # A cone volume viewed over a native (W, H, D) buffer keeps that layout (no copy).
+                if not (is_project and self.beam == "cone" and staged_input.permute(2, 1, 0).is_contiguous()):
+                    staged_input = staged_input.contiguous()
                 staged_geometry = self._geometry_for(device, global_slice, geometry)
             staged.append((device, staged_input, staged_geometry))
 
@@ -1871,7 +1878,7 @@ class Projector:
             )
         return ConeBackprojectorFunction.apply(
             sinogram, *geometry, *volume_shape,
-            *self.detector_spacing, self.voxel_spacing,
+            *self.detector_spacing, self.voxel_spacing, self.native_volume_layout,
         )
 
     @property
