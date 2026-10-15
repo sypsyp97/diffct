@@ -616,12 +616,14 @@ class Projector:
         volume_elements = math.prod(self.volume_shape)
         projection_elements = math.prod(self.projection_shape)
 
+        full_allowed = (isinstance(tensor, torch.Tensor) and is_cuda and output_store is None
+                        and self.volume_chunk_shape is None and self.view_chunk_size is None
+                        and self.detector_chunk_shape is None and not parameterized and self.schedule == "auto"
+                        and self.partition == "views")
+
         def full_fits(budgets, allocation_limit, reservation_budget):
             """Whether one launch over the whole volume and all views fits these limits."""
-            can_use_full = (isinstance(tensor, torch.Tensor) and is_cuda and output_store is None
-                            and self.volume_chunk_shape is None and self.view_chunk_size is None
-                            and self.detector_chunk_shape is None and not parameterized and self.schedule == "auto"
-                            and self.partition == "views")
+            can_use_full = full_allowed
             for device_rank, device in enumerate(devices):
                 shard = _balanced_slice(local_views, device_rank, len(devices))
                 views = shard.stop - shard.start
@@ -649,7 +651,7 @@ class Projector:
                 can_use_full = can_use_full and 4 * max(volume_elements, projection_elements) <= allocation_limit
             return can_use_full
 
-        if not (self._distributed and self.world_size > 1):
+        if full_allowed and not (self._distributed and self.world_size > 1):
             # Snapshot-free lower bounds of the budgets below. Each condition of the full path
             # grows with the budgets, so a launch that fits the bounds fits the exact budgets and
             # gets the same plan. Distributed ranks agree on exact budgets, so they skip this.
