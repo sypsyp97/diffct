@@ -108,11 +108,16 @@ glyph bounds for every written frame, including 1,272 repeated wait frames.
 Complete decoding confirms source/trace/export counts agree. No text violates
 the 0.1-scene-unit viewport margin; no distinct text bounding boxes overlap.
 
-The 800 × 450 GIF decodes into **1,061 frames**, covering all **1,211** 8 fps source
-samples with exact palette-image/delay mapping; identical samples merge. Its
-151.37 s duration differs by less than one sampling interval. Two MP4 frames
-(9.100 s and 141.967 s) are background-only at sequential chapter fade midpoints;
-these are the retained transition style. No GIF frame is background-only.
+The 800 × 450 GIF decodes into **1,123 frames**, covering all **1,211** 8 fps source
+samples; identical samples merge. Its 151.37 s duration differs by less than one
+sampling interval. All frames share one 255-colour palette, and pixels unchanged
+from the previous frame are stored as transparent, so the file is 12.1 MB (41.2 MB
+with a separate 64-colour palette per frame). Against the MP4 at the same sample
+times, every displayed GIF frame reaches at least 41.6 dB PSNR (median 42.7 dB).
+To rebuild only the GIF from the committed MP4, run
+`python docs/video/render.py --gif-only`. Two MP4 frames (9.100 s and 141.967 s)
+are background-only at sequential chapter fade midpoints; these are the retained
+transition style.
 
 Manual pixel review covers text compositions at fade/solid states, animation
 midpoints, chapter transitions, regular animation samples and full-resolution
