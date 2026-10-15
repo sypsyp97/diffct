@@ -90,7 +90,7 @@ def _memory_lower_bounds(device):
     allocation_limit = (1 << 63) - 1
     if backend == "native" and available < 20 * 1024 ** 2:
         allocation_limit = 1024 ** 2
-    if torch.cuda.get_allocator_backend() != "native":
+    if backend != "native":
         reservation = (1 << 63) - 1
     else:
         reservation = max(0, min(free, int(total * fraction) - reserved))
