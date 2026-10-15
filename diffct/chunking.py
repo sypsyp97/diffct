@@ -63,6 +63,40 @@ def _memory_budget(device):
     return budget, allocation_limit
 
 
+def _memory_lower_bounds(device):
+    """Lower bounds of `_memory_budget` and `_reservation_budget` without an allocator snapshot.
+
+    Returns (budget, allocation_limit, reservation budget), each at most the value the two exact
+    functions return at the same allocator state. The snapshot is what makes those functions
+    slow; it only serves two corrections, and both are bounded by allocator counters: free splits
+    pinned by other streams are inactive reserved bytes, at most reserved - allocated, and pinned
+    segments hold at most every reserved byte.
+    """
+    free, total = torch.cuda.mem_get_info(device)
+    # One nested statistics query; memory_allocated/memory_reserved each flatten every statistic.
+    stats = torch.cuda.memory_stats_as_nested_dict(device)
+    if stats:
+        allocated = stats["allocated_bytes"]["all"]["current"]
+        reserved = stats["reserved_bytes"]["all"]["current"]
+    else:                                   # allocator not initialised: nothing allocated or reserved
+        allocated = reserved = 0
+    reusable = max(0, reserved - allocated)
+    getter = getattr(torch.cuda, "get_per_process_memory_fraction", None)
+    fraction = getter(device) if getter is not None else 1.0
+    allocator_room = max(0, int(total * fraction) - allocated)
+    backend = getattr(torch.cuda, "get_allocator_backend", lambda: "native")()
+    foreign_splits = reusable if backend == "native" else 0
+    available = max(0, min(free + reusable, allocator_room) - foreign_splits)
+    allocation_limit = (1 << 63) - 1
+    if backend == "native" and available < 20 * 1024 ** 2:
+        allocation_limit = 1024 ** 2
+    if torch.cuda.get_allocator_backend() != "native":
+        reservation = (1 << 63) - 1
+    else:
+        reservation = max(0, min(free, int(total * fraction) - reserved))
+    return available * 3 // 4, allocation_limit, reservation
+
+
 def _native_segments(device):
     index = torch.device(device).index if not isinstance(device, int) else device
     index = torch.cuda.current_device() if index is None else index

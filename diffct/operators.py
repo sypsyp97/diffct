@@ -8,8 +8,8 @@ import time
 import torch
 
 from .chunking import (_ChunkPlan, _host_geometry_bytes, _largest_buffer_bytes, _memory_budget,
-                       _pipeline_buffers, _pipeline_bytes, _pixel_tiles, _reservation_budget,
-                       _reservation_bytes, _tiles, _working_set_bytes)
+                       _memory_lower_bounds, _pipeline_buffers, _pipeline_bytes, _pixel_tiles,
+                       _reservation_budget, _reservation_bytes, _tiles, _working_set_bytes)
 from . import pipeline as _pipeline
 from .storage import TensorStore
 from .streaming import _validate_stores
@@ -606,13 +606,6 @@ class Projector:
             *active_devices, *((input_device,) if is_cuda else ()),
             *((output_device,) if output_device.type == "cuda" else ()), *collective_devices,
         )))
-        observed = {device: _memory_budget(device) for device in inventory}
-        budgets = {device: limits[0] for device, limits in observed.items()}
-        allocation_limit = min((limits[1] for limits in observed.values()), default=(1 << 63) - 1)
-        # A known zero budget rejects metadata-only device inventories before
-        # querying their physical streams or allocator snapshots.
-        reservation_budget = (min((_reservation_budget(device) for device in inventory),
-                                  default=(1 << 63) - 1) if all(budgets.values()) else 0)
         parameterized = isinstance(self.detector_surface, ParameterizedSurface)
         surface = self.detector_surface is not None or self.detector_chunk_shape is not None
         # Sampling precedes view sharding. Conservatively allow the complete
@@ -622,35 +615,59 @@ class Projector:
                        if self.detector_surface is not None and not parameterized else 0)
         volume_elements = math.prod(self.volume_shape)
         projection_elements = math.prod(self.projection_shape)
-        can_use_full = (isinstance(tensor, torch.Tensor) and is_cuda and output_store is None
-                        and self.volume_chunk_shape is None and self.view_chunk_size is None
-                        and self.detector_chunk_shape is None and not parameterized and self.schedule == "auto"
-                        and self.partition == "views")
-        for device_rank, device in enumerate(devices):
-            shard = _balanced_slice(local_views, device_rank, len(devices))
-            views = shard.stop - shard.start
-            if views == 0:
-                continue
-            needed = _working_set_bytes(self.beam, self.volume_shape, views, self.detector_shape, surface)
-            needed += world_bytes
-            if is_cuda and device == input_device:
-                needed += 8 * (volume_elements + projection_elements)
-            can_use_full = can_use_full and needed <= budgets[device]
-            can_use_full = can_use_full and _largest_buffer_bytes(
-                self.beam, self.volume_shape, views, self.detector_shape, surface
-            ) <= allocation_limit
-            buffers = _pipeline_buffers(self.beam, self.volume_shape, views, self.detector_shape,
-                                        surface, retained=2,
-                                        geometry_grad=True, ray_accumulators=1)
-            buffers += (world_bytes // 4,) * 4
-            if is_cuda and device == input_device:
-                buffers += (4 * volume_elements,) * 2 + (4 * projection_elements,) * 2
-            can_use_full = can_use_full and _reservation_bytes(buffers) <= reservation_budget
-        if is_cuda and input_device not in active_devices:
-            can_use_full = can_use_full and 8 * (volume_elements + projection_elements) + world_bytes <= budgets[input_device]
-        can_use_full = can_use_full and all(world_bytes <= amount for amount in budgets.values())
-        if is_cuda:
-            can_use_full = can_use_full and 4 * max(volume_elements, projection_elements) <= allocation_limit
+
+        def full_fits(budgets, allocation_limit, reservation_budget):
+            """Whether one launch over the whole volume and all views fits these limits."""
+            can_use_full = (isinstance(tensor, torch.Tensor) and is_cuda and output_store is None
+                            and self.volume_chunk_shape is None and self.view_chunk_size is None
+                            and self.detector_chunk_shape is None and not parameterized and self.schedule == "auto"
+                            and self.partition == "views")
+            for device_rank, device in enumerate(devices):
+                shard = _balanced_slice(local_views, device_rank, len(devices))
+                views = shard.stop - shard.start
+                if views == 0:
+                    continue
+                needed = _working_set_bytes(self.beam, self.volume_shape, views, self.detector_shape, surface)
+                needed += world_bytes
+                if is_cuda and device == input_device:
+                    needed += 8 * (volume_elements + projection_elements)
+                can_use_full = can_use_full and needed <= budgets[device]
+                can_use_full = can_use_full and _largest_buffer_bytes(
+                    self.beam, self.volume_shape, views, self.detector_shape, surface
+                ) <= allocation_limit
+                buffers = _pipeline_buffers(self.beam, self.volume_shape, views, self.detector_shape,
+                                            surface, retained=2,
+                                            geometry_grad=True, ray_accumulators=1)
+                buffers += (world_bytes // 4,) * 4
+                if is_cuda and device == input_device:
+                    buffers += (4 * volume_elements,) * 2 + (4 * projection_elements,) * 2
+                can_use_full = can_use_full and _reservation_bytes(buffers) <= reservation_budget
+            if is_cuda and input_device not in active_devices:
+                can_use_full = can_use_full and 8 * (volume_elements + projection_elements) + world_bytes <= budgets[input_device]
+            can_use_full = can_use_full and all(world_bytes <= amount for amount in budgets.values())
+            if is_cuda:
+                can_use_full = can_use_full and 4 * max(volume_elements, projection_elements) <= allocation_limit
+            return can_use_full
+
+        if not (self._distributed and self.world_size > 1):
+            # Snapshot-free lower bounds of the budgets below. Each condition of the full path
+            # grows with the budgets, so a launch that fits the bounds fits the exact budgets and
+            # gets the same plan. Distributed ranks agree on exact budgets, so they skip this.
+            bounds = {device: _memory_lower_bounds(device) for device in inventory}
+            floor_budgets = {device: bound[0] for device, bound in bounds.items()}
+            floor_limit = min((bound[1] for bound in bounds.values()), default=(1 << 63) - 1)
+            floor_reservation = (min((bound[2] for bound in bounds.values()), default=(1 << 63) - 1)
+                                 if all(floor_budgets.values()) else 0)
+            if full_fits(floor_budgets, floor_limit, floor_reservation):
+                return None
+        observed = {device: _memory_budget(device) for device in inventory}
+        budgets = {device: limits[0] for device, limits in observed.items()}
+        allocation_limit = min((limits[1] for limits in observed.values()), default=(1 << 63) - 1)
+        # A known zero budget rejects metadata-only device inventories before
+        # querying their physical streams or allocator snapshots.
+        reservation_budget = (min((_reservation_budget(device) for device in inventory),
+                                  default=(1 << 63) - 1) if all(budgets.values()) else 0)
+        can_use_full = full_fits(budgets, allocation_limit, reservation_budget)
 
         # CUDA results stay on the caller's device. CPU execution never reserves
         # a full volume/sinogram there. Include transfer scratch on an origin
