@@ -55,12 +55,26 @@ def _empty_detector_positions(device, beam):
 
 
 def _prepare_volume(beam, volume):
-    """Prepare one contiguous native HW/WHD tile for repeated ray launches."""
-    volume = volume.detach().to(dtype=torch.float32).contiguous()
+    """Prepare one contiguous native HW/WHD tile for repeated ray launches.
+
+    A cone volume that is a ``(D, H, W)`` view of a ``(W, H, D)``-contiguous buffer, as returned with
+    ``native_volume_layout=True``, already has the native layout and is used without a copy.
+    """
+    volume = volume.detach().to(dtype=torch.float32)
     if beam == "cone":
+        native = volume.permute(2, 1, 0)
+        if native.is_contiguous():
+            return native
+        volume = volume.contiguous()
         _validate_3d_memory_layout(volume, expected_order="DHW")
         return volume.permute(2, 1, 0).contiguous()
-    return volume
+    return volume.contiguous()
+
+
+def _cone_volume(volume):
+    """float32 cone volume, contiguous unless it is already a view of a native (W, H, D) buffer."""
+    volume = volume.to(dtype=torch.float32)
+    return volume if volume.permute(2, 1, 0).is_contiguous() else volume.contiguous()
 
 
 def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing,
@@ -789,7 +803,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         det_u_vec = DeviceManager.ensure_device(det_u_vec, device)
         det_v_vec = DeviceManager.ensure_device(det_v_vec, device)
 
-        volume = volume.to(dtype=torch.float32).contiguous()
+        volume = _cone_volume(volume)
         src_pos = src_pos.to(dtype=torch.float32).contiguous()
         det_center = det_center.to(dtype=torch.float32).contiguous()
         det_u_vec = det_u_vec.to(dtype=torch.float32).contiguous()
@@ -860,7 +874,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
     """
     @staticmethod
     @_on_device_of("sinogram")
-    def forward(ctx, sinogram, src_pos, det_center, det_u_vec, det_v_vec, D, H, W, du, dv, voxel_spacing=1.0):
+    def forward(ctx, sinogram, src_pos, det_center, det_u_vec, det_v_vec, D, H, W, du, dv, voxel_spacing=1.0,
+                native_layout=False):
         """Compute the 3D cone beam backprojection with arbitrary trajectories using CUDA acceleration.
 
         Parameters
@@ -887,6 +902,9 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             Physical spacing between detector elements along the v-axis.
         voxel_spacing : float, optional
             Physical size of one voxel (in same units as positions, default: 1.0).
+        native_layout : bool, optional
+            If True, return a (D, H, W) tensor with the kernel's native (W, H, D)-contiguous strides
+            instead of a contiguous copy (default: False). Projections accept such tensors without a copy.
 
         Returns
         -------
@@ -931,15 +949,20 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         # Validate memory layout to prevent coordinate system inconsistencies
         _validate_3d_memory_layout(sinogram, expected_order='VHW')
 
-        vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
+        if native_layout:
+            # A (D, H, W) tensor with the native (W, H, D) strides, not a view: the kernel writes its
+            # contiguous permutation, and in-place operations on the result stay valid under autograd.
+            vol = torch.empty_strided((D, H, W), (1, D, D * H), dtype=sinogram.dtype, device=device).zero_()
+            vol_perm = vol.permute(2, 1, 0)
+        else:
+            vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
         _backproject_into(
             "cone", sinogram, (src_pos, det_center, det_u_vec, det_v_vec),
             (du, dv), voxel_spacing, vol_perm,
         )
 
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv, voxel_spacing)
-        vol = vol_perm.permute(2, 1, 0).contiguous()
-        return vol
+        return vol if native_layout else vol_perm.permute(2, 1, 0).contiguous()
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -955,4 +978,4 @@ class ConeBackprojectorFunction(torch.autograd.Function):
             ctx.needs_input_grad[1:5], "cone", grad_output, sinogram,
             (src_pos, det_center, det_u_vec, det_v_vec), (du, dv), voxel_spacing,
         )
-        return (grad_sino, *geometry_grads, None, None, None, None, None, None)
+        return (grad_sino, *geometry_grads, None, None, None, None, None, None, None)

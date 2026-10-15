@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged.
+
 ### Changed
 
 - Projector execution planning takes no allocator snapshot when a full launch clearly fits: lower bounds of the memory limits come from `mem_get_info` and one statistics query, and the exact planner runs only when they do not suffice. Plans are unchanged. Host time per call for small problems drops by about 1 ms. Distributed operators keep the exact planner (#26).

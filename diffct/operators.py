@@ -349,6 +349,13 @@ class Projector:
     conservative automatic chunks targeting 8 MiB work arrays. Explicit
     chunk hints take priority. Reports and selection caches retain metadata.
 
+    ``native_volume_layout=True`` makes native full-CUDA cone backprojections of unbatched inputs on a
+    flat detector return ``(D, H, W)`` tensors with the kernels' ``(W, H, D)``-contiguous strides instead
+    of contiguous copies; native projections accept such tensors without a copy. An iterative solver that
+    keeps its volumes in this layout then avoids two whole-volume copies per normal-operator application
+    on one device. Values are identical. Results from several local devices, curved detectors, batched
+    inputs, streamed execution and the PyTorch backend still involve copies.
+
     Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
     bounded by the chosen tile and view batch. Caller-owned CUDA data/results
     and CUDA work inside a supplied callback are outside this memory bound.
@@ -375,8 +382,9 @@ class Projector:
                  distributed=False, process_group=None, detector_surface=None,
                  volume_chunk_shape=None, view_chunk_size=None, detector_chunk_shape=None,
                  schedule="auto", partition="views", backend="auto", precision="fast",
-                 partition_grid=None):
+                 partition_grid=None, native_volume_layout=False):
         self.backend = select_backend(backend, precision, voxel_spacing, partition)
+        self.native_volume_layout = bool(native_volume_layout)
         self.precision = precision
         self.dtype = torch.float64 if precision == "float64" else torch.float32
         self._reference = None
@@ -523,9 +531,11 @@ class Projector:
             parameters = tuple((tuple(value.shape), str(value.dtype)) for value in surface.parameters)
         else:
             kind, parameters = ("points" if surface is not None else "flat"), ()
+        # native_volume_layout sets the element order of reduced backprojections, so ranks must agree on it.
         metadata = (self.partition, self.partition_grid, self.backend, self.precision, self.schedule,
                     self.global_volume_shape, self.beam, self.voxel_spacing,
-                    self.detector_spacing, self._n_views, self.detector_shape, kind, parameters)
+                    self.detector_spacing, self._n_views, self.detector_shape, kind, parameters,
+                    self.native_volume_layout)
         if self.backend == "torch":
             # Portable collectives follow the tile and ray-batch order, so
             # every rank must derive the same chunks.
@@ -533,7 +543,8 @@ class Projector:
         layouts = [None] * self.world_size
         torch.distributed.all_gather_object(layouts, metadata, group=self._process_group)
         if any(layout != metadata for layout in layouts):
-            raise ValueError("distributed ranks must agree on geometry, surface layout and portable chunk hints")
+            raise ValueError("distributed ranks must agree on geometry, surface layout, native volume layout "
+                             "and portable chunk hints")
 
     def _participation(self):
         if self.backend == "torch" and self.world_size > 1 and torch.is_grad_enabled():
@@ -808,9 +819,10 @@ class Projector:
             )
             source = tensor if is_project else tensor[local_slice]
             with torch.cuda.device(device):
-                staged_input = source.to(
-                    device=device, dtype=torch.float32, non_blocking=True
-                ).contiguous()
+                staged_input = source.to(device=device, dtype=torch.float32, non_blocking=True)
+                # A cone volume viewed over a native (W, H, D) buffer keeps that layout (no copy).
+                if not (is_project and self.beam == "cone" and staged_input.permute(2, 1, 0).is_contiguous()):
+                    staged_input = staged_input.contiguous()
                 staged_geometry = self._geometry_for(device, global_slice, geometry)
             staged.append((device, staged_input, staged_geometry))
 
@@ -839,17 +851,28 @@ class Projector:
                     self.projection_shape, dtype=torch.float32, device=input_device
                 )
 
+            # With native_volume_layout every rank holds its cone result in the native (W, H, D) order,
+            # so collectives reduce the same element order on every rank.
+            native = self.native_volume_layout and self.beam == "cone" and self.detector_surface is None
             if len(outputs) == 1:
                 result = outputs[0][1].to(device=input_device, non_blocking=True)
             else:
-                result = torch.zeros(
-                    self.volume_shape, dtype=torch.float32, device=input_device
-                )
+                if native:
+                    D, H, W = self.volume_shape
+                    result = torch.empty_strided(self.volume_shape, (1, D, D * H), dtype=torch.float32,
+                                                 device=input_device).zero_()
+                else:
+                    result = torch.zeros(
+                        self.volume_shape, dtype=torch.float32, device=input_device
+                    )
                 for _, output in outputs:
                     result.add_(output.to(device=input_device, non_blocking=True))
             if self._distributed and self.world_size > 1:
+                reduced = result.permute(2, 1, 0) if native else result
+                if not reduced.is_contiguous():
+                    raise RuntimeError("cone backprojection result is not in the layout every rank reduces")
                 torch.distributed.all_reduce(
-                    result,
+                    reduced,
                     op=torch.distributed.ReduceOp.SUM,
                     group=self._process_group,
                 )
@@ -1871,7 +1894,7 @@ class Projector:
             )
         return ConeBackprojectorFunction.apply(
             sinogram, *geometry, *volume_shape,
-            *self.detector_spacing, self.voxel_spacing,
+            *self.detector_spacing, self.voxel_spacing, self.native_volume_layout,
         )
 
     @property
