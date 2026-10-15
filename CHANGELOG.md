@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Projector execution planning takes no allocator snapshot when a full launch clearly fits: lower bounds of the memory limits come from `mem_get_info` and one statistics query, and the exact planner runs only when they do not suffice. Plans are unchanged. Host time per call for small problems drops by about 1 ms. Distributed operators keep the exact planner (#26).
+- The introduction video explains 2.3.0 tiled execution and view, space and hybrid partitions with a computed walnut example; the README GIF is 12 MB instead of 22 MB (#25).
+
 ## [2.3.0] - 2026-10-14
 
 ### Added
