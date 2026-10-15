@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections as `(D, H, W)` views of the kernel's `(W, H, D)`-contiguous buffer instead of contiguous copies, and cone projections accept such views without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application. The default is unchanged.
+- `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged.
 
 ### Changed
 

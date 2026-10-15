@@ -903,8 +903,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         voxel_spacing : float, optional
             Physical size of one voxel (in same units as positions, default: 1.0).
         native_layout : bool, optional
-            If True, return the (D, H, W) view of the kernel's (W, H, D)-contiguous buffer instead of a
-            contiguous copy (default: False). Projections accept such views without a copy.
+            If True, return a (D, H, W) tensor with the kernel's native (W, H, D)-contiguous strides
+            instead of a contiguous copy (default: False). Projections accept such tensors without a copy.
 
         Returns
         -------
@@ -949,15 +949,20 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         # Validate memory layout to prevent coordinate system inconsistencies
         _validate_3d_memory_layout(sinogram, expected_order='VHW')
 
-        vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
+        if native_layout:
+            # A (D, H, W) tensor with the native (W, H, D) strides, not a view: the kernel writes its
+            # contiguous permutation, and in-place operations on the result stay valid under autograd.
+            vol = torch.empty_strided((D, H, W), (1, D, D * H), dtype=sinogram.dtype, device=device).zero_()
+            vol_perm = vol.permute(2, 1, 0)
+        else:
+            vol_perm = torch.zeros((W, H, D), dtype=sinogram.dtype, device=device)
         _backproject_into(
             "cone", sinogram, (src_pos, det_center, det_u_vec, det_v_vec),
             (du, dv), voxel_spacing, vol_perm,
         )
 
         ctx.intermediate = (D, H, W, n_u, n_v, du, dv, voxel_spacing)
-        vol = vol_perm.permute(2, 1, 0)
-        return vol if native_layout else vol.contiguous()
+        return vol if native_layout else vol_perm.permute(2, 1, 0).contiguous()
 
     @staticmethod
     def backward(ctx, grad_output):
