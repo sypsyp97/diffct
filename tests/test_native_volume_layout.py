@@ -60,6 +60,22 @@ def _assert_bits(actual, expected):
                        expected.contiguous().view(torch.int32))
 
 
+def _assert_atomic_close(actual, expected, repeated):
+    assert actual.shape == expected.shape == repeated.shape
+    assert actual.dtype == expected.dtype == repeated.dtype == torch.float32
+    assert all(torch.isfinite(t).all() for t in (actual, expected, repeated))
+    # Calibrate only from two default executions, never from the native result.
+    # Atomic summation order varies. Allow four times the observed max spread;
+    # two runs can coincide, so retain an eight-epsilon global-scale floor.
+    # The floor (~9.5e-7) exceeds the measured ~4.0e-7 run-to-run discrepancy.
+    # Global absolute error handles cancellation near zero. This is an empirical
+    # allowance for these fixtures, not a universal atomic-summation bound.
+    scale = max(expected.abs().max().item(), repeated.abs().max().item())
+    spread = (expected - repeated).abs().max().item()
+    tolerance = max(4 * spread, 8 * torch.finfo(torch.float32).eps * scale)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=tolerance)
+
+
 def test_native_layout_default_is_false_without_cuda():
     assert inspect.signature(diffct.Projector).parameters["native_volume_layout"].default is False
     projector = diffct.Projector(_geometry("cpu"), SHAPE, DETECTOR, beam="cone")
@@ -68,7 +84,7 @@ def test_native_layout_default_is_false_without_cuda():
 
 @pytest.mark.cuda
 @cuda_required
-def test_full_cone_backprojection_native_view_is_bitwise_equal_to_default():
+def test_full_cone_backprojection_native_view_matches_default():
     geometry = _geometry()
     default = diffct.Projector(geometry, SHAPE, DETECTOR, beam="cone")
     ordinary = _projector(False, geometry=geometry)
@@ -76,12 +92,13 @@ def test_full_cone_backprojection_native_view_is_bitwise_equal_to_default():
     sinogram = _values((VIEWS, *DETECTOR))
     with torch.no_grad():
         expected = default.backproject(sinogram)
+        repeated = default.backproject(sinogram)
         explicit = ordinary.backproject(sinogram)
         actual = native.backproject(sinogram)
     assert expected.is_contiguous() and explicit.is_contiguous()
     _assert_native(actual)
-    _assert_bits(actual, expected)
-    _assert_bits(explicit, expected)
+    _assert_atomic_close(actual, expected, repeated)
+    _assert_atomic_close(explicit, expected, repeated)
     for projector in (default, ordinary, native):
         assert projector.last_execution_stats is None, "fixture unexpectedly streamed"
 
@@ -155,10 +172,17 @@ def test_data_and_geometry_gradients_match_across_layouts(operation, native_inpu
         return output.detach(), tuple(g.detach() for g in gradients)
 
     reference, expected = evaluate(False, False)
+    repeated, repeated_gradients = evaluate(False, False)
     for native in (False, True):
         actual, gradients = evaluate(native, native_input)
-        _assert_bits(actual, reference)
-        _assert_bits(gradients[0], expected[0])
+        if operation == "project":
+            _assert_bits(actual, reference)
+            # The projector's data VJP is an atomic backprojection.
+            _assert_atomic_close(gradients[0], expected[0], repeated_gradients[0])
+        else:
+            _assert_atomic_close(actual, reference, repeated)
+            # A fixed cotangent goes through deterministic projection here.
+            _assert_bits(gradients[0], expected[0])
         for gradient, target in zip(gradients[1:], expected[1:]):
             assert torch.isfinite(gradient).all()
             assert target.abs().max() > 0, "geometry fixture produced a vacuous gradient"
@@ -174,22 +198,28 @@ def test_data_and_geometry_gradients_match_across_layouts(operation, native_inpu
 def test_cg_style_updates_remain_native_and_match_contiguous_loop():
     ordinary, native = _projector(False), _projector(True)
     contiguous = _values(SHAPE)
+    repeated = contiguous.clone()
     view = _native_view(contiguous)
     with torch.no_grad():
         for _ in range(4):
             _assert_native(view)
             ordinary_sino = ordinary.project(contiguous)
+            repeated_sino = ordinary.project(repeated)
             native_sino = native.project(view)
-            _assert_bits(native_sino, ordinary_sino)
+            # Keep exact projection coverage on identical inputs at every step.
+            _assert_bits(native.project(_native_view(contiguous)), ordinary_sino)
+            _assert_atomic_close(native_sino, ordinary_sino, repeated_sino)
             ordinary_update = ordinary.backproject(ordinary_sino)
+            repeated_update = ordinary.backproject(repeated_sino)
             native_update = native.backproject(native_sino)
             _assert_native(native_update)
-            _assert_bits(native_update, ordinary_update)
+            _assert_atomic_close(native_update, ordinary_update, repeated_update)
             contiguous = contiguous + 0.0001 * ordinary_update
+            repeated = repeated + 0.0001 * repeated_update
             view = view + 0.0001 * native_update
             assert contiguous.is_contiguous()
             _assert_native(view)
-            _assert_bits(view, contiguous)
+            _assert_atomic_close(view, contiguous, repeated)
             assert ordinary.last_execution_stats is None and native.last_execution_stats is None
 
 
@@ -222,7 +252,11 @@ def test_other_beams_and_streaming_ignore_native_layout(beam, streamed):
             expected = getattr(ordinary, operation)(data)
             actual = getattr(native, operation)(data)
             assert expected.is_contiguous() and actual.is_contiguous()
-            _assert_bits(actual, expected)
+            if operation == "project":
+                _assert_bits(actual, expected)
+            else:
+                repeated = ordinary.backproject(data)
+                _assert_atomic_close(actual, expected, repeated)
             if streamed:
                 assert ordinary.last_execution_stats is not None
                 assert native.last_execution_stats is not None
