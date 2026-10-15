@@ -365,8 +365,10 @@ class DiffCTIntro(Scene):
             frame=RoundedRectangle(width=width,height=height,corner_radius=.1,
                                    color=color,stroke_width=1.5,fill_color=PALE,fill_opacity=1)
             frame.move_to(centre)
-            pins=VGroup(*[Line(frame.get_left()+[0,dy,0],frame.get_left()+[-.12,dy,0],
-                              color=color,stroke_width=2) for dy in [-.45,-.15,.15,.45]])
+            pins=VGroup(*[Line(frame.get_edge_center(side*RIGHT)+[0,dy,0],
+                              frame.get_edge_center(side*RIGHT)+[side*.12,dy,0],
+                              color=color,stroke_width=2)
+                          for side in [-1,1] for dy in [-.45,-.15,.15,.45]])
             label=T(f'GPU {index}',22,color).next_to(frame,UP,buff=.1)
             label.add_background_rectangle(color=PALE,opacity=1,buff=.035)
             label.set_z_index(3)
@@ -377,33 +379,34 @@ class DiffCTIntro(Scene):
         self.note('2D walnut illustration · simulated projections computed with diffct')
         host=photo(image,2.6).move_to([-4.7,.4,0])
         output=photo(np.zeros_like(projection),2.6,vmax).move_to([4.7,.4,0])
-        gpu=chip(0,[0,.4,0],width=3,height=2.65)
+        gpu=chip(0,[0,.4,0],width=3,height=2.6)
+        on_baseline(gpu[2],1.92)
         self.show(T('1. A large scan, a small GPU buffer',30).move_to([0,2.6,0]),
                   host,output,gpu,
-                  T('CPU / disk input',24,SUB).move_to([-4.7,2.03,0]),
-                  T('CPU / disk output',24,SUB).move_to([4.7,2.03,0]),
-                  T('Full walnut slice',20,SUB).move_to([-4.7,-1.25,0]),
-                  T('Views × detector bins',20,SUB).move_to([4.7,-.85,0]),
-                  T('Read',22,GREEN).move_to([-2.45,1.65,0]),
-                  T('Add',22,WARM).move_to([2.45,1.65,0]))
-        compute_label=T('Project this tile',22,SUB).move_to([0,.05,0])
+                  label_baseline(T('CPU / disk input',24,SUB),-4.7,1.92),
+                  label_baseline(T('CPU / disk output',24,SUB),4.7,1.92),
+                  label_baseline(T('Full walnut slice',20,SUB),-4.7,-1.35),
+                  label_baseline(T('Views × detector bins',20,SUB),4.7,-1.35),
+                  label_baseline(T('Read',22,GREEN),-2.45,1.5),
+                  label_baseline(T('Add',22,WARM),2.45,1.5))
+        compute_label=T('Project this tile',22,SUB).move_to([0,.4,0])
         compute_label.add_background_rectangle(color=PALE,opacity=1,buff=.035)
         compute_label.set_z_index(3)
         self.show(Arrow([-3.22,.4,0],[-1.65,.4,0],buff=0,color=GREEN),
-                  Arrow([1.65,-.5,0],[3.22,.4,0],buff=0,color=WARM),
+                  Arrow([1.65,.4,0],[3.22,.4,0],buff=0,color=WARM),
                   compute_label)
         outlines=VGroup(*[crop_frame(host,i*16,(i+1)*16,64,GPU_COLORS[i]) for i in range(4)])
         self.play(Create(outlines),run_time=.6)
         batch=crop_frame(output,0,16,64,GREEN)
-        view_label=T('First 16 views',20,GREEN).move_to([4.7,-1.3,0])
+        view_label=T('First 16 views',20,GREEN).move_to([4.7,-1.75,0])
         self.show(batch,view_label)
         total=np.zeros_like(projection)
         for tile in range(4):
             colour=GPU_COLORS[tile]
             source=photo(image[tile*16:(tile+1)*16],host.width,color=colour).move_to(outlines[tile])
-            resident=source.copy().scale_to_fit_width(2.35).move_to([0,.7,0])
-            contribution=photo(partials[tile,:16],2.35,vmax,colour).move_to([0,-.55,0])
-            tile_label=T(f'Tile {tile+1} of 4',18,colour).move_to([0,1.22,0])
+            resident=source.copy().scale_to_fit_width(2.35).move_to([0,.98,0])
+            contribution=photo(partials[tile,:16],2.35,vmax,colour).move_to([0,-.35,0])
+            tile_label=T(f'Tile {tile+1} of 4',18,colour).move_to([0,1.45,0])
             tile_label.add_background_rectangle(color=PALE,opacity=1,buff=.02)
             tile_label.set_z_index(3)
             self.play(Indicate(outlines[tile],color=colour,scale_factor=1.04),FadeIn(tile_label),
@@ -428,7 +431,7 @@ class DiffCTIntro(Scene):
         for view_start in [16,32,48]:
             resident=None
             for tile in range(4):
-                next_tile=photo(image[tile*16:(tile+1)*16],2.35,color=GPU_COLORS[tile]).move_to([0,.7,0])
+                next_tile=photo(image[tile*16:(tile+1)*16],2.35,color=GPU_COLORS[tile]).move_to([0,.98,0])
                 total[view_start:view_start+16]+=partials[tile,view_start:view_start+16]
                 animations=[Indicate(outlines[tile],color=GPU_COLORS[tile],scale_factor=1.02),
                             Transform(output,photo(total,output.width,vmax).move_to(output))]
@@ -437,7 +440,7 @@ class DiffCTIntro(Scene):
                 resident=next_tile
             self.play(FadeOut(resident),run_time=.15)
         self.mark('streaming_complete')
-        self.show(T('All 64 views',20,GREEN).move_to([4.7,-1.3,0]),duration=.3)
+        self.show(T('All 64 views',20,GREEN).move_to([4.7,-1.75,0]),duration=.3)
         self.note('GPU working memory holds tiles; caller-owned CUDA tensors are separate')
         self.wait(2)
         self.reset()
@@ -447,8 +450,9 @@ class DiffCTIntro(Scene):
             self.heading(4,'Split views' if mode=='views' else 'Split the volume')
             title='2. Two GPUs: different angles' if mode=='views' else '3. Two GPUs: different parts of the walnut'
             self.note('Owned inputs are shown; each GPU still computes in tiles')
-            host=photo(image,2.5).move_to([-4.7,.3,0])
-            output=photo(np.zeros_like(projection),2.5,vmax).move_to([4.7,.3,0])
+            stage_y=(.95-1.1)/2
+            host=photo(image,2.5).move_to([-4.7,stage_y,0])
+            output=photo(np.zeros_like(projection),2.5,vmax).move_to([4.7,stage_y,0])
             self.show(T(title,30).move_to([0,2.6,0]),host,output,
                       T('Input',24,SUB).move_to([-4.7,1.9,0]),
                       T('Assemble on CPU',24,SUB).move_to([4.7,1.9,0]),
@@ -483,11 +487,11 @@ class DiffCTIntro(Scene):
                     target=photo(projection[rank*32:(rank+1)*32],output.width,vmax,[GREEN,WARM][rank])
                     target.move_to(crop_frame(output,rank*32,(rank+1)*32,64,[GREEN,WARM][rank]))
                     self.play(TransformFromCopy(result,target),run_time=.8)
-                self.show(T('Views 1–32',19,GREEN).move_to([4.7,1.42,0]),
-                          T('Views 33–64',19,WARM).move_to([4.7,-.85,0]),duration=.3)
+                self.show(T('Views 1–32',19,GREEN).move_to([4.7,stage_y+1.12,0]),
+                          T('Views 33–64',19,WARM).move_to([4.7,stage_y-1.15,0]),duration=.3)
             else:
                 junction=VGroup(Circle(.24,color=WARM,fill_color=BG,fill_opacity=1),
-                                MathTex('+',font_size=30,color=WARM)).move_to([2.65,.3,0])
+                                MathTex('+',font_size=30,color=WARM)).move_to([2.65,stage_y,0])
                 self.show(junction,duration=.3)
                 accumulated=np.zeros_like(projection)
                 for rank,result in enumerate(results):
@@ -505,8 +509,9 @@ class DiffCTIntro(Scene):
         self.heading(4,'Combine both splits')
         self.note('Hybrid: split both inputs; GPU computation stays tiled')
         self.show(T('4. Four GPUs: split both the volume and the views',29).move_to([0,2.6,0]))
-        host=photo(image,2.1).move_to([-5.05,.05,0])
-        output=photo(np.zeros_like(projection),2.1,vmax).move_to([5.05,.05,0])
+        stage_y=(.8-1.2)/2
+        host=photo(image,2.1).move_to([-5.05,stage_y,0])
+        output=photo(np.zeros_like(projection),2.1,vmax).move_to([5.05,stage_y,0])
         host_label=T('Input',22,SUB).move_to([-5.05,1.5,0])
         output_label=T('Assemble on CPU',22,SUB).move_to([5.05,1.5,0])
         self.show(host,output,host_label,output_label,
@@ -572,7 +577,7 @@ class DiffCTIntro(Scene):
                 self.play(Succession(FadeOut(incoming),FadeIn(contribution)),run_time=.5)
                 pieces.append(contribution)
             final=photo(back[space*32:(space+1)*32],2.1,bmax,[GREEN,WARM][space])
-            final.move_to([-5.05,.05+(.525 if space==0 else -.525),0])
+            final.move_to([-5.05,stage_y+(.525 if space==0 else -.525),0])
             plus=MathTex('+',font_size=30,color=INK).move_to([0,y-.15,0])
             self.show(plus,duration=.2)
             packets=[part.copy() for part in pieces];self.add(*packets)
@@ -580,7 +585,7 @@ class DiffCTIntro(Scene):
             self.remove(*packets)
             combined=photo(back[space*32:(space+1)*32],.8,bmax).move_to(plus)
             self.play(TransformFromCopy(combined,final),FadeOut(plus),run_time=.7)
-        self.show(T('Unfiltered backprojection\n(matched adjoint)',17,SUB).move_to([-5.05,-1.48,0]),duration=.3)
+        self.show(T('Unfiltered backprojection\n(matched adjoint)',17,SUB).move_to([-5.05,stage_y-1.53,0]),duration=.3)
         self.note('Values spread along rays: blur and raised background, not a reconstruction')
         self.mark('hybrid_adjoint')
         self.wait(5)
