@@ -72,8 +72,74 @@ def _assert_atomic_close(actual, expected, repeated):
     # allowance for these fixtures, not a universal atomic-summation bound.
     scale = max(expected.abs().max().item(), repeated.abs().max().item())
     spread = (expected - repeated).abs().max().item()
+    # Limit reference noise to 32 eps (~3.8e-6 of global scale), about nine
+    # times the observed discrepancy. This fixture-specific float32 budget
+    # leaves rounding headroom without accepting arbitrary reference drift.
+    # Consequently the calibrated tolerance cannot exceed 128 eps (~1.5e-5).
+    assert spread <= 32 * torch.finfo(torch.float32).eps * scale, (
+        f"default-vs-default spread {spread} exceeds float32 budget at scale {scale}"
+    )
     tolerance = max(4 * spread, 8 * torch.finfo(torch.float32).eps * scale)
     torch.testing.assert_close(actual, expected, rtol=0, atol=tolerance)
+
+
+def test_atomic_comparison_rejects_excessive_reference_spread():
+    expected = torch.ones(SHAPE, dtype=torch.float32)
+    repeated = expected.clone()
+    repeated[0, 0, 0] += 1e-3
+    # Even a perfect candidate must fail if calibration is unreliable.
+    with pytest.raises(AssertionError, match="default-vs-default spread"):
+        _assert_atomic_close(expected, expected, repeated)
+
+
+@pytest.mark.cuda
+@cuda_required
+def test_atomic_comparison_rejects_transpose_and_voxel_shift():
+    operator = _projector(False)
+    sinogram = _values((VIEWS, *DETECTOR))
+    with torch.no_grad():
+        expected = operator.backproject(sinogram)
+        repeated = operator.backproject(sinogram)
+    # Validate calibration outside raises: a noisy reference is not evidence
+    # that a corrupted candidate was rejected by the numerical comparison.
+    _assert_atomic_close(expected, expected, repeated)
+    corrupted = (
+        expected.permute(2, 1, 0).contiguous().reshape(SHAPE),
+        expected.roll(1, dims=0),
+    )
+    for candidate in corrupted:
+        assert candidate.shape == expected.shape
+        with pytest.raises(AssertionError, match="Tensor-likes are not close"):
+            _assert_atomic_close(candidate, expected, repeated)
+
+
+@pytest.mark.cuda
+@cuda_required
+def test_differentiable_native_backprojection_allows_inplace_clamp():
+    sinogram = _values((VIEWS, *DETECTOR))
+    weight = _values(SHAPE, seed=43)
+
+    def evaluate(native):
+        data = sinogram.clone().requires_grad_()
+        output = _projector(native).backproject(data)
+        assert output.requires_grad and output.grad_fn is not None
+        assert (output < 0).any() and (output > 0).any()
+        if native:
+            _assert_native(output)
+        pointer = output.data_ptr()
+        assert output.clamp_min_(0) is output
+        assert output.data_ptr() == pointer
+        if native:
+            _assert_native(output)
+        gradient, = torch.autograd.grad((output * weight).sum(), data)
+        assert gradient.abs().max() > 0
+        return output.detach(), gradient
+
+    expected, expected_gradient = evaluate(False)
+    repeated, repeated_gradient = evaluate(False)
+    actual, gradient = evaluate(True)
+    _assert_atomic_close(actual, expected, repeated)
+    _assert_atomic_close(gradient, expected_gradient, repeated_gradient)
 
 
 def test_native_layout_default_is_false_without_cuda():
