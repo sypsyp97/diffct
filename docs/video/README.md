@@ -23,6 +23,16 @@ render under `.validation/video-review/final/` for shot-by-shot review.
 Manim CE 0.20.1 and PyAV 17.0.0 were used. Saved assets render without CUDA.
 Layout bounds are checked during rendering.
 
+The GPU chapter also uses computed 2D illustration inputs. To regenerate them
+with the repository's matching PyTorch environment:
+
+```powershell
+python docs/video/make_gpu_example.py
+python -m unittest discover -s docs/video -p test_gpu_example.py
+```
+
+The saved `gpu_example.npz` lets the film render without PyTorch or a GPU.
+
 ## Story and coverage
 
 1. **Opening:** rotating 3D walnut, project name, PyTorch and feature overview.
@@ -33,35 +43,40 @@ Layout bounds are checked during rendering.
    inner-product identity, loss/backward code, volume/sinogram second derivatives.
 4. **Geometry gradients:** a clearly labelled pose-correction schematic alongside
    the recorded calibration loss, angle error and first-order geometry scope.
-5. **Multi-GPU:** host/store inputs stream volume tiles and view batches through
-   local GPUs. A table distinguishes `views`, `space` and `hybrid` rank ownership.
-   The eight-rank/two-node schematic shows a `(2, 4)` hybrid grid: ranks 0–3 share
-   the first view shard and ranks 4–7 the second; ranks 0/4, 1/5, 2/6 and 3/7 own
-   matching first-axis volume slabs. Projection sums across space; backprojection
-   sums across views. The chart explicitly labels its archived view-partition
-   timings, which do not measure the new hybrid backend.
+5. **Multi-GPU:** one walnut slice stays on the left and its simulated sinogram
+   on the right. Four numbered image tiles move through one GPU buffer; their
+   computed projections accumulate in the CPU output, then the next view batches
+   fill the rest. Two GPUs first receive copies of the whole image and compute
+   separate view ranges (`views`); their result rows stack. Next they receive
+   different image halves (`space`); their overlapping projections add. Four GPUs
+   combine both splits (`hybrid`, grid `(2, 2)`): columns own view groups and rows
+   own image halves. Backprojection reverses the visible data flow and adds
+   view-group contributions to each image half. The final chart retains explicitly
+   archived view-partition timings, which do not measure the hybrid backend.
 6. **Measured reconstruction:** four real projections, then FDK / SIRT / CGLS /
    TV as a four-column, two-row axial/coronal comparison with iteration counts.
 7. **Ending:** rotating walnut, plain installation for CPU/PyTorch ROCm and CUDA
    extras for native NVIDIA execution, the matching PyTorch prerequisite,
    documentation and repository links.
 
-The ownership table describes logical data per **rank**, not a promise about
-device residency. `views` still replicates the rank volume; `space` and `hybrid`
-own only slabs. Streaming with host/store inputs bounds GPU working buffers by
-tiles/batches. Caller-owned CUDA inputs/results and autograd graph storage are
-outside that bound. The local `devices` example distributes view work and streams
-every owned volume tile; it does not create spatial rank ownership.
+The first shot shows **GPU buffer residency**. The later worker cards show
+logical data per **rank**, which may themselves be streamed in tiles as in the
+first shot. `views` still replicates the rank volume; `space` and `hybrid` own
+only first-axis slabs. Caller-owned CUDA inputs/results and autograd graph
+storage are outside the bounded streaming buffers. The complete sinogram or
+adjoint at the side is explicitly **assembled on CPU for this illustration**;
+distributed projection normally returns owned view rows replicated within each
+space group, while the adjoint returns an owned image slab replicated across
+view groups. The clip does not imply an automatic global gather.
 
-The NCCL/hybrid drawing is an example rank placement, not a hardware benchmark.
-It assumes torchrun has bound each process to its local GPU before process-group
-initialization. Hybrid selects the PyTorch backend automatically. All ranks must
-use consistent shapes, partitions and chunk hints. The loss formula in the
+GPU cards are a data-flow schematic, not measured execution time or memory use.
+The distributed API excerpts assume one process per GPU, local device binding,
+and an initialized process group. Hybrid selects the PyTorch backend automatically.
+All ranks must use consistent shapes, partitions and chunk hints. The loss formula in the
 autograd chapter is the ordinary single-process loss; distributed replica
 divisors are documented in [EXECUTION.md](../EXECUTION.md#hybrid-ownership-and-losses).
-Code cards are API excerpts: `...` stands for the acquisition/shape arguments,
-and store variables stand for `TensorStore`, `NpyStore` or compatible block
-stores. Set geometry `requires_grad` before constructing the projector.
+Code cards are API excerpts: `...` stands for the acquisition/shape arguments.
+Set geometry `requires_grad` before constructing the projector.
 
 ## Content cross-check
 
@@ -75,40 +90,42 @@ reconstruction panels retain their recorded inputs.
 | Trajectories | Five schematic paths; source/centre/u/v tuple; valid per-view poses | [Projector](../../diffct/operators.py), unchanged [ScanDiagram](scan_diagram.py) |
 | Autograd | Simulated parallel sinogram; Siddon path sum; matched adjoint; ordinary squared-loss gradient; batch/second data derivatives | [Projector](../../diffct/operators.py), [portable traversal](../../diffct/backends.py), `make_inputs.py`, `data2d.npz` |
 | Geometry | First-order source/centre/axis gradients; schematic pose dots; log10 loss, 150 steps, angle RMSE 0.55° to 0.006° | [geometry VJP](../../diffct/kernels/geometry_vjp.py), `calib_history.json` |
-| Streaming | CPU/store inputs, explicit tile/view limits, local devices, caller-owned CUDA exclusion | [Projector streamed execution](../../diffct/operators.py), [block stores](../../diffct/storage.py) |
-| Ownership | `views`: full rank volume; `space`: full views; `hybrid`: slabs and view shards | [Partition](../../diffct/distribution.py) |
-| Hybrid nodes | `(2, 4)` rank ordering; same slab on ranks 0/4 etc.; view copies within each space group; projection SUM space / adjoint SUM views | [Partition](../../diffct/distribution.py), [portable reductions](../../diffct/backends.py) |
+| Streaming | Four actual image tiles, one GPU buffer; first 16 views accumulate tile contributions, then repeat for all 64 views | `gpu_example.npz`, [generator](make_gpu_example.py), [Projector streamed execution](../../diffct/operators.py) |
+| Views / space | Same image copies with different view rows stack; different image halves with the same views add | [Partition](../../diffct/distribution.py), computed `tile_projection` |
+| Hybrid | `(2, 2)` ordering: GPUs 0/1 own views 1–32, GPUs 2/3 views 33–64; 0/2 own the first image half, 1/3 the second; projection adds vertically, adjoint horizontally | [Partition](../../diffct/distribution.py), [portable reductions](../../diffct/backends.py), computed `view_backprojection` |
 | Scaling | Archived 2.0.2 views timings: 30.08 / 8.08 / 5.59 ms, calculated 3.7× / 5.4×; 128³, 360 views, A100 | `docs/video/scaling.json`; separate from the 2.2.0 README chart |
 | Measured data | Four transposed measured projections; existing axial/coronal orientation, common [0, 1] range; FDK / SIRT 200 / CGLS 20 / Adam TV 300; dataset attribution | Unchanged `measured()` and `walnut_measured.npz`, `make_inputs.py`, `WALNUT_NOTICE.txt` |
 | Ending | CPU/PyTorch ROCm installation, native CUDA 12/13 extras, matching PyTorch prerequisite and project URLs | [Install guide](../../README.md#install), `pyproject.toml`, [backend selection](../../diffct/backends.py) |
 
-## Render review (2026-10-14)
+## Render review (2026-10-15)
 
-The exported film is 106.433 s: **3,193 MP4 frames**, 1920 × 1080 at constant
+The exported film is 147.967 s: **4,439 MP4 frames**, 1920 × 1080 at constant
 30 fps. A Cairo render observer recorded visible Tex/MathTex identities and
-glyph bounds for every written frame, including 1,107 repeated wait frames.
+glyph bounds for every written frame, including 1,182 repeated wait frames.
 Complete decoding confirms source/trace/export counts agree. No text violates
 the 0.1-scene-unit viewport margin; no distinct text bounding boxes overlap.
 
-The 800 × 450 GIF decodes into **725 frames**, covering all **852** 8 fps source
+The 800 × 450 GIF decodes into **1,052 frames**, covering all **1,184** 8 fps source
 samples with exact palette-image/delay mapping; identical samples merge. Its
-106.5 s duration differs by less than one sampling interval. Two MP4 frames
-(9.100 s and 97.033 s) and one 120 ms GIF frame are background-only at sequential
-chapter fade midpoints; these are the retained transition style.
+148.0 s duration differs by less than one sampling interval. Two MP4 frames
+(9.100 s and 138.567 s) are background-only at sequential chapter fade midpoints;
+these are the retained transition style. No GIF frame is background-only.
 
-Manual encoded-pixel review covers all **62 text compositions** at fade/solid
-states, all 87 animation midpoints, nine chapter transitions, 2 s animation
-samples and ten full-resolution keyframes (18 final contact sheets). The
-earlier preview was also reviewed at 301 samples. Bounds/provenance checks do
-not prove semantics or occlusion; the content table above and pixel review
-provide those checks. Local detailed traces/contact sheets live under ignored
-`.validation/video-23/final-audit/`.
+Manual exported-pixel review covers all **98 text compositions** at fade/solid
+states, all 189 animation midpoints, ten chapter transitions and 2 s animation
+samples (28 final contact sheets), plus nine full-resolution render keyframes.
+The GPU preview was also reviewed before the full render. Moving packets pass
+behind protected GPU identifiers and operation labels; label changes fade out
+before the replacement fades in. Bounds/provenance checks do not prove semantics
+or occlusion; the content table above and pixel review provide those checks.
+Local detailed traces/contact sheets live under ignored
+`.validation/video-intuitive/final-v4/`.
 
-Existing depth checks passed (5 tests). The existing four-process Gloo hybrid
-forward/adjoint/loss/TV and asymmetric ownership/cell-oracle tests also passed
-(2 tests). The nine measured input fields were compared with their archive:
-five exact matches and four exact coronal flips, as described below. No new
-ROCm/NCCL/cross-node performance measurements were made for this video.
+The GPU illustration numeric checks passed (7 tests), including regeneration of
+the saved fixture. Existing depth checks passed (5 tests). Main's measured input
+arrays and display transforms are unchanged. Python compilation and
+`git diff --check` passed. No new ROCm/NCCL/cross-node performance measurements
+were made for this video.
 
 ## Data and provenance
 
@@ -130,6 +147,18 @@ not newly measured 2.3.0 solver/accuracy results.
   CGLS (20), and TV (300, weight 0.3) axial/coronal slices at 256³. All reconstruction
   panels use [0, 1]. `data2d.npz` contains a walnut slice and a SciPy rotate/sum
   **display simulation** of a parallel sinogram; the film labels it accordingly.
+- `gpu_example.npz` is a separate **computed 2D data-flow illustration**, generated
+  by [make_gpu_example.py](make_gpu_example.py) with the released library's CPU
+  PyTorch float64 Siddon projector. The measured 256² axial slice is mean-pooled
+  by 4 × 4 to 64². Geometry has 64 parallel views on [0, π), 96 detector bins,
+  unit voxel/detector spacing. Four 16-row contributions keep global coordinates;
+  pairs form the two 32-row spatial owners. View groups contain 32 rows each.
+  `tile_projection` sums to the full sinogram, and `view_backprojection` sums to
+  its matched adjoint. All projected panels share the full sinogram's maximum;
+  all adjoint panels share the complete adjoint's maximum. A matched adjoint is
+  deliberately blurred, not an inverse reconstruction. The seven numeric checks
+  include independent axis-aligned row/column path sums and regeneration of the
+  committed fixture. This introduces no new acquisition, solver or GPU benchmark.
 - `calib_history.json` is the saved, separate 64³ calibration run. Its seven
   samples are plotted on a labelled log10 axis, with steps 0–149 (150 steps).
   Pose dots are a schematic, not recovered measurements or saved optimizer poses.
@@ -174,18 +203,19 @@ reconstruction displays and the surface-rendering transformations described abov
   Trajectory curves and source positions interpolate between scan types.
 - Text returns to upstream's `Tex` and `MathTex` rendering rather than Pango
   `Text`. The original Latin Modern serif/monospace family handles kerning and
-  ligatures in LaTeX. The scene's 20 / 24 / 28 / 36 typography scale maps to
-  25 / 30 / 35 / 45 TeX points; code cards use 24 or 26.4 points. List, table and caption
-  rows share baselines using the upstream baseline helper. Code spaces are
+  ligatures in LaTeX. Body text and headings use the original 20 / 24 / 28 / 36
+  scale (25 / 30 / 35 / 45 TeX points); compact GPU annotations use 17–22.
+  List and caption rows share baselines using the upstream baseline helper. Code spaces are
   explicitly preserved in TeX. No per-character tracking or system font fallback
   is used. This also avoids the old small-size Pango spacing path documented in
   [Manim's 0.22 release notes](https://docs.manim.community/en/stable/changelog/0.22.0-changelog.html).
 - Opening and ending share a centered title, subtitle and walnut, with identical
   positions and type sizes. The opening chapter map uses the upstream centered
   three-plus-two arrangement. Trajectory content follows equal-width columns.
-  GPU nodes use mirrored centers and equal-size code cards. Node titles enter
-  after view copies arrive, so moving views do not cross visible titles. Each
-  hybrid node receives one view shard, repeated across its four slab owners.
+  GPU inputs and assembled outputs keep fixed positions as the division of work
+  changes. GPU cards contain actual walnut regions and computed sinograms rather
+  than anonymous blocks. Forward contributions visibly accumulate; the hybrid
+  adjoint moves data in the reverse direction and adds across the view groups.
 - The opening restores the five-chapter overview, the scan rig keeps an amber
   source marker, and trajectory/GPU colors identify the active path or partition.
   Projection and adjoint use cyan and amber with a shared serif formula style.
