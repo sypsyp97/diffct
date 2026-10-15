@@ -95,19 +95,33 @@ def _bounds_trial(state):
             _assert_bounds()
             small_live = torch.empty(MIB // 2, dtype=torch.uint8, device="cuda:0")
             used = torch.empty(MIB // 2, dtype=torch.uint8, device="cuda:0")
+            used_address = used.data_ptr()
+            # Warm both kernels before queuing the cross-stream use. Allocation
+            # belongs to the default stream; record_stream must name another.
+            used.fill_(0)
+            torch.cuda._sleep(1)
             stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(stream):
                 torch.cuda._sleep(50000000)
                 used.fill_(1)
                 used.record_stream(stream)
             del used
-            assert any(any(b["state"] == "active_awaiting_free" for b in s["blocks"])
+            # Module.cpp calls this active_pending_free. Native free records an
+            # event; snapshots do not reap it, even if the GPU finishes first.
+            # Do not allocate or empty the cache before checking these bounds.
+            assert any(any(b["address"] == used_address
+                           and b["state"] == "active_pending_free" for b in s["blocks"])
                        and any(b["state"] == "active_allocated" for b in s["blocks"])
                        for s in chunking._native_segments(0))
             _assert_bounds()
             stream.synchronize()
+            # Synchronization alone does not retire allocator events. A new
+            # allocation runs process_events before the post-release comparison.
+            reap = torch.empty(1, dtype=torch.uint8, device="cuda:0")
+            assert not any(b["state"] == "active_pending_free"
+                           for s in chunking._native_segments(0) for b in s["blocks"])
             _assert_bounds()
-            del foreign_live, small_live
+            del reap, foreign_live, small_live
         elif state == "fraction":
             torch.cuda.set_per_process_memory_fraction(64 * MIB / total, 0)
             _assert_bounds()
@@ -139,9 +153,16 @@ def _compare_plans(operator, source, is_project, output=None):
 @torch.no_grad()
 def _equality_trial(beam, pressure):
     with _allocator() as total:
-        case = _case(beam, views=5)
-        case.shape = (48, 64, 64) if beam == "cone" else (384, 512)
-        case.detector = (24, 24) if beam == "cone" else (64,)
+        case = _case(beam, views=8 if pressure else 5)
+        if pressure:
+            # Both resident arrays are exactly 1 MiB in float32. A full tile
+            # plus all rays and geometry cannot share one 2 MiB small segment;
+            # a spatially split tile can. Keep each allocation in the small pool.
+            case.shape = (64, 64, 64) if beam == "cone" else (512, 512)
+            case.detector = (256, 128) if beam == "cone" else (32768,)
+        else:
+            case.shape = (48, 64, 64) if beam == "cone" else (384, 512)
+            case.detector = (24, 24) if beam == "cone" else (64,)
         operator = _projector(case, devices=[0])
         for is_project in (True, False):
             torch.cuda.set_per_process_memory_fraction(1.0, 0)
@@ -150,23 +171,20 @@ def _equality_trial(beam, pressure):
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
             if pressure:
-                # Search real process ceilings, without fabricating allocator
-                # statistics. Require a feasible plan that actually splits work.
-                found = False
-                for ceiling in (8, 12, 16, 24, 32, 48, 64):
-                    torch.cuda.set_per_process_memory_fraction(ceiling * MIB / total, 0)
-                    with mock.patch.object(operators, "_memory_lower_bounds", return_value=(0, 0, 0)):
-                        try:
-                            plan = operator._execution_plan(source, is_project)
-                        except RuntimeError as error:
-                            assert "minimum tile/view/pixel batch" in str(error)
-                            continue
-                    if plan is not None and (plan.chunk_shape != case.shape
+                assert source.nbytes == MIB
+                assert 4 * math.prod(case.shape) == 4 * math.prod(case.sino_shape) == MIB
+                # Measure the pinned baseline after releasing cached segments.
+                # Allow two fresh small segments: one for output, one for the
+                # pipeline. 64 KiB avoids fraction rounding at the boundary,
+                # but cannot admit a third 2 MiB segment. No budgets are mocked.
+                ceiling = torch.cuda.memory_reserved(0) + 4 * source.nbytes + MIB // 16
+                torch.cuda.set_per_process_memory_fraction(ceiling / total, 0)
+                with mock.patch.object(operators, "_memory_lower_bounds", return_value=(0, 0, 0)):
+                    plan = operator._execution_plan(source, is_project)
+                assert plan is not None and (plan.chunk_shape != case.shape
                                              or plan.view_chunk_size < case.views
-                                             or plan.detector_chunk_shape != case.detector):
-                        found = True
-                        break
-                assert found, "real ceilings did not exercise a feasible chunked plan"
+                                             or plan.detector_chunk_shape != case.detector), \
+                    f"real ceiling {ceiling} did not exercise a feasible chunked plan: {plan}"
             else:
                 torch.cuda.set_per_process_memory_fraction(256 * MIB / total, 0)
             plan = _compare_plans(operator, source, is_project)
