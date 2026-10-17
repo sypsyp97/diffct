@@ -21,8 +21,8 @@
 
 <p align="center">
   <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">完整视频（MP4）</a> ·
-  <a href="https://www.preprints.org/manuscript/202605.1446/v1">技术报告</a> ·
-  <a href="https://doi.org/10.20944/preprints202605.1446.v1">DOI</a>
+  <a href="https://www.preprints.org/manuscript/202605.1446/v2">技术报告</a> ·
+  <a href="https://doi.org/10.20944/preprints202605.1446.v2">DOI</a>
 </p>
 
 <p align="center">
@@ -216,12 +216,12 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 }
 
 @article{202605.1446,
-  doi       = {10.20944/preprints202605.1446.v1},
-  url       = {https://doi.org/10.20944/preprints202605.1446.v1},
+  doi       = {10.20944/preprints202605.1446.v2},
+  url       = {https://doi.org/10.20944/preprints202605.1446.v2},
   year      = 2026,
-  month     = {May},
+  month     = {Oct},
   publisher = {Preprints},
-  author    = {Yipeng Sun and Linda-Sophie Schneider and Chengze ye and Andreas Maier},
+  author    = {Yipeng Sun and Linda-Sophie Schneider and Chengze Ye and Andreas Maier},
   title     = {diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories},
   journal   = {Preprints}
 }
