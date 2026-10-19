@@ -44,6 +44,20 @@ ROCm hardware, several physical GPUs, NCCL and cross-node execution need the
 corresponding deployment checks. Existing published native performance numbers
 do not measure the portable precision backend or hybrid execution.
 
+## Call-time trajectory validation
+
+An ordinary flat detector's trajectory override is checked at its corners,
+with work proportional to the view count. If these bounds cannot exclude a
+source/pixel coincidence in the execution dtype, the affected views fall back
+to bounded pixel checks. Curved detectors still check sampled pixels; frames
+and surface parameters are staged on CPU once per admission.
+
+Run `python examples/benchmark_trajectory_admission.py --warmup 1 --samples 3`
+to measure this validation with CPU and CUDA trajectories. The script bypasses
+numerical projection and reports admission time, plus a separate untimed pass
+counting validation rays and tensor transfers. These are not projection
+throughput measurements.
+
 ## Batch dimensions and axis spacing
 
 Any leading batch/channel dimensions precede the configured volume or ray

@@ -252,6 +252,9 @@ directions become ``R @ d``. ``rotation`` is a proper orthogonal matrix shaped
 ``(d,d)`` or ``(views,d,d)``, and ``translation`` is shaped ``(d,)`` or
 ``(views,d)``. Use the same dtype and device as the trajectory. Both shared and
 per-view transforms preserve gradients to the frames and transform parameters.
+The helper validates frames and transforms; ``Projector`` checks actual
+detector pixels. Surface offsets may define valid rays even when the reference
+detector center coincides with the source.
 
 .. code-block:: python
 

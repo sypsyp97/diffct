@@ -153,6 +153,39 @@ class ReferenceProjector:
             owner._geometry_trainable = owner._geometry_trainable or trainable
         self._validate_geometry(geometry, torch.device("cpu"), admission=True)
 
+    def _admission_batches(self, geometry):
+        owner = self.owner
+        if owner.detector_surface is not None:
+            yield from self._batches()
+            return
+        views = owner.view_slice
+        if views.start == views.stop:
+            return
+        # Flat point component arithmetic is monotone in each detector
+        # coordinate; finite corner points and source differences bound the grid.
+        endpoints = tuple((slice(0, 1),) if size == 1 else (slice(0, 1), slice(size - 1, size))
+                          for size in owner.detector_shape)
+        for pixels in itertools.product(*endpoints):
+            yield views, pixels
+        if owner.beam in ("parallel", "parallel3d"):
+            return
+        source, lower = (value[views].to(dtype=owner.dtype) for value in geometry[:2])
+        upper = lower
+        for size, pitch, axis in zip(owner.detector_shape, owner.detector_spacing, geometry[2:]):
+            coordinates = (torch.tensor([.5 - size / 2, size - .5 - size / 2], dtype=torch.float64)
+                           * pitch).to(dtype=owner.dtype)
+            products = coordinates[None, :, None] * axis[views, None, :].to(dtype=owner.dtype)
+            lower = lower + products.amin(dim=1)
+            upper = upper + products.amax(dim=1)
+        # Corners cannot exclude an interior pixel rounded onto the source.
+        # A staged source outside this AABB cannot coincide; inconclusive views
+        # retain the exact bounded pixel check rather than changing admission.
+        ambiguous = torch.all((source >= lower) & (source <= upper), dim=-1)
+        for index in torch.nonzero(ambiguous, as_tuple=False).flatten().tolist():
+            selected = slice(views.start + index, views.start + index + 1)
+            for pixels in _rectangles(owner.detector_shape, self.detector_chunk_shape):
+                yield selected, pixels
+
     def _work_chunks(self, batch_elements=1):
         owner = self.owner
         chunks = list(owner.volume_chunk_shape or owner.global_volume_shape)

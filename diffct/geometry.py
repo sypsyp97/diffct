@@ -24,7 +24,8 @@ def transform_trajectory(trajectory, rotation=None, translation=None, *, beam='c
 
     if beam not in ('parallel', 'fan', 'cone', 'parallel3d'):
         raise ValueError("beam must be 'parallel', 'fan', 'cone', or 'parallel3d'")
-    _, views = _validate_trajectory(trajectory, beam)
+    # Frames alone do not specify the sampled detector surface.
+    _, views = _validate_trajectory(trajectory, beam, detector_surface=True)
     first = trajectory[0]
     dimensions = first.shape[1]
     for value in (*trajectory, rotation, translation):

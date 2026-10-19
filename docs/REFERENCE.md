@@ -308,7 +308,9 @@ Angles may be nonuniform or unsorted. Count-based calls retain their defaults.
 applies a differentiable rigid transform about the world origin: `R @ p + t`
 for points and `R @ d` for directions. Rotation is a proper orthogonal matrix
 shaped `(d,d)` or `(views,d,d)`; translation is `(d,)` or `(views,d)`, using
-the frames' dtype and device.
+the frames' dtype and device. The helper validates the frames and transform;
+`Projector` validates actual detector pixels. A curved detector's reference
+center may coincide with the source when its surface offsets give valid rays.
 
 Second derivatives with respect to the geometry raise an error. Edge cases are
 listed in [Geometry and units](#geometry-and-units).
