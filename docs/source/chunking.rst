@@ -196,10 +196,12 @@ parameter gradients before communication. The captured sampler and one set of
 frame/parameter snapshots preserve backward behavior after parameter mutation.
 See :ref:`detector-surfaces`.
 
-Legacy two-argument callbacks still sample their complete detector geometry
-on the host and retain that footprint. Streamed legacy callbacks must return
-CPU offsets. CUDA callbacks remain supported when the automatic CUDA
-full-volume path fits. Callback values are not cached across operations.
+Legacy two-argument callbacks receive complete CPU detector grids and can return
+CPU or CUDA offsets. The operator transfers selected offsets to each compute
+device before expanding world points for its owned views or streamed batch.
+Memory planning uses these local view counts and the selected precision.
+Callback allocations remain caller-controlled. Callback values are not cached
+across operations.
 
 ``devices=[0, 1]`` still partitions views in list order. Each card streams tiles;
 the full output returns to the input device. Distributed ``partition="views"``

@@ -384,14 +384,14 @@ def test_fixed_original_frames_frozen_and_geometry_second_derivatives_raise(beam
 
 @pytest.mark.cuda
 @cuda_required
-def test_cuda_callback_offsets_rejected_before_world_point_expansion():
+def test_cuda_callback_offsets_stream_without_global_world_point_expansion():
     case = _case("cone")
 
     def callback(u, v):
         return _flat_surface(u, v).cuda()
 
-    # The supplied CUDA offset itself is caller-owned; frame expansion would
-    # create the complete (views,U,V,xyz) CUDA geometry and is forbidden.
+    # Callback offsets are caller-owned. Each compute batch must expand its
+    # own points without creating the complete (views,U,V,xyz) geometry.
     class NoWorldExpansion(TorchDispatchMode):
         def __torch_dispatch__(self, function, types, args=(), kwargs=None):
             result = function(*args, **(kwargs or {}))
@@ -400,8 +400,14 @@ def test_cuda_callback_offsets_rejected_before_world_point_expansion():
                     assert tuple(tensor.shape) != (*case.sino_shape, 3), "expanded full CUDA surface"
             return result
 
-    with NoWorldExpansion(), pytest.raises((TypeError, ValueError)):
-        _projector(case, callback, volume_chunk_shape=_chunk(case), view_chunk_size=2)
+    with NoWorldExpansion():
+        projector = _projector(case, callback, volume_chunk_shape=_chunk(case), view_chunk_size=2)
+        image, sino = _data(case, device="cpu")
+        output = projector.project(image)
+        adjoint = projector.backproject(sino)
+    matrix = _matrix(case, _offsets(case, flat=True))
+    _close(output, (matrix @ _numpy(image).ravel()).reshape(case.sino_shape))
+    _close(adjoint, (matrix.T @ _numpy(sino).ravel()).reshape(case.shape))
 
 
 class _Launches:
@@ -1103,13 +1109,12 @@ def test_automatic_cpu_empty_gpu_shard_ignores_idle_zero_budget():
 
 @pytest.mark.cuda
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Two CUDA GPUs are required")
-def test_two_gpu_full_path_counts_total_cuda_surface_world_sampling_before_expansion():
+def test_two_gpu_full_path_budgets_owned_float32_surface_points():
     case = _case("cone", views=8)
     case.shape, case.detector = (2, 3, 4), (24, 20)
 
     def callback(u, v):
-        # Shared float64 offsets are caller-provided. World positions are
-        # sampled for all eight views on this device before four-view dispatch.
+        # Float64 offsets must not force global float64 world-point storage.
         return _flat_surface(u, v).to(device="cuda:0")
 
     class NoTotalWorldExpansion(TorchDispatchMode):
@@ -1125,18 +1130,13 @@ def test_two_gpu_full_path_counts_total_cuda_surface_world_sampling_before_expan
         projector = _projector(case, callback, devices=[0, 1])
     image, _ = _data(case, device="cuda:0")
     matrix = _matrix(case, _offsets(case, flat=True))
-    # 400 KiB observations give 300 KiB after the documented reserve. A
-    # four-view estimate fits, but eager float64 world-point arithmetic for
-    # eight views has overlapping full tensors exceeding that usable room.
+    # 400 KiB observations give 300 KiB after the documented reserve. Each
+    # four-view FP32 expansion fits. A global FP64 expansion cannot fit.
     with _memory_inventory({0: 400 * 1024, 1: 400 * 1024}), NoTotalWorldExpansion(), \
-            _Launches() as denied:
-        with pytest.raises((TypeError, ValueError), match="CPU|cpu"):
-            projector.project(image)
-    assert not denied.records, "unaffordable GPU surface should fail before any ray kernel"
-    # The same callback remains usable when actual full-world sampling fits.
-    with _memory_inventory({0: 32 * 1024 ** 2, 1: 32 * 1024 ** 2}), _Launches() as launches:
+            _Launches() as launches:
         launches.phase = "project"
         output = projector.project(image)
+    assert projector.last_execution_stats is None, "owned FP32 points should fit the full path"
     _close(output, (matrix @ _numpy(image).ravel()).reshape(case.sino_shape))
     assert output.device == image.device
     _assert_bounded_launches(launches.records, case, case.shape, 4, ("project",), {0, 1})

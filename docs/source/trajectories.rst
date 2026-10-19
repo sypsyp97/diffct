@@ -125,10 +125,10 @@ per pixel and no detector-area integration. They operate directly on the native
 curved grid without resampling. Run ``python examples/curved_detector.py`` for a
 complete circular cone example, also shown in :doc:`examples`.
 
-Legacy streamed operations require CPU offsets and retain complete host
-callback geometry. CUDA offsets remain supported when
-the automatic CUDA full-volume path fits. See :doc:`chunking` for large-volume
-execution and memory requirements.
+Full-volume and streamed operations accept CPU or CUDA offsets. The operator
+transfers selected offsets to the compute device before expanding world points
+for that device's view shard or streamed batch. Geometry uses the selected
+precision. See :doc:`chunking` for execution and memory requirements.
 
 For bounded view/pixel sampling, pass explicit tensor parameters:
 

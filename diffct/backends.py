@@ -258,20 +258,11 @@ class ReferenceProjector:
         elif tuple(offsets.shape) not in (shared_shape, (len(ids), *shared_shape)):
             raise ValueError("detector_surface output shape must match the selected view/pixel batch")
         frames = (owner._learnable or owner._trajectory) if geometry is None else geometry[:frame_count]
-        native_surface = owner.backend == "numba" and surface is not None
-        native_legacy = native_surface and not isinstance(surface, ParameterizedSurface)
-        if native_surface and not native_legacy:
-            dtype = torch.float32
-            for component in (*frames, offsets):
-                dtype = torch.promote_types(dtype, component.dtype)
-        local_dtype = offsets.dtype if native_legacy else dtype
-        local = self._transfer(offsets.to(dtype=local_dtype), device, stats)
+        local = self._transfer(offsets.to(dtype=dtype), device, stats)
         if local.ndim == u.ndim + 1:
             local = local.unsqueeze(0)
         dimensions = len(owner.global_volume_shape)
-        selected = tuple(self._transfer(value[views].to(
-            dtype=torch.promote_types(torch.float32, value.dtype) if native_legacy else dtype,
-        ), device, stats) for value in frames)
+        selected = tuple(self._transfer(value[views].to(dtype=dtype), device, stats) for value in frames)
 
         def frame(value):
             return value.reshape(len(ids), *([1] * u.ndim), dimensions)
@@ -307,12 +298,7 @@ class ReferenceProjector:
                     "the source and detector surface pixels must lie within 1e15 voxels "
                     "of the volume center"
                 )
-        if native_surface:
-            # Native surface preprocessing composes before staging complete
-            # rays to FP32. Data transforms must preserve that operator.
-            selected = tuple(value.to(dtype=owner.dtype) for value in selected)
-            points = points.to(dtype=owner.dtype)
-        elif validate and dtype != owner.dtype:
+        if validate and dtype != owner.dtype:
             # Casting the completed point misses cancellation/overflow during
             # FP32 component arithmetic. Reuse the same sampled offsets.
             selected = tuple(value.to(dtype=owner.dtype) for value in selected)

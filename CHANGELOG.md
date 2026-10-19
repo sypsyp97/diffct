@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Callable detector surfaces expand world points on each compute device after view sharding, using the selected precision. Memory planning uses local view counts. Streamed surface execution also accepts CUDA offsets, including `ParameterizedSurface` outputs.
+
 ### Added
 
 - `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged.
