@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Callable detector surfaces expand world points on each compute device after view sharding, using the selected precision. Memory planning uses local view counts. Streamed surface execution also accepts CUDA offsets, including `ParameterizedSurface` outputs.
+- Callable detector surfaces expand world points on each compute device after view sharding, preserving native composition precision. Memory planning uses local view counts and composition dtypes. Streamed surface execution accepts CUDA offsets, including `ParameterizedSurface` outputs. Offset snapshots stay on CPU with gradient connections intact. Construction bounds validation storage, and distributed calls check actual callback layouts and propagate validation errors before numerical work.
 
 ### Added
 

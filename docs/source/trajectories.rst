@@ -127,8 +127,10 @@ complete circular cone example, also shown in :doc:`examples`.
 
 Full-volume and streamed operations accept CPU or CUDA offsets. The operator
 transfers selected offsets to the compute device before expanding world points
-for that device's view shard or streamed batch. Geometry uses the selected
-precision. See :doc:`chunking` for execution and memory requirements.
+for that device's view shard or streamed batch. Native execution preserves dtype
+promotion during composition before staging complete coordinates as float32.
+The PyTorch backend uses the selected precision. See :doc:`chunking` for memory
+requirements.
 
 For bounded view/pixel sampling, pass explicit tensor parameters:
 

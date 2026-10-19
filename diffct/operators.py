@@ -294,7 +294,9 @@ class Projector:
     ``(views, *detector_shape, 3)``. Cone normals are ``cross(det_u, det_v)``;
     2D normals are ``(det_u_y, -det_u_x)`` with zero middle offsets. Offsets
     can be on CPU or CUDA in full-volume and streamed execution. World points
-    expand on each compute device after view sharding, in the selected precision.
+    expand on each compute device after view sharding. Native execution preserves
+    the composition's dtype promotion before converting complete coordinates to
+    float32. The PyTorch backend uses the selected precision.
     The callback is sampled and validated on every call,
     with first-order gradients for captured PyTorch parameters. Omitting it
     preserves the flat detector.
@@ -449,6 +451,7 @@ class Projector:
         self._process_group = process_group
         surface_trainable = False
         validation_error = None
+        surface_metadata = None
         try:
             if isinstance(detector_surface, ParameterizedSurface):
                 surface_trainable = any(parameter.requires_grad for parameter in detector_surface.parameters)
@@ -457,34 +460,18 @@ class Projector:
                 if isinstance(detector_surface, ParameterizedSurface):
                     geometry = (*frames, *(parameter.detach().to(device="cpu")
                                            for parameter in detector_surface.parameters))
-                    spec = _GeometrySpec("sampled", detector_surface.sampler)
+                    spec = _GeometrySpec("sampled", detector_surface.sampler, torch.float64)
                 else:
                     with torch.enable_grad():
                         offsets = self._surface_offsets()
                     surface_trainable = offsets.requires_grad
-                    geometry, spec = (*frames, offsets), _GeometrySpec("offsets")
+                    geometry, spec = (*frames, offsets), self._surface_spec(frames, offsets)
+                    surface_metadata = (tuple(offsets.shape), str(offsets.dtype))
                 devices = self._devices or (torch.device("cuda", torch.cuda.current_device()),)
-                local_views = self.view_slice.stop - self.view_slice.start
-                batch = min(32, self.view_chunk_size or 32)
-                pixel_limits = tuple(min(size, limit, 64) for size, limit in zip(
-                    self.detector_shape, self.detector_chunk_shape or self.detector_shape,
-                ))
-                # Validate raw admission bounds and execution arithmetic in owned batches.
-                with torch.no_grad():
-                    for device_rank, device in enumerate(devices):
-                        shard = _balanced_slice(local_views, device_rank, len(devices))
-                        begin, end = self.view_slice.start + shard.start, self.view_slice.start + shard.stop
-                        for start in range(begin, end, batch):
-                            for pixels, _ in _pixel_tiles(self.detector_shape, pixel_limits):
-                                for dtype in ((None, self.dtype) if self.dtype == torch.float32 else (None,)):
-                                    _sample_geometry(
-                                        self.beam, self.detector_shape, self.detector_spacing, geometry, spec,
-                                        slice(start, min(start + batch, end)), pixels, self.voxel_spacing,
-                                        device=device, dtype=dtype,
-                                    )
+                self._validate_surface_geometry(geometry, spec, devices)
         except (TypeError, ValueError, RuntimeError) as error:
             validation_error = error
-        self._partition.preflight(validation_error)
+        self._partition.preflight(validation_error, surface_metadata)
         self._geometry_trainable = bool(self._learnable) or surface_trainable
         if self.dtype == torch.float32 and beam in ("fan", "cone") and detector_surface is None:
             # Both FP32 backends set up each segment from the endpoint nearer
@@ -611,7 +598,7 @@ class Projector:
             component.record_stream(stream)
         return geometry
 
-    def _execution_plan(self, tensor, is_project, output_store=None):
+    def _execution_plan(self, tensor, is_project, output_store=None, geometry_spec=None):
         self._validate_input(tensor, is_project)
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is required to execute the projector")
@@ -652,7 +639,7 @@ class Projector:
                 if views == 0:
                     continue
                 # World-point expressions are created only for this device's view shard.
-                world_buffers = self._surface_work_buffers(views, self.detector_shape)
+                world_buffers = self._surface_work_buffers(views, self.detector_shape, spec=geometry_spec)
                 world_bytes = sum(world_buffers)
                 needed = _working_set_bytes(self.beam, self.volume_shape, views, self.detector_shape, surface)
                 needed += world_bytes
@@ -746,12 +733,12 @@ class Projector:
             buffers = _pipeline_buffers(self.beam, shape, batch, pixels, points,
                                         geometry_grad=self._geometry_trainable,
                                         ray_accumulators=extra_rays, peers=peers or foreign_output)
-            buffers += self._surface_work_buffers(batch, pixels)
+            buffers += self._surface_work_buffers(batch, pixels, spec=geometry_spec)
             return (
                 sum(buffers) <= budget
                 and _reservation_bytes(buffers) <= reservation_budget
                 and _largest_buffer_bytes(self.beam, shape, batch, pixels, points) <= allocation_limit
-                and max(self._surface_work_buffers(batch, pixels), default=0) <= allocation_limit
+                and max(self._surface_work_buffers(batch, pixels, spec=geometry_spec), default=0) <= allocation_limit
                 and _host_geometry_bytes(self.beam, batch, pixels, points) <= _pipeline._GEOMETRY_WORK_BYTES
             )
 
@@ -776,7 +763,7 @@ class Projector:
                                    surface or pixels != self.detector_shape,
                                    geometry_grad=self._geometry_trainable,
                                    ray_accumulators=extra_rays, peers=peers or foreign_output)
-        estimate += sum(self._surface_work_buffers(batch, pixels))
+        estimate += sum(self._surface_work_buffers(batch, pixels, spec=geometry_spec))
         return _ChunkPlan(chunk, batch, devices, pixels, budget, allocation_limit,
                           estimated_gpu_bytes=estimate, foreign_output=foreign_output,
                           reservation_budget_bytes=reservation_budget,
@@ -784,14 +771,67 @@ class Projector:
                               self.beam, chunk, batch, pixels, surface or pixels != self.detector_shape,
                               geometry_grad=self._geometry_trainable,
                               ray_accumulators=extra_rays, peers=peers or foreign_output)
-                              + self._surface_work_buffers(batch, pixels)))
+                              + self._surface_work_buffers(batch, pixels, spec=geometry_spec)))
 
-    def _surface_work_buffers(self, views, pixels, slots=1):
+    def _surface_work_buffers(self, views, pixels, slots=1, spec=None):
         """Bound device-local offset staging and world-point expression storage."""
         if self.detector_surface is None:
             return ()
         elements = views * math.prod(pixels) * 3
-        return (torch.empty((), dtype=self.dtype).element_size() * elements,) * (4 * slots)
+        dtype = torch.float64 if spec is None or spec.dtype is None else spec.dtype
+        buffers = (torch.empty((), dtype=dtype).element_size() * elements,) * (4 * slots)
+        if dtype != torch.float64:
+            buffers += (8 * elements,) * slots
+        return buffers + (views * 3 * 8 * (4 if self.beam == "cone" else 3),) * slots
+
+    def _surface_spec(self, frames, offsets):
+        dtype = torch.float32
+        for component in (*frames[1:], offsets):
+            dtype = torch.promote_types(dtype, component.dtype)
+        return _GeometrySpec("offsets", dtype=dtype)
+
+    def _validate_surface_geometry(self, geometry, spec, devices, plan=None):
+        """Validate owned geometry in batches admitted before any numerical work."""
+        local_views = self.view_slice.stop - self.view_slice.start
+        for device_rank, device in enumerate(devices):
+            shard = _balanced_slice(local_views, device_rank, len(devices))
+            if shard.start == shard.stop:
+                continue
+            batch = min(shard.stop - shard.start, plan.view_chunk_size if plan is not None
+                        else min(32, self.view_chunk_size or 32))
+            pixels = ((plan.detector_chunk_shape or self.detector_shape) if plan is not None else
+                      tuple(min(size, limit, 64) for size, limit in zip(
+                          self.detector_shape, self.detector_chunk_shape or self.detector_shape)))
+            budget, allocation, reservation = _memory_lower_bounds(device)
+
+            def fits():
+                buffers = self._surface_work_buffers(batch, pixels, spec=spec)
+                return (sum(buffers) <= budget and max(buffers, default=0) <= allocation
+                        and _reservation_bytes(buffers) <= reservation)
+
+            if not fits():
+                budget, allocation = _memory_budget(device)
+                reservation = _reservation_budget(device) if budget else 0
+            while not fits():
+                if plan is not None:
+                    raise RuntimeError("CUDA memory budget cannot fit the surface validation batch")
+                if batch > 1:
+                    batch = max(1, batch // 2)
+                elif max(pixels) > 1:
+                    axis = max(range(len(pixels)), key=pixels.__getitem__)
+                    pixels = tuple(max(1, size // 2) if index == axis else size
+                                   for index, size in enumerate(pixels))
+                else:
+                    raise RuntimeError("CUDA memory budget cannot fit the minimum surface validation batch")
+            begin, end = self.view_slice.start + shard.start, self.view_slice.start + shard.stop
+            with torch.no_grad():
+                for start in range(begin, end, batch):
+                    for selected, _ in _pixel_tiles(self.detector_shape, pixels):
+                        _sample_geometry(
+                            self.beam, self.detector_shape, self.detector_spacing, geometry, spec,
+                            slice(start, min(start + batch, end)), selected, self.voxel_spacing,
+                            device=device, native_legacy=spec.kind == "offsets",
+                        )
 
     def _validate_input(self, tensor, is_project):
         if not isinstance(tensor, torch.Tensor):
@@ -820,43 +860,57 @@ class Projector:
         from numba import cuda
 
         input_device = tensor.device
-        if reduce_cotangent and self._distributed and self.world_size > 1:
-            tensor = tensor.detach().clone(memory_format=torch.contiguous_format)
-            with torch.cuda.device(input_device):
-                torch.distributed.all_reduce(
-                    tensor,
-                    op=torch.distributed.ReduceOp.SUM,
-                    group=self._process_group,
-                )
-
         devices = self._devices or (input_device,)
         local_views = self.projection_shape[0]
 
-        # Stage every input and geometry shard before launching any raw kernel.
-        staged = []
-        for device_rank, device in enumerate(devices):
-            local_slice = _balanced_slice(local_views, device_rank, len(devices))
-            if local_slice.start == local_slice.stop:
-                continue
-            global_slice = slice(
-                self.view_slice.start + local_slice.start,
-                self.view_slice.start + local_slice.stop,
-            )
-            source = tensor if is_project else tensor[local_slice]
-            with torch.cuda.device(device):
-                staged_input = source.to(device=device, dtype=torch.float32, non_blocking=True)
-                # A cone volume viewed over a native (W, H, D) buffer keeps that layout (no copy).
-                if not (is_project and self.beam == "cone" and staged_input.permute(2, 1, 0).is_contiguous()):
-                    staged_input = staged_input.contiguous()
-                staged_geometry = (
-                    _sample_geometry(
-                        self.beam, self.detector_shape, self.detector_spacing, geometry,
-                        geometry_spec, global_slice, tuple(slice(0, size) for size in self.detector_shape),
-                        self.voxel_spacing, device=device, dtype=self.dtype,
-                    ) if geometry_spec is not None and geometry_spec.kind in ("offsets", "sampled")
-                    else self._geometry_for(device, global_slice, geometry)
+        # All ranks validate their owned geometry before any numerical collective.
+        shards, error = [], None
+        try:
+            for device_rank, device in enumerate(devices):
+                local_slice = _balanced_slice(local_views, device_rank, len(devices))
+                if local_slice.start == local_slice.stop:
+                    continue
+                global_slice = slice(
+                    self.view_slice.start + local_slice.start,
+                    self.view_slice.start + local_slice.stop,
                 )
-            staged.append((device, staged_input, staged_geometry))
+                with torch.cuda.device(device):
+                    staged_geometry = (
+                        _sample_geometry(
+                            self.beam, self.detector_shape, self.detector_spacing, geometry,
+                            geometry_spec, global_slice, tuple(slice(0, size) for size in self.detector_shape),
+                            self.voxel_spacing, device=device, native_legacy=geometry_spec.kind == "offsets",
+                        ) if geometry_spec is not None and geometry_spec.kind in ("offsets", "sampled")
+                        else self._geometry_for(device, global_slice, geometry)
+                    )
+                shards.append((device, local_slice, staged_geometry))
+        except (TypeError, ValueError, RuntimeError) as failure:
+            error = failure
+        if geometry_spec is not None:
+            self._partition.preflight(error)
+        elif error is not None:
+            raise error
+        if reduce_cotangent and self._distributed and self.world_size > 1:
+            tensor = tensor.detach().clone(memory_format=torch.contiguous_format)
+            with torch.cuda.device(input_device):
+                torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, group=self._process_group)
+
+        staged, error = [], None
+        try:
+            for device, local_slice, staged_geometry in shards:
+                source = tensor if is_project else tensor[local_slice]
+                with torch.cuda.device(device):
+                    staged_input = source.to(device=device, dtype=torch.float32, non_blocking=True)
+                    # Preserve the native cone layout when the input already uses it.
+                    if not (is_project and self.beam == "cone" and staged_input.permute(2, 1, 0).is_contiguous()):
+                        staged_input = staged_input.contiguous()
+                staged.append((device, staged_input, staged_geometry))
+        except (TypeError, ValueError, RuntimeError) as failure:
+            error = failure
+        if geometry_spec is not None:
+            self._partition.preflight(error)
+        elif error is not None:
+            raise error
 
         # Keep all outputs alive until every device has launched its shard.
         outputs = []
@@ -947,7 +1001,8 @@ class Projector:
             components = _sample_geometry(
                 self.beam, self.detector_shape, self.detector_spacing, components,
                 geometry_spec, global_slice, pixels, self.voxel_spacing,
-                device=device if surface else None, dtype=self.dtype if surface else None,
+                device=device if surface else None,
+                native_legacy=surface and geometry_spec.kind == "offsets",
             )
         else:
             components = tuple(component[global_slice] for component in components)
@@ -955,7 +1010,7 @@ class Projector:
         for index, component in enumerate(components):
             value = component.detach().to(
                 device=component.device if surface else "cpu",
-                dtype=self.dtype if surface else torch.promote_types(torch.float32, component.dtype),
+                dtype=torch.promote_types(torch.float32, component.dtype),
             )
             position = index == 1 or (index == 0 and self.beam != "parallel")
             if position:
@@ -976,6 +1031,14 @@ class Projector:
     def _run_store_streamed(self, source, sink, is_project, geometry, plan, geometry_spec):
         self.last_execution_stats = None
         try:
+            if geometry_spec is not None and (geometry_spec.kind == "offsets" or
+                                             (geometry_spec.kind == "sampled" and self.world_size > 1)):
+                error = None
+                try:
+                    self._validate_surface_geometry(geometry, geometry_spec, plan.devices, plan)
+                except (TypeError, ValueError, RuntimeError) as failure:
+                    error = failure
+                self._partition.preflight(error)
             chosen, pilots, cached = self._choose_schedule(source, sink, is_project, geometry, plan, geometry_spec)
             stats = self._execution_stats(chosen, is_project)
             stats["d2h_bytes"] = self._snapshot_d2h_bytes
@@ -1014,14 +1077,14 @@ class Projector:
             return _pipeline_bytes(self.beam, shape, plan.view_chunk_size, pixels, points,
                                    slots=slots, retained=retained, geometry_grad=self._geometry_trainable,
                                    peers=peers, ray_accumulators=ray_accumulators) + sum(
-                                       self._surface_work_buffers(plan.view_chunk_size, pixels, slots))
+                                       self._surface_work_buffers(plan.view_chunk_size, pixels, slots, spec))
 
         def reserved(shape, slots=1, retained=1, ray_accumulators=0):
             return _reservation_bytes(_pipeline_buffers(
                 self.beam, shape, plan.view_chunk_size, pixels, points,
                 slots=slots, retained=retained, geometry_grad=self._geometry_trainable,
                 peers=peers, ray_accumulators=ray_accumulators)
-                + self._surface_work_buffers(plan.view_chunk_size, pixels, slots))
+                + self._surface_work_buffers(plan.view_chunk_size, pixels, slots, spec))
 
         shapes = [plan.chunk_shape]
         if self.volume_chunk_shape is None and len(volume_shape) == 3:
@@ -1097,7 +1160,7 @@ class Projector:
             self.beam, plan.chunk_shape, plan.view_chunk_size, pixels, points,
             slots=plan.slots, retained=plan.window_size, geometry_grad=self._geometry_trainable,
             peers=peers, ray_accumulators=extra_rays) + self._surface_work_buffers(
-                plan.view_chunk_size, pixels, plan.slots)
+                plan.view_chunk_size, pixels, plan.slots, spec)
 
     def _choose_schedule(self, source, sink, is_project, geometry, plan, spec):
         candidates = self._candidate_plans(plan, is_project, spec)
@@ -1797,8 +1860,8 @@ class Projector:
                         inputs, selections = self._surface_batch_inputs(geometry, geometry_spec, global_slice, pixels)
                         local_geometry = _sample_geometry(
                             self.beam, self.detector_shape, self.detector_spacing, inputs, geometry_spec,
-                            global_slice, pixels, self.voxel_spacing, device=device, dtype=self.dtype,
-                            local_geometry=True,
+                            global_slice, pixels, self.voxel_spacing, device=device, local_geometry=True,
+                            native_legacy=geometry_spec.kind == "offsets",
                         )
                 else:
                     local_geometry = tuple(
@@ -1869,8 +1932,8 @@ class Projector:
                     local_geometry = _sample_geometry(self.beam, self.detector_shape, self.detector_spacing,
                                                       inputs, geometry_spec, global_slice, pixels, self.voxel_spacing,
                                                       device=pipe.device if surface else None,
-                                                      dtype=self.dtype if surface else None,
-                                                      local_geometry=surface)
+                                                      local_geometry=surface,
+                                                      native_legacy=surface and geometry_spec.kind == "offsets")
                 cpu_geometry = tuple(value.detach() - value.new_tensor(centre)
                                      if index == 1 or self.beam != "parallel" else value.detach()
                                      for index, value in enumerate(local_geometry))
@@ -2013,8 +2076,7 @@ class Projector:
             return self._native_batch(volume, True)
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
-        plan = self._execution_plan(volume, True)
-        geometry_spec, geometry = self._effective_geometry(plan, volume.device)
+        plan, geometry_spec, geometry = self._prepare_execution(volume, True)
         return _ProjectorAutograd.apply(volume, self, "project", plan, geometry_spec, self._participation(), *geometry)
 
     def backproject(self, sinogram):
@@ -2034,8 +2096,7 @@ class Projector:
             return self._native_batch(sinogram, False)
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
-        plan = self._execution_plan(sinogram, False)
-        geometry_spec, geometry = self._effective_geometry(plan, sinogram.device)
+        plan, geometry_spec, geometry = self._prepare_execution(sinogram, False)
         return _ProjectorAutograd.apply(sinogram, self, "backproject", plan, geometry_spec, self._participation(), *geometry)
 
     def _native_batch(self, tensor, is_project):
@@ -2085,8 +2146,7 @@ class Projector:
                 self._reference.into(source, sink, is_project)
             return output
         with torch.no_grad():
-            plan = self._execution_plan(source, is_project, sink)
-            geometry_spec, geometry = self._effective_geometry(plan, torch.device(getattr(source, "device", "cpu")))
+            plan, geometry_spec, geometry = self._prepare_execution(source, is_project, sink)
             self._run_store_streamed(source, sink, is_project, geometry if geometry else None, plan, geometry_spec)
         return output
 
@@ -2094,16 +2154,18 @@ class Projector:
         """Alias for :meth:`project`."""
         return self.project(volume)
 
+    def _prepare_execution(self, tensor, is_project, output_store=None):
+        device = torch.device(getattr(tensor, "device", "cpu"))
+        if self.detector_surface is not None:
+            spec, geometry = self._effective_geometry(None, device)
+            plan = self._execution_plan(tensor, is_project, output_store, spec)
+        else:
+            plan = self._execution_plan(tensor, is_project, output_store)
+            spec, geometry = self._effective_geometry(plan, device)
+        return plan, spec, geometry
+
     def _effective_geometry(self, plan, input_device):
         self._agree_geometry_layout()
-        if isinstance(self.detector_surface, ParameterizedSurface):
-            surface = self.detector_surface
-            frames = self._learnable if self._learnable else self._trajectory
-            values = (*frames, *surface.parameters)
-            snapshots = tuple(value.clone() if value.device.type == "cpu" else value.to(device="cpu", copy=True)
-                              for value in values)
-            self._snapshot_d2h_bytes += sum(value.numel() * value.element_size() for value in values if value.is_cuda)
-            return _GeometrySpec("sampled", surface.sampler), snapshots
         if self.detector_surface is None:
             if plan is not None:
                 self._snapshot_d2h_bytes += sum(value.numel() * value.element_size() for value in self._learnable if value.is_cuda)
@@ -2119,10 +2181,28 @@ class Projector:
             tensor, device = saved
             return tensor.to(device=device)
 
-        with torch.autograd.graph.saved_tensors_hooks(pack, unpack):
-            offsets = self._surface_offsets()
+        error, metadata = None, None
+        spec, snapshots = None, ()
+        try:
             frames = self._learnable or self._trajectory
-            return _GeometrySpec("offsets"), tuple(component.clone() for component in (*frames, offsets))
+            if isinstance(self.detector_surface, ParameterizedSurface):
+                surface = self.detector_surface
+                values = (*frames, *surface.parameters)
+                spec = _GeometrySpec("sampled", surface.sampler, torch.float64)
+                snapshots = tuple(value.to(device="cpu", copy=True) for value in values)
+            else:
+                with torch.autograd.graph.saved_tensors_hooks(pack, unpack):
+                    offsets = self._surface_offsets()
+                    values = (*frames, offsets)
+                    snapshots = tuple(value.to(device="cpu", copy=True) for value in values)
+                spec = self._surface_spec(frames, offsets)
+                metadata = (tuple(offsets.shape), str(offsets.dtype))
+            self._snapshot_d2h_bytes += sum(value.numel() * value.element_size()
+                                            for value in values if value.is_cuda)
+        except (TypeError, ValueError, RuntimeError) as failure:
+            error = failure
+        self._partition.preflight(error, metadata)
+        return spec, snapshots
 
     def _surface_offsets(self):
         """Sample the legacy callback without expanding a view-by-pixel tensor."""
@@ -2149,9 +2229,4 @@ class Projector:
             raise ValueError(
                 f"detector_surface output must have shape {shared_shape} or {per_view_shape}"
             )
-        if not torch.isfinite(offsets).all().item():
-            raise ValueError("detector_surface offsets must be finite")
-        if self.beam != "cone" and torch.any(offsets[..., 1] != 0).item():
-            raise ValueError("2D detector_surface middle offsets must be zero")
-
         return offsets

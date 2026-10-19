@@ -199,7 +199,9 @@ See :ref:`detector-surfaces`.
 Legacy two-argument callbacks receive complete CPU detector grids and can return
 CPU or CUDA offsets. The operator transfers selected offsets to each compute
 device before expanding world points for its owned views or streamed batch.
-Memory planning uses these local view counts and the selected precision.
+Memory planning uses these local view counts and the composition dtype.
+Gradient-connected offsets are snapshotted on CPU and transferred per batch.
+Construction also sizes validation batches to the available device budget.
 Callback allocations remain caller-controlled. Callback values are not cached
 across operations.
 

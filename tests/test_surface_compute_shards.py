@@ -1,11 +1,12 @@
-"""Surface expansion uses compute precision and only the owned view batch.
+"""Surface expansion uses its arithmetic precision and only owned view batches.
 
 Numerical references reuse the original NumPy voxel-box oracle. Allocation
 observers record real tensor operations and do not replace geometry code.
 """
 
-from datetime import timedelta
 import time
+from contextlib import ExitStack
+from datetime import timedelta
 from unittest import mock
 
 import numpy as np
@@ -28,6 +29,16 @@ CUDA_REQUIRED = pytest.mark.skipif(
     not torch.cuda.is_available() or torch.version.hip is not None,
     reason="native surface execution requires NVIDIA CUDA",
 )
+
+
+def _unlimited_native_validation_memory():
+    patches = ExitStack()
+    unlimited = (1 << 63) - 1
+    patches.enter_context(mock.patch.object(operators, "_memory_lower_bounds", return_value=(unlimited,) * 3))
+    patches.enter_context(mock.patch.object(operators, "_memory_budget", return_value=(unlimited,) * 2))
+    patches.enter_context(mock.patch.object(operators, "_reservation_budget", return_value=unlimited))
+    patches.enter_context(mock.patch.object(torch.cuda, "get_allocator_backend", return_value="cudaMallocAsync"))
+    return patches
 
 
 def _arc(u, v, radius):
@@ -169,7 +180,7 @@ def test_native_streamed_offsets_expand_only_compute_device_view_pixel_batches(k
         with _WorldPointAdds(case) as trace:
             result = getattr(operator, operation)(source)
             gradient, = torch.autograd.grad((result.double() * weight.double()).sum(), radius)
-        _check_expansion(trace.records, dtype=torch.float32, devices={torch.device("cuda:0")},
+        _check_expansion(trace.records, dtype=torch.float64, devices={torch.device("cuda:0")},
                          maximum_views=2, pixels=(4, 3))
         assert result.device.type == "cpu" and result.dtype == torch.float32
         _close(result, (linear @ _numpy(source).ravel()).reshape(result.shape))
@@ -220,7 +231,7 @@ def test_per_view_legacy_surface_vjp_keeps_cuda_gradients_batch_local():
         with NoGlobalCudaOffsets(case) as trace:
             result = getattr(operator, operation)(source)
             gradient, = torch.autograd.grad((result.double() * weight.double()).sum(), radii)
-        _check_expansion(trace.records, dtype=torch.float32,
+        _check_expansion(trace.records, dtype=torch.float64,
                          devices={torch.device("cuda", index) for index in devices},
                          maximum_views=2, pixels=(4, 3))
         assert gradient.device == radii.device and gradient.dtype == radii.dtype
@@ -246,7 +257,7 @@ def test_two_native_devices_expand_each_owned_view_shard(kind):
         samples.clear()
         with _WorldPointAdds(case) as trace:
             result = getattr(operator, operation)(source)
-        _check_expansion(trace.records, dtype=torch.float32,
+        _check_expansion(trace.records, dtype=torch.float64,
                          devices={torch.device("cuda:0"), torch.device("cuda:1")}, maximum_views=3)
         assert {device for _, device, _ in trace.records} == {
             torch.device("cuda:0"), torch.device("cuda:1"),
@@ -266,6 +277,7 @@ def test_native_constructor_validates_each_device_view_shard():
     # on CPU so constructor view ownership is testable without CUDA hardware.
     with mock.patch.object(operators, "select_backend", return_value="numba"), \
             mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),) * 2), \
+            _unlimited_native_validation_memory(), \
             _WorldPointAdds(case) as trace:
         _projector(case, _surface("legacy", radius), devices=[0, 1])
     assert trace.records
@@ -285,24 +297,40 @@ class _CudaMetadataTensor(torch.Tensor):
         return True
 
 
-def test_full_surface_admission_fits_owned_float32_points_with_float64_offsets():
+@pytest.mark.parametrize("geometry_dtype, budget, full_fits", [
+    (torch.float32, 250 * 1024, True),
+    (torch.float64, 250 * 1024, False),
+    (torch.float64, 400 * 1024, True),
+])
+def test_full_surface_admission_counts_actual_composition_dtype_only_for_owned_views(
+    geometry_dtype, budget, full_fits,
+):
     case = _case("cone", views=8)
     case.shape, case.detector = (2, 3, 4), (24, 20)
+    case.trajectory = tuple(value.to(geometry_dtype) for value in case.trajectory)
     radius = torch.tensor(3.7, dtype=torch.float64)
-    operator = _projector(case, _surface("legacy", radius), backend="torch", precision="fast")
+
+    def surface(u, v):
+        return _arc(u, v, radius).to(geometry_dtype)
+
+    with mock.patch.object(operators, "select_backend", return_value="numba"), \
+            mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),) * 2), \
+            _unlimited_native_validation_memory():
+        operator = _projector(case, surface, backend="numba", precision="fast")
     # This planner reads metadata only. Real CUDA integration above observes
     # actual points; this case keeps its admission boundary testable on CPU.
     operator._devices = (torch.device("cuda:0"), torch.device("cuda:1"))
     data = torch.empty(case.shape).as_subclass(_CudaMetadataTensor)
-    budget = 200 * 1024
     unlimited = (1 << 63) - 1
     with mock.patch.object(torch.cuda, "is_available", return_value=True), \
             mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"), \
             mock.patch.object(operators, "_memory_lower_bounds", return_value=(budget, unlimited, unlimited)), \
             mock.patch.object(operators, "_memory_budget", return_value=(budget, unlimited)), \
             mock.patch.object(operators, "_reservation_budget", return_value=unlimited):
-        plan = operator._execution_plan(data, True)
-    assert plan is None, "full admission charged global float64 world points instead of four owned FP32 views"
+        geometry_spec, _ = operator._effective_geometry(None, torch.device("cpu"))
+        plan = operator._execution_plan(data, True, geometry_spec=geometry_spec)
+    assert (plan is None) == full_fits, \
+        "full admission must count the actual composition dtype for four owned views and native FP32 conversion"
 
 
 def _gloo_local_surface_worker(rank, rendezvous):
@@ -385,7 +413,8 @@ def _gloo_invalid_native_surface_worker(rank, rendezvous):
 
             surface = callback if kind == "legacy" else ParameterizedSurface(sampler)
             with mock.patch.object(operators, "select_backend", return_value="numba"), \
-                    mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),)):
+                    mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),)), \
+                    _unlimited_native_validation_memory():
                 with pytest.raises(ValueError, match="1e6"):
                     _projector(case, surface, backend="numba", distributed=True)
             if kind == "parameterized":
@@ -448,7 +477,8 @@ def test_native_surface_constructor_preserves_raw_distance_limit_before_float32_
     # Constructor admission must preserve raw bounds. Replacing only backend
     # selection and its device inventory keeps this check runnable without CUDA.
     with mock.patch.object(operators, "select_backend", return_value="numba"), \
-            mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),)):
+            mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),)), \
+            _unlimited_native_validation_memory():
         with pytest.raises(ValueError, match="1e6"):
             _projector(case, surface, backend="numba", precision="fast")
 
@@ -472,6 +502,7 @@ def test_native_constructor_uses_exact_norm_of_float32_surface_coordinates(kind)
     assert all(torch.linalg.vector_norm(value.double()).item() > 1e6 for value in case.trajectory[:2])
     assert all(torch.linalg.vector_norm(value).item() == 1e6 for value in case.trajectory[:2])
     with mock.patch.object(operators, "select_backend", return_value="numba"), \
-            mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),)):
+            mock.patch.object(operators, "_normalize_devices", return_value=(torch.device("cpu"),)), \
+            _unlimited_native_validation_memory():
         with pytest.raises(ValueError, match="1e6"):
             _projector(case, surface, backend="numba", precision="fast")

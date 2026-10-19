@@ -9,6 +9,7 @@ import torch
 class _GeometrySpec:
     kind: str
     sampler: object = None
+    dtype: object = None
 
 
 class ParameterizedSurface:
@@ -46,11 +47,11 @@ def _detector_grids(detector_shape, spacing, pixels):
 
 
 def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixels, voxel_spacing,
-                     *, device=None, dtype=None, validate=True, local_geometry=False):
+                     *, device=None, dtype=None, validate=True, local_geometry=False,
+                     native_legacy=False):
     """Build one selected world-point batch on the requested compute device."""
     frame_count = 4 if beam == "cone" else 3
     frames = geometry[:frame_count]
-    distance_dtype = torch.float64 if dtype is None else dtype
     device = torch.device("cpu") if device is None else torch.device(device)
     dimensions = len(detector_shape)
     view_count = (views.stop - views.start if local_geometry
@@ -80,7 +81,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
             dtype = torch.promote_types(dtype, component.dtype)
     elif dtype not in (torch.float32, torch.float64):
         raise ValueError("surface geometry dtype must be float32 or float64")
-    offsets = offsets.to(device=device, dtype=dtype)
+    offsets = offsets.to(device=device, dtype=offsets.dtype if native_legacy else dtype)
     if validate:
         if not torch.isfinite(offsets).all().item():
             raise ValueError("detector surface coordinates must be finite")
@@ -88,7 +89,8 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
 
     def frame(component):
         selected = component if local_geometry else component[views]
-        return selected.to(device=device, dtype=dtype).reshape(
+        frame_dtype = torch.promote_types(torch.float32, component.dtype) if native_legacy else dtype
+        return selected.to(device=device, dtype=frame_dtype).reshape(
             view_count, *([1] * dimensions), component.shape[-1],
         )
 
@@ -96,12 +98,15 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
     points = center + local[..., 0, None] * axis_u
     if beam == "cone":
         axis_v = frame(frames[3])
-        normal = torch.linalg.cross(axis_u, axis_v, dim=-1)
+        normal_dtype = torch.promote_types(axis_u.dtype, axis_v.dtype)
+        normal = torch.linalg.cross(axis_u.to(dtype=normal_dtype),
+                                    axis_v.to(dtype=normal_dtype), dim=-1)
         points = points + local[..., 1, None] * axis_v + local[..., 2, None] * normal
     else:
         normal = torch.stack((axis_u[..., 1], -axis_u[..., 0]), dim=-1)
         points = points + local[..., 2, None] * normal
-    source = (frames[0] if local_geometry else frames[0][views]).to(device=device, dtype=dtype)
+    source_dtype = torch.promote_types(torch.float32, frames[0].dtype) if native_legacy else dtype
+    source = (frames[0] if local_geometry else frames[0][views]).to(device=device, dtype=source_dtype)
     if validate:
         for component in (source, points):
             if not torch.isfinite(component).all().item() or not torch.isfinite(component.float()).all().item():
@@ -111,12 +116,8 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
             endpoints = points.reshape(view_count, -1, source.shape[-1])
             if torch.any(torch.all(sources.float() == endpoints.float(), dim=-1)).item():
                 raise ValueError("surface source and detector coordinates must differ")
-            source_distance = torch.linalg.vector_norm(
-                sources.to(dtype=distance_dtype) / voxel_spacing, dim=-1,
-            )
-            pixel_distance = torch.linalg.vector_norm(
-                endpoints.to(dtype=distance_dtype) / voxel_spacing, dim=-1,
-            )
+            source_distance = torch.linalg.vector_norm(sources.double(), dim=-1) / voxel_spacing
+            pixel_distance = torch.linalg.vector_norm(endpoints.double(), dim=-1) / voxel_spacing
             if torch.any(torch.minimum(source_distance, pixel_distance) > 1e6).item():
                 raise ValueError("surface source or pixel must lie within 1e6 voxels")
             if torch.any(source_distance > 1e15).item() or torch.any(pixel_distance > 1e15).item():

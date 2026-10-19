@@ -143,8 +143,15 @@ at construction and afresh on each operation,
 so captured PyTorch parameters can change and receive first-order gradients.
 The operator transfers selected offsets to each compute device before expanding
 world points. Each device expands only its owned views, or the current streamed
-view and pixel batch. Geometry uses float32 for `precision="fast"` and `"float32"`,
-and float64 for `"float64"`. Memory planning uses these local view counts and dtypes.
+view and pixel batch. Native execution preserves the dtype promotion of offsets
+and frames during composition, then converts complete coordinates to float32.
+The PyTorch backend uses the selected precision. Memory planning includes the
+composition dtype and local view counts; samplers with an unknown output dtype
+use a conservative float64 allowance.
+Offset snapshots stay on CPU, with their gradient connections intact. Validation
+uses bounded batches and reports local failures to all distributed ranks before
+numerical work. Ranks must agree on the actual callback offset shape and dtype
+at construction and on each call.
 Allocations made by the callback itself still depend on its implementation;
 use `ParameterizedSurface` to sample offsets for selected global view IDs.
 The existing trajectory rule still applies: if no component requires gradients,
@@ -154,7 +161,7 @@ geometry are unsupported. Surfaces must return the documented shape and finite
 coordinates on every call; a source must not coincide with any pixel.
 
 Explicit positions cost two coordinates per 2D pixel or three per cone pixel,
-in the selected precision, plus gradients when needed. Sources and ray directions remain
+in the composition dtype, plus gradients when needed. Sources and ray directions remain
 per-view tensors. Views are sharded with the same multi-GPU and distributed
 rules as flat detectors. Each pixel samples one ray; these kernels do not
 integrate over a finite detector-pixel area. FBP/FDK and analytical weighting
@@ -236,8 +243,8 @@ directly, avoiding stale transfer-stream reservations across calls.
 
 Legacy detector-surface callbacks can return CPU or CUDA offsets.
 Explicit `ParameterizedSurface` samples local view/pixel batches.
-Both interfaces expand world points on the compute device in the selected
-precision, after view sharding. Geometry snapshots
+Both interfaces expand world points on the compute device after view sharding.
+Geometry snapshots
 keep data and first-order geometry backward consistent with the forward call,
 including later parameter changes. Geometry second derivatives remain
 unsupported. No cache or autograd state retains all streamed CUDA tiles.

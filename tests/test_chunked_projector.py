@@ -1109,12 +1109,12 @@ def test_automatic_cpu_empty_gpu_shard_ignores_idle_zero_budget():
 
 @pytest.mark.cuda
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Two CUDA GPUs are required")
-def test_two_gpu_full_path_budgets_owned_float32_surface_points():
+def test_two_gpu_full_path_budgets_owned_promoted_surface_points():
     case = _case("cone", views=8)
     case.shape, case.detector = (2, 3, 4), (24, 20)
 
     def callback(u, v):
-        # Float64 offsets must not force global float64 world-point storage.
+        # Float64 offsets preserve promoted arithmetic within each view shard.
         return _flat_surface(u, v).to(device="cuda:0")
 
     class NoTotalWorldExpansion(TorchDispatchMode):
@@ -1131,12 +1131,12 @@ def test_two_gpu_full_path_budgets_owned_float32_surface_points():
     image, _ = _data(case, device="cuda:0")
     matrix = _matrix(case, _offsets(case, flat=True))
     # 400 KiB observations give 300 KiB after the documented reserve. Each
-    # four-view FP32 expansion fits. A global FP64 expansion cannot fit.
+    # four-view FP64 expansion fits. A global FP64 expansion cannot fit.
     with _memory_inventory({0: 400 * 1024, 1: 400 * 1024}), NoTotalWorldExpansion(), \
             _Launches() as launches:
         launches.phase = "project"
         output = projector.project(image)
-    assert projector.last_execution_stats is None, "owned FP32 points should fit the full path"
+    assert projector.last_execution_stats is None, "owned promoted points should fit the full path"
     _close(output, (matrix @ _numpy(image).ravel()).reshape(case.sino_shape))
     assert output.device == image.device
     _assert_bounded_launches(launches.records, case, case.shape, 4, ("project",), {0, 1})
