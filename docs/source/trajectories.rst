@@ -23,6 +23,9 @@ also pass measured or calibrated poses in the same layout.
    * - ``cone`` (default)
      - ``(src_pos, det_center, det_u, det_v)``, each ``(N, 3)``
      - ``(D, H, W)`` / ``(N, U, V)``
+   * - ``parallel3d``
+     - ``(ray_dir, det_center, det_u, det_v)``, each ``(N, 3)``
+     - ``(D, H, W)`` / ``(N, U, V)``
 
 Coordinates are Cartesian ``(x, y[, z])``. Volume indexing is ``[y, x]`` for 2D
 and ``[z, y, x]`` for 3D. The origin is the volume centre. Use one length unit
@@ -31,7 +34,7 @@ positive scalar or a positive per-axis tuple in tensor order: ``(dy,dx)`` or
 ``(dz,dy,dx)``. Per-axis spacing uses the PyTorch backend; see :doc:`execution`.
 
 Detector axes are unit direction vectors, not pixel-step vectors. The detector
-spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
+spacing sets the pixel pitch. A scalar spacing applies to both 3D detector axes.
 With the default flat detector, pixel ``(u, v)`` is at:
 
 .. code-block:: text
@@ -66,8 +69,13 @@ coordinate system above.
    sinogram = A.project(volume)  # (90, 96, 64)
 
 All components must be finite floating-point tensors with the same nonzero view
-count. ``ray_dir`` and ``det_u`` must be orthogonal for parallel beams. ``det_u``
-and ``det_v`` must be orthogonal for cone beams. With flat fan/cone detectors,
+count. ``ray_dir`` and ``det_u`` must be orthogonal for 2D parallel beams. ``det_u``
+and ``det_v`` must be orthogonal for 3D beams. ``parallel3d`` permits oblique
+detectors: the unit ray direction must not be tangent to the detector plane.
+Degeneracy is checked by the frame's numerical rank in float64.
+Its rays are infinite lines through each pixel. It uses the PyTorch backend
+on CPU or CUDA; ``backend="auto"`` selects it automatically and explicit
+``backend="numba"`` is unsupported. With flat fan/cone detectors,
 the source must not coincide with the detector centre or view the detector
 edge-on. The native FP32 backend requires the nearer of source and detector
 centre to lie within 1e6 voxel spacings of the origin. Native surface detectors validate each actual
@@ -87,7 +95,7 @@ Parameterized detector surfaces
 
 ``Projector(..., detector_surface=surface)`` places each pixel
 on a native curve. The legacy two-argument callback places pixels
-on an arc, cylinder or another parameterized surface. For cone beams it receives
+on an arc, cylinder or another parameterized surface. For 3D beams it receives
 physical float64 ``u, v`` grids on CPU with shape ``(U, V)`` and ``ij`` indexing. It returns local
 ``(u, v, n)`` offsets shaped ``(U, V, 3)`` or ``(views, U, V, 3)``. Here ``views``
 is the total trajectory view count, also in distributed mode. The world point is:
@@ -195,10 +203,63 @@ gradients, it clones the entire trajectory. For example:
 This loss uses the same target geometry, so the gradient is zero. For a real
 calibration loop, see ``examples/geometry_calibration.py``.
 
-If poses come from learnable angles or offsets, rebuild the derived tensors and
-the ``Projector`` inside each optimization step. Parameterize rotations so that
-axes stay unit length and orthogonal. Trajectory frame checks run only at
-construction; sampled surface positions are also checked on every operation.
+If poses come from learnable angles or offsets, rebuild the derived tensors
+inside each optimization step and pass them to the same projector:
+
+.. code-block:: python
+
+   from diffct import circular_trajectory_3d
+
+   angles = torch.linspace(0, 2 * torch.pi, 91, device=volume.device)[:-1]
+   angles = angles.detach().requires_grad_()
+   optimizer = torch.optim.Adam([angles], lr=1e-3)
+   for _ in range(10):
+       optimizer.zero_grad()
+       current = circular_trajectory_3d(angles, sid=80.0, sdd=128.0)
+       loss = (A.project(volume, trajectory=current) - target).square().sum()
+       loss.backward()
+       optimizer.step()
+
+``project``, ``backproject``, ``__call__``, ``project_into`` and
+``backproject_into`` accept the keyword-only ``trajectory`` argument. It replaces
+the complete tuple for that call and must keep the configured beam and view
+count. Omission or ``None`` uses the constructor trajectory. Each calculation
+keeps its own geometry snapshot for backward; overrides leave the default
+trajectory unchanged. The ``*_into`` methods retain their numerical,
+no-autograd contract. Distributed ranks must agree on whether an override is
+present and supply one coherent global trajectory.
+
+Parameterize rotations so that axes stay unit length and orthogonal. Frame
+checks run at construction and for each override; sampled surface positions
+are checked on every operation.
+
+Differentiable geometry helpers
+-------------------------------
+
+``circular_trajectory_2d_parallel``, ``circular_trajectory_2d_fan``,
+``circular_trajectory_3d`` and ``circular_trajectory_3d_parallel`` accept either
+a view count or a nonempty floating-point angle tensor as the first argument.
+Angles are in radians and may be nonuniform or unsorted. A tensor preserves its
+device, dtype and autograd history; ``device`` and ``dtype`` only configure
+count-based generation. Parallel helpers cover ``[0, pi)`` by default; fan and
+cone helpers cover ``[0, 2*pi)``. The 3D parallel helper lifts the 2D orbit into
+the XY plane with ``det_v=(0,0,1)``. In both parallel helpers,
+``detector_distance`` is a transverse shift along ``det_u``.
+
+``transform_trajectory(trajectory, rotation=None, translation=None, beam="cone")``
+applies a rigid transform about the world origin. Points become ``R @ p + t``;
+directions become ``R @ d``. ``rotation`` is a proper orthogonal matrix shaped
+``(d,d)`` or ``(views,d,d)``, and ``translation`` is shaped ``(d,)`` or
+``(views,d)``. Use the same dtype and device as the trajectory. Both shared and
+per-view transforms preserve gradients to the frames and transform parameters.
+
+.. code-block:: python
+
+   from diffct import transform_trajectory
+
+   shift = torch.zeros(3, device=volume.device, requires_grad=True)
+   current = transform_trajectory(current, translation=shift)
+   shifted = A.project(volume, trajectory=current)
 
 Limits:
 

@@ -105,7 +105,9 @@ loss.backward()                     # x.grad = A^T (A x - y)
 
 **自定义或标定轨迹。** 可直接传入标定得到的逐视角源点、探测器中心和方向轴张量，无需拟合圆轨迹。详见 [REFERENCE](docs/REFERENCE.md#custom-or-calibrated-trajectories)（英文）。
 
-**几何梯度。** 构造 `Projector` 前，将轨迹张量设为 `requires_grad=True`。详见 [REFERENCE](docs/REFERENCE.md#geometry-gradients)（英文）。
+**几何梯度。** 用 `A.project(volume, trajectory=current)` 或 `A.backproject(sinogram, trajectory=current)` 复用同一个投影器。圆轨迹生成器接受可学习的角度张量，`transform_trajectory` 提供可微刚体变换；省略覆盖参数时继续使用构造时的轨迹。详见 [REFERENCE](docs/REFERENCE.md#geometry-gradients)（英文）。
+
+**3D 平行束。** 使用 `circular_trajectory_3d_parallel(...)` 和 `beam="parallel3d"`，通过 PyTorch 后端在 CPU 或 CUDA 上执行匹配的前向投影和反向投影。
 
 **多卡与多节点。** 详见 [REFERENCE](docs/REFERENCE.md#several-gpus-and-nodes)（英文）和 [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md)。
 

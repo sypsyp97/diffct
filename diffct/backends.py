@@ -132,7 +132,7 @@ class ReferenceProjector:
     every voxel. All data operations remain ordinary differentiable PyTorch.
     """
 
-    def __init__(self, owner, *, validate=True):
+    def __init__(self, owner, *, validate=True, synchronize=True):
         self.owner = owner
         self.spacing = voxel_spacing_tuple(owner.voxel_spacing, len(owner.global_volume_shape))
         self.chunk_shape, self.view_chunk_size, self.detector_chunk_shape = self._work_chunks()
@@ -144,7 +144,7 @@ class ReferenceProjector:
         if (owner.detector_surface is not None
                 and not isinstance(owner.detector_surface, ParameterizedSurface)):
             trainable = any(value.requires_grad for value in geometry)
-            if owner.world_size > 1:
+            if synchronize and owner.world_size > 1:
                 device = (torch.device("cuda", torch.cuda.current_device())
                           if dist.get_backend(owner.process_group) == "nccl" else torch.device("cpu"))
                 flag = torch.tensor(int(trainable), device=device)
@@ -259,7 +259,7 @@ class ReferenceProjector:
                 else (axes[0], torch.zeros_like(axes[0])))
         ids = torch.arange(views.start, views.stop, device="cpu")
         surface = owner.detector_surface
-        frame_count = 4 if owner.beam == "cone" else 3
+        frame_count = 4 if owner.beam in ("cone", "parallel3d") else 3
         if isinstance(surface, ParameterizedSurface):
             parameters = tuple(self._transfer(value, torch.device("cpu"), stats)
                                for value in (surface.parameters if geometry is None else geometry[frame_count:]))
@@ -304,7 +304,7 @@ class ReferenceProjector:
         def world_points(offsets, components):
             axis_u = frame(components[2])
             points = frame(components[1]) + offsets[..., 0, None] * axis_u
-            if owner.beam == "cone":
+            if owner.beam in ("cone", "parallel3d"):
                 axis_v = frame(components[3])
                 points = points + offsets[..., 1, None] * axis_v
                 normal_dtype = torch.promote_types(axis_u.dtype, axis_v.dtype)
@@ -315,7 +315,7 @@ class ReferenceProjector:
             return points + offsets[..., 2, None] * normal
 
         points = world_points(local, selected)
-        if (validate and owner.beam != "parallel" and owner.dtype == torch.float32
+        if (validate and owner.beam not in ("parallel", "parallel3d") and owner.dtype == torch.float32
                 and owner.detector_surface is not None):
             # Raw FP64 coordinates preserve the exact admission boundaries.
             sources = frame(selected[0]).expand_as(points)
@@ -342,7 +342,7 @@ class ReferenceProjector:
             # FP32 component arithmetic. Reuse the same sampled offsets.
             selected = tuple(value.to(dtype=owner.dtype) for value in selected)
             points = world_points(local.to(dtype=owner.dtype), selected)
-        if owner.beam == "parallel":
+        if owner.beam in ("parallel", "parallel3d"):
             origins, directions = points, frame(selected[0]).expand_as(points)
         else:
             sources = frame(selected[0]).expand_as(points)
@@ -393,7 +393,7 @@ class ReferenceProjector:
         first, last = (lower - origins) / safe_direction, (upper - origins) / safe_direction
         enter = torch.where(constant, -torch.inf, torch.minimum(first, last)).amax(dim=-1)
         leave = torch.where(constant, torch.inf, torch.maximum(first, last)).amin(dim=-1)
-        if owner.beam != "parallel":
+        if owner.beam not in ("parallel", "parallel3d"):
             enter, leave = enter.clamp_min(0), torch.minimum(leave, ray_length)
         inside = (~constant | ((origins >= lower) & (origins < upper))).all(dim=-1)
         valid = inside & (leave > enter)

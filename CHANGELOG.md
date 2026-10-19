@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-call `trajectory` overrides on `Projector` operations, preserving the constructor default and each call's geometry graph without rebuilding the projector.
+- Angle-tensor inputs for circular trajectory helpers and differentiable `transform_trajectory` rigid transforms.
+- `beam="parallel3d"` and `circular_trajectory_3d_parallel`, using infinite parallel rays and the PyTorch backend on CPU and CUDA, with data and first-order geometry gradients.
 - `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged.
 
 ### Changed

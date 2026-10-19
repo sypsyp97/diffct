@@ -12,8 +12,8 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
 `backend="auto"` selects PyTorch for either strict precision mode, per-axis
-spacing, and hybrid ownership. An incompatible explicit Numba request raises
-an error. `Projector.backend`, `.precision` and `.dtype` describe the selected
+spacing, hybrid ownership and `parallel3d` beams. An incompatible explicit Numba
+request raises an error. `Projector.backend`, `.precision` and `.dtype` describe the selected
 execution. Supplying a float64 input to `precision="fast"` still yields FP32.
 Create trajectories and data in float64 for a double-precision baseline;
 casting an already rounded trajectory cannot recover its original precision.

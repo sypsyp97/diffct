@@ -13,6 +13,81 @@ from typing import Callable, Tuple
 # Trajectory Generation Functions
 # ============================================================================
 
+def transform_trajectory(trajectory, rotation=None, translation=None, *, beam='cone'):
+    """Apply ``p' = R p + t`` to points and ``d' = R d`` to directions.
+
+    Rotation and translation can be shared or have one entry per view. All
+    inputs must share dtype and device. Ordinary tensor operations preserve
+    gradients to the frames and transform parameters.
+    """
+    from .operators import _validate_trajectory
+
+    if beam not in ('parallel', 'fan', 'cone', 'parallel3d'):
+        raise ValueError("beam must be 'parallel', 'fan', 'cone', or 'parallel3d'")
+    _, views = _validate_trajectory(trajectory, beam)
+    first = trajectory[0]
+    dimensions = first.shape[1]
+    for value in (*trajectory, rotation, translation):
+        if value is None:
+            continue
+        if not isinstance(value, torch.Tensor) or not torch.is_floating_point(value):
+            raise TypeError("frames and transforms must be floating-point tensors")
+        if value.dtype != first.dtype or value.device != first.device:
+            raise ValueError("frames and transforms must share dtype and device")
+        if not torch.isfinite(value).all().item():
+            raise ValueError("frames and transforms must be finite")
+    if rotation is not None:
+        if tuple(rotation.shape) not in ((dimensions, dimensions), (views, dimensions, dimensions)):
+            raise ValueError("rotation must have shape (d, d) or (views, d, d)")
+        matrix = rotation.detach().double()
+        identity = torch.eye(dimensions, device=matrix.device, dtype=matrix.dtype).expand_as(matrix)
+        if (not torch.allclose(matrix.transpose(-1, -2) @ matrix, identity, rtol=1e-4, atol=1e-4)
+                or not torch.allclose(torch.linalg.det(matrix), matrix.new_ones(matrix.shape[:-2]),
+                                      rtol=1e-4, atol=1e-4)):
+            raise ValueError("rotation must be orthogonal and proper (determinant +1)")
+    if translation is not None and tuple(translation.shape) not in ((dimensions,), (views, dimensions)):
+        raise ValueError("translation must have shape (d,) or (views, d)")
+    result = []
+    for index, value in enumerate(trajectory):
+        if rotation is not None:
+            value = (rotation @ value.unsqueeze(-1)).squeeze(-1)
+        if translation is not None and (index == 1 or (index == 0 and beam in ('fan', 'cone'))):
+            value = value + translation
+        result.append(value)
+    return tuple(result)
+
+
+def circular_trajectory_3d_parallel(n_views, detector_distance=0.0, start_angle=0.0,
+                                    end_angle=None, device='cuda', dtype=torch.float32):
+    """Lift the 2D parallel orbit into XY, with a vertical detector v axis.
+
+    ``n_views`` accepts a count or a finite floating angle vector in radians.
+    The default orbit spans pi; detector_distance is the legacy transverse
+    offset along detector u. Angle tensors retain their dtype, device and graph.
+    """
+    frames = circular_trajectory_2d_parallel(
+        n_views, detector_distance, start_angle, end_angle, device, dtype,
+    )
+    zero = torch.zeros_like(frames[0][:, :1])
+    lifted = tuple(torch.cat((value, zero), dim=1) for value in frames)
+    vertical = torch.cat((zero, zero, torch.ones_like(zero)), dim=1)
+    return (*lifted, vertical)
+
+
+def _circular_angles(n_views, start_angle, end_angle, device, dtype):
+    if isinstance(n_views, torch.Tensor):
+        if not torch.is_floating_point(n_views):
+            raise TypeError("angles must have floating-point dtype")
+        if n_views.ndim != 1 or n_views.numel() == 0:
+            raise ValueError("angles must be a nonempty one-dimensional tensor")
+        if not torch.isfinite(n_views).all().item():
+            raise ValueError("angles must be finite")
+        return n_views, n_views.numel(), n_views.device, n_views.dtype
+    step = (end_angle - start_angle) / n_views
+    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+    return angles, n_views, device, dtype
+
+
 def _check_source_positions(src_pos):
     """Reject non-finite sources and sources at the isocenter, which have no viewing direction."""
     if not torch.isfinite(src_pos).all():
@@ -32,8 +107,9 @@ def circular_trajectory_3d(n_views, sid, sdd, start_angle=0.0, end_angle=None, d
 
     Parameters
     ----------
-    n_views : int
-        Number of projection views.
+    n_views : int or torch.Tensor
+        Number of projection views, or a nonempty finite floating angle vector
+        in radians. Angle tensors preserve their dtype, device and autograd graph.
     sid : float
         Source-to-Isocenter Distance (SID), in physical units.
     sdd : float
@@ -71,8 +147,7 @@ def circular_trajectory_3d(n_views, sid, sdd, start_angle=0.0, end_angle=None, d
         end_angle = 2 * math.pi
 
     # Generate angles (equivalent to linspace with endpoint=False)
-    step = (end_angle - start_angle) / n_views
-    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+    angles, n_views, device, dtype = _circular_angles(n_views, start_angle, end_angle, device, dtype)
 
     # Preallocate position matrices
     src_pos = torch.zeros((n_views, 3), device=device, dtype=dtype)
@@ -564,8 +639,9 @@ def circular_trajectory_2d_fan(n_views, sid, sdd, start_angle=0.0, end_angle=Non
 
     Parameters
     ----------
-    n_views : int
-        Number of projection views.
+    n_views : int or torch.Tensor
+        Number of projection views, or a nonempty finite floating angle vector
+        in radians. Angle tensors preserve their dtype, device and autograd graph.
     sid : float
         Source-to-Isocenter Distance (SID), in physical units.
     sdd : float
@@ -599,8 +675,7 @@ def circular_trajectory_2d_fan(n_views, sid, sdd, start_angle=0.0, end_angle=Non
         end_angle = 2 * math.pi
 
     # Generate angles
-    step = (end_angle - start_angle) / n_views
-    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+    angles, n_views, device, dtype = _circular_angles(n_views, start_angle, end_angle, device, dtype)
 
     # Preallocate position matrices
     src_pos = torch.zeros((n_views, 2), device=device, dtype=dtype)
@@ -798,8 +873,9 @@ def circular_trajectory_2d_parallel(n_views, detector_distance=0.0, start_angle=
 
     Parameters
     ----------
-    n_views : int
-        Number of projection views.
+    n_views : int or torch.Tensor
+        Number of projection views, or a nonempty finite floating angle vector
+        in radians. Angle tensors preserve their dtype, device and autograd graph.
     detector_distance : float, optional
         Distance from isocenter to detector origin (default: 0.0).
     start_angle : float, optional
@@ -831,8 +907,7 @@ def circular_trajectory_2d_parallel(n_views, detector_distance=0.0, start_angle=
         end_angle = math.pi  # Half rotation for parallel beam
 
     # Generate angles
-    step = (end_angle - start_angle) / n_views
-    angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
+    angles, n_views, device, dtype = _circular_angles(n_views, start_angle, end_angle, device, dtype)
 
     # Preallocate position matrices
     ray_dir = torch.zeros((n_views, 2), device=device, dtype=dtype)

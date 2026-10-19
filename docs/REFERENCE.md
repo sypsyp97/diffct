@@ -4,7 +4,7 @@
 
 | Area | Supported here | Important limit |
 |---|---|---|
-| Acquisition | 2D parallel/fan and 3D cone beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
+| Acquisition | 2D parallel/fan and 3D cone/parallel beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
 | Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives raise an error; surface samples are checked on every call |
 | Execution | Native NVIDIA CUDA or portable PyTorch; explicit FP32/FP64, leading batch dimensions, per-axis spacing, devices and distributed ownership | Native fast mode remains FP32; strict/hybrid/per-axis execution uses PyTorch; see [precision and execution](EXECUTION.md) |
 | Reconstruction | Library CGLS/SIRT/TV; streamed differentiable `fbp`/`fdk`, numerical store outputs, approximate `helical_fdk` and composable helpers | Analytical geometry is fixed and flat; helical/low-level helpers retain their original CUDA contract; `backproject()` is not an inverse |
@@ -133,7 +133,7 @@ points away from the source, so the example uses negative normal offsets and
 an initial radius equal to the source-to-detector distance.
 `torch.stack((u, v, torch.zeros_like(u)), -1)` gives a flat surface.
 
-For fan and parallel beams the inputs have shape `(U,)`, `v` is zero, and the
+For 2D fan and parallel beams the inputs have shape `(U,)`, `v` is zero, and the
 return shape is `(U, 3)` or `(views, U, 3)`. The middle offset must be zero.
 The local normal is `(det_u_y, -det_u_x)`. Fan rays connect each source to its
 pixel; parallel rays pass through each pixel along the view's `ray_dir`.
@@ -266,8 +266,11 @@ See [the CPU-backed CGLS example](../examples/chunked_reconstruction.py), the
 
 Trajectory tensors with `requires_grad=True` get gradients for the source,
 detector centre and detector axes. The gradient is the exact derivative of the
-cell-constant model. Set `requires_grad=True` before constructing `Projector`;
-otherwise it snapshots the geometry. Rebuild it after changing fixed geometry.
+cell-constant model. Set `requires_grad=True` before constructing `Projector`
+to retain its default trajectory tensors; otherwise it snapshots them.
+Alternatively, pass a complete `trajectory=...` tuple on each call. The override
+keeps the configured beam and view count, leaves the default intact and retains
+that calculation's values and graph for backward.
 
 ```python
 source, det_center, det_u, det_v = (t.clone() for t in trajectory)
@@ -275,6 +278,37 @@ source.requires_grad_()
 A = Projector((source, det_center, det_u, det_v), (128, 128, 128), (384, 256), detector_spacing=0.8)
 (A.project(volume) - sinogram).square().sum().backward()   # source.grad has shape (360, 3)
 ```
+
+For parameters that produce nonleaf trajectory tensors, build the projector once
+and rebuild only those tensors in each optimization step:
+
+```python
+from diffct import circular_trajectory_3d
+
+angles = torch.arange(360, device=volume.device, dtype=torch.float64) * (2 * torch.pi / 360)
+angles.requires_grad_()
+optimizer = torch.optim.Adam([angles], lr=1e-3)
+for _ in range(10):
+    optimizer.zero_grad()
+    current = circular_trajectory_3d(angles, sid=320.0, sdd=512.0)
+    (A.project(volume, trajectory=current) - sinogram).square().sum().backward()
+    optimizer.step()
+```
+
+`backproject`, `__call__`, `project_into` and `backproject_into` also accept the
+keyword-only override. Omission or `None` uses the constructor trajectory.
+Store methods retain their unbatched numerical, no-autograd contract.
+Distributed ranks must agree on override presence and use one coherent global
+trajectory.
+
+Circular 2D parallel/fan and 3D cone/parallel helpers accept nonempty floating
+angle tensors in radians, preserving their dtype, device and gradients.
+Angles may be nonuniform or unsorted. Count-based calls retain their defaults.
+`transform_trajectory(trajectory, rotation=None, translation=None, beam="cone")`
+applies a differentiable rigid transform about the world origin: `R @ p + t`
+for points and `R @ d` for directions. Rotation is a proper orthogonal matrix
+shaped `(d,d)` or `(views,d,d)`; translation is `(d,)` or `(views,d)`, using
+the frames' dtype and device.
 
 Second derivatives with respect to the geometry raise an error. Edge cases are
 listed in [Geometry and units](#geometry-and-units).
@@ -327,25 +361,34 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
 | `parallel` | `(ray_dir, det_origin, det_u)`, each `(views, 2)` | `(H, W)` | `(views, U)` |
 | `fan` | `(src_pos, det_center, det_u)`, each `(views, 2)` | `(H, W)` | `(views, U)` |
 | `cone` | `(src_pos, det_center, det_u, det_v)`, each `(views, 3)` | `(D, H, W)` | `(views, U, V)` |
+| `parallel3d` | `(ray_dir, det_center, det_u, det_v)`, each `(views, 3)` | `(D, H, W)` | `(views, U, V)` |
 
 - Use the helpers in `diffct.geometry` (`circular_*`, `spiral_*`,
   `sinusoidal_*`, `saddle_*`, `random_*`, `custom_*`), or pass calibrated
   tensors.
 - Geometry rows use world `(x, y)` or `(x, y, z)` coordinates. Volume axes
   run in `(y, x)` or `(z, y, x)` order. Leading batch/channel dimensions are preserved.
-- Direction vectors have unit length. `ray_dir` is orthogonal to `det_u`, and
-  `det_u` is orthogonal to `det_v`. Detector pitch is a separate argument:
-  a scalar in 2D, a scalar or `(du, dv)` pair for cone beams.
-  `detector_shape=(U, V)` and cone sinograms always follow `(views, U, V)`.
+- Direction vectors have unit length. In 2D parallel beams, `ray_dir` is
+  orthogonal to `det_u`. In 3D beams, `det_u` is orthogonal to `det_v`.
+  `parallel3d` allows oblique detectors, provided the ray direction is not
+  tangent to the detector plane (numerical frame rank is checked in float64).
+  Detector pitch is a separate argument:
+  a scalar in 2D, a scalar or `(du, dv)` pair in 3D.
+  `detector_shape=(U, V)` and 3D sinograms always follow `(views, U, V)`.
+- `parallel3d` traces infinite lines through detector pixels on the PyTorch
+  backend; `backend="auto"` selects it, and explicit `backend="numba"` rejects.
+  `circular_trajectory_3d_parallel` lifts the 2D parallel orbit into XY with
+  `det_v=(0,0,1)` and the same default `[0, pi)` range. In both parallel
+  generators, `detector_distance` shifts the centre along `det_u`.
 - The volume is centred on the origin. Voxel `i` of an axis with `N` voxels has
   its centre at `(i + 0.5 - N / 2) * axis_spacing`. Voxel spacing is a scalar
   or a tuple `(dy, dx)` / `(dz, dy, dx)` in tensor axis order.
 - The default flat detector array is centred. Pixel `k` of `N_det` pixels lies at
   `(k - (N_det - 1) / 2) * pitch` from `det_center` along `det_u`
-  (`det_origin` for parallel beams), the same convention as `main`. For cone
+  (`det_origin` for 2D parallel beams), the same convention as `main`. For 3D
   beams, add the analogous offset along `det_v` using its own pitch.
 - Projections are line integrals in the length unit of the geometry. For flat
-  detectors, `Projector` rejects views where the source equals the detector
+  fan/cone detectors, `Projector` rejects views where the source equals the detector
   centre, or the detector is edge-on to the source. Surface detectors check the
   actual pixel positions instead.
 - The native kernels work in float32. In native fan and cone beams, the source or the
@@ -363,7 +406,7 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   to a volume axis, a source on a voxel face plane, and equal detector pitches.
   For finite-difference checks, rotate the trajectory slightly, for example with
   `start_angle=0.1`.
-- Trajectory frame checks run at construction; surface positions are also
+- Trajectory frame checks run at construction and for each override; surface positions are also
   checked on every call. Optimize angles and offsets, not raw axis vectors, so
   the geometry stays valid.
 

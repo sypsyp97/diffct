@@ -107,7 +107,9 @@ loss.backward()                     # x.grad = A^T (A x - y)
 
 **Custom or calibrated trajectories.** Pass calibrated tensors directly instead of a generator; no circular fit is needed. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#custom-or-calibrated-trajectories).
 
-**Geometry gradients.** Set `requires_grad=True` on trajectory tensors before you build `Projector`. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#geometry-gradients).
+**Geometry gradients.** Reuse one projector with `A.project(volume, trajectory=current)` or `A.backproject(sinogram, trajectory=current)`. Circular helpers accept learnable angle tensors, and `transform_trajectory` applies differentiable rigid transforms. Omitting the override keeps the constructor trajectory. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#geometry-gradients).
+
+**3D parallel beams.** Use `circular_trajectory_3d_parallel(...)` and `beam="parallel3d"`. The PyTorch backend provides matched projection and backprojection on CPU and CUDA.
 
 **Several GPUs and nodes.** See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#several-gpus-and-nodes) and [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md).
 
