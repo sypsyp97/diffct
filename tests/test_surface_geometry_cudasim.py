@@ -85,11 +85,13 @@ class _KernelEntries:
 
     def __getitem__(self, configuration):
         launch = self.kernel[configuration]
+        grid = configuration[0]
+        rows = grid[1] if isinstance(grid, tuple) and len(grid) > 1 else 1
 
         def run(*args):
             frames, offsets, source, points, view, start, count, capacity = args[:8]
             self.records.append(dict(frames=frames.copy(), source=source, points=points,
-                                     view=view, start=start, count=count, capacity=capacity))
+                                     view=view, rows=rows, start=start, count=count, capacity=capacity))
             return launch(*args)
 
         return run
@@ -177,6 +179,8 @@ def test_fused_helper_runs_real_kernel_for_global_batches_into_reused_bounded_ta
     first_pixels = (slice(2, 7), slice(3, 8)) if beam == "cone" else (slice(2, 27),)
     tail_pixels = (slice(8, 11), slice(8, 13)) if beam == "cone" else (slice(26, 29),)
     batches = [(slice(2, 4), first_pixels), (slice(6, 7), tail_pixels)]
+    shared_offsets = kind == "offsets" and not per_view
+    packet_size = (len(case.trajectory) + (3 if rank == 3 else 0)) * rank
     centre = (.1875, -.3125, .4375)[:rank]
     source_buffer, point_buffer = torch.empty(2 * rank), torch.empty(2 * 25 * rank)
     original_storage = (source_buffer.data_ptr(), point_buffer.data_ptr())
@@ -213,26 +217,54 @@ def test_fused_helper_runs_real_kernel_for_global_batches_into_reused_bounded_ta
             assert torch.all(point_buffer[math.prod(shape):] == 77.)
             assert (source_buffer.data_ptr(), point_buffer.data_ptr()) == original_storage
             observed = entries.records[before:]
-            assert observed and {record["view"] for record in observed} == set(range(count))
+            assert observed
+            pixel_count = math.prod(shape[1:-1])
+            coverage = np.zeros((count, pixel_count), dtype=np.int64)
+            if shared_offsets:
+                assert len(observed) == math.ceil(count / 65535)
+                assert sum(record["rows"] for record in observed) == count
             for record in observed:
                 assert np.shares_memory(record["source"], source_buffer.numpy())
                 assert np.shares_memory(record["points"], point_buffer.numpy())
+                assert 0 <= record["view"] < record["view"] + record["rows"] <= count
+                assert 1 <= record["rows"] <= 65535
                 assert record["count"] <= record["capacity"]
-                assert record["start"] + record["count"] <= math.prod(shape[1:-1])
-                frame_values = [value[views.start + record["view"]].numpy() for value in case.trajectory]
-                original_prefix = np.concatenate([value.astype(np.float64) for value in frame_values])
-                np.testing.assert_array_equal(record["frames"][:original_prefix.size], original_prefix)
-                assert record["frames"].nbytes <= 512, "packed frame arena exceeded one native allocation unit"
-                if rank == 3:
-                    normal_dtype = np.result_type(np.float32, frame_values[2].dtype, frame_values[3].dtype)
-                    if kind == "sampled":
-                        normal_dtype = np.result_type(normal_dtype, *(value.dtype for value in frame_values), local_offsets.dtype)
-                    normal = np.cross(frame_values[2].astype(normal_dtype), frame_values[3].astype(normal_dtype))
-                    np.testing.assert_array_equal(record["frames"][12:15], normal.astype(np.float64))
-    assert len(pipe.allocations) == 2, "packed workspaces were allocated again for the tail batch"
+                assert 0 <= record["start"] < record["start"] + record["count"] <= pixel_count
+                if shared_offsets:
+                    assert record["start"] == 0 and record["count"] == pixel_count
+                else:
+                    assert record["rows"] == 1
+                coverage[record["view"]:record["view"] + record["rows"],
+                         record["start"]:record["start"] + record["count"]] += 1
+                packets = record["frames"].reshape(record["rows"], packet_size)
+                assert record["frames"].nbytes <= record["rows"] * packet_size * 8
+                for row, packet in enumerate(packets):
+                    frame_values = [value[views.start + record["view"] + row].numpy()
+                                    for value in case.trajectory]
+                    original_prefix = np.concatenate([value.astype(np.float64) for value in frame_values])
+                    np.testing.assert_array_equal(packet[:original_prefix.size], original_prefix)
+                    if rank == 3:
+                        normal_dtype = np.result_type(np.float32, frame_values[2].dtype, frame_values[3].dtype)
+                        if kind == "sampled":
+                            normal_dtype = np.result_type(normal_dtype, *(value.dtype for value in frame_values), local_offsets.dtype)
+                        normal = np.cross(frame_values[2].astype(normal_dtype), frame_values[3].astype(normal_dtype))
+                        np.testing.assert_array_equal(packet[12:15], normal.astype(np.float64))
+            np.testing.assert_array_equal(coverage, np.ones_like(coverage))
+    assert len(pipe.allocations) == (3 if shared_offsets else 2), \
+        "packed workspaces were allocated again for the tail batch"
     workspace_bytes = sum(math.ceil(value.numel() * value.element_size() / 512) * 512 for value in pipe.allocations)
     target_bytes = sum(math.ceil(value.numel() * value.element_size() / 512) * 512 for value in (source_buffer, point_buffer))
-    assert workspace_bytes <= target_bytes, "packed staging exceeded the native geometry buffer bytes"
+    maximum_bytes = target_bytes
+    if shared_offsets:
+        maximum_views = max(views.stop - views.start for views, _ in batches)
+        maximum_pixels = max(math.prod(part.stop - part.start for part in pixels) for _, pixels in batches)
+        assert groups["_surface_frames"].dtype == torch.float64
+        assert groups["_surface_frames"].numel() == maximum_views * packet_size
+        # One legacy packet, one shared offset tile plus status, and one packet per view.
+        maximum_bytes = sum(math.ceil(size / 512) * 512 for size in (
+            packet_size * 8, (rank * maximum_pixels + 1) * 8, maximum_views * packet_size * 8,
+        ))
+    assert workspace_bytes <= maximum_bytes, "packed staging exceeded the geometry workspace budget"
     assert any(record["count"] < record["capacity"] for record in entries.records)
     assert len(samples) == (2 if kind == "sampled" else 0), "surface sampler ran more than once per native batch"
     if kind == "sampled":
@@ -244,6 +276,53 @@ def test_fused_helper_runs_real_kernel_for_global_batches_into_reused_bounded_ta
             np.testing.assert_array_equal(sample[0], expected_u)
             np.testing.assert_array_equal(sample[1], expected_v)
     assert bool(pipe.waits) == (offset_origin == "cuda-metadata")
+
+
+@pytest.mark.parametrize("beam", ["cone", "fan", "parallel"])
+@pytest.mark.parametrize("first_count", [1, 3], ids=["grow-frames", "reuse-frames"])
+def test_fused_helper_restages_caller_supplied_shared_offsets_for_geometry_vjp(beam, first_count):
+    case = _case(beam, views=5)
+    projector = _projector(case, backend="torch")
+    rank = len(case.shape)
+    pixels = (slice(1, 3), slice(2, 5)) if rank == 3 else (slice(1, 5),)
+    pixel_shape = tuple(part.stop - part.start for part in pixels)
+    count = 3
+    full_offsets = torch.zeros((*case.detector, 3), dtype=torch.float64)
+    geometry, spec = (*case.trajectory, full_offsets), _GeometrySpec("offsets")
+    first_offsets = torch.zeros((*pixel_shape, 3), dtype=torch.float64, requires_grad=True)
+    second_offsets = torch.tensor([.375, -.25, .625], dtype=torch.float64).expand(
+        *pixel_shape, 3).clone().requires_grad_()
+    targets = (torch.empty((count, rank)), torch.empty((count, *pixel_shape, rank)))
+    centre = (.1875, -.3125, .4375)[:rank]
+    groups, pipe = {}, _CpuGeometryPipe()
+    entries = _KernelEntries(importlib.import_module("diffct.kernels.surface_geometry").compose_surface)
+    outputs = []
+    with _cpu_geometry_transport(entries), \
+            mock.patch.object(operators, "_sample_offsets", side_effect=AssertionError("caller supplied offsets")):
+        for actual_count, offsets in ((first_count, first_offsets), (count, second_offsets)):
+            views = slice(1, 1 + actual_count)
+            selected_targets = tuple(value[:actual_count] for value in targets)
+            projector._surface_geometry_into(geometry, spec, views, pixels, centre,
+                                             selected_targets, pipe, groups, offsets=offsets)
+            frames = tuple(value[views].numpy().copy() for value in case.trajectory)
+            local_offsets = np.broadcast_to(offsets.detach().numpy(), (actual_count, *pixel_shape, 3))
+            expected = (_world(frames, local_offsets, beam) - np.asarray(centre)).astype(np.float32)
+            expected_source = frames[0] if beam == "parallel" else frames[0] - np.asarray(centre)
+            np.testing.assert_array_equal(selected_targets[0].numpy(), expected_source.astype(np.float32))
+            np.testing.assert_array_equal(selected_targets[1].numpy(), expected)
+            outputs.append(selected_targets[1].clone())
+            packet_size = (len(case.trajectory) + (3 if rank == 3 else 0)) * rank
+            assert groups["_surface_frames"].dtype == torch.float64
+            assert groups["_surface_frames"].numel() == actual_count * packet_size
+            if len(outputs) == 1:
+                workspace = groups["_surface_workspace"]
+                frame_buffer = groups["_surface_frames"]
+            else:
+                assert groups["_surface_workspace"] is workspace
+                assert (groups["_surface_frames"] is frame_buffer) == (first_count == count)
+    assert len(entries.records) == 2
+    assert [record["rows"] for record in entries.records] == [first_count, count]
+    assert not torch.equal(outputs[0], outputs[1][:first_count])
 
 
 @pytest.mark.parametrize("failure,message", [

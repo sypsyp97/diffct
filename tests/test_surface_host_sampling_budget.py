@@ -142,6 +142,7 @@ def large_runs():
                 # Keep results on CPU so earlier calls do not consume the next
                 # call's device budget. Copying is outside the measured region.
                 trace.output = output.detach().cpu()
+                trace.execution_stats = operator.last_execution_stats
                 runs[name, operation, views] = trace
                 del output
     return runs
@@ -160,10 +161,26 @@ def test_compose_surface_launches_stay_within_plan_budget(large_runs, plan, oper
                 assert all(size <= limit for size, limit in zip(
                     actual.detector_chunk_shape, STREAM_HINTS["detector_chunk_shape"],
                 ))
-        # Zero is valid when a batched GPU tensor path composes the geometry.
-        # Explicit detector tiles may each compose once per view. Detector rows
-        # and staging segments must not multiply launches under either plan.
-        maximum = views * (STREAM_DETECTOR_TILES if plan == "streamed" else 1)
+        # Geometry uses each volume tile's centre, so every planned ray job may
+        # compose once: view batches x detector tiles x volume tiles.
+        stats = trace.execution_stats
+        if stats is None:
+            assert all(actual is None for actual in trace.plans)
+            maximum = 0  # Full batched tensor geometry needs no compose launch.
+        else:
+            batches = math.ceil(views / stats["view_chunk_size"])
+            detector_tiles = math.prod(math.ceil(size / chunk) for size, chunk in zip(
+                DETECTOR, stats["detector_chunk_shape"],
+            ))
+            volume_tiles = math.prod(math.ceil(size / chunk) for size, chunk in zip(
+                VOLUME, stats["chunk_shape"],
+            ))
+            maximum = batches * detector_tiles * volume_tiles
+            # Schedule selection runs one warmup job, then a two-job prefix
+            # for spatial/views or a three-job prefix for window. Each job
+            # gets one launch, independent of its views, rows, or segments.
+            maximum += sum(1 + {"spatial": 2, "views": 2, "window": 3}[pilot["schedule"]]
+                           for pilot in stats["pilot"])
         assert trace.launches.calls <= maximum, (
             f"{plan} {operation}: {trace.launches.calls} compose_surface launches "
             f"for {views} views and detector {DETECTOR}; maximum is {maximum}"
