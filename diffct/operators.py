@@ -836,8 +836,12 @@ class Projector:
             buffers = (_allocation_bytes(2 * (frames + (3 if rank == 3 else 0)) * rank),
                        _allocation_bytes(2 * (columns * capacity + 1)))
             if shared:
-                # Device copy of the shared offset tile before column packing.
-                buffers += (_allocation_bytes(2 * 3 * capacity),)
+                # Device copy of the shared offset tile before column packing,
+                # the frame packets of every view, and one bound for the
+                # transient staged frames plus cross-product operands and result.
+                packet = (frames + (3 if rank == 3 else 0)) * rank
+                buffers += (_allocation_bytes(2 * 3 * capacity), _allocation_bytes(2 * views * packet),
+                            _allocation_bytes(2 * views * (frames + 3) * rank))
             if self._geometry_trainable:
                 # Replay one view and a bounded detector row at a time.
                 replay = rank * min(capacity, pixels[-1])
