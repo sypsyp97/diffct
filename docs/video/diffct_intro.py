@@ -1,4 +1,4 @@
-"""diffct 2.3.0 film: tiled execution, rank ownership and measured walnut data.
+"""diffct film: tiled execution, rank ownership and measured walnut data.
 
 See README.md for input provenance and render commands. The 3D walnut is an
 isosurface of a real FDK reconstruction. Scan rigs and pose errors are schematics.
@@ -190,9 +190,7 @@ class DiffCTIntro(Scene):
         walnut = self.walnut(3.3, [0, .05, 0], turn)
         self.show(walnut, duration=1)
         name = T('diffct', 72).move_to([0,2.65,0])
-        version = T('2.3.0', 24, GREEN).next_to(name, RIGHT, buff=.22).align_to(name, UP)
-        brand = VGroup(name, version)
-        self.show(brand)
+        self.show(name)
         self.show(T('Differentiable CT, built on PyTorch.', 28).move_to([0, 1.78, 0]))
         details = VGroup()
         for i,title in enumerate(CHAPTERS):
