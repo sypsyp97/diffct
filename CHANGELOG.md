@@ -7,18 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-20
+
 ### Added
 
-- Per-call `trajectory` overrides on `Projector` operations, preserving the constructor default and each call's geometry graph without rebuilding the projector.
-- Angle-tensor inputs for circular trajectory helpers and differentiable `transform_trajectory` rigid transforms.
-- `beam="parallel3d"` and `circular_trajectory_3d_parallel`, using infinite parallel rays and the PyTorch backend on CPU and CUDA, with data and first-order geometry gradients.
-- `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged.
+- Per-call `trajectory` overrides on `Projector` operations, preserving the constructor default and each call's geometry graph without rebuilding the projector (#29).
+- Angle-tensor inputs for circular trajectory helpers and differentiable `transform_trajectory` rigid transforms (#29).
+- `beam="parallel3d"` and `circular_trajectory_3d_parallel`, using infinite parallel rays and the PyTorch backend on CPU and CUDA, with data and first-order geometry gradients (#29).
+- `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged (#27).
 
 ### Changed
 
-- The native cone backprojection kernel steps through the z crossings of each xy cell in an inner loop and groups adjacent detector rows in a warp, so the atomic additions of a warp hit neighbouring voxels of one column. Each ray's segments and arithmetic are unchanged; backprojection takes about 1.7–1.8x less time on large cone and helical problems.
+- The native cone backprojection kernel steps through the z crossings of each xy cell in an inner loop and groups adjacent detector rows in a warp, so the atomic additions of a warp hit neighbouring voxels of one column. Each ray's segments and arithmetic are unchanged; backprojection takes about 1.7–1.8x less time on large cone and helical problems (#35).
 - Projector execution planning takes no allocator snapshot when a full launch clearly fits: lower bounds of the memory limits come from `mem_get_info` and one statistics query, and the exact planner runs only when they do not suffice. Plans are unchanged. Host time per call for small problems drops by about 1 ms. Distributed operators keep the exact planner (#26).
-- Distributed calls and solvers check rank agreement with one fixed-size collective per request instead of Python object exchanges, skip the callback protocol when no callback is given, and accumulate solver norms on the device with one host read per norm. Results are unchanged.
+- Distributed calls and solvers check rank agreement with one fixed-size collective per request instead of Python object exchanges, skip the callback protocol when no callback is given, and accumulate solver norms on the device with one host read per norm. Results are unchanged (#34).
 - The introduction video explains 2.3.0 tiled execution and view, space and hybrid partitions with a computed walnut example; the README GIF is 12 MB instead of 22 MB (#25).
 
 ### Fixed
@@ -26,8 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detector surfaces expand world points on each compute device after view sharding, preserving native composition precision. Memory planning uses local view counts and composition dtypes. Streamed execution accepts CPU or CUDA offsets from both surface interfaces (#30).
 - Surface snapshots preserve gradient connections on CPU. Streamed composition and geometry backward use bounded fragments. Distributed calls check callback layouts and propagate validation errors before numerical work (#30).
 - Native surface admission sizes validation batches from available memory and staging limits, replacing fixed one-view batches (#32).
-- Rigid trajectory transforms accept valid surface detector frames whose reference center coincides with the source or whose reference plane is edge-on.
-- Call-time trajectory validation checks flat detectors by corners and coordinate bounds, with exact pixel checks for ambiguous views. Frames stage once per validation device. Native surface validation uses bounded batches on each compute device after view sharding.
+- Rigid trajectory transforms accept valid surface detector frames whose reference center coincides with the source or whose reference plane is edge-on (#29).
+- Call-time trajectory validation checks flat detectors by corners and coordinate bounds, with exact pixel checks for ambiguous views. Frames stage once per validation device. Native surface validation uses bounded batches on each compute device after view sharding (#29).
 
 ## [2.3.0] - 2026-10-14
 
