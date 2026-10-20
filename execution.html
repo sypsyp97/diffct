@@ -311,22 +311,25 @@ Numba CUDA or require a CUDA runtime; native execution initializes them on
 first use. The CUDA compiler extras are needed for native Numba execution.
 ROCm uses PyTorch’s <code class="docutils literal notranslate"><span class="pre">&quot;cuda&quot;</span></code> device namespace, as described in the
 <a class="reference external" href="https://docs.pytorch.org/docs/stable/notes/hip.html">PyTorch HIP notes</a>.
-Local regression evidence covers CPU, one NVIDIA GPU and four-process Gloo.
-ROCm hardware, several physical GPUs, NCCL and cross-node execution need the
-corresponding deployment checks. Existing published native performance numbers
-do not measure the portable precision backend or hybrid execution.</p>
+Hardware support depends on the installed PyTorch build and process-group
+backend. Existing published native performance numbers do not measure the
+portable precision backend or hybrid execution.</p>
 <section id="call-time-trajectory-validation">
 <h2>Call-time trajectory validation<a class="headerlink" href="#call-time-trajectory-validation" title="Link to this heading">¶</a></h2>
 <p>An ordinary flat detector’s trajectory override is checked at its corners,
 with work proportional to the view count. If these bounds cannot exclude a
 source/pixel coincidence in the execution dtype, the affected views fall back
-to bounded pixel checks. Curved detectors still check sampled pixels; frames
-and surface parameters are staged on CPU once per admission.</p>
+to bounded pixel checks. Curved detectors still check sampled pixels. Native
+admission snapshots surface frames and parameters on CPU, then validates owned
+batches on compute devices. Validation batches shrink to fit memory and staging
+limits; they are separate from execution chunks. Portable admission stages
+frames once per validation device.</p>
 <p>Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/benchmark_trajectory_admission.py</span> <span class="pre">--warmup</span> <span class="pre">1</span> <span class="pre">--samples</span> <span class="pre">3</span></code>
 to measure this validation with CPU and CUDA trajectories. The script bypasses
 numerical projection and reports admission time, plus a separate untimed pass
 counting validation rays and tensor transfers. These are not projection
-throughput measurements.</p>
+throughput measurements. For CPU-only admission measurements, add
+<code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">torch</span> <span class="pre">--frame-device</span> <span class="pre">cpu</span></code>.</p>
 </section>
 <section id="batch-dimensions-and-axis-spacing">
 <h2>Batch dimensions and axis spacing<a class="headerlink" href="#batch-dimensions-and-axis-spacing" title="Link to this heading">¶</a></h2>
@@ -393,8 +396,10 @@ execution contracts.</p>
 <h2>Hybrid ownership and losses<a class="headerlink" href="#hybrid-ownership-and-losses" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">partition=&quot;hybrid&quot;,</span> <span class="pre">partition_grid=(view_ranks,</span> <span class="pre">space_ranks)</span></code> uses
 <code class="docutils literal notranslate"><span class="pre">rank</span> <span class="pre">=</span> <span class="pre">view_rank</span> <span class="pre">*</span> <span class="pre">space_ranks</span> <span class="pre">+</span> <span class="pre">space_rank</span></code>; the grid product must equal the
-process-group size. Each space rank owns a balanced first-axis slab and each
-view rank owns a balanced view shard. Both retain global physical coordinates.
+process-group size. With <code class="docutils literal notranslate"><span class="pre">partition_grid=None</span></code>, the operator chooses a near-square
+factorization, with at least as many view ranks as space ranks.
+Each space rank owns a balanced first-axis slab; each view rank owns a balanced
+view shard. Both retain global physical coordinates.
 Forward ray contributions sum across space ranks; adjoint/analytical volume
 tiles sum across view ranks. Empty and uneven shards participate normally.
 Distributed PyTorch-backend projectors require the same <code class="docutils literal notranslate"><span class="pre">volume_chunk_shape</span></code>,

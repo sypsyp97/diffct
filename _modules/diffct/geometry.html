@@ -242,10 +242,10 @@
         </div>
         <article role="main" id="furo-main-content">
           <h1>Source code for diffct.geometry</h1><div class="highlight"><pre>
-<span></span><span class="sd">"""Geometry and trajectory generation for cone beam CT.</span>
+<span></span><span class="sd">"""Geometry and trajectory generation for 2D and 3D CT.</span>
 
 <span class="sd">This module provides functions for generating circular, spiral, sinusoidal, saddle,</span>
-<span class="sd">and custom trajectories for cone beam CT scanning geometries.</span>
+<span class="sd">and custom trajectories for parallel, fan and cone beams, plus rigid transforms.</span>
 <span class="sd">"""</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
@@ -728,8 +728,8 @@
                         <span class="n">start_angle</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">'cuda'</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Generate saddle-shaped trajectory geometry for cone-beam CT.</span>
 
-<span class="sd">    Creates a saddle-shaped trajectory where the source moves in both z and radial</span>
-<span class="sd">    directions following a saddle surface (hyperbolic paraboloid).</span>
+<span class="sd">    The source height varies with ``cos(2 * angle)`` and its radius varies</span>
+<span class="sd">    with ``sin(2 * angle)``.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1157,7 +1157,7 @@
 <span class="sd">        Number of projection views, or a nonempty finite floating angle vector</span>
 <span class="sd">        in radians. Angle tensors preserve their dtype, device and autograd graph.</span>
 <span class="sd">    detector_distance : float, optional</span>
-<span class="sd">        Distance from isocenter to detector origin (default: 0.0).</span>
+<span class="sd">        Transverse detector-origin offset along ``det_u`` (default: 0.0).</span>
 <span class="sd">    start_angle : float, optional</span>
 <span class="sd">        Starting angle in radians (default: 0.0).</span>
 <span class="sd">    end_angle : float, optional</span>

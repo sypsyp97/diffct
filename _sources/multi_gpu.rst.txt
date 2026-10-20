@@ -1,7 +1,7 @@
 Multiple GPUs and Nodes
 =======================
 
-By default, ``Projector`` splits views across GPUs and automatically streams spatial tiles
+By default, ``Projector`` splits views across selected GPUs and automatically streams native spatial tiles
 when arrays are CPU-backed or the estimated CUDA working set does not fit.
 For volumes larger than one GPU, use CPU arrays or numerical block stores;
 see :doc:`chunking`.
@@ -11,7 +11,11 @@ There are two modes:
 - **One process per GPU:** launch with ``torchrun`` and pass ``distributed=True``.
   Default ``partition="views"`` holds a local view shard and a replicated volume.
   ``partition="space"`` holds an owned volume slab and replicated ray batches.
+  ``partition="hybrid"`` combines view and space ownership on the PyTorch backend.
   GPU working buffers hold bounded tiles, pixels and view batches.
+
+The CUDA examples below use NCCL. Portable library calls can use CPU with Gloo
+or supported PyTorch accelerators; see :doc:`execution`.
 
 Spatial ownership
 -----------------
@@ -26,8 +30,9 @@ tile counts. Shared parameter gradients are reduced after the local pixel VJP.
 
 In space mode, divide identical replicated projection losses by ``world_size``
 before backward; sum losses on local backprojection slabs. CGLS SUMs owned
-volume norms but counts replicated ray norms once. Volume regularizers with
-neighbors across slabs require application-level halo exchange. The existing
+volume norms but counts replicated ray norms once. The library's
+``total_variation`` exchanges neighboring faces; custom boundary-coupled
+regularizers need their own halo exchange. The existing
 TV/SIRT examples continue to use views mode. The complete ownership and loss
 table is in ``docs/DISTRIBUTED.md`` in the repository.
 
@@ -36,7 +41,11 @@ to avoid extra host copies. For true spatial ownership use one process per
 GPU, with streaming inside an owned slab when needed. Disk-backed CGLS and
 rank-local checkpoints are available in ``examples/disk_reconstruction.py``;
 see :doc:`chunking`. The solver capacity includes ``x,s,p`` together plus ray,
-geometry and pipeline state. No view-by-space process grid is introduced.
+geometry and pipeline state. Hybrid mode uses
+``partition_grid=(view_ranks, space_ranks)`` and parent-group rank
+``view_rank * space_ranks + space_rank``. Divide projection losses by
+``space_world_size`` and backprojection losses by ``view_world_size``.
+The disk example accepts only views and space partitions.
 
 One process, several GPUs
 -------------------------

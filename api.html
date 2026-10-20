@@ -273,7 +273,8 @@ rays can be oblique but must not be tangent to the detector plane. If no
 trajectory
 tensor requires gradients, the projector clones the geometry. Otherwise it
 keeps references, reads the current values at every call, and returns
-gradients for those tensors; the checks above run only at construction.
+gradients for those tensors. Live default frames are checked at construction;
+overrides are checked on each call.
 <code class="docutils literal notranslate"><span class="pre">project</span></code>, <code class="docutils literal notranslate"><span class="pre">backproject</span></code>, <code class="docutils literal notranslate"><span class="pre">__call__</span></code> and their <code class="docutils literal notranslate"><span class="pre">*_into</span></code> variants
 accept a keyword-only <code class="docutils literal notranslate"><span class="pre">trajectory</span></code> replacing all frames for that call.
 It must retain the constructor’s beam and view count; it is validated and
@@ -343,8 +344,8 @@ chunk hints take priority. Reports and selection caches retain metadata.</p>
 flat detector return <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> tensors with the kernels’ <code class="docutils literal notranslate"><span class="pre">(W,</span> <span class="pre">H,</span> <span class="pre">D)</span></code>-contiguous strides instead
 of contiguous copies; native projections accept such tensors without a copy. An iterative solver that
 keeps its volumes in this layout then avoids two whole-volume copies per normal-operator application
-on one device. Values are identical. Results from several local devices, curved detectors, batched
-inputs, streamed execution and the PyTorch backend still involve copies.</p>
+on one device. The layout does not change the operator. Results from several local devices,
+curved detectors, batched inputs, streamed execution and the PyTorch backend still involve copies.</p>
 <p>Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
 bounded by the chosen tile and view batch. Caller-owned CUDA data/results
 and CUDA work inside a supplied callback are outside this memory bound.
@@ -482,8 +483,8 @@ prefer <code class="docutils literal notranslate"><span class="pre">Projector</s
 method with a cell-constant image basis for parallel beam CT geometry. The forward pass computes
 the sinogram from a 2D image using parallel beam geometry. The backward pass
 computes gradients using the adjoint backprojection operation. Requires
-CUDA-capable hardware and a properly configured CUDA environment; all input
-tensors must reside on the same CUDA device.</p>
+NVIDIA CUDA hardware. Geometry tensors are moved to the image’s device;
+execution uses float32.</p>
 <p class="rubric">Examples</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParallelProjectorFunction</span><span class="p">,</span> <span class="n">circular_trajectory_2d_parallel</span>
@@ -508,7 +509,7 @@ tensors must reside on the same CUDA device.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>image</strong> (<em>torch.Tensor</em>) – 2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>image</strong> (<em>torch.Tensor</em>) – Floating-point CUDA image of shape (H, W), converted to float32 for execution.</p></li>
 <li><p><strong>ray_dir</strong> (<em>torch.Tensor</em>) – Ray direction unit vectors for each view, shape (n_views, 2).</p></li>
 <li><p><strong>det_origin</strong> (<em>torch.Tensor</em>) – Detector origin positions for each view, shape (n_views, 2), in physical units.</p></li>
 <li><p><strong>det_u_vec</strong> (<em>torch.Tensor</em>) – Detector u-direction unit vectors for each view, shape (n_views, 2).</p></li>
@@ -526,8 +527,8 @@ tensors must reside on the same CUDA device.</p>
 </dl>
 <p class="rubric">Notes</p>
 <ul class="simple">
-<li><p>All input tensors must be on the same CUDA device.</p></li>
-<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Geometry tensors are moved to the image’s CUDA device and converted to float32.</p></li>
+<li><p>Data derivatives support higher orders; geometry derivatives are first-order only.</p></li>
 <li><p>Supports arbitrary parallel beam geometries.</p></li>
 <li><p>Uses cell-constant Siddon ray tracing.</p></li>
 </ul>
@@ -592,7 +593,7 @@ Requires CUDA-capable hardware and consistent device placements.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 2D input sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – Floating-point CUDA sinogram of shape (n_views, num_detectors), converted to float32 for execution.</p></li>
 <li><p><strong>ray_dir</strong> (<em>torch.Tensor</em>) – Ray direction unit vectors for each view, shape (n_views, 2).</p></li>
 <li><p><strong>det_origin</strong> (<em>torch.Tensor</em>) – Detector origin positions for each view, shape (n_views, 2), in physical units.</p></li>
 <li><p><strong>det_u_vec</strong> (<em>torch.Tensor</em>) – Detector u-direction unit vectors for each view, shape (n_views, 2).</p></li>
@@ -611,8 +612,8 @@ Requires CUDA-capable hardware and consistent device placements.</p>
 </dl>
 <p class="rubric">Notes</p>
 <ul class="simple">
-<li><p>All input tensors must be on the same CUDA device.</p></li>
-<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Geometry tensors are moved to the sinogram’s CUDA device and converted to float32.</p></li>
+<li><p>Data derivatives support higher orders; geometry derivatives are first-order only.</p></li>
 <li><p>Supports arbitrary parallel beam geometries.</p></li>
 <li><p>Uses the adjoint of cell-constant Siddon ray tracing.</p></li>
 </ul>
@@ -677,7 +678,7 @@ adjoint backprojection.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>image</strong> (<em>torch.Tensor</em>) – 2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>image</strong> (<em>torch.Tensor</em>) – Floating-point CUDA image of shape (H, W), converted to float32 for execution.</p></li>
 <li><p><strong>src_pos</strong> (<em>torch.Tensor</em>) – Source positions for each view, shape (n_views, 2), in physical units.</p></li>
 <li><p><strong>det_center</strong> (<em>torch.Tensor</em>) – Detector center positions for each view, shape (n_views, 2), in physical units.</p></li>
 <li><p><strong>det_u_vec</strong> (<em>torch.Tensor</em>) – Detector u-direction unit vectors for each view, shape (n_views, 2).</p></li>
@@ -695,8 +696,8 @@ adjoint backprojection.</p>
 </dl>
 <p class="rubric">Notes</p>
 <ul class="simple">
-<li><p>All input tensors must be on the same CUDA device.</p></li>
-<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Geometry tensors are moved to the image’s CUDA device and converted to float32.</p></li>
+<li><p>Data derivatives support higher orders; geometry derivatives are first-order only.</p></li>
 <li><p>Supports arbitrary fan beam geometries.</p></li>
 <li><p>Uses cell-constant Siddon ray tracing.</p></li>
 </ul>
@@ -762,7 +763,7 @@ gradients via forward projection.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 2D input fan beam sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – Floating-point CUDA fan sinogram of shape (n_views, num_detectors), converted to float32 for execution.</p></li>
 <li><p><strong>src_pos</strong> (<em>torch.Tensor</em>) – Source positions for each view, shape (n_views, 2), in physical units.</p></li>
 <li><p><strong>det_center</strong> (<em>torch.Tensor</em>) – Detector center positions for each view, shape (n_views, 2), in physical units.</p></li>
 <li><p><strong>det_u_vec</strong> (<em>torch.Tensor</em>) – Detector u-direction unit vectors for each view, shape (n_views, 2).</p></li>
@@ -781,8 +782,8 @@ gradients via forward projection.</p>
 </dl>
 <p class="rubric">Notes</p>
 <ul class="simple">
-<li><p>All input tensors must be on the same CUDA device.</p></li>
-<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Geometry tensors are moved to the sinogram’s CUDA device and converted to float32.</p></li>
+<li><p>Data derivatives support higher orders; geometry derivatives are first-order only.</p></li>
 <li><p>Supports arbitrary fan beam geometries.</p></li>
 <li><p>Uses the adjoint of cell-constant Siddon ray tracing.</p></li>
 </ul>
@@ -849,7 +850,7 @@ gradients via adjoint 3D backprojection. Requires significant GPU memory.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>volume</strong> (<em>torch.Tensor</em>) – 3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>volume</strong> (<em>torch.Tensor</em>) – Floating-point CUDA volume of shape (D, H, W), converted to float32 for execution.</p></li>
 <li><p><strong>src_pos</strong> (<em>torch.Tensor</em>) – Source positions for each view, shape (n_views, 3), in physical units.</p></li>
 <li><p><strong>det_center</strong> (<em>torch.Tensor</em>) – Detector center positions for each view, shape (n_views, 3), in physical units.</p></li>
 <li><p><strong>det_u_vec</strong> (<em>torch.Tensor</em>) – Detector u-direction unit vectors for each view, shape (n_views, 3).</p></li>
@@ -870,8 +871,8 @@ gradients via adjoint 3D backprojection. Requires significant GPU memory.</p>
 </dl>
 <p class="rubric">Notes</p>
 <ul class="simple">
-<li><p>All input tensors must be on the same CUDA device.</p></li>
-<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Geometry tensors are moved to the volume’s CUDA device and converted to float32.</p></li>
+<li><p>Data derivatives support higher orders; geometry derivatives are first-order only.</p></li>
 <li><p>Supports arbitrary source and detector trajectories, not limited to circular orbits.</p></li>
 <li><p>Uses cell-constant Siddon ray tracing.</p></li>
 </ul>
@@ -943,7 +944,7 @@ for large-scale applications, and ensure sufficient GPU memory is available.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – 3D input cone beam projection tensor of shape (n_views, det_u, det_v), must be on a CUDA device and of type float32.</p></li>
+<li><p><strong>sinogram</strong> (<em>torch.Tensor</em>) – Floating-point CUDA cone sinogram of shape (n_views, det_u, det_v), converted to float32 for execution.</p></li>
 <li><p><strong>src_pos</strong> (<em>torch.Tensor</em>) – Source positions for each view, shape (n_views, 3), in physical units.</p></li>
 <li><p><strong>det_center</strong> (<em>torch.Tensor</em>) – Detector center positions for each view, shape (n_views, 3), in physical units.</p></li>
 <li><p><strong>det_u_vec</strong> (<em>torch.Tensor</em>) – Detector u-direction unit vectors for each view, shape (n_views, 3).</p></li>
@@ -967,8 +968,8 @@ instead of a contiguous copy (default: False). Projections accept such tensors w
 </dl>
 <p class="rubric">Notes</p>
 <ul class="simple">
-<li><p>All input tensors must be on the same CUDA device.</p></li>
-<li><p>The operation is fully differentiable and supports autograd.</p></li>
+<li><p>Geometry tensors are moved to the sinogram’s CUDA device and converted to float32.</p></li>
+<li><p>Data derivatives support higher orders; geometry derivatives are first-order only.</p></li>
 <li><p>Supports arbitrary source and detector trajectories.</p></li>
 <li><p>Uses the adjoint of cell-constant Siddon ray tracing.</p></li>
 </ul>
@@ -1166,8 +1167,8 @@ with radial oscillations as it rotates around the z-axis.</p>
 <dt class="sig sig-object py" id="diffct.geometry.saddle_trajectory_3d">
 <span class="sig-prename descclassname"><span class="pre">diffct.geometry.</span></span><span class="sig-name descname"><span class="pre">saddle_trajectory_3d</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_views</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdd</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">z_amplitude</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">50.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">radial_amplitude</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">30.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cuda'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">torch.float32</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/geometry.html#saddle_trajectory_3d"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.geometry.saddle_trajectory_3d" title="Link to this definition">¶</a></dt>
 <dd><p>Generate saddle-shaped trajectory geometry for cone-beam CT.</p>
-<p>Creates a saddle-shaped trajectory where the source moves in both z and radial
-directions following a saddle surface (hyperbolic paraboloid).</p>
+<p>The source height varies with <code class="docutils literal notranslate"><span class="pre">cos(2</span> <span class="pre">*</span> <span class="pre">angle)</span></code> and its radius varies
+with <code class="docutils literal notranslate"><span class="pre">sin(2</span> <span class="pre">*</span> <span class="pre">angle)</span></code>.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
@@ -1257,7 +1258,7 @@ scanning geometry, commonly used in 2D parallel-beam CT imaging.</p>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>n_views</strong> (<em>int</em><em> or </em><em>torch.Tensor</em>) – Number of projection views, or a nonempty finite floating angle vector
 in radians. Angle tensors preserve their dtype, device and autograd graph.</p></li>
-<li><p><strong>detector_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – Distance from isocenter to detector origin (default: 0.0).</p></li>
+<li><p><strong>detector_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – Transverse detector-origin offset along <code class="docutils literal notranslate"><span class="pre">det_u</span></code> (default: 0.0).</p></li>
 <li><p><strong>start_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – Starting angle in radians (default: 0.0).</p></li>
 <li><p><strong>end_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – Ending angle in radians (default: pi, half rotation for parallel beam).</p></li>
 <li><p><strong>device</strong> (<em>str</em><em> or </em><em>torch.device</em><em>, </em><em>optional</em>) – Device for tensors (default: ‘cuda’).</p></li>

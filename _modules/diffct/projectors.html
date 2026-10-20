@@ -508,8 +508,8 @@
 <span class="sd">    method with a cell-constant image basis for parallel beam CT geometry. The forward pass computes</span>
 <span class="sd">    the sinogram from a 2D image using parallel beam geometry. The backward pass</span>
 <span class="sd">    computes gradients using the adjoint backprojection operation. Requires</span>
-<span class="sd">    CUDA-capable hardware and a properly configured CUDA environment; all input</span>
-<span class="sd">    tensors must reside on the same CUDA device.</span>
+<span class="sd">    NVIDIA CUDA hardware. Geometry tensors are moved to the image's device;</span>
+<span class="sd">    execution uses float32.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -533,7 +533,7 @@
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
 <span class="sd">        image : torch.Tensor</span>
-<span class="sd">            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</span>
+<span class="sd">            Floating-point CUDA image of shape (H, W), converted to float32 for execution.</span>
 <span class="sd">        ray_dir : torch.Tensor</span>
 <span class="sd">            Ray direction unit vectors for each view, shape (n_views, 2).</span>
 <span class="sd">        det_origin : torch.Tensor</span>
@@ -554,8 +554,8 @@
 
 <span class="sd">        Notes</span>
 <span class="sd">        -----</span>
-<span class="sd">        - All input tensors must be on the same CUDA device.</span>
-<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Geometry tensors are moved to the image's CUDA device and converted to float32.</span>
+<span class="sd">        - Data derivatives support higher orders; geometry derivatives are first-order only.</span>
 <span class="sd">        - Supports arbitrary parallel beam geometries.</span>
 <span class="sd">        - Uses cell-constant Siddon ray tracing.</span>
 
@@ -657,7 +657,7 @@
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
 <span class="sd">        sinogram : torch.Tensor</span>
-<span class="sd">            2D input sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.</span>
+<span class="sd">            Floating-point CUDA sinogram of shape (n_views, num_detectors), converted to float32 for execution.</span>
 <span class="sd">        ray_dir : torch.Tensor</span>
 <span class="sd">            Ray direction unit vectors for each view, shape (n_views, 2).</span>
 <span class="sd">        det_origin : torch.Tensor</span>
@@ -680,8 +680,8 @@
 
 <span class="sd">        Notes</span>
 <span class="sd">        -----</span>
-<span class="sd">        - All input tensors must be on the same CUDA device.</span>
-<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Geometry tensors are moved to the sinogram's CUDA device and converted to float32.</span>
+<span class="sd">        - Data derivatives support higher orders; geometry derivatives are first-order only.</span>
 <span class="sd">        - Supports arbitrary parallel beam geometries.</span>
 <span class="sd">        - Uses the adjoint of cell-constant Siddon ray tracing.</span>
 
@@ -783,7 +783,7 @@
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
 <span class="sd">        image : torch.Tensor</span>
-<span class="sd">            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.</span>
+<span class="sd">            Floating-point CUDA image of shape (H, W), converted to float32 for execution.</span>
 <span class="sd">        src_pos : torch.Tensor</span>
 <span class="sd">            Source positions for each view, shape (n_views, 2), in physical units.</span>
 <span class="sd">        det_center : torch.Tensor</span>
@@ -804,8 +804,8 @@
 
 <span class="sd">        Notes</span>
 <span class="sd">        -----</span>
-<span class="sd">        - All input tensors must be on the same CUDA device.</span>
-<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Geometry tensors are moved to the image's CUDA device and converted to float32.</span>
+<span class="sd">        - Data derivatives support higher orders; geometry derivatives are first-order only.</span>
 <span class="sd">        - Supports arbitrary fan beam geometries.</span>
 <span class="sd">        - Uses cell-constant Siddon ray tracing.</span>
 
@@ -907,7 +907,7 @@
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
 <span class="sd">        sinogram : torch.Tensor</span>
-<span class="sd">            2D input fan beam sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.</span>
+<span class="sd">            Floating-point CUDA fan sinogram of shape (n_views, num_detectors), converted to float32 for execution.</span>
 <span class="sd">        src_pos : torch.Tensor</span>
 <span class="sd">            Source positions for each view, shape (n_views, 2), in physical units.</span>
 <span class="sd">        det_center : torch.Tensor</span>
@@ -930,8 +930,8 @@
 
 <span class="sd">        Notes</span>
 <span class="sd">        -----</span>
-<span class="sd">        - All input tensors must be on the same CUDA device.</span>
-<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Geometry tensors are moved to the sinogram's CUDA device and converted to float32.</span>
+<span class="sd">        - Data derivatives support higher orders; geometry derivatives are first-order only.</span>
 <span class="sd">        - Supports arbitrary fan beam geometries.</span>
 <span class="sd">        - Uses the adjoint of cell-constant Siddon ray tracing.</span>
 
@@ -1034,7 +1034,7 @@
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
 <span class="sd">        volume : torch.Tensor</span>
-<span class="sd">            3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.</span>
+<span class="sd">            Floating-point CUDA volume of shape (D, H, W), converted to float32 for execution.</span>
 <span class="sd">        src_pos : torch.Tensor</span>
 <span class="sd">            Source positions for each view, shape (n_views, 3), in physical units.</span>
 <span class="sd">        det_center : torch.Tensor</span>
@@ -1061,8 +1061,8 @@
 
 <span class="sd">        Notes</span>
 <span class="sd">        -----</span>
-<span class="sd">        - All input tensors must be on the same CUDA device.</span>
-<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Geometry tensors are moved to the volume's CUDA device and converted to float32.</span>
+<span class="sd">        - Data derivatives support higher orders; geometry derivatives are first-order only.</span>
 <span class="sd">        - Supports arbitrary source and detector trajectories, not limited to circular orbits.</span>
 <span class="sd">        - Uses cell-constant Siddon ray tracing.</span>
 
@@ -1174,7 +1174,7 @@
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
 <span class="sd">        sinogram : torch.Tensor</span>
-<span class="sd">            3D input cone beam projection tensor of shape (n_views, det_u, det_v), must be on a CUDA device and of type float32.</span>
+<span class="sd">            Floating-point CUDA cone sinogram of shape (n_views, det_u, det_v), converted to float32 for execution.</span>
 <span class="sd">        src_pos : torch.Tensor</span>
 <span class="sd">            Source positions for each view, shape (n_views, 3), in physical units.</span>
 <span class="sd">        det_center : torch.Tensor</span>
@@ -1206,8 +1206,8 @@
 
 <span class="sd">        Notes</span>
 <span class="sd">        -----</span>
-<span class="sd">        - All input tensors must be on the same CUDA device.</span>
-<span class="sd">        - The operation is fully differentiable and supports autograd.</span>
+<span class="sd">        - Geometry tensors are moved to the sinogram's CUDA device and converted to float32.</span>
+<span class="sd">        - Data derivatives support higher orders; geometry derivatives are first-order only.</span>
 <span class="sd">        - Supports arbitrary source and detector trajectories.</span>
 <span class="sd">        - Uses the adjoint of cell-constant Siddon ray tracing.</span>
 

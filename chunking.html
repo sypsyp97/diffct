@@ -254,6 +254,8 @@
         <article role="main" id="furo-main-content">
           <section id="large-volumes-and-chunked-execution">
 <h1>Large Volumes and Chunked Execution<a class="headerlink" href="#large-volumes-and-chunked-execution" title="Link to this heading">¶</a></h1>
+<p>This page describes the native CUDA path. For portable execution and analytical
+streaming, see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.</p>
 <p>Pass CPU volumes and sinograms to <code class="docutils literal notranslate"><span class="pre">Projector</span></code> when complete arrays exceed GPU
 memory. Projection and the matched adjoint execute on CUDA; outputs and data
 gradients return to the input device. Tensor methods still hold complete arrays
@@ -325,6 +327,13 @@ batches. Geometry VJPs also prepare each tile once across their view batches. Co
 retain contiguous <code class="docutils literal notranslate"><span class="pre">(W,</span> <span class="pre">H,</span> <span class="pre">D)</span></code> access; tensor volumes remain <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code>.
 Forward kernels overwrite each active ray, including missed rays and short
 final batches, so they do not need unconditional output clearing.</p>
+<p><code class="docutils literal notranslate"><span class="pre">native_volume_layout=True</span></code> optionally retains native full-CUDA cone output
+strides <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">D,</span> <span class="pre">D</span> <span class="pre">*</span> <span class="pre">H)</span></code> for an unbatched flat-detector backprojection. The
+shape stays <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code>. Projection accepts that layout without conversion,
+so one compute device can avoid both volume layout copies in <code class="docutils literal notranslate"><span class="pre">A^T</span> <span class="pre">A</span></code>.
+The default is <code class="docutils literal notranslate"><span class="pre">False</span></code>. Several local devices, surfaces, batches, streaming
+and the PyTorch backend still involve copies. Distributed ranks must agree
+on this setting.</p>
 <p>For example, a <code class="docutils literal notranslate"><span class="pre">1024**3</span></code> float32 volume is 4 GiB. With 720 views in batches of
 32, returning a complete partial volume after each of the 23 batches would
 transfer 92 GiB. Returning the completed accumulated volume transfers 4 GiB
@@ -399,7 +408,7 @@ writes do not materialize a complete mapped array.</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">project_into</span></code> and <code class="docutils literal notranslate"><span class="pre">backproject_into</span></code> return the supplied output. They
 accept tensors, these stores, or structural backends with <code class="docutils literal notranslate"><span class="pre">shape</span></code>, <code class="docutils literal notranslate"><span class="pre">dtype</span></code>,
-<code class="docutils literal notranslate"><span class="pre">read(slices)</span></code>, <code class="docutils literal notranslate"><span class="pre">write(slices,value,accumulate=False)</span></code> and <code class="docutils literal notranslate"><span class="pre">flush()</span></code>. Outputs must be
+<code class="docutils literal notranslate"><span class="pre">read(slices)</span></code>, <code class="docutils literal notranslate"><span class="pre">write(slices,value,accumulate=False)</span></code> and <code class="docutils literal notranslate"><span class="pre">flush()</span></code>. Outputs must
 match <code class="docutils literal notranslate"><span class="pre">A.dtype</span></code> and be writable. Native fast output is float32; explicit
 <code class="docutils literal notranslate"><span class="pre">precision=&quot;float64&quot;</span></code> output is float64. Each completed output region overwrites its prior
 contents; no full result is allocated internally. These numerical methods do
@@ -436,7 +445,10 @@ Gradient-connected offsets are snapshotted on CPU and transferred per batch.
 Streamed composition writes offset fragments into reusable float32 geometry
 buffers. Geometry backward replays one view and a bounded detector-row segment
 at a time, without retaining complete CUDA composition graphs.
-Construction also sizes validation batches to the available device budget.
+Native admission starts with the owned view shard and detector rectangle,
+limited by explicit hints. It reduces validation batches to fit device memory,
+allocation and host-staging limits. These batches are independent of execution
+chunks and their automatic 32-view cap.
 Callback allocations remain caller-controlled. Callback values are not cached
 across operations.</p>
 <p><code class="docutils literal notranslate"><span class="pre">devices=[0,</span> <span class="pre">1]</span></code> still partitions views in list order. Each card streams tiles;
@@ -457,15 +469,16 @@ shape; <code class="docutils literal notranslate"><span class="pre">volume_slice
 <code class="docutils literal notranslate"><span class="pre">local_volume_shape</span></code> give the required local tensor/store shape. Projection
 SUMs the slab contributions into replicated ray batches; backprojection
 returns only the owned slab. Physical coordinates remain on the global voxel
-lattice. Empty slabs are valid. This is one spatial process dimension, without
-a combined view-by-space process grid.</p>
+lattice. Empty slabs are valid. The PyTorch backend also supports
+<code class="docutils literal notranslate"><span class="pre">partition=&quot;hybrid&quot;,</span> <span class="pre">partition_grid=(view_ranks,</span> <span class="pre">space_ranks)</span></code>; see
+<a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a> for ownership and loss divisors.</p>
 <p>Caller-owned CUDA inputs and complete CUDA outputs still occupy their full
 size. Keep arrays, trajectory tensors and learnable surface parameters on CPU
 for bounded GPU residency. CUDA geometry snapshots or CUDA intermediates made
 inside a callback also consume GPU memory outside the streamed tile buffers.
-Analytical FBP/FDK helpers
-retain their existing execution path; this feature belongs to the native
-projection/adjoint pair.</p>
+<code class="docutils literal notranslate"><span class="pre">fbp</span></code>/<code class="docutils literal notranslate"><span class="pre">fdk</span></code> also support view/spatial chunks and numerical stores; see
+<a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>. The helical approximation and low-level CUDA helpers retain
+their original execution path.</p>
 </section>
 <section id="runnable-iterative-reconstruction">
 <h2>Runnable iterative reconstruction<a class="headerlink" href="#runnable-iterative-reconstruction" title="Link to this heading">¶</a></h2>
@@ -496,9 +509,10 @@ It does not assume later calls can use free splits inside the state segments.
 The state bound also includes compatible idle segments on the caller’s stream:
 reusing an oversized cached segment can pin more memory than a fresh allocation.
 The example helpers set <code class="docutils literal notranslate"><span class="pre">operator.last_solver_stats</span></code> with state and scratch
-capacity metadata. This report belongs to the examples; the core package
-continues to provide projection and backprojection. The disk entrypoint saves
-it alongside the actual residual, elapsed time and CUDA tensor peak.</p>
+capacity metadata. This report belongs to the example helpers. The library
+also provides numerical CGLS/SIRT/TV solvers; see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.
+The disk entrypoint saves it alongside the actual residual, elapsed time and
+CUDA tensor peak.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/disk_reconstruction.py<span class="w"> </span>--output<span class="w"> </span>disk-run
 python<span class="w"> </span>examples/disk_reconstruction.py<span class="w"> </span>--surface<span class="w"> </span>saddle<span class="w"> </span>--output<span class="w"> </span>saddle-run
 torchrun<span class="w"> </span>--standalone<span class="w"> </span>--nproc-per-node<span class="o">=</span><span class="m">2</span><span class="w"> </span>examples/disk_reconstruction.py<span class="w"> </span><span class="se">\</span>

@@ -401,9 +401,10 @@ contains global view IDs. Return <code class="docutils literal notranslate"><spa
 <code class="docutils literal notranslate"><span class="pre">(len(view_indices),*pixel_shape,3)</span></code> batched offsets. In 2D the middle
 component remains zero. Streamed grids, IDs and explicit parameter snapshots
 are CPU tensors; parameter dtypes and original gradient devices are preserved.
-World-coordinate arithmetic promotes all frames and offsets to one common
-dtype, at least float32; float64 inputs retain float64 arithmetic. Gradients
-return in each input’s original dtype. Offsets and world points are validated
+Native sampled-surface arithmetic promotes frames and offsets to one common
+dtype, at least float32; float64 inputs retain float64 arithmetic. The PyTorch
+backend uses the selected precision. Gradients return in each input’s original
+dtype. Offsets and world points are validated
 on every executing batch.</p>
 <p>The sampler is pure. Mutable geometry tensors must be explicit parameters;
 other captured configuration must be immutable. Coupling across views uses
@@ -476,12 +477,13 @@ are checked on every operation.</p>
 <code class="docutils literal notranslate"><span class="pre">circular_trajectory_3d</span></code> and <code class="docutils literal notranslate"><span class="pre">circular_trajectory_3d_parallel</span></code> accept either
 a view count or a nonempty floating-point angle tensor as the first argument.
 Angles are in radians and may be nonuniform or unsorted. A tensor preserves its
-device, dtype and autograd history; <code class="docutils literal notranslate"><span class="pre">device</span></code> and <code class="docutils literal notranslate"><span class="pre">dtype</span></code> only configure
-count-based generation. Parallel helpers cover <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">pi)</span></code> by default; fan and
-cone helpers cover <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">2*pi)</span></code>. The 3D parallel helper lifts the 2D orbit into
+device, dtype and autograd history. <code class="docutils literal notranslate"><span class="pre">start_angle</span></code>, <code class="docutils literal notranslate"><span class="pre">end_angle</span></code>, <code class="docutils literal notranslate"><span class="pre">device</span></code>
+and <code class="docutils literal notranslate"><span class="pre">dtype</span></code> only configure count-based generation. Parallel helpers cover
+<code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">pi)</span></code> by default; fan and cone helpers cover <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">2*pi)</span></code>.
+The 3D parallel helper lifts the 2D orbit into
 the XY plane with <code class="docutils literal notranslate"><span class="pre">det_v=(0,0,1)</span></code>. In both parallel helpers,
 <code class="docutils literal notranslate"><span class="pre">detector_distance</span></code> is a transverse shift along <code class="docutils literal notranslate"><span class="pre">det_u</span></code>.</p>
-<p><code class="docutils literal notranslate"><span class="pre">transform_trajectory(trajectory,</span> <span class="pre">rotation=None,</span> <span class="pre">translation=None,</span> <span class="pre">beam=&quot;cone&quot;)</span></code>
+<p><code class="docutils literal notranslate"><span class="pre">transform_trajectory(trajectory,</span> <span class="pre">rotation=None,</span> <span class="pre">translation=None,</span> <span class="pre">*,</span> <span class="pre">beam=&quot;cone&quot;)</span></code>
 applies a rigid transform about the world origin. Points become <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">&#64;</span> <span class="pre">p</span> <span class="pre">+</span> <span class="pre">t</span></code>;
 directions become <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">&#64;</span> <span class="pre">d</span></code>. <code class="docutils literal notranslate"><span class="pre">rotation</span></code> is a proper orthogonal matrix shaped
 <code class="docutils literal notranslate"><span class="pre">(d,d)</span></code> or <code class="docutils literal notranslate"><span class="pre">(views,d,d)</span></code>, and <code class="docutils literal notranslate"><span class="pre">translation</span></code> is shaped <code class="docutils literal notranslate"><span class="pre">(d,)</span></code> or

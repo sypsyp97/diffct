@@ -63,8 +63,8 @@ Notes
 - The TV weight is an example setting. Choose it for your geometry, resolution,
   voxel spacing and data scale. The solver uses half the mean squared residual
   per ray and a mean TV term. Its voxel differences are not divided by voxel spacing.
-- Each GPU needs a full float32 volume and workspace. Inputs of other floating-point
-  types are converted to float32 internally.
+- The script keeps complete input/output tensors on the process's CUDA device.
+  Native working buffers may stream; CGLS state can fall back to CPU.
 - To adapt the loss for several ranks, see :doc:`multi_gpu`.
 
 Source

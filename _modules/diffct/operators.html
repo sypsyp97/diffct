@@ -548,7 +548,8 @@
 <span class="sd">    trajectory</span>
 <span class="sd">    tensor requires gradients, the projector clones the geometry. Otherwise it</span>
 <span class="sd">    keeps references, reads the current values at every call, and returns</span>
-<span class="sd">    gradients for those tensors; the checks above run only at construction.</span>
+<span class="sd">    gradients for those tensors. Live default frames are checked at construction;</span>
+<span class="sd">    overrides are checked on each call.</span>
 <span class="sd">    ``project``, ``backproject``, ``__call__`` and their ``*_into`` variants</span>
 <span class="sd">    accept a keyword-only ``trajectory`` replacing all frames for that call.</span>
 <span class="sd">    It must retain the constructor's beam and view count; it is validated and</span>
@@ -625,8 +626,8 @@
 <span class="sd">    flat detector return ``(D, H, W)`` tensors with the kernels' ``(W, H, D)``-contiguous strides instead</span>
 <span class="sd">    of contiguous copies; native projections accept such tensors without a copy. An iterative solver that</span>
 <span class="sd">    keeps its volumes in this layout then avoids two whole-volume copies per normal-operator application</span>
-<span class="sd">    on one device. Values are identical. Results from several local devices, curved detectors, batched</span>
-<span class="sd">    inputs, streamed execution and the PyTorch backend still involve copies.</span>
+<span class="sd">    on one device. The layout does not change the operator. Results from several local devices,</span>
+<span class="sd">    curved detectors, batched inputs, streamed execution and the PyTorch backend still involve copies.</span>
 
 <span class="sd">    Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are</span>
 <span class="sd">    bounded by the chosen tile and view batch. Caller-owned CUDA data/results</span>

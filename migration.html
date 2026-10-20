@@ -298,21 +298,35 @@ orbit. Use a helper or pass your calibrated tensors directly.</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">(U,</span> <span class="pre">V)</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V)</span></code></p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">parallel3d</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(ray_dir,</span> <span class="pre">det_center,</span> <span class="pre">det_u,</span> <span class="pre">det_v)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">3)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(U,</span> <span class="pre">V)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V)</span></code></p></td>
+</tr>
 </tbody>
 </table>
 </div>
 <p>Geometry coordinates are <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y)</span></code> or <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z)</span></code>, while volume indices are
 <code class="docutils literal notranslate"><span class="pre">(y,</span> <span class="pre">x)</span></code> or <code class="docutils literal notranslate"><span class="pre">(z,</span> <span class="pre">y,</span> <span class="pre">x)</span></code>. Cone sinograms use <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V)</span></code>, not the common
 image-display convention <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">V,</span> <span class="pre">U)</span></code>; transpose imported measurements if
-necessary. In distributed mode, only the leading view dimension is sharded.</p>
+necessary. Distributed <code class="docutils literal notranslate"><span class="pre">partition=&quot;views&quot;</span></code> shards views; <code class="docutils literal notranslate"><span class="pre">&quot;space&quot;</span></code> shards
+the first volume axis; <code class="docutils literal notranslate"><span class="pre">&quot;hybrid&quot;</span></code> combines both. Use <code class="docutils literal notranslate"><span class="pre">A.volume_shape</span></code> and
+<code class="docutils literal notranslate"><span class="pre">A.projection_shape</span></code> for the required local shapes.</p>
 <p>Trajectory tensors may be on CPU or CUDA. Projection and backprojection inputs
-must be floating-point CPU or CUDA tensors of exactly the documented shape,
-without batch or channel dimensions. CPU arrays automatically stream through
-CUDA tiles; see <a class="reference external" href="https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution">chunked execution</a>. Computation
-and outputs are float32 even if the input is float64; autograd returns input
-gradients in the input’s device and dtype.
-<code class="docutils literal notranslate"><span class="pre">voxel_spacing</span></code> is one positive scalar (isotropic voxels). <code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code>
-is one positive scalar for 2D, and a scalar or <code class="docutils literal notranslate"><span class="pre">(u_pitch,</span> <span class="pre">v_pitch)</span></code> for cone.</p>
+must be floating-point tensors with the documented trailing shape. Leading
+batch/channel dimensions are preserved. Native CPU arrays stream through
+CUDA tiles; <code class="docutils literal notranslate"><span class="pre">backend=&quot;torch&quot;</span></code> computes on the input’s CPU or supported
+PyTorch accelerator. See <a class="reference external" href="https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution">chunked execution</a>.
+<code class="docutils literal notranslate"><span class="pre">precision=&quot;fast&quot;</span></code> (default) and <code class="docutils literal notranslate"><span class="pre">&quot;float32&quot;</span></code> return float32;
+<code class="docutils literal notranslate"><span class="pre">precision=&quot;float64&quot;</span></code> uses the PyTorch backend and returns float64. Autograd
+returns input gradients in the input’s device and dtype.
+<code class="docutils literal notranslate"><span class="pre">voxel_spacing</span></code> is a positive scalar or a tuple <code class="docutils literal notranslate"><span class="pre">(dy,</span> <span class="pre">dx)</span></code> / <code class="docutils literal notranslate"><span class="pre">(dz,</span> <span class="pre">dy,</span> <span class="pre">dx)</span></code>.
+Per-axis spacing uses the PyTorch backend. <code class="docutils literal notranslate"><span class="pre">detector_spacing</span></code> is a positive
+scalar for 2D, and a scalar or <code class="docutils literal notranslate"><span class="pre">(u_pitch,</span> <span class="pre">v_pitch)</span></code> for 3D.
+<code class="docutils literal notranslate"><span class="pre">parallel3d</span></code> uses infinite lines on the PyTorch backend; explicit
+<code class="docutils literal notranslate"><span class="pre">backend=&quot;numba&quot;</span></code> is unsupported. See <a class="reference external" href="https://github.com/sypsyp97/diffct/blob/main/docs/EXECUTION.md">precision and execution</a>.</p>
 </section>
 <section id="minimal-migration-example">
 <h2>Minimal migration example<a class="headerlink" href="#minimal-migration-example" title="Link to this heading">¶</a></h2>
@@ -379,15 +393,22 @@ trajectory tensors requires gradients at construction, the operator stores a
 clone: editing your original tensors later does not update that operator.</p>
 <p>If any trajectory tensor has <code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code> at construction, the operator
 keeps references to the supplied tensors and reads their current values on each
-call. When a trajectory is computed from learnable parameters such as angles or
-shifts, rebuild that trajectory and the <code class="docutils literal notranslate"><span class="pre">Projector</span></code> inside each optimization
-step to create the new autograd graph. See
+call. When a trajectory is computed from learnable angles or shifts, rebuild
+the trajectory inside each optimization step. Reuse the projector with
+<code class="docutils literal notranslate"><span class="pre">project(volume,</span> <span class="pre">trajectory=current)</span></code> or <code class="docutils literal notranslate"><span class="pre">backproject(sinogram,</span> <span class="pre">trajectory=current)</span></code>.
+The keyword-only override must preserve the beam and view count. Each call
+keeps its geometry graph and leaves the constructor trajectory unchanged.
+<code class="docutils literal notranslate"><span class="pre">__call__</span></code>, <code class="docutils literal notranslate"><span class="pre">project_into</span></code> and <code class="docutils literal notranslate"><span class="pre">backproject_into</span></code> also accept the override;
+store methods remain numerical. See
 <a class="reference external" href="https://github.com/sypsyp97/diffct/blob/main/examples/geometry_calibration.py"><code class="docutils literal notranslate"><span class="pre">examples/geometry_calibration.py</span></code></a>.</p>
 <p>Keep every geometry valid as it changes: components must have the same nonzero
 view count and finite values; direction axes must be unit vectors; parallel
-<code class="docutils literal notranslate"><span class="pre">ray_dir</span></code>/<code class="docutils literal notranslate"><span class="pre">det_u</span></code> and cone <code class="docutils literal notranslate"><span class="pre">det_u</span></code>/<code class="docutils literal notranslate"><span class="pre">det_v</span></code> must be orthogonal. Fan/cone sources
-must differ from their detector centers, and detectors must not be edge-on to
-the source. These checks run at construction, not after each parameter update.</p>
+<code class="docutils literal notranslate"><span class="pre">ray_dir</span></code>/<code class="docutils literal notranslate"><span class="pre">det_u</span></code> and 3D <code class="docutils literal notranslate"><span class="pre">det_u</span></code>/<code class="docutils literal notranslate"><span class="pre">det_v</span></code> must be orthogonal. For <code class="docutils literal notranslate"><span class="pre">parallel3d</span></code>,
+the ray direction must not be tangent to the detector plane. Flat fan/cone
+sources must differ from their detector centers, and detectors must not be
+edge-on to the source. Surface detectors check actual pixel positions instead.
+Frame checks run at construction and for each override. Surface samples are
+checked on every operation; changing live default tensors does not rerun frame checks.</p>
 <p>Geometry derivatives are first-order only and are piecewise derivatives of the
 cell-constant Siddon model. At voxel-boundary crossings they need not agree with
 a centered finite difference. Second derivatives with respect to geometry raise

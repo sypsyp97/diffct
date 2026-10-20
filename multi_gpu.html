@@ -254,7 +254,7 @@
         <article role="main" id="furo-main-content">
           <section id="multiple-gpus-and-nodes">
 <h1>Multiple GPUs and Nodes<a class="headerlink" href="#multiple-gpus-and-nodes" title="Link to this heading">¶</a></h1>
-<p>By default, <code class="docutils literal notranslate"><span class="pre">Projector</span></code> splits views across GPUs and automatically streams spatial tiles
+<p>By default, <code class="docutils literal notranslate"><span class="pre">Projector</span></code> splits views across selected GPUs and automatically streams native spatial tiles
 when arrays are CPU-backed or the estimated CUDA working set does not fit.
 For volumes larger than one GPU, use CPU arrays or numerical block stores;
 see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>.
@@ -264,8 +264,11 @@ There are two modes:</p>
 <li><p><strong>One process per GPU:</strong> launch with <code class="docutils literal notranslate"><span class="pre">torchrun</span></code> and pass <code class="docutils literal notranslate"><span class="pre">distributed=True</span></code>.
 Default <code class="docutils literal notranslate"><span class="pre">partition=&quot;views&quot;</span></code> holds a local view shard and a replicated volume.
 <code class="docutils literal notranslate"><span class="pre">partition=&quot;space&quot;</span></code> holds an owned volume slab and replicated ray batches.
+<code class="docutils literal notranslate"><span class="pre">partition=&quot;hybrid&quot;</span></code> combines view and space ownership on the PyTorch backend.
 GPU working buffers hold bounded tiles, pixels and view batches.</p></li>
 </ul>
+<p>The CUDA examples below use NCCL. Portable library calls can use CPU with Gloo
+or supported PyTorch accelerators; see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.</p>
 <section id="spatial-ownership">
 <h2>Spatial ownership<a class="headerlink" href="#spatial-ownership" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">partition=&quot;space&quot;</span></code> splits the first tensor axis into balanced half-open
@@ -277,8 +280,9 @@ generates only the owned volume. Collective order does not depend on local
 tile counts. Shared parameter gradients are reduced after the local pixel VJP.</p>
 <p>In space mode, divide identical replicated projection losses by <code class="docutils literal notranslate"><span class="pre">world_size</span></code>
 before backward; sum losses on local backprojection slabs. CGLS SUMs owned
-volume norms but counts replicated ray norms once. Volume regularizers with
-neighbors across slabs require application-level halo exchange. The existing
+volume norms but counts replicated ray norms once. The library’s
+<code class="docutils literal notranslate"><span class="pre">total_variation</span></code> exchanges neighboring faces; custom boundary-coupled
+regularizers need their own halo exchange. The existing
 TV/SIRT examples continue to use views mode. The complete ownership and loss
 table is in <code class="docutils literal notranslate"><span class="pre">docs/DISTRIBUTED.md</span></code> in the repository.</p>
 <p>For replicated CPU state use one process per node controlling multiple GPUs
@@ -286,7 +290,11 @@ to avoid extra host copies. For true spatial ownership use one process per
 GPU, with streaming inside an owned slab when needed. Disk-backed CGLS and
 rank-local checkpoints are available in <code class="docutils literal notranslate"><span class="pre">examples/disk_reconstruction.py</span></code>;
 see <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a>. The solver capacity includes <code class="docutils literal notranslate"><span class="pre">x,s,p</span></code> together plus ray,
-geometry and pipeline state. No view-by-space process grid is introduced.</p>
+geometry and pipeline state. Hybrid mode uses
+<code class="docutils literal notranslate"><span class="pre">partition_grid=(view_ranks,</span> <span class="pre">space_ranks)</span></code> and parent-group rank
+<code class="docutils literal notranslate"><span class="pre">view_rank</span> <span class="pre">*</span> <span class="pre">space_ranks</span> <span class="pre">+</span> <span class="pre">space_rank</span></code>. Divide projection losses by
+<code class="docutils literal notranslate"><span class="pre">space_world_size</span></code> and backprojection losses by <code class="docutils literal notranslate"><span class="pre">view_world_size</span></code>.
+The disk example accepts only views and space partitions.</p>
 </section>
 <section id="one-process-several-gpus">
 <h2>One process, several GPUs<a class="headerlink" href="#one-process-several-gpus" title="Link to this heading">¶</a></h2>
