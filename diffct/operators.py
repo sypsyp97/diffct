@@ -1361,13 +1361,15 @@ class Projector:
         # A workspace sized for an earlier, smaller tile keeps the segment path.
         shared = shared and capacity >= pixel_count
         # Every job of a call slices the same offset snapshot: stage it once per
-        # call and pixel tile. The cache keeps the snapshot alive, so a later
-        # snapshot cannot reuse its storage under the same key.
+        # call, pixel tile and workspace. The key holds the snapshot and the
+        # workspace, so neither a later snapshot reusing storage nor a recreated
+        # workspace can match it.
         if shared:
-            staged_key = (geometry[frame_count], tuple((part.start, part.stop) for part in pixels))
+            staged_key = (geometry[frame_count], packed_offsets, tuple((part.start, part.stop) for part in pixels))
             restage = not ("_surface_shared_staged" in groups
                            and groups["_surface_shared_staged"][0] is staged_key[0]
-                           and groups["_surface_shared_staged"][1] == staged_key[1])
+                           and groups["_surface_shared_staged"][1] is staged_key[1]
+                           and groups["_surface_shared_staged"][2] == staged_key[2])
         else:
             restage = False
             groups.pop("_surface_shared_staged", None)
