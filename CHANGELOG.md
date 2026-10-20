@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-10-21
+
+### Fixed
+
+- Count host world points in the streamed geometry budget only for surfaces that expand them on the host. Shared, non-trainable legacy offsets no longer shrink view batches (#40).
+- Compose shared legacy offsets with one launch per job: the frames of all views are staged in one transfer and `compose_surface` runs on a 2-D grid whose rows are views. The offset snapshot is staged once per call and pixel tile; offsets supplied by the caller, such as in the geometry VJP replay, are staged on every call (#40).
+- Count the batched frame staging in the streamed surface memory budget, and pack shared offsets into the workspace without a device staging buffer (#40).
+
 ## [2.4.1] - 2026-10-20
 
 ### Fixed
