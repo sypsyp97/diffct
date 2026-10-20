@@ -1,4 +1,4 @@
-# diffct 2.3.0 introduction
+# diffct introduction
 
 The film preserves the upstream dark, serif presentation: LaTeX typography,
 numbered chapters, a thin progress rule, framed CT images and monospace code
@@ -89,7 +89,7 @@ reconstruction panels retain their recorded inputs.
 
 | Shot | Content checked | Evidence |
 |---|---|---|
-| Opening | 2.3.0 title, five chapters, measured CT surface | `pyproject.toml`, `walnut_surface.npz` |
+| Opening | Title, five chapters, measured CT surface | `walnut_surface.npz` |
 | Trajectories | Five schematic paths; source/centre/u/v tuple; valid per-view poses | [Projector](../../diffct/operators.py), unchanged [ScanDiagram](scan_diagram.py) |
 | Autograd | Simulated parallel sinogram; Siddon path sum; matched adjoint; ordinary squared-loss gradient; batch/second data derivatives | [Projector](../../diffct/operators.py), [portable traversal](../../diffct/backends.py), `make_inputs.py`, `data2d.npz` |
 | Geometry | First-order source/centre/axis gradients; schematic pose dots; log10 loss, 150 steps, angle RMSE 0.55° to 0.006° | [geometry VJP](../../diffct/kernels/geometry_vjp.py), `calib_history.json` |
