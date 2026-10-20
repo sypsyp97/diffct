@@ -659,14 +659,13 @@ class Projector:
             *active_devices, *((input_device,) if is_cuda else ()),
             *((output_device,) if output_device.type == "cuda" else ()), *collective_devices,
         )))
-        parameterized = isinstance(self.detector_surface, ParameterizedSurface)
         surface = self.detector_surface is not None or self.detector_chunk_shape is not None
         volume_elements = math.prod(self.volume_shape)
         projection_elements = math.prod(self.projection_shape)
 
         full_allowed = (isinstance(tensor, torch.Tensor) and is_cuda and output_store is None
                         and self.volume_chunk_shape is None and self.view_chunk_size is None
-                        and self.detector_chunk_shape is None and not parameterized and self.schedule == "auto"
+                        and self.detector_chunk_shape is None and self.schedule == "auto"
                         and self.partition == "views")
 
         def full_fits(budgets, allocation_limit, reservation_budget):
@@ -2046,14 +2045,15 @@ class Projector:
             )
             with torch.cuda.device(device):
                 if sampled:
-                    with torch.autograd.graph.save_on_cpu(), torch.enable_grad():
+                    # The full plan budgets the complete composition on this
+                    # device. Keep its graph here instead of replaying pixels.
+                    with torch.enable_grad():
                         pixels = tuple(slice(0, size) for size in self.detector_shape)
                         inputs, selections = self._surface_batch_inputs(geometry, geometry_spec, global_slice, pixels)
                         offsets = _sample_offsets(
                             self.beam, self.detector_shape, self.detector_spacing, inputs, geometry_spec,
                             global_slice, pixels, local_geometry=True,
                         )
-                    with torch.no_grad():
                         local_geometry = _sample_geometry(
                             self.beam, self.detector_shape, self.detector_spacing, (*inputs[:len(self._trajectory)], offsets),
                             _GeometrySpec("offsets"),
@@ -2075,13 +2075,13 @@ class Projector:
                         self.voxel_spacing,
                     )
                 if sampled:
-                    del local_geometry
-                    parts = surface_batch_vjp(
-                        self.beam, self.detector_shape, self.detector_spacing, inputs, offsets,
-                        global_slice, pixels, self.voxel_spacing, device, parts,
-                        self._surface_capacity(global_slice.stop - global_slice.start, self.detector_shape),
-                        native_legacy=geometry_spec.kind == "offsets",
+                    parts = torch.autograd.grad(
+                        local_geometry, inputs,
+                        tuple(weight.to(device=value.device, dtype=value.dtype)
+                              for value, weight in zip(local_geometry, parts)),
+                        allow_unused=True,
                     )
+                    del local_geometry
             for index, (grad, part) in enumerate(zip(grads, parts)):
                 if part is not None:
                     if sampled:

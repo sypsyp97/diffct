@@ -62,6 +62,19 @@ Updated parameterized surfaces are checked on portable calls and native
 data transforms. Native tensor-returning calls check each batch before use;
 `*_into` calls preflight all batches before changing caller output.
 
+Native CUDA calls with either surface interface use full execution when the
+device memory, allocation and reservation limits admit the workload. Full
+geometry backward retains the surface composition graph on the compute device
+and pulls back all owned pixels together. This avoids per-row host autograd
+replay. Explicit chunk limits and workloads that cannot fit still use bounded
+streaming.
+
+Run `python examples/benchmark_surface_geometry.py` for a synthetic helical
+scan with 1338 views, a 736x64 curved detector and a 96x512x512 volume. It reports
+separate synchronized forward, adjoint and geometry-gradient timings for both
+surface interfaces. By default it reports and skips streamed plans; use
+`--allow-streamed` to time that potentially slower fallback.
+
 Run `python examples/benchmark_trajectory_admission.py --warmup 1 --samples 3`
 to measure this validation with CPU and CUDA trajectories. The script bypasses
 numerical projection and reports admission time, plus a separate untimed pass

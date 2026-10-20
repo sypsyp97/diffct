@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Let `ParameterizedSurface` use full native CUDA execution when the existing memory limits admit it. Full curved-detector geometry gradients now pull back one GPU composition graph instead of replaying tiny pixel fragments through host autograd; explicitly chunked and memory-limited calls retain bounded streaming.
 - Revalidate updated `ParameterizedSurface` pixels on portable calls and native data transforms. Native `*_into` calls validate all sampled batches before changing caller output.
 - Apply call-time trajectory admission to retained, trainable constructor frames, including geometry updated into degenerate or out-of-range values. Flat CUDA frame validation avoids bulk CPU round trips.
 - Keep each portable distributed forward's surface sampler for backward when callers replace the sampler or parameters before differentiating.
