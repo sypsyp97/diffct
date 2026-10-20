@@ -1,5 +1,6 @@
 """Shared deterministic ownership for view and first-axis space partitions."""
 
+import hashlib
 import math
 import numbers
 from copy import deepcopy
@@ -55,7 +56,7 @@ def balanced_slice(size, rank, world_size):
 
 
 def control_status(values, *, process_group=None, world_size=1):
-    """Combine fixed-size status flags without serializing Python objects."""
+    """Combine fixed-size control values without serializing Python objects."""
     if world_size == 1:
         return values
     with torch._C._DisableFuncTorch():
@@ -66,28 +67,46 @@ def control_status(values, *, process_group=None, world_size=1):
         return status.tolist()
 
 
+def _canonical_metadata(value):
+    """Keep container types while making dictionary order deterministic."""
+    if isinstance(value, dict):
+        return ("dict", tuple(sorted(
+            ((_canonical_metadata(key), _canonical_metadata(item)) for key, item in value.items()),
+            key=repr,
+        )))
+    if isinstance(value, (tuple, list)):
+        return ("tuple" if isinstance(value, tuple) else "list",
+                tuple(_canonical_metadata(item) for item in value))
+    return value
+
+
 def preflight(error=None, metadata=None, *, process_group=None, world_size=1,
               cache=None, cache_key=None, revision=None,
               mismatch="distributed ranks must agree on request metadata"):
     """Reject invalid/disagreeing requests collectively before numerical I/O.
 
-    A cache key identifies one collective site, never a local request variant.
-    Keep only that site's latest successful agreement to detect rank divergence.
+    Cache only local digest computation. Every call compares current metadata
+    across ranks, including calls through different warmed Partition objects.
     """
     result = (None if error is None else (type(error).__name__, str(error)), metadata)
     results = [result]
     if world_size > 1:
-        results = [None] * world_size
         # Control messages do not participate in data transforms or autograd.
         with torch._C._DisableFuncTorch():
-            changed = (metadata is not None if cache is None else
-                       cache_key not in cache or cache[cache_key] != (revision, metadata))
-            # A local cache hit cannot skip communication: another rank
-            # may have changed its configuration or failed validation.
-            if not control_status((int(error is not None or changed),),
-                                  process_group=process_group, world_size=world_size)[0]:
-                return
-            dist.all_gather_object(results, result, group=process_group)
+            changed = (cache is None or cache_key not in cache
+                       or cache[cache_key][:2] != (revision, metadata))
+            digest = (int.from_bytes(hashlib.blake2b(
+                repr(_canonical_metadata(metadata)).encode("utf-8"), digest_size=8,
+            ).digest(), "big", signed=True) if changed else cache[cache_key][2])
+            # MAX(digest) and MAX(~digest) encode both signed int64 bounds.
+            # Complementing also handles -2**63 without negation overflow.
+            failed, upper, inverse_lower = control_status(
+                (int(error is not None), digest, ~digest),
+                process_group=process_group, world_size=world_size,
+            )
+            if failed or upper != ~inverse_lower:
+                results = [None] * world_size
+                dist.all_gather_object(results, result, group=process_group)
     failure = next((entry[0] for entry in results if entry[0] is not None), None)
     if failure is not None:
         classes = {kind.__name__: kind for kind in (TypeError, ValueError, RuntimeError,
@@ -95,8 +114,8 @@ def preflight(error=None, metadata=None, *, process_group=None, world_size=1,
         raise classes.get(failure[0], RuntimeError)(failure[1])
     if any(entry[1] != metadata for entry in results):
         raise ValueError(mismatch)
-    if cache is not None:
-        cache[cache_key] = (revision, deepcopy(metadata))
+    if cache is not None and world_size > 1 and changed:
+        cache[cache_key] = (revision, deepcopy(metadata), digest)
 
 
 class Partition:
