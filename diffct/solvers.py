@@ -10,7 +10,7 @@ from .pipeline import _fragments
 from .storage import NpyStore, TensorStore
 from .streaming import _validate_stores
 from ._solver_state import (
-    agreement, callback_stop, copy_blocks, count, fill_blocks, finite,
+    agreement, callback_stop, callbacks_enabled, copy_blocks, count, fill_blocks, finite,
     load_checkpoint, save_checkpoint, scalar_sum, signature, squared_norm, update_blocks,
 )
 from ._solver_tv import total_variation
@@ -57,8 +57,9 @@ def _request(operator, measurements, iterations, x0, rtol, atol, callback,
     except (ValueError, TypeError, OSError) as caught:
         error = caught
     agreement(operator, error, (controls, settings, x0 is not None,
-                                resume is not None, checkpoint_directory is not None))
-    return controls
+                                resume is not None, checkpoint_directory is not None),
+              cache_key="solver request")
+    return (*controls, callbacks_enabled(operator, callback))
 
 
 def _initial(operator, data, x0):
@@ -83,7 +84,7 @@ def _status(residual, threshold, stopped=False):
 def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
          callback=None, checkpoint_directory=None, resume=None):
     """CGLS with a total iteration target, including resumed iterations."""
-    iterations, rtol, atol = _request(operator, measurements, iterations, x0, rtol, atol,
+    iterations, rtol, atol, callbacks = _request(operator, measurements, iterations, x0, rtol, atol,
                                      callback, checkpoint_directory, resume, {})
     data = measurements.detach().to(dtype=getattr(operator, "dtype", measurements.dtype))
     metadata = signature(operator, measurements, "cgls", {}, 1048576, compute_dtype=data.dtype) if checkpoint_directory is not None or resume is not None else None
@@ -124,7 +125,8 @@ def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
         if checkpoint_directory is not None:
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history,
                             norm, 1048576, gamma=gamma)
-        stopped = callback_stop(operator, callback, completed, history[-1], states["x"])
+        if callbacks:
+            stopped = callback_stop(operator, callback, completed, history[-1], states["x"])
         if stopped:
             break
     converged, reason = _status(history[-1], threshold, stopped)
@@ -138,7 +140,7 @@ def sirt(operator, measurements, iterations=100, *, x0=None, rtol=1e-6, atol=0.,
          callback=None, checkpoint_directory=None, resume=None, relaxation=1., nonnegative=True):
     """Row/column-normalized SIRT, with optional nonnegative iterates."""
     settings = dict(relaxation=relaxation, nonnegative=nonnegative)
-    iterations, rtol, atol = _request(operator, measurements, iterations, x0, rtol, atol,
+    iterations, rtol, atol, callbacks = _request(operator, measurements, iterations, x0, rtol, atol,
                                      callback, checkpoint_directory, resume, settings)
     data = measurements.detach().to(dtype=getattr(operator, "dtype", measurements.dtype))
     metadata = signature(operator, measurements, "sirt", settings, 1048576, compute_dtype=data.dtype) if checkpoint_directory is not None or resume is not None else None
@@ -166,7 +168,8 @@ def sirt(operator, measurements, iterations=100, *, x0=None, rtol=1e-6, atol=0.,
         history.append(math.sqrt(squared_norm(operator, data - operator.project(states["x"]), "rays")))
         if checkpoint_directory is not None:
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history, norm, 1048576)
-        stopped = callback_stop(operator, callback, completed, history[-1], states["x"])
+        if callbacks:
+            stopped = callback_stop(operator, callback, completed, history[-1], states["x"])
         if stopped:
             break
     converged, reason = _status(history[-1], threshold, stopped)
@@ -179,7 +182,7 @@ def tv_reconstruction(operator, measurements, iterations=100, weight=1., lr=.1, 
                       checkpoint_directory=None, resume=None):
     """Adam on half the global mean squared data error plus physical mean TV."""
     settings = dict(weight=weight, lr=lr)
-    iterations, rtol, atol = _request(operator, measurements, iterations, x0, rtol, atol,
+    iterations, rtol, atol, callbacks = _request(operator, measurements, iterations, x0, rtol, atol,
                                      callback, checkpoint_directory, resume, settings)
     data = measurements.detach().to(dtype=getattr(operator, "dtype", measurements.dtype))
     metadata = signature(operator, measurements, "tv_reconstruction", settings, 1048576, compute_dtype=data.dtype) if checkpoint_directory is not None or resume is not None else None
@@ -216,7 +219,8 @@ def tv_reconstruction(operator, measurements, iterations=100, weight=1., lr=.1, 
             states = dict(x=x, **optimizer.state[x])
             states["step"] = states["step"].reshape(1)
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history, norm, 1048576)
-        stopped = callback_stop(operator, callback, completed, history[-1], x.detach())
+        if callbacks:
+            stopped = callback_stop(operator, callback, completed, history[-1], x.detach())
         if stopped:
             break
     converged, reason = _status(history[-1], threshold, stopped)
@@ -248,8 +252,10 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
     except Exception as caught:
         error = caught
     agreement(operator, error, (controls, block_elements,
-                                resume is not None, checkpoint_directory is not None))
+                                resume is not None, checkpoint_directory is not None),
+              cache_key="solver request")
     iterations, rtol, atol = controls
+    callbacks = callbacks_enabled(operator, callback)
     metadata = signature(operator, source, "cgls_into", {}, block_elements, compute_dtype=x.dtype) if checkpoint_directory is not None or resume is not None else None
     previous = (load_checkpoint(operator, resume, metadata, iterations, block_elements, ("x", "s", "p", "r", "q"))
                 if resume is not None else None)
@@ -307,7 +313,8 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
         if checkpoint_directory is not None:
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history,
                             norm, block_elements, gamma=gamma)
-        stopped = callback_stop(operator, callback, completed, history[-1], output)
+        if callbacks:
+            stopped = callback_stop(operator, callback, completed, history[-1], output)
         if stopped:
             break
     for store in states.values():

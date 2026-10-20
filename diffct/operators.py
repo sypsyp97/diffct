@@ -549,6 +549,17 @@ class Projector:
                     "of the volume center"
                 )
 
+    def _agreement_revision(self):
+        surface = self.detector_surface
+        values = (*self._learnable, *self._trajectory,
+                  *(surface.parameters if isinstance(surface, ParameterizedSurface) else ()))
+        # Inference tensors have no version counter. Reconfirm their metadata
+        # instead of treating an unobservable in-place update as a cache hit.
+        with torch._C._DisableFuncTorch():
+            if any(value.is_inference() for value in values):
+                return object()
+            return id(surface), tuple((id(value), value._version) for value in values)
+
     def _agree_geometry_layout(self):
         if not (self._distributed and self.world_size > 1):
             return
@@ -567,11 +578,11 @@ class Projector:
             # Portable collectives follow the tile and ray-batch order, so
             # every rank must derive the same chunks.
             metadata += (self.volume_chunk_shape, self.view_chunk_size, self.detector_chunk_shape)
-        layouts = [None] * self.world_size
-        torch.distributed.all_gather_object(layouts, metadata, group=self._process_group)
-        if any(layout != metadata for layout in layouts):
-            raise ValueError("distributed ranks must agree on geometry, surface layout, native volume layout "
-                             "and portable chunk hints")
+        self._partition.preflight(
+            metadata=metadata, cache_key="geometry layout", revision=self._agreement_revision(),
+            mismatch="distributed ranks must agree on geometry, surface layout, native volume layout "
+                     "and portable chunk hints",
+        )
 
     def _participation(self):
         if self.backend == "torch" and self.world_size > 1 and torch.is_grad_enabled():
@@ -722,16 +733,12 @@ class Projector:
                 torch.device("cuda", torch.cuda.current_device())
                 if torch.distributed.get_backend(self._process_group) == "nccl" else torch.device("cpu")
             )
-            settings = torch.tensor(
-                (*self.global_volume_shape, *(self.volume_chunk_shape or (0,) * len(self.volume_shape)),
-                 self.view_chunk_size or 0, *(self.detector_chunk_shape or (0,) * len(self.detector_shape))),
-                dtype=torch.int64, device=control_device,
+            self._partition.preflight(
+                metadata=(self.global_volume_shape, self.volume_chunk_shape,
+                          self.view_chunk_size, self.detector_chunk_shape),
+                cache_key="native chunks", revision=self._agreement_revision(),
+                mismatch="distributed ranks must agree on volume shape and explicit chunk limits",
             )
-            lower, upper = settings.clone(), settings.clone()
-            torch.distributed.all_reduce(lower, op=torch.distributed.ReduceOp.MIN, group=self._process_group)
-            torch.distributed.all_reduce(upper, op=torch.distributed.ReduceOp.MAX, group=self._process_group)
-            if not torch.equal(lower, upper):
-                raise ValueError("distributed ranks must agree on volume shape and explicit chunk limits")
             agreement = torch.tensor([int(can_use_full), budget, allocation_limit, int(not foreign_output),
                                       reservation_budget], dtype=torch.int64, device=control_device)
             torch.distributed.all_reduce(agreement, op=torch.distributed.ReduceOp.MIN, group=self._process_group)
@@ -2414,7 +2421,10 @@ class Projector:
         # Metadata transport needs ordinary storage-backed tensors, even when
         # the numerical operation runs inside a data transform.
         with torch._C._DisableFuncTorch():
-            self._partition.preflight(error, (trajectory is not None, owner._geometry_trainable, surface_metadata))
+            self._partition.preflight(
+                error, (trajectory is not None, owner._geometry_trainable, surface_metadata),
+                cache_key="operator request", revision=owner._agreement_revision(),
+            )
         result = getattr(owner, operation)(*args)
         if owner is not self:
             self.last_execution_stats = owner.last_execution_stats
@@ -2430,7 +2440,8 @@ class Projector:
                 source, sink = _validate_stores(self, value, output, is_project)
             except (TypeError, ValueError, RuntimeError, PermissionError) as failure:
                 error = failure
-            self._partition.preflight(error, (is_project, self.dtype))
+            self._partition.preflight(error, (is_project, self.dtype),
+                                      cache_key="operator output")
         else:
             source, sink = _validate_stores(self, value, output, is_project)
         if self._reference is not None:
@@ -2496,7 +2507,8 @@ class Projector:
                                             for value in values if value.is_cuda)
         except (TypeError, ValueError, RuntimeError) as failure:
             error = failure
-        self._partition.preflight(error, metadata)
+        self._partition.preflight(error, metadata, cache_key="surface snapshot",
+                                  revision=self._agreement_revision())
         return spec, snapshots
 
     def _surface_offsets(self):
