@@ -93,15 +93,21 @@ def preflight(error=None, metadata=None, *, process_group=None, world_size=1,
     if world_size > 1:
         # Control messages do not participate in data transforms or autograd.
         with torch._C._DisableFuncTorch():
-            changed = (cache is None or cache_key not in cache
-                       or cache[cache_key][:2] != (revision, metadata))
-            digest = (int.from_bytes(hashlib.blake2b(
-                repr(_canonical_metadata(metadata)).encode("utf-8"), digest_size=8,
-            ).digest(), "big", signed=True) if changed else cache[cache_key][2])
+            try:
+                changed = (cache is None or cache_key not in cache
+                           or cache[cache_key][:2] != (revision, metadata))
+                digest = (int.from_bytes(hashlib.blake2b(
+                    repr(_canonical_metadata(metadata)).encode("utf-8"), digest_size=8,
+                ).digest(), "big", signed=True) if changed else cache[cache_key][2])
+                exchange = error is not None
+            except Exception:
+                # Metadata that cannot be digested here (e.g. self-referential) must not leave
+                # this rank outside the collective; the object exchange below reports it.
+                changed, digest, exchange = False, 0, True
             # MAX(digest) and MAX(~digest) encode both signed int64 bounds.
             # Complementing also handles -2**63 without negation overflow.
             failed, upper, inverse_lower = control_status(
-                (int(error is not None), digest, ~digest),
+                (int(exchange), digest, ~digest),
                 process_group=process_group, world_size=world_size,
             )
             if failed or upper != ~inverse_lower:
