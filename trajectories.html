@@ -5,7 +5,7 @@
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Large Volumes and Chunked Execution" href="chunking.html"><link rel="prev" title="Precision, training and reconstruction" href="execution.html">
 
-    <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
+    <!-- Generated with Sphinx 9.1.1 and Furo 2025.12.19 -->
         <title>Trajectories and Geometry - diffct 2.3.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
@@ -368,10 +368,12 @@ the documented shape; fan/cone pixels cannot coincide with the source.
 per pixel and no detector-area integration. They operate directly on the native
 curved grid without resampling. Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/curved_detector.py</span></code> for a
 complete circular cone example, also shown in <a class="reference internal" href="examples.html"><span class="doc">Examples</span></a>.</p>
-<p>Legacy streamed operations require CPU offsets and retain complete host
-callback geometry. CUDA offsets remain supported when
-the automatic CUDA full-volume path fits. See <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a> for large-volume
-execution and memory requirements.</p>
+<p>Full-volume and streamed operations accept CPU or CUDA offsets. The operator
+transfers selected offsets to the compute device before expanding world points
+for that device’s view shard or streamed batch. Native execution preserves dtype
+promotion during composition before staging complete coordinates as float32.
+The PyTorch backend uses the selected precision. See <a class="reference internal" href="chunking.html"><span class="doc">Large Volumes and Chunked Execution</span></a> for memory
+requirements.</p>
 <p>For bounded view/pixel sampling, pass explicit tensor parameters:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParameterizedSurface</span>
 

@@ -5,7 +5,7 @@
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Migrating from diffct 1.x to 2.0" href="migration.html"><link rel="prev" title="Measured Walnut" href="walnut_example.html">
 
-    <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
+    <!-- Generated with Sphinx 9.1.1 and Furo 2025.12.19 -->
         <title>API Reference - diffct 2.3.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
@@ -276,8 +276,10 @@ for every pixel. It receives centred physical float64 grids on CPU and
 returns a floating-point tensor shaped <code class="docutils literal notranslate"><span class="pre">(*detector_shape,</span> <span class="pre">3)</span></code> or
 <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">*detector_shape,</span> <span class="pre">3)</span></code>. Cone normals are <code class="docutils literal notranslate"><span class="pre">cross(det_u,</span> <span class="pre">det_v)</span></code>;
 2D normals are <code class="docutils literal notranslate"><span class="pre">(det_u_y,</span> <span class="pre">-det_u_x)</span></code> with zero middle offsets. Offsets
-must be on CPU for streamed execution. CUDA offsets remain supported on a
-fitting full-volume CUDA path. Constructor world validation runs on CPU.
+can be on CPU or CUDA in full-volume and streamed execution. World points
+expand on each compute device after view sharding. Native execution preserves
+the composition’s dtype promotion before converting complete coordinates to
+float32. The PyTorch backend uses the selected precision.
 The callback is sampled and validated on every call,
 with first-order gradients for captured PyTorch parameters. Omitting it
 preserves the flat detector.</p>
@@ -438,7 +440,7 @@ geometry and autograd requirements, and <a class="reference internal" href="mult
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">diffct.</span></span><span class="sig-name descname"><span class="pre">ParameterizedSurface</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sampler</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parameters</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/diffct/surfaces.html#ParameterizedSurface"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#diffct.ParameterizedSurface" title="Link to this definition">¶</a></dt>
 <dd><p>Sample local detector offsets from global CPU pixel/view coordinates.</p>
 <p><code class="docutils literal notranslate"><span class="pre">sampler(u,</span> <span class="pre">v,</span> <span class="pre">view_indices,</span> <span class="pre">*parameters)</span></code> returns shared or per-view
-<code class="docutils literal notranslate"><span class="pre">(...,</span> <span class="pre">3)</span></code> offsets. Parameters are explicit finite floating tensors;
+<code class="docutils literal notranslate"><span class="pre">(...,</span> <span class="pre">3)</span></code> offsets on CPU or CUDA. Parameters are explicit finite floating tensors;
 other geometry configuration must be immutable. Projector snapshots the
 sampler reference and parameter values per invocation. Snapshot storage
 scales with parameter sizes, and the sampler’s own allocations remain

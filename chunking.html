@@ -5,7 +5,7 @@
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Multiple GPUs and Nodes" href="multi_gpu.html"><link rel="prev" title="Trajectories and Geometry" href="trajectories.html">
 
-    <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
+    <!-- Generated with Sphinx 9.1.1 and Furo 2025.12.19 -->
         <title>Large Volumes and Chunked Execution - diffct 2.3.0</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
@@ -428,10 +428,17 @@ batch. Pixel cotangents are reduced through the local sampler/frame graph to
 parameter gradients before communication. The captured sampler and one set of
 frame/parameter snapshots preserve backward behavior after parameter mutation.
 See <a class="reference internal" href="trajectories.html#detector-surfaces"><span class="std std-ref">Parameterized detector surfaces</span></a>.</p>
-<p>Legacy two-argument callbacks still sample their complete detector geometry
-on the host and retain that footprint. Streamed legacy callbacks must return
-CPU offsets. CUDA callbacks remain supported when the automatic CUDA
-full-volume path fits. Callback values are not cached across operations.</p>
+<p>Legacy two-argument callbacks receive complete CPU detector grids and can return
+CPU or CUDA offsets. The operator transfers selected offsets to each compute
+device before expanding world points for its owned views or streamed batch.
+Memory planning uses these local view counts and the composition dtype.
+Gradient-connected offsets are snapshotted on CPU and transferred per batch.
+Streamed composition writes offset fragments into reusable float32 geometry
+buffers. Geometry backward replays one view and a bounded detector-row segment
+at a time, without retaining complete CUDA composition graphs.
+Construction also sizes validation batches to the available device budget.
+Callback allocations remain caller-controlled. Callback values are not cached
+across operations.</p>
 <p><code class="docutils literal notranslate"><span class="pre">devices=[0,</span> <span class="pre">1]</span></code> still partitions views in list order. Each card streams tiles;
 the full output returns to the input device. Distributed <code class="docutils literal notranslate"><span class="pre">partition=&quot;views&quot;</span></code>
 ranks retain local view shards and replicated volumes. Local GPU backprojection
