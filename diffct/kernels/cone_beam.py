@@ -120,6 +120,11 @@ def _cone_3d_forward_kernel(
         det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
         det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
 
+    # Preserve native endpoint composition, then clip in float64: when both
+    # endpoints are distant, float32 loses voxel widths before rebasing.
+    src_x, src_y, src_z = np.float64(src_x), np.float64(src_y), np.float64(src_z)
+    det_x, det_y, det_z = np.float64(det_x), np.float64(det_y), np.float64(det_z)
+
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
@@ -133,7 +138,7 @@ def _cone_3d_forward_kernel(
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Measure the ray parameter from the endpoint nearer the volume centre, so a
-    # distant source does not make the float32 parameters coarse. Only the
+    # distant source does not make the parameters coarse. Only the
     # source-to-detector segment is integrated.
     if src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
         org_x = src_x
@@ -170,15 +175,14 @@ def _cone_3d_forward_kernel(
     if t_min >= t_max:  # No valid 3D intersection
         d_sino[iview, iu, iv] = _ZERO; return
 
-    # The traversal restarts at the entry point, so its parameters stay
-    # within the volume diameter.
-    ent_x = org_x + t_min * dir_x
-    ent_y = org_y + t_min * dir_y
-    ent_z = org_z + t_min * dir_z
-    ray_x = dir_x
-    ray_y = dir_y
-    ray_z = dir_z
-    t_end = t_max - t_min
+    # Only setup needs float64; traverse in float32 from the volume entry.
+    ent_x = np.float32(org_x + t_min * dir_x)
+    ent_y = np.float32(org_y + t_min * dir_y)
+    ent_z = np.float32(org_z + t_min * dir_z)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    ray_z = np.float32(dir_z)
+    t_end = np.float32(t_max - t_min)
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     accum = _ZERO  # Accumulated projection value
@@ -337,6 +341,10 @@ def _cone_3d_backward_kernel(
         det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
         det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
 
+    # Match forward setup while retaining native endpoint composition.
+    src_x, src_y, src_z = np.float64(src_x), np.float64(src_y), np.float64(src_z)
+    det_x, det_y, det_z = np.float64(det_x), np.float64(det_y), np.float64(det_z)
+
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
@@ -347,7 +355,7 @@ def _cone_3d_backward_kernel(
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Measure the ray parameter from the endpoint nearer the volume centre, so a
-    # distant source does not make the float32 parameters coarse. Only the
+    # distant source does not make the parameters coarse. Only the
     # source-to-detector segment is integrated.
     if src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
         org_x = src_x
@@ -380,15 +388,14 @@ def _cone_3d_backward_kernel(
 
     if t_min >= t_max: return
 
-    # The traversal restarts at the entry point, so its parameters stay
-    # within the volume diameter.
-    ent_x = org_x + t_min * dir_x
-    ent_y = org_y + t_min * dir_y
-    ent_z = org_z + t_min * dir_z
-    ray_x = dir_x
-    ray_y = dir_y
-    ray_z = dir_z
-    t_end = t_max - t_min
+    # Only setup needs float64; traverse in float32 from the volume entry.
+    ent_x = np.float32(org_x + t_min * dir_x)
+    ent_y = np.float32(org_y + t_min * dir_y)
+    ent_z = np.float32(org_z + t_min * dir_z)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    ray_z = np.float32(dir_z)
+    t_end = np.float32(t_max - t_min)
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     t = _ZERO

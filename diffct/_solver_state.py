@@ -211,6 +211,8 @@ def load_checkpoint(operator, directory, expected, iterations, elements, names):
     try:
         directory = Path(directory).resolve()
         saved = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        if not isinstance(saved, dict):
+            raise ValueError("checkpoint metadata must be an object")
         # JSON canonicalization also normalizes tuple-valued physical spacing.
         canonical = json.loads(json.dumps(expected))
         if any(saved.get(key) != value for key, value in canonical.items()):
@@ -225,12 +227,16 @@ def load_checkpoint(operator, directory, expected, iterations, elements, names):
         if expected["algorithm"] in ("cgls", "cgls_into"):
             finite(saved.get("gamma"), "checkpoint gamma")
         manifest = saved.get("states", {})
+        if not isinstance(manifest, dict):
+            raise ValueError("checkpoint states must be an object")
         if set(manifest) != set(names):
             raise ValueError("checkpoint does not contain the complete solver state")
         states = {}
         for name in names:
-            store = NpyStore(directory / f"{name}.npy", mode="r")
             specification = manifest[name]
+            if not isinstance(specification, dict):
+                raise ValueError("checkpoint state specification must be an object")
+            store = NpyStore(directory / f"{name}.npy", mode="r")
             shape = operator.projection_shape if name in ("r", "q", "row") else operator.volume_shape
             if name == "step":
                 shape = (1,)

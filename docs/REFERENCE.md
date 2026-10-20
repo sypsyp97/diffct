@@ -162,8 +162,9 @@ from execution chunks and are not capped at the automatic 32-view execution limi
 Allocations made by the callback itself still depend on its implementation;
 use `ParameterizedSurface` to sample offsets for selected global view IDs.
 The existing trajectory rule still applies: if no component requires gradients,
-the entire trajectory is cloned. Otherwise all components are read live, with
-gradients for the differentiable components. Second derivatives through the
+the entire trajectory is cloned. Otherwise all components are read live and
+validated on each call, with gradients for the differentiable components.
+Second derivatives through the
 geometry are unsupported. Surfaces must return the documented shape and finite
 coordinates on every call; a source must not coincide with any pixel.
 
@@ -431,7 +432,7 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   to a volume axis, a source on a voxel face plane, and equal detector pitches.
   For finite-difference checks, rotate the trajectory slightly, for example with
   `start_angle=0.1`.
-- Trajectory frame checks run at construction and for each override; surface positions are also
+- Trajectory frame checks run at construction and on each call with live default frames or an override; surface positions are also
   checked on every call. Optimize angles and offsets, not raw axis vectors, so
   the geometry stays valid.
 
