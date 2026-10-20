@@ -160,9 +160,10 @@ contains global view IDs. Return ``(*pixel_shape,3)`` shared offsets or
 ``(len(view_indices),*pixel_shape,3)`` batched offsets. In 2D the middle
 component remains zero. Streamed grids, IDs and explicit parameter snapshots
 are CPU tensors; parameter dtypes and original gradient devices are preserved.
-World-coordinate arithmetic promotes all frames and offsets to one common
-dtype, at least float32; float64 inputs retain float64 arithmetic. Gradients
-return in each input's original dtype. Offsets and world points are validated
+Native sampled-surface arithmetic promotes frames and offsets to one common
+dtype, at least float32; float64 inputs retain float64 arithmetic. The PyTorch
+backend uses the selected precision. Gradients return in each input's original
+dtype. Offsets and world points are validated
 on every executing batch.
 
 The sampler is pure. Mutable geometry tensors must be explicit parameters;
@@ -246,13 +247,14 @@ Differentiable geometry helpers
 ``circular_trajectory_3d`` and ``circular_trajectory_3d_parallel`` accept either
 a view count or a nonempty floating-point angle tensor as the first argument.
 Angles are in radians and may be nonuniform or unsorted. A tensor preserves its
-device, dtype and autograd history; ``device`` and ``dtype`` only configure
-count-based generation. Parallel helpers cover ``[0, pi)`` by default; fan and
-cone helpers cover ``[0, 2*pi)``. The 3D parallel helper lifts the 2D orbit into
+device, dtype and autograd history. ``start_angle``, ``end_angle``, ``device``
+and ``dtype`` only configure count-based generation. Parallel helpers cover
+``[0, pi)`` by default; fan and cone helpers cover ``[0, 2*pi)``.
+The 3D parallel helper lifts the 2D orbit into
 the XY plane with ``det_v=(0,0,1)``. In both parallel helpers,
 ``detector_distance`` is a transverse shift along ``det_u``.
 
-``transform_trajectory(trajectory, rotation=None, translation=None, beam="cone")``
+``transform_trajectory(trajectory, rotation=None, translation=None, *, beam="cone")``
 applies a rigid transform about the world origin. Points become ``R @ p + t``;
 directions become ``R @ d``. ``rotation`` is a proper orthogonal matrix shaped
 ``(d,d)`` or ``(views,d,d)``, and ``translation`` is shaped ``(d,)`` or

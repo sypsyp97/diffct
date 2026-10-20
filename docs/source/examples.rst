@@ -14,6 +14,8 @@ The scripts in the repository ``examples/`` directory show how to use
   rank-owned spatial slabs and completed-iteration checkpoints.
 - ``benchmark_execution.py``: schedule and slab/block comparisons with actual
   copy payloads, pilot metadata, timing and CUDA tensor peaks.
+- ``benchmark_trajectory_admission.py``: per-call trajectory validation without
+  numerical projection. Use ``--backend torch --frame-device cpu`` on CPU.
 - ``analytical_reconstruction.py``: parallel-beam FBP, fan-beam FBP and cone-beam
   FDK, with a choice of ramp-filter window.
 - ``learnable_reconstruction.py``: build and train a filter and detector weights

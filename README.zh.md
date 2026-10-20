@@ -37,18 +37,20 @@
 > **2.0 版**用逐视角轨迹取代了 1.x 的圆轨迹接口。为 1.x 写的代码需要修改，见[迁移说明](docs/MIGRATION.md)。
 > Apple Silicon 请使用 [Linda-Sophie Schneider 的 MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
 
+本 README 对应源码版本，包含[尚未发布的 API](CHANGELOG.md#unreleased)。逐次调用覆盖轨迹、圆轨迹角度张量、`transform_trajectory`、`parallel3d` 和 `native_volume_layout` 需要从源码安装。
+
 ## 为什么使用 diffct
 
 据我们所知，diffct 是唯一同时具备以下四点的开源 GPU CT 库：任意逐视角轨迹、对体数据的自动求导、对采集几何的一阶梯度，以及内置的多卡和多节点执行。我们在 2026 年 10 月与 LEAP、TIGRE、ASTRA/tomosipo、DiffDRR 等库做了对比。
 
-- **任意轨迹。** 每个视角有各自的源点、探测器中心和探测器轴；圆轨迹、螺旋、鞍形、正弦、随机和标定扫描使用同一套代码。`requires_grad=True` 的轨迹张量可获得用于标定的几何梯度。
+- **任意轨迹。** 每个视角有各自的射线方向或源点、探测器中心和探测器轴；圆轨迹、螺旋、鞍形、正弦、随机和标定扫描使用同一套代码。`requires_grad=True` 的轨迹张量可获得用于标定的几何梯度。
 - **曲面探测器。** `ParameterizedSurface` 接收全局像素坐标、视角编号和显式参数，按批次生成弧形、柱面及其他曲面；原有 `detector_surface(u, v)` 回调仍可用。投影与匹配反投影支持曲面参数的一阶梯度。见[曲面接口](docs/REFERENCE.md#parameterized-detector-surfaces)（英文）。
 - **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
 - **大体积。** 按空间、视角和像素自动分块，传输缓冲有容量上限。`project_into`/`backproject_into` 可写入调用方的张量或磁盘存储；张量 autograd 接口仍保留完整输入、输出和梯度。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
-- **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或用 torchrun 与 NCCL。默认 `partition="views"` 分片视角并复制体数据；`partition="space"` 让每个 rank 固定拥有一部分体积，合并射线贡献。加速比取决于工作负载和通信开销。
+- **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或用 torchrun 与 NCCL。视角、空间和混合分区控制体数据与投影的复制。加速比取决于工作负载和通信开销。
+- **精度与训练。** 显式选择原生/PyTorch 后端及 FP32/FP64 模式，支持各轴体素间距、batch/channel 和数据 `torch.func` 变换。可移植路径使用 CPU 或 PyTorch CUDA/ROCm；执行规则见[执行指南](docs/EXECUTION.md)（英文）。
+- **求解器。** 库级 `cgls`、`sirt`、`tv_reconstruction` 支持残差历史、收敛阈值、回调，以及扫描和数据指纹绑定的完整 checkpoint；`cgls_into` 使用有界磁盘状态。
 - **可微 FBP 和 FDK。** `fbp`、`fdk` 和近似螺旋重建 `helical_fdk` 组合公开的滤波器、权重和解析反投影。反向 kernel 转置实际的插值算子，可学习自定义 filter 和 weight。见[解析重建指南](docs/source/analytical_learning.rst)（英文）。
-- **精度与训练。** 显式选择原生/PyTorch 后端及 FP32/FP64 模式，支持各轴体素间距、batch/channel 和数据 `torch.func` 变换。可移植路径使用 CPU 或 PyTorch CUDA/ROCm；实卡验证范围见[执行指南](docs/EXECUTION.md)（英文）。
-- **求解器。** 库级 `cgls`、`sirt`、`tv_reconstruction` 支持残差历史、收敛阈值、回调和完整 checkpoint；`cgls_into` 使用有界磁盘状态。混合分区可同时分片视角和体积。
 
 功能边界、限制和等中心规则见 [docs/REFERENCE.md](docs/REFERENCE.md#capabilities-and-limits)（英文）。
 
@@ -61,14 +63,14 @@ pip install "diffct[cu12]"    # PyTorch 为 CUDA 12 构建
 pip install "diffct[cu13]"    # PyTorch 为 CUDA 13 构建
 ```
 
-extra 安装 Numba 编译内核所需的 CUDA 库。CPU 或 PyTorch ROCm 路径先安装对应 PyTorch，再运行 `pip install diffct` 并选择 `backend="torch"`；原生路径已有兼容 CUDA Toolkit 时也可使用普通安装。
+extra 安装 Numba 编译内核所需的 CUDA 库。CPU 或 PyTorch ROCm 路径先安装对应 PyTorch，再运行 `pip install diffct` 并选择 `backend="torch"`。导入 diffct 和使用该后端不需要 CUDA 运行时；原生执行时才初始化 Numba CUDA。原生路径已有兼容 CUDA Toolkit 时也可使用普通安装。
 
 从源码安装（含示例）：
 
 ```bash
 git clone https://github.com/sypsyp97/diffct.git
 cd diffct && pip install -e ".[cu12]"
-python examples/quickstart.py               # 冒烟测试：每种射束打印伴随误差约 1e-8
+python examples/quickstart.py               # 打印每种射束的伴随误差和梯度
 ```
 
 <details>
@@ -108,6 +110,8 @@ loss.backward()                     # x.grad = A^T (A x - y)
 **几何梯度。** 用 `A.project(volume, trajectory=current)` 或 `A.backproject(sinogram, trajectory=current)` 复用同一个投影器。圆轨迹生成器接受可学习的角度张量，`transform_trajectory` 提供可微刚体变换；省略覆盖参数时继续使用构造时的轨迹。详见 [REFERENCE](docs/REFERENCE.md#geometry-gradients)（英文）。
 
 **3D 平行束。** 使用 `circular_trajectory_3d_parallel(...)` 和 `beam="parallel3d"`，通过 PyTorch 后端在 CPU 或 CUDA 上执行匹配的前向投影和反向投影。
+
+**原生体积布局。** 无 batch、平板锥束操作可设置 `native_volume_layout=True`，避免体积布局复制。这适用于单计算设备的原生完整 CUDA 路径。形状仍为 `(D, H, W)`，返回张量的步长采用内核布局；默认值为 `False`。限制见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
 
 **多卡与多节点。** 详见 [REFERENCE](docs/REFERENCE.md#several-gpus-and-nodes)（英文）和 [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md)。
 
@@ -188,12 +192,13 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 ## 示例
 
-`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`analytical_reconstruction.py`、`learnable_reconstruction.py`、`helical_fdk.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`benchmark_scaling.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
+`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`benchmark_trajectory_admission.py`、`analytical_reconstruction.py`、`learnable_reconstruction.py`、`helical_fdk.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`benchmark_scaling.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
+| [精度、训练与重建](docs/EXECUTION.md) | 后端模式、batch/间距约定、解析重建存储、混合分区损失归一化和求解器 checkpoint（英文） |
 | [轨迹指南](docs/source/trajectories.rst) | 轨迹元组和 `Projector` 用法 |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | 功能边界、自定义轨迹、几何梯度、多卡细节、几何与单位（英文） |
 | [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md) | 执行与内存选择、分布式损失规则、Slurm 和跨节点检查 |

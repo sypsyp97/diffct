@@ -302,7 +302,8 @@ class Projector:
     trajectory
     tensor requires gradients, the projector clones the geometry. Otherwise it
     keeps references, reads the current values at every call, and returns
-    gradients for those tensors; the checks above run only at construction.
+    gradients for those tensors. Live default frames are checked at construction;
+    overrides are checked on each call.
     ``project``, ``backproject``, ``__call__`` and their ``*_into`` variants
     accept a keyword-only ``trajectory`` replacing all frames for that call.
     It must retain the constructor's beam and view count; it is validated and
@@ -379,8 +380,8 @@ class Projector:
     flat detector return ``(D, H, W)`` tensors with the kernels' ``(W, H, D)``-contiguous strides instead
     of contiguous copies; native projections accept such tensors without a copy. An iterative solver that
     keeps its volumes in this layout then avoids two whole-volume copies per normal-operator application
-    on one device. Values are identical. Results from several local devices, curved detectors, batched
-    inputs, streamed execution and the PyTorch backend still involve copies.
+    on one device. The layout does not change the operator. Results from several local devices,
+    curved detectors, batched inputs, streamed execution and the PyTorch backend still involve copies.
 
     Full host volumes/sinograms stay on CPU; streamed native CUDA buffers are
     bounded by the chosen tile and view batch. Caller-owned CUDA data/results
