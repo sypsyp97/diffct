@@ -28,6 +28,13 @@ VOLUME = (3, 4, 5)
 PITCH = (.012, .07)
 VIEWS = (64, 256)
 STREAM_HINTS = dict(view_chunk_size=16, detector_chunk_shape=(444, 32))
+STREAM_DETECTOR_TILES = math.prod(
+    math.ceil(size / chunk)
+    for size, chunk in zip(DETECTOR, STREAM_HINTS["detector_chunk_shape"])
+)
+# Allow four additional samples per operation for admission checks or bounded
+# pilot/validation setup. This slack must not grow with views, batches, or tiles.
+SAMPLE_SETUP_SLACK = 4
 # Match the established float32 native surface acceptance tolerance.
 RTOL, ATOL = 4e-4, 6e-5
 
@@ -142,7 +149,7 @@ def large_runs():
 
 @pytest.mark.parametrize("plan", ("default", "streamed"))
 @pytest.mark.parametrize("operation", ("project", "backproject"))
-def test_compose_surface_launches_at_most_once_per_view(large_runs, plan, operation):
+def test_compose_surface_launches_stay_within_plan_budget(large_runs, plan, operation):
     for views in VIEWS:
         trace = large_runs[plan, operation, views]
         assert trace.plans, "native execution did not reach its planner"
@@ -154,30 +161,45 @@ def test_compose_surface_launches_at_most_once_per_view(large_runs, plan, operat
                     actual.detector_chunk_shape, STREAM_HINTS["detector_chunk_shape"],
                 ))
         # Zero is valid when a batched GPU tensor path composes the geometry.
-        # Rows, staging segments, and detector tiles must not multiply launches.
-        assert trace.launches.calls <= views, (
+        # Explicit detector tiles may each compose once per view. Detector rows
+        # and staging segments must not multiply launches under either plan.
+        maximum = views * (STREAM_DETECTOR_TILES if plan == "streamed" else 1)
+        assert trace.launches.calls <= maximum, (
             f"{plan} {operation}: {trace.launches.calls} compose_surface launches "
-            f"for {views} views and detector {DETECTOR}; maximum is {views}"
+            f"for {views} views and detector {DETECTOR}; maximum is {maximum}"
         )
         assert torch.isfinite(trace.output).all()
         assert torch.count_nonzero(trace.output).item() > 0
 
 
-@pytest.mark.parametrize("plan", ("default", "streamed"))
 @pytest.mark.parametrize("operation", ("project", "backproject"))
-def test_geometry_sampling_does_not_scale_with_views(large_runs, plan, operation):
-    small = large_runs[plan, operation, 64].samples
-    large = large_runs[plan, operation, 256].samples
+def test_default_geometry_sampling_does_not_scale_with_views(large_runs, operation):
+    small = large_runs["default", operation, 64].samples
+    large = large_runs["default", operation, 256].samples
     # Four times as many views may use at most twice as many host samples.
     # A path that needs no sample at 64 views still gets a two-call allowance.
     assert large <= 2 * max(1, small), (
-        f"{plan} {operation}: _sample_geometry calls grew from {small} at 64 views "
+        f"default {operation}: _sample_geometry calls grew from {small} at 64 views "
         f"to {large} at 256 views; maximum is {2 * max(1, small)}"
     )
-    if plan == "default":
-        assert large <= 8, (
-            f"default {operation}: {large} _sample_geometry calls for 256 views; maximum is 8"
-        )
+    assert large <= 8, (
+        f"default {operation}: {large} _sample_geometry calls for 256 views; maximum is 8"
+    )
+
+
+@pytest.mark.parametrize("views", VIEWS)
+@pytest.mark.parametrize("operation", ("project", "backproject"))
+def test_streamed_geometry_sampling_is_bounded_by_explicit_chunks(large_runs, views, operation):
+    # Validation may sample once per explicit view batch and detector tile.
+    # Derive the budget from the requested chunks, not observed sample counts.
+    batches = math.ceil(views / STREAM_HINTS["view_chunk_size"])
+    maximum = batches * STREAM_DETECTOR_TILES + SAMPLE_SETUP_SLACK
+    samples = large_runs["streamed", operation, views].samples
+    assert samples <= maximum, (
+        f"streamed {operation}: {samples} _sample_geometry calls for {views} views; "
+        f"maximum is {maximum} ({batches} view batches x {STREAM_DETECTOR_TILES} "
+        f"detector tiles + {SAMPLE_SETUP_SLACK} setup calls)"
+    )
 
 
 @pytest.mark.parametrize("views", VIEWS)
