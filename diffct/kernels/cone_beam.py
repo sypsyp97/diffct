@@ -414,8 +414,25 @@ def _cone_3d_backward_kernel(
     tz = (np.float32(next_iz) - cz - ent_z) * inv_dir_z if abs(ray_z) > _TINY else _BIG
 
     # === 3D CONE BEAM BACKPROJECTION TRAVERSAL LOOP ===
-    # Adjoint of the cell-constant Siddon forward projection.
+    # Adjoint of the cell-constant Siddon forward projection. The segment sequence and
+    # arithmetic match the forward loop exactly; only the loop structure differs. Z
+    # crossings inside one xy cell run in the inner loop, so the lanes of a warp, which
+    # cover adjacent detector rows and share their xy path, reconverge at every xy step
+    # and their atomic adds hit neighbouring addresses of one z column.
     while t < t_end:
+        while tz < tx and tz < ty:     # Z-boundary crossed first
+            if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
+                t_next = min(tx, ty, tz, t_end)
+                seg_len = t_next - t
+                if seg_len > _ZERO:
+                    cuda.atomic.add(d_vol, (ix, iy, iz), g * seg_len)
+            t = tz
+            iz += step_z
+            tz += dt_z
+            if t >= t_end:
+                break
+        if t >= t_end:
+            break
         if 0 <= ix < Nx and 0 <= iy < Ny and 0 <= iz < Nz:
             # Determine next 3D voxel boundary crossing (minimum of x, y, z boundaries or ray exit)
             t_next = min(tx, ty, tz, t_end)
@@ -424,19 +441,15 @@ def _cone_3d_backward_kernel(
                 cuda.atomic.add(d_vol, (ix, iy, iz), g * seg_len)
 
         # === 3D VOXEL BOUNDARY CROSSING LOGIC ===
-        # Advance to next voxel based on which boundary is crossed first in 3D
-        if tx <= ty and tx <= tz:      # X-boundary crossed first
+        # Not a z step, so x is first exactly when tx <= ty (ties keep the forward order).
+        if tx <= ty:                   # X-boundary crossed first
             t = tx
             ix += step_x
             tx += dt_x
-        elif ty <= tx and ty <= tz:    # Y-boundary crossed first
+        else:                          # Y-boundary crossed first
             t = ty
             iy += step_y
             ty += dt_y
-        else:                          # Z-boundary crossed first
-            t = tz
-            iz += step_z
-            tz += dt_z
 
 
 # ============================================================================
