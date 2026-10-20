@@ -830,10 +830,14 @@ class Projector:
             rank, frames = len(self.volume_shape), 4 if self.beam == "cone" else 3
             capacity = self._surface_capacity(views, pixels)
             columns = 3 if self.beam == "cone" else 2
-            if spec is not None and spec.kind == "offsets" and spec.shared:
+            shared = spec is not None and spec.kind == "offsets" and spec.shared
+            if shared:
                 capacity = math.prod(pixels)
             buffers = (_allocation_bytes(2 * (frames + (3 if rank == 3 else 0)) * rank),
                        _allocation_bytes(2 * (columns * capacity + 1)))
+            if shared:
+                # Device copy of the shared offset tile before column packing.
+                buffers += (_allocation_bytes(2 * 3 * capacity),)
             if self._geometry_trainable:
                 # Replay one view and a bounded detector row at a time.
                 replay = rank * min(capacity, pixels[-1])
@@ -1356,6 +1360,17 @@ class Projector:
         source, points = targets[0].view(count, rank), targets[1].view(count, -1, rank)
         # A workspace sized for an earlier, smaller tile keeps the segment path.
         shared = shared and capacity >= pixel_count
+        # Every job of a call slices the same offset snapshot: stage it once per
+        # call and pixel tile. The cache keeps the snapshot alive, so a later
+        # snapshot cannot reuse its storage under the same key.
+        if shared:
+            staged_key = (geometry[frame_count], tuple((part.start, part.stop) for part in pixels))
+            restage = not ("_surface_shared_staged" in groups
+                           and groups["_surface_shared_staged"][0] is staged_key[0]
+                           and groups["_surface_shared_staged"][1] == staged_key[1])
+        else:
+            restage = False
+            groups.pop("_surface_shared_staged", None)
         with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload), cuda.gpus[pipe.device.index]:
             if origin is not None:
                 pipe.upload.wait_stream(origin)
@@ -1363,17 +1378,20 @@ class Projector:
             stream = _get_numba_external_stream_for(pipe.upload)
             arrays = tuple(TorchCUDABridge.tensor_to_cuda_array(value)
                            for value in (packed_frames, packed_offsets, source, points))
-            if shared:
-                width = pixel_shape[-1]
-                for row in range(pixel_shape[0] if rank == 3 else 1):
-                    line = offsets[row] if rank == 3 else offsets
-                    for column, original in enumerate(columns):
-                        value = line[:, original]
-                        if not value.is_cuda:
-                            value = value.to(dtype=torch.float64)
-                        start = column * capacity + row * width
-                        _pipeline._copy(packed_offsets[start:start + width], value, pipe.stats)
-                        pipe.retain(pipe.event(pipe.upload), value, packed_offsets)
+            if restage:
+                # One host-to-device transfer, or one per detector row for a
+                # non-contiguous tile; the float64 columns are packed on the device.
+                device_offsets = torch.empty(offsets.shape, dtype=offsets.dtype, device=packed_offsets.device)
+                if offsets.is_contiguous():
+                    _pipeline._copy(device_offsets, offsets, pipe.stats)
+                else:
+                    for row in range(offsets.shape[0]):
+                        _pipeline._copy(device_offsets[row], offsets[row], pipe.stats)
+                pipe.retain(pipe.event(pipe.upload), offsets, device_offsets)
+                flat = device_offsets.reshape(pixel_count, 3)
+                for column, original in enumerate(columns):
+                    packed_offsets[column * capacity:column * capacity + pixel_count].copy_(flat[:, original])
+                groups["_surface_shared_staged"] = staged_key
             for local in range(count):
                 packet = torch.cat([value[views.start + local].detach().to(device="cpu", dtype=torch.float64)
                                     for value in frames])
