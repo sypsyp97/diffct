@@ -26,7 +26,7 @@ def surface_batch_vjp(beam, detector_shape, detector_spacing, inputs, offsets,
     if capacity < 1:
         raise ValueError("surface replay capacity must be a positive integer")
 
-    frame_count = 4 if beam == "cone" else 3
+    frame_count = 4 if beam in ("cone", "parallel3d") else 3
     frames = inputs[:frame_count]
     dimensions = len(detector_shape)
     pixel_shape = tuple(len(range(*selected.indices(size)))

@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Rigid trajectory transforms accept valid surface detector frames whose reference center coincides with the source or whose reference plane is edge-on.
-- Call-time trajectory validation checks ordinary flat detectors by view and corners, retaining exact pixel checks when needed. Surface validation stages geometry on CPU once instead of repeatedly transferring each pixel batch.
+- Call-time trajectory validation checks flat detectors by corners and coordinate bounds, with exact pixel checks for ambiguous views. Frames stage once per validation device. Native surface validation uses bounded batches on each compute device after view sharding.
 
 ## [2.3.0] - 2026-10-14
 

@@ -17,7 +17,7 @@ from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
 from .utils import TorchCUDABridge, _get_numba_external_stream_for
-from .backends import ReferenceProjector, select_backend, voxel_spacing_tuple
+from .backends import ReferenceProjector, _flat_admission_batches, select_backend, voxel_spacing_tuple
 from .distribution import Partition
 from .projectors import (
     _backproject_into,
@@ -485,17 +485,7 @@ class Projector:
             if isinstance(detector_surface, ParameterizedSurface):
                 surface_trainable = any(parameter.requires_grad for parameter in detector_surface.parameters)
             if self.backend != "torch" and detector_surface is not None:
-                frames = self._learnable or self._trajectory
-                if isinstance(detector_surface, ParameterizedSurface):
-                    geometry = (*frames, *(parameter.detach().to(device="cpu")
-                                           for parameter in detector_surface.parameters))
-                    spec = _GeometrySpec("sampled", detector_surface.sampler, torch.float64)
-                else:
-                    with torch.enable_grad():
-                        offsets = self._surface_offsets()
-                    surface_trainable = offsets.requires_grad
-                    geometry, spec = (*frames, offsets), self._surface_spec(frames, offsets)
-                    surface_metadata = (tuple(offsets.shape), str(offsets.dtype))
+                geometry, spec, surface_trainable, surface_metadata = self._surface_validation_inputs()
                 devices = self._devices or (torch.device("cuda", torch.cuda.current_device()),)
                 self._validate_surface_geometry(geometry, spec, devices)
         except (TypeError, ValueError, RuntimeError) as error:
@@ -850,6 +840,20 @@ class Projector:
         for component in (*frames[1:], offsets):
             dtype = torch.promote_types(dtype, component.dtype)
         return _GeometrySpec("offsets", dtype=dtype)
+
+    def _surface_validation_inputs(self):
+        """Stage frame metadata once without expanding surface world points."""
+        with torch.enable_grad():
+            frames = tuple(value.to(device="cpu") for value in (self._learnable or self._trajectory))
+            surface = self.detector_surface
+            if isinstance(surface, ParameterizedSurface):
+                parameters = tuple(value.to(device="cpu") for value in surface.parameters)
+                geometry = (*frames, *parameters)
+                return (geometry, _GeometrySpec("sampled", surface.sampler, torch.float64),
+                        any(value.requires_grad for value in parameters), None)
+            offsets = self._surface_offsets()
+        return ((*frames, offsets.detach()), self._surface_spec(frames, offsets),
+                offsets.requires_grad, (tuple(offsets.shape), str(offsets.dtype)))
 
     def _validate_surface_geometry(self, geometry, spec, devices, plan=None):
         """Validate owned geometry in batches admitted before any numerical work."""
@@ -2340,7 +2344,7 @@ class Projector:
         # sharing the immutable partition and runtime configuration.
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
-        owner, error = self, None
+        owner, error, surface_metadata = self, None, None
         if trajectory is not None:
             try:
                 frames, views = _validate_trajectory(
@@ -2358,8 +2362,50 @@ class Projector:
                     and any(value.requires_grad for value in surface.parameters)
                 )
                 owner._validate_geometry_range()
-                reference = ReferenceProjector(owner, synchronize=False)
-                owner._reference = reference if owner.backend == "torch" else None
+                if owner.backend == "torch":
+                    owner._reference = ReferenceProjector(owner, synchronize=False)
+                else:
+                    value = args[0]
+                    input_device = torch.device(value.device) if hasattr(value, "device") else torch.device("cpu")
+                    devices = owner._devices or (
+                        input_device if input_device.type == "cuda"
+                        else torch.device("cuda", torch.cuda.current_device()),
+                    )
+                    if surface is not None:
+                        geometry, spec, trainable, surface_metadata = owner._surface_validation_inputs()
+                        owner._geometry_trainable = owner._geometry_trainable or trainable
+                        owner._validate_surface_geometry(geometry, spec, devices)
+                        del geometry
+                    else:
+                        geometry = tuple(value.detach().to(device="cpu") for value in frames)
+                        pixels = owner.detector_chunk_shape or tuple(min(size, 64) for size in owner.detector_shape)
+                        local_views = owner.view_slice.stop - owner.view_slice.start
+                        for device_rank, device in enumerate(devices):
+                            shard = _balanced_slice(local_views, device_rank, len(devices))
+                            if shard.start == shard.stop:
+                                continue
+                            owned = slice(owner.view_slice.start + shard.start,
+                                          owner.view_slice.start + shard.stop)
+                            staged = tuple(value[owned].to(device=device, dtype=owner.dtype) for value in geometry)
+                            admission_owner = copy(owner)
+                            admission_owner.view_slice = slice(0, shard.stop - shard.start)
+                            for views, selected in _flat_admission_batches(admission_owner, staged, pixels):
+                                source, points = _sample_geometry(
+                                    owner.beam, owner.detector_shape, owner.detector_spacing, staged,
+                                    None, views, selected, owner.voxel_spacing, device=device,
+                                    dtype=owner.dtype, validate=False,
+                                )
+                                if not torch.isfinite(source).all().item() or not torch.isfinite(points).all().item():
+                                    raise ValueError("detector surface world coordinates must be finite")
+                                sources = source.reshape(source.shape[0], *([1] * len(selected)), -1)
+                                if owner.beam != "parallel" and torch.any(torch.all(points == sources, dim=-1)).item():
+                                    raise ValueError("source and detector surface pixels must differ")
+                                directions = (source if owner.beam == "parallel" else
+                                              points - sources)
+                                if not torch.isfinite(directions).all().item():
+                                    raise ValueError("detector surface world coordinates must be finite")
+                                del source, points, sources, directions
+                            del staged
             except (TypeError, ValueError, RuntimeError) as failure:
                 error = failure
         # None must participate too: mixed override/default calls or gradient
@@ -2367,7 +2413,7 @@ class Projector:
         # Metadata transport needs ordinary storage-backed tensors, even when
         # the numerical operation runs inside a data transform.
         with torch._C._DisableFuncTorch():
-            self._partition.preflight(error, (trajectory is not None, owner._geometry_trainable))
+            self._partition.preflight(error, (trajectory is not None, owner._geometry_trainable, surface_metadata))
         result = getattr(owner, operation)(*args)
         if owner is not self:
             self.last_execution_stats = owner.last_execution_stats

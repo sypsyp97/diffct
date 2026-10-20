@@ -229,6 +229,12 @@ trajectory unchanged. The ``*_into`` methods retain their numerical,
 no-autograd contract. Distributed ranks must agree on whether an override is
 present and supply one coherent global trajectory.
 
+Call-time admission checks flat-detector corners and coordinate bounds, with
+exact pixel checks for ambiguous views. Frames stage once per validation device.
+Native curved-detector admission uses bounded batches on each compute device
+after view sharding. Distributed admission errors reach all ranks before
+numerical execution.
+
 Parameterize rotations so that axes stay unit length and orthogonal. Frame
 checks run at construction and for each override; sampled surface positions
 are checked on every operation.

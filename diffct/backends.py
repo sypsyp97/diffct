@@ -61,6 +61,37 @@ def _rectangles(shape, chunks):
                     for start, step, size in zip(starts, chunks, shape))
 
 
+def _flat_admission_batches(owner, geometry, detector_chunk_shape):
+    """Bound flat admission with corners and exact ambiguous-view fallback."""
+    views = owner.view_slice
+    if views.start == views.stop:
+        return
+    # Flat point component arithmetic is monotone in each detector
+    # coordinate; finite corner points and source differences bound the grid.
+    endpoints = tuple((slice(0, 1),) if size == 1 else (slice(0, 1), slice(size - 1, size))
+                      for size in owner.detector_shape)
+    for pixels in itertools.product(*endpoints):
+        yield views, pixels
+    if owner.beam in ("parallel", "parallel3d"):
+        return
+    source, lower = (value[views].to(dtype=owner.dtype) for value in geometry[:2])
+    upper = lower
+    for size, pitch, axis in zip(owner.detector_shape, owner.detector_spacing, geometry[2:]):
+        coordinates = (torch.tensor([.5 - size / 2, size - .5 - size / 2], dtype=torch.float64)
+                       * pitch).to(device=lower.device, dtype=owner.dtype)
+        products = coordinates[None, :, None] * axis[views, None, :].to(dtype=owner.dtype)
+        lower = lower + products.amin(dim=1)
+        upper = upper + products.amax(dim=1)
+    # Corners cannot exclude an interior pixel rounded onto the source.
+    # A staged source outside this AABB cannot coincide; inconclusive views
+    # retain the exact bounded pixel check rather than changing admission.
+    ambiguous = torch.all((source >= lower) & (source <= upper), dim=-1)
+    for index in torch.nonzero(ambiguous, as_tuple=False).flatten().tolist():
+        selected = slice(views.start + index, views.start + index + 1)
+        for pixels in _rectangles(owner.detector_shape, detector_chunk_shape):
+            yield selected, pixels
+
+
 class _DistributedApply(torch.autograd.Function):
     """Distributed linear map whose adjoint SUMs replicated cotangents."""
 
@@ -140,7 +171,7 @@ class ReferenceProjector:
             # Native owners already validated geometry before transform dispatch.
             return
         with torch.enable_grad():
-            geometry = self._snapshot_geometry()
+            geometry = self._snapshot_geometry(synchronize=synchronize)
         if (owner.detector_surface is not None
                 and not isinstance(owner.detector_surface, ParameterizedSurface)):
             trainable = any(value.requires_grad for value in geometry)
@@ -151,40 +182,14 @@ class ReferenceProjector:
                 dist.all_reduce(flag, op=dist.ReduceOp.MAX, group=owner.process_group)
                 trainable = bool(flag.item())
             owner._geometry_trainable = owner._geometry_trainable or trainable
-        self._validate_geometry(geometry, torch.device("cpu"), admission=True)
+        self._validate_geometry(geometry, geometry[0].device, admission=True,
+                                synchronize=synchronize)
 
     def _admission_batches(self, geometry):
-        owner = self.owner
-        if owner.detector_surface is not None:
+        if self.owner.detector_surface is not None:
             yield from self._batches()
-            return
-        views = owner.view_slice
-        if views.start == views.stop:
-            return
-        # Flat point component arithmetic is monotone in each detector
-        # coordinate; finite corner points and source differences bound the grid.
-        endpoints = tuple((slice(0, 1),) if size == 1 else (slice(0, 1), slice(size - 1, size))
-                          for size in owner.detector_shape)
-        for pixels in itertools.product(*endpoints):
-            yield views, pixels
-        if owner.beam in ("parallel", "parallel3d"):
-            return
-        source, lower = (value[views].to(dtype=owner.dtype) for value in geometry[:2])
-        upper = lower
-        for size, pitch, axis in zip(owner.detector_shape, owner.detector_spacing, geometry[2:]):
-            coordinates = (torch.tensor([.5 - size / 2, size - .5 - size / 2], dtype=torch.float64)
-                           * pitch).to(dtype=owner.dtype)
-            products = coordinates[None, :, None] * axis[views, None, :].to(dtype=owner.dtype)
-            lower = lower + products.amin(dim=1)
-            upper = upper + products.amax(dim=1)
-        # Corners cannot exclude an interior pixel rounded onto the source.
-        # A staged source outside this AABB cannot coincide; inconclusive views
-        # retain the exact bounded pixel check rather than changing admission.
-        ambiguous = torch.all((source >= lower) & (source <= upper), dim=-1)
-        for index in torch.nonzero(ambiguous, as_tuple=False).flatten().tolist():
-            selected = slice(views.start + index, views.start + index + 1)
-            for pixels in _rectangles(owner.detector_shape, self.detector_chunk_shape):
-                yield selected, pixels
+        else:
+            yield from _flat_admission_batches(self.owner, geometry, self.detector_chunk_shape)
 
     def _work_chunks(self, batch_elements=1):
         owner = self.owner
@@ -218,7 +223,7 @@ class ReferenceProjector:
             for pixels in _rectangles(owner.detector_shape, detector_chunk_shape or self.detector_chunk_shape):
                 yield views, pixels
 
-    def _snapshot_geometry(self):
+    def _snapshot_geometry(self, *, synchronize=True):
         owner = self.owner
         frames = owner._learnable or owner._trajectory
         surface = owner.detector_surface
@@ -227,7 +232,11 @@ class ReferenceProjector:
         error, metadata, snapshots = None, None, ()
         try:
             if isinstance(surface, ParameterizedSurface):
-                snapshots = tuple(value.clone() for value in (*frames, *surface.parameters))
+                # Parameters are sampled on CPU. Preserve their autograd state
+                # when a sampler differentiates a potential during admission.
+                with torch.enable_grad():
+                    parameters = tuple(value.to(device="cpu", copy=True) for value in surface.parameters)
+                snapshots = (*tuple(value.clone() for value in frames), *parameters)
             else:
                 axes = [(torch.arange(size, device="cpu", dtype=torch.float64) + .5 - size / 2) * pitch
                         for size, pitch in zip(owner.detector_shape, owner.detector_spacing)]
@@ -254,32 +263,50 @@ class ReferenceProjector:
                 snapshots = (*tuple(value.clone() for value in frames), offsets.to(device="cpu", copy=True))
         except (TypeError, ValueError, RuntimeError) as failure:
             error = failure
-        owner._partition.preflight(error, metadata)
+        if synchronize:
+            owner._partition.preflight(error, metadata)
+        elif error is not None:
+            raise error
         return snapshots
 
-    def _validate_geometry(self, geometry, fallback, *, admission=False):
+    def _validate_geometry(self, geometry, fallback, *, admission=False, synchronize=True):
         """Finish every local geometry check before any rank starts numerics."""
         owner = self.owner
         if not admission and (owner.detector_surface is None or
                               (owner.world_size == 1 and isinstance(owner.detector_surface, ParameterizedSurface))):
             return
-        devices = owner._devices or (fallback,)
+        devices = tuple(torch.device(device) for device in (owner._devices or (fallback,)))
         error = None
         try:
+            frame_count = 4 if owner.beam in ("cone", "parallel3d") else 3
+            parameters = geometry[frame_count:]
+            if isinstance(owner.detector_surface, ParameterizedSurface):
+                with torch.enable_grad():
+                    parameters = tuple(value.to(device="cpu") for value in parameters)
             with torch.no_grad():
-                for batch, (views, pixels) in enumerate(self._batches()):
+                # Reuse frame transfers across detector chunks. Offset batches
+                # remain bounded and move only when a ray batch needs them.
+                staged = {device: (*tuple(value.to(device=device) for value in geometry[:frame_count]),
+                                    *parameters) for device in set(devices)}
+                batches = self._admission_batches(staged[devices[0]]) if admission else self._batches()
+                for batch, (views, pixels) in enumerate(batches):
+                    device = devices[batch % len(devices)]
                     origins, directions, _ = self._rays(
-                        views, pixels, devices[batch % len(devices)], validate=True, geometry=geometry,
+                        views, pixels, device, validate=True, geometry=staged[device],
                         admission=admission,
                     )
                     if (not torch.isfinite(origins.to(dtype=owner.dtype)).all().item()
                             or not torch.isfinite(directions.to(dtype=owner.dtype)).all().item()):
                         raise ValueError("detector surface world coordinates must be finite")
-                    if owner.beam != "parallel" and torch.any(torch.all(directions == 0, dim=-1)).item():
+                    if (owner.beam not in ("parallel", "parallel3d")
+                            and torch.any(torch.all(directions == 0, dim=-1)).item()):
                         raise ValueError("source and detector surface pixels must differ")
         except (TypeError, ValueError, RuntimeError) as failure:
             error = failure
-        owner._partition.preflight(error)
+        if synchronize:
+            owner._partition.preflight(error)
+        elif error is not None:
+            raise error
 
     def _rays(self, views, pixels, device, validate=False, stats=None, geometry=None, *, admission=True):
         owner = self.owner
@@ -313,7 +340,7 @@ class ReferenceProjector:
         if validate:
             if not torch.isfinite(offsets).all().item():
                 raise ValueError("detector_surface offsets must be finite")
-            if owner.beam != "cone" and torch.any(offsets[..., 1] != 0).item():
+            if owner.beam not in ("cone", "parallel3d") and torch.any(offsets[..., 1] != 0).item():
                 raise ValueError("2D detector_surface middle offsets must be zero")
         frames = (owner._learnable or owner._trajectory) if geometry is None else geometry[:frame_count]
         native_surface = owner.backend == "numba" and surface is not None
