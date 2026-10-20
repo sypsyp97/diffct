@@ -13,6 +13,7 @@ import math
 import platform
 import statistics
 import time
+from unittest.mock import patch
 
 import numba
 import torch
@@ -21,24 +22,69 @@ import diffct
 from diffct import ParameterizedSurface, Projector, spiral_trajectory_3d
 
 
+class StreamedPlan(RuntimeError):
+    def __init__(self, plan):
+        super().__init__("Actual per-call execution plan is streamed; use --allow-streamed to time it.")
+        self.plan = plan
+
+
+def plan_metadata(plan):
+    return {key: getattr(plan, key) for key in (
+        "chunk_shape", "view_chunk_size", "detector_chunk_shape", "gpu_budget_bytes",
+        "estimated_gpu_bytes", "allocation_limit", "reservation_budget_bytes",
+    )}
+
+
 def measure(operation, args, device):
-    for _ in range(args.warmup):
-        operation()
-    begin, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    original = Projector._execution_plan
+    streamed_plan = None
+
+    def guarded_plan(owner, *positional, **keywords):
+        nonlocal streamed_plan
+        plan = original(owner, *positional, **keywords)
+        if plan is not None:
+            streamed_plan = plan
+            if not args.allow_streamed:
+                raise StreamedPlan(plan)
+        return plan
+
+    torch.cuda.synchronize(device)
+    baseline_allocated = torch.cuda.memory_allocated(device)
+    baseline_reserved = torch.cuda.memory_reserved(device)
+    torch.cuda.reset_peak_memory_stats(device)
     wall, cuda = [], []
-    for _ in range(args.samples):
-        torch.cuda.synchronize(device)
-        started = time.perf_counter()
-        begin.record()
-        result = operation()
-        end.record()
-        torch.cuda.synchronize(device)
-        wall.append(time.perf_counter() - started)
-        cuda.append(begin.elapsed_time(end) / 1000)
-        del result
-    return {"wall_seconds": wall, "cuda_event_seconds": cuda,
-            "median_wall_seconds": statistics.median(wall),
-            "median_cuda_event_seconds": statistics.median(cuda)}
+    try:
+        with patch.object(Projector, "_execution_plan", guarded_plan):
+            for _ in range(args.warmup):
+                operation()
+            begin, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+            for _ in range(args.samples):
+                torch.cuda.synchronize(device)
+                started = time.perf_counter()
+                begin.record()
+                result = operation()
+                end.record()
+                torch.cuda.synchronize(device)
+                wall.append(time.perf_counter() - started)
+                cuda.append(begin.elapsed_time(end) / 1000)
+                del result
+        measurements = {"status": "measured", "wall_seconds": wall, "cuda_event_seconds": cuda,
+                        "median_wall_seconds": statistics.median(wall),
+                        "median_cuda_event_seconds": statistics.median(cuda),
+                        "full_admission": streamed_plan is None}
+        if streamed_plan is not None:
+            measurements["actual_plan"] = plan_metadata(streamed_plan)
+    except StreamedPlan as error:
+        measurements = {"status": "skipped", "reason": str(error), "full_admission": False,
+                        "actual_plan": plan_metadata(error.plan)}
+    torch.cuda.synchronize(device)
+    peak_allocated = torch.cuda.max_memory_allocated(device)
+    peak_reserved = torch.cuda.max_memory_reserved(device)
+    return {**measurements, "memory_scope": "Warmup and samples; PyTorch CUDA allocator",
+            "baseline_allocated_bytes": baseline_allocated, "baseline_reserved_bytes": baseline_reserved,
+            "peak_allocated_bytes": peak_allocated, "peak_reserved_bytes": peak_reserved,
+            "incremental_peak_allocated_bytes": peak_allocated - baseline_allocated,
+            "incremental_peak_reserved_bytes": peak_reserved - baseline_reserved}
 
 
 def main():
@@ -117,10 +163,7 @@ def main():
                 record = {"surface": kind, "mode": mode, "operation": operation,
                           "full_admission": plan is None}
                 if plan is not None:
-                    record["plan"] = {key: getattr(plan, key) for key in (
-                        "chunk_shape", "view_chunk_size", "detector_chunk_shape", "gpu_budget_bytes",
-                        "estimated_gpu_bytes", "allocation_limit", "reservation_budget_bytes",
-                    )}
+                    record["plan"] = plan_metadata(plan)
                 print(json.dumps({"admission": record}), flush=True)
                 if plan is not None and not args.allow_streamed:
                     print(json.dumps({**record, "status": "skipped",
@@ -135,7 +178,7 @@ def main():
                     loss = 0.5 * (current.project(image) - rays).square().mean()
                     return torch.autograd.grad(loss, (central,) if mode == "surface_gradient" else frames)
 
-                print(json.dumps({**record, "status": "measured", **measure(run, args, device)}), flush=True)
+                print(json.dumps({**record, **measure(run, args, device)}), flush=True)
                 del run
             del operator
 
