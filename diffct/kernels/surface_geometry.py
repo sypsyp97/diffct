@@ -51,11 +51,17 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
     ``frame32`` gives the arithmetic dtype of each packed frame component.
     ``offset32`` gives the offset arithmetic dtype. Values are stored exactly
     in float64 staging buffers. Results use caller-owned float32 buffers.
+
+    A launch may compose several views with the same offsets: grid row ``y``
+    writes view ``view_index + y`` from the ``y``-th of ``gridDim.y`` equal
+    frame packets in ``frames``.
     """
     pixel = cuda.grid(1)
+    view_index += cuda.blockIdx.y
+    base = cuda.blockIdx.y * (frames.size // cuda.gridDim.y)
     if pixel == 0:
         for axis in range(rank):
-            value = frames[axis]
+            value = frames[base + axis]
             if not parallel:
                 value = _surface_add(value, -centre[axis], frame32[0])
             source[view_index, axis] = np.float32(value)
@@ -85,20 +91,20 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
     point_squared = np.float64(0.0)
     for axis in range(rank):
         point = _surface_add(
-            frames[rank + axis],
-            _surface_multiply(tangent, frames[2 * rank + axis], tangent32),
+            frames[base + rank + axis],
+            _surface_multiply(tangent, frames[base + 2 * rank + axis], tangent32),
             frame32[1] and tangent32,
         )
         if rank == 3:
             point = _surface_add(
-                point, _surface_multiply(vertical, frames[3 * rank + axis], vertical32),
+                point, _surface_multiply(vertical, frames[base + 3 * rank + axis], vertical32),
                 point32,
             )
-            normal = frames[4 * rank + axis]
+            normal = frames[base + 4 * rank + axis]
         else:
-            normal = frames[2 * rank + 1] if axis == 0 else -frames[2 * rank]
+            normal = frames[base + 2 * rank + 1] if axis == 0 else -frames[base + 2 * rank]
         point = _surface_add(point, _surface_multiply(depth, normal, depth32), final32)
-        source_value = frames[axis]
+        source_value = frames[base + axis]
         source_native = np.float32(source_value)
         point_native = np.float32(point)
         finite = (finite and math.isfinite(source_value) and math.isfinite(point)

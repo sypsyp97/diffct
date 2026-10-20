@@ -1331,6 +1331,9 @@ class Projector:
         rank, frame_count = len(self.volume_shape), 4 if self.beam == "cone" else 3
         count = views.stop - views.start
         pixel_shape = tuple(selected.stop - selected.start for selected in pixels)
+        # Offsets sampled here derive from the snapshot and the pixel tile;
+        # offsets supplied by the caller may differ per batch and are not cached.
+        cacheable = offsets is None
         if offsets is None:
             offsets = _sample_offsets(self.beam, self.detector_shape, self.detector_spacing,
                                       geometry, spec, views, pixels)
@@ -1346,7 +1349,7 @@ class Projector:
         offset32 = ((torch.promote_types(torch.float32, offsets.dtype)
                      if spec.kind == "offsets" else common) == torch.float32)
         # Offsets shared by all views are staged once per call and composed
-        # with one launch per view instead of per row segment.
+        # with one launch for all views instead of per view and row segment.
         shared = spec.kind == "offsets" and offsets.ndim == len(pixel_shape) + 1
         pixel_count = math.prod(pixel_shape)
         if "_surface_workspace" not in groups:
@@ -1364,14 +1367,14 @@ class Projector:
         # call, pixel tile and workspace. The key holds the snapshot and the
         # workspace, so neither a later snapshot reusing storage nor a recreated
         # workspace can match it.
-        if shared:
+        if shared and cacheable:
             staged_key = (geometry[frame_count], packed_offsets, tuple((part.start, part.stop) for part in pixels))
             restage = not ("_surface_shared_staged" in groups
                            and groups["_surface_shared_staged"][0] is staged_key[0]
                            and groups["_surface_shared_staged"][1] is staged_key[1]
                            and groups["_surface_shared_staged"][2] == staged_key[2])
         else:
-            restage = False
+            restage = shared
             groups.pop("_surface_shared_staged", None)
         with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload), cuda.gpus[pipe.device.index]:
             if origin is not None:
@@ -1393,8 +1396,38 @@ class Projector:
                 flat = device_offsets.reshape(pixel_count, 3)
                 for column, original in enumerate(columns):
                     packed_offsets[column * capacity:column * capacity + pixel_count].copy_(flat[:, original])
-                groups["_surface_shared_staged"] = staged_key
-            for local in range(count):
+                if cacheable:
+                    groups["_surface_shared_staged"] = staged_key
+            if shared:
+                # Stage the frames of every view in one transfer and compose
+                # all views with one launch; grid row y composes view y.
+                stride = (frame_count + (3 if rank == 3 else 0)) * rank
+                if "_surface_frames" not in groups or groups["_surface_frames"].numel() < count * stride:
+                    if "_surface_frames" in groups:
+                        # Earlier launches on the upload stream may still read it.
+                        pipe.retain(pipe.event(pipe.upload), groups["_surface_frames"], None)
+                    groups["_surface_frames"] = pipe.empty(count * stride, dtype=torch.float64)
+                block = groups["_surface_frames"][:count * stride].view(count, stride)
+                packet = torch.cat([value[views].detach().to(device="cpu", dtype=torch.float64)
+                                    for value in frames], dim=1)
+                staged = torch.empty(packet.shape, dtype=torch.float64, device=block.device)
+                _pipeline._copy(staged, packet, pipe.stats)
+                block[:, :frame_count * rank].copy_(staged)
+                if rank == 3:
+                    axis_u, axis_v = block[:, 2 * rank:3 * rank], block[:, 3 * rank:4 * rank]
+                    if frame32[2] and frame32[3]:
+                        axis_u, axis_v = axis_u.to(torch.float32), axis_v.to(torch.float32)
+                    block[:, 4 * rank:5 * rank].copy_(torch.linalg.cross(axis_u, axis_v, dim=1))
+                pipe.retain(pipe.event(pipe.upload), packet, staged)
+                for first in range(0, count, 65535):
+                    rows = min(65535, count - first)
+                    compose_surface[((pixel_count + 127) // 128, rows), 128, stream](
+                        TorchCUDABridge.tensor_to_cuda_array(block[first:first + rows].reshape(-1)),
+                        *arrays[1:], first, 0, pixel_count, capacity, rank,
+                        self.beam == "parallel", frame32, offset32,
+                        tuple(centre) + (0.,) * (3 - rank), self.voxel_spacing,
+                    )
+            for local in range(0 if shared else count):
                 packet = torch.cat([value[views.start + local].detach().to(device="cpu", dtype=torch.float64)
                                     for value in frames])
                 _pipeline._copy(packed_frames[:frame_count * rank], packet, pipe.stats)
@@ -1410,13 +1443,6 @@ class Projector:
                         normal.copy_(scratch[2 * rank:])
                     else:
                         torch.linalg.cross(axis_u, axis_v, out=normal)
-                if shared:
-                    compose_surface[(pixel_count + 127) // 128, 128, stream](
-                        *arrays, local, 0, pixel_count, capacity, rank,
-                        self.beam == "parallel", frame32, offset32,
-                        tuple(centre) + (0.,) * (3 - rank), self.voxel_spacing,
-                    )
-                    continue
                 selected = offsets[local] if offsets.ndim == len(pixel_shape) + 2 else offsets
                 for row in range(pixel_shape[0] if rank == 3 else 1):
                     line = selected[row] if rank == 3 else selected
@@ -2200,6 +2226,7 @@ class Projector:
                     slot.finish()
                 pipe.reclaim_output()
                 del local_groups["_surface_workspace"]
+                local_groups.pop("_surface_shared_staged", None)
                 reduced = surface_batch_vjp(
                     self.beam, self.detector_shape, self.detector_spacing, inputs, offsets,
                     global_slice, pixels, self.voxel_spacing, pipe.device, parts,
