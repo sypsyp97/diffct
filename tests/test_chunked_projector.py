@@ -948,8 +948,14 @@ def test_automatic_gpu_surface_constructor_cpu_validation_and_early_stream_rejec
     # but its validation must never expand the complete CUDA world geometry.
     with _StagingGuard(case, case.shape, 1):
         projector = _projector(case, callback)
-    with _StagingGuard(case, case.shape, 1), pytest.raises((TypeError, ValueError), match="CPU|cpu"):
-        projector.project(torch.ones(case.shape))
+    with _memory_inventory({torch.cuda.current_device(): 8192}), \
+            _StagingGuard(case, case.shape, 1), _Launches() as launches:
+        launches.phase = "cpu-stream"
+        streamed_cpu = projector.project(torch.ones(case.shape))
+        report = projector.last_execution_stats
+    _close(streamed_cpu, _chords(case, _offsets(case, flat=True)))
+    assert streamed_cpu.device.type == "cpu"
+    _assert_automatic_plans(launches.records, case, {"cpu-stream": report}, .75 * 8192)
     image = torch.ones(case.shape, device="cuda")
     device = torch.cuda.current_device()
     with _memory_inventory({device: 8 * 1024 ** 3}), _Launches() as launches:
@@ -957,9 +963,13 @@ def test_automatic_gpu_surface_constructor_cpu_validation_and_early_stream_rejec
         output = projector.project(image)
     _close(output, _chords(case, _offsets(case, flat=True)))
     assert len(launches.records) == 1
-    with _memory_inventory({device: 8192}), _StagingGuard(case, case.shape, 1), \
-            pytest.raises((TypeError, ValueError), match="CPU|cpu"):
-        projector.project(image)
+    with _memory_inventory({device: 8192}), _Launches() as launches:
+        launches.phase = "cuda-stream"
+        streamed_cuda = projector.project(image)
+        report = projector.last_execution_stats
+    _close(streamed_cuda, _chords(case, _offsets(case, flat=True)))
+    assert streamed_cuda.device == image.device
+    _assert_automatic_plans(launches.records, case, {"cuda-stream": report}, .75 * 8192, {device})
 
 
 @pytest.mark.cuda

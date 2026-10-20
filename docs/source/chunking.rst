@@ -201,6 +201,9 @@ CPU or CUDA offsets. The operator transfers selected offsets to each compute
 device before expanding world points for its owned views or streamed batch.
 Memory planning uses these local view counts and the composition dtype.
 Gradient-connected offsets are snapshotted on CPU and transferred per batch.
+Streamed composition writes offset fragments into reusable float32 geometry
+buffers. Geometry backward replays one view and a bounded detector-row segment
+at a time, without retaining complete CUDA composition graphs.
 Construction also sizes validation batches to the available device budget.
 Callback allocations remain caller-controlled. Callback values are not cached
 across operations.

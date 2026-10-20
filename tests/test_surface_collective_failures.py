@@ -149,8 +149,29 @@ class _CpuTransfer:
         return _CpuEvent()
 
 
+def _cpu_surface_geometry_into(operator, geometry, spec, views, pixels, centre,
+                               targets, pipe, groups, offsets=None):
+    """Replace fused device writes with real CPU geometry for collective tests."""
+    frame_count = 4 if operator.beam == "cone" else 3
+    if offsets is None:
+        offsets = operators._sample_offsets(operator.beam, operator.detector_shape,
+                                             operator.detector_spacing, geometry, spec, views, pixels)
+    local = (*(value[views] for value in geometry[:frame_count]), offsets)
+    source, points = operators._sample_geometry(
+        operator.beam, operator.detector_shape, operator.detector_spacing, local,
+        operators._GeometrySpec("offsets"), views, pixels, operator.voxel_spacing,
+        local_geometry=True, native_legacy=spec.kind == "offsets",
+    )
+    for index, value in enumerate((source, points)):
+        if index == 1 or operator.beam != "parallel":
+            value = value - value.new_tensor(centre)
+        targets[index].copy_(value.reshape_as(targets[index]))
+    return _CpuEvent()
+
+
 @contextmanager
 def _native_cpu():
+    """Keep admission and ray dispatch real; replace CUDA transport and writes."""
     import numba
 
     with mock.patch.object(operators, "select_backend", return_value="numba"), \
@@ -165,6 +186,7 @@ def _native_cpu():
             mock.patch.object(torch.Tensor, "record_stream", return_value=None), \
             mock.patch.object(numba, "cuda", SimpleNamespace(gpus=_CpuGpus()), create=True), \
             mock.patch.object(operators._pipeline, "_TransferPipeline", _CpuTransfer), \
+            mock.patch.object(Projector, "_surface_geometry_into", _cpu_surface_geometry_into), \
             mock.patch.object(operators, "_prepare_volume", side_effect=lambda beam, value: value):
         yield
 

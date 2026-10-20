@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Callable detector surfaces expand world points on each compute device after view sharding, preserving native composition precision. Memory planning uses local view counts and composition dtypes. Streamed surface execution accepts CUDA offsets, including `ParameterizedSurface` outputs. Offset snapshots stay on CPU with gradient connections intact. Construction bounds validation storage, and distributed calls check actual callback layouts and propagate validation errors before numerical work.
+- Streamed surface composition writes bounded offset fragments into reusable ray-geometry buffers. Geometry backward replays bounded fragments without retaining complete CUDA composition graphs. Flat-detector execution keeps its reusable host-to-device staging.
 
 ### Added
 
