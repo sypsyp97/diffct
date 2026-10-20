@@ -4,6 +4,7 @@ import math
 import numbers
 from weakref import WeakKeyDictionary
 
+import torch
 import torch.distributed as dist
 
 
@@ -58,7 +59,9 @@ def preflight(error=None, metadata=None, *, process_group=None, world_size=1):
     results = [result]
     if world_size > 1:
         results = [None] * world_size
-        dist.all_gather_object(results, result, group=process_group)
+        # Control messages do not participate in data transforms or autograd.
+        with torch._C._DisableFuncTorch():
+            dist.all_gather_object(results, result, group=process_group)
     failure = next((entry[0] for entry in results if entry[0] is not None), None)
     if failure is not None:
         classes = {kind.__name__: kind for kind in (TypeError, ValueError, RuntimeError,

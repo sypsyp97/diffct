@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Callable detector surfaces expand world points on each compute device after view sharding, preserving native composition precision. Memory planning uses local view counts and composition dtypes. Streamed surface execution accepts CUDA offsets, including `ParameterizedSurface` outputs. Offset snapshots stay on CPU with gradient connections intact. Construction bounds validation storage, and distributed calls check actual callback layouts and propagate validation errors before numerical work.
+- Streamed surface composition writes bounded offset fragments into reusable ray-geometry buffers. Geometry backward replays bounded fragments without retaining complete CUDA composition graphs. Flat-detector execution keeps its reusable host-to-device staging.
+
 ### Added
 
 - `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged.

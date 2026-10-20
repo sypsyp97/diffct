@@ -112,7 +112,8 @@ sampler must be pure. Per-view coupling uses global IDs or explicit parameters,
 including parameters for views outside the executing batch. Each forward
 captures the sampler and one set of frame/parameter snapshots; backward uses
 those values after mutation or replacement. World points and pixel VJPs are
-generated locally; shared parameter gradients are reduced before communication.
+generated for the executing device's view and pixel batch; shared parameter
+gradients are reduced before communication. Samplers can return CPU or CUDA offsets.
 The local frame and 2D constraints below apply to both surface interfaces.
 Allocations inside user samplers remain the caller's responsibility.
 
@@ -122,9 +123,9 @@ The legacy two-argument callback receives complete centred physical float64 grid
 It returns a finite floating-point PyTorch tensor of local `(u, v, n)` offsets,
 with shape `(U, V, 3)` shared by all views, or `(views, U, V, 3)` for a separate
 surface in each view. Here `views` is the total trajectory view count, including
-in distributed mode; the operator handles view sharding. Streamed calls require
-CPU offsets. A fitting automatic CUDA full-volume path also accepts CUDA offsets;
-move the grids to your parameters' device inside the callback when needed.
+in distributed mode; the operator handles view sharding. Both full-volume and
+streamed calls accept CPU or CUDA offsets. Move the grids to your parameters'
+device inside the callback when needed.
 The world position is
 `center + offset_u * det_u + offset_v * det_v + offset_n * cross(det_u, det_v)`.
 The normal's sign follows the supplied frame. In the generated frame above it
@@ -137,17 +138,30 @@ return shape is `(U, 3)` or `(views, U, 3)`. The middle offset must be zero.
 The local normal is `(det_u_y, -det_u_x)`. Fan rays connect each source to its
 pixel; parallel rays pass through each pixel along the view's `ray_dir`.
 
-Legacy callbacks retain their complete host geometry footprint and are evaluated
+Legacy callbacks receive the complete detector grids and are evaluated
 at construction and afresh on each operation,
 so captured PyTorch parameters can change and receive first-order gradients.
+The operator transfers selected offsets to each compute device before expanding
+world points. Each device expands only its owned views, or the current streamed
+view and pixel batch. Native execution preserves the dtype promotion of offsets
+and frames during composition, then converts complete coordinates to float32.
+The PyTorch backend uses the selected precision. Memory planning includes the
+composition dtype and local view counts; samplers with an unknown output dtype
+use a conservative float64 allowance.
+Offset snapshots stay on CPU, with their gradient connections intact. Validation
+uses bounded batches and reports local failures to all distributed ranks before
+numerical work. Ranks must agree on the actual callback offset shape and dtype
+at construction and on each call.
+Allocations made by the callback itself still depend on its implementation;
+use `ParameterizedSurface` to sample offsets for selected global view IDs.
 The existing trajectory rule still applies: if no component requires gradients,
 the entire trajectory is cloned. Otherwise all components are read live, with
 gradients for the differentiable components. Second derivatives through the
 geometry are unsupported. Surfaces must return the documented shape and finite
 coordinates on every call; a source must not coincide with any pixel.
 
-Explicit positions cost two float32 coordinates per 2D pixel or three per
-cone pixel, plus gradients when needed. Sources and ray directions remain
+Explicit positions cost two coordinates per 2D pixel or three per cone pixel,
+in the composition dtype, plus gradients when needed. Sources and ray directions remain
 per-view tensors. Views are sharded with the same multi-GPU and distributed
 rules as flat detectors. Each pixel samples one ray; these kernels do not
 integrate over a finite detector-pixel area. FBP/FDK and analytical weighting
@@ -227,10 +241,10 @@ Transfers hold source and destination references in the bounded completion-event
 queue until they finish. Completed internal copies release these references
 directly, avoiding stale transfer-stream reservations across calls.
 
-Legacy streamed detector-surface callbacks must return CPU offsets and retain
-their full CPU callback footprint. Explicit `ParameterizedSurface` instead
-samples local view/pixel batches. CUDA legacy callbacks remain
-supported when an automatic CUDA full-volume path fits. CPU geometry snapshots
+Legacy detector-surface callbacks can return CPU or CUDA offsets.
+Explicit `ParameterizedSurface` samples local view/pixel batches.
+Both interfaces expand world points on the compute device after view sharding.
+Geometry snapshots
 keep data and first-order geometry backward consistent with the forward call,
 including later parameter changes. Geometry second derivatives remain
 unsupported. No cache or autograd state retains all streamed CUDA tiles.
