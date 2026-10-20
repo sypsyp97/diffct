@@ -833,15 +833,12 @@ class Projector:
             shared = spec is not None and spec.kind == "offsets" and spec.shared
             if shared:
                 capacity = math.prod(pixels)
-            buffers = (_allocation_bytes(2 * (frames + (3 if rank == 3 else 0)) * rank),
+            # Shared offsets pack the frame packets of every view of a job.
+            buffers = (_allocation_bytes(2 * (views if shared else 1) * (frames + (3 if rank == 3 else 0)) * rank),
                        _allocation_bytes(2 * (columns * capacity + 1)))
             if shared:
-                # Device copy of the shared offset tile before column packing,
-                # the frame packets of every view, and one bound for the
-                # transient staged frames plus cross-product operands and result.
-                packet = (frames + (3 if rank == 3 else 0)) * rank
-                buffers += (_allocation_bytes(2 * 3 * capacity), _allocation_bytes(2 * views * packet),
-                            _allocation_bytes(2 * views * (frames + 3) * rank))
+                # Device copy of the shared offset tile before column packing.
+                buffers += (_allocation_bytes(2 * 3 * capacity),)
             if self._geometry_trainable:
                 # Replay one view and a bounded detector row at a time.
                 replay = rank * min(capacity, pixels[-1])
@@ -1356,10 +1353,13 @@ class Projector:
         # with one launch for all views instead of per view and row segment.
         shared = spec.kind == "offsets" and offsets.ndim == len(pixel_shape) + 1
         pixel_count = math.prod(pixel_shape)
+        # One packed frame packet per view: source, center, axes, normal and
+        # float32 cross-product scratch. Shared offsets pack every view of a job.
+        stride = (frame_count + (3 if rank == 3 else 0)) * rank
         if "_surface_workspace" not in groups:
             capacity = pixel_count if shared else self._surface_capacity(count, pixel_shape)
             groups["_surface_workspace"] = (
-                pipe.empty((frame_count + (3 if rank == 3 else 0)) * rank, dtype=torch.float64),
+                pipe.empty((count if shared else 1) * stride, dtype=torch.float64),
                 pipe.empty((3 if rank == 3 else 2) * capacity + 1, dtype=torch.float64), capacity,
             )
         packed_frames, packed_offsets, capacity = groups["_surface_workspace"]
@@ -1367,6 +1367,11 @@ class Projector:
         source, points = targets[0].view(count, rank), targets[1].view(count, -1, rank)
         # A workspace sized for an earlier, smaller tile keeps the segment path.
         shared = shared and capacity >= pixel_count
+        if shared and packed_frames.numel() < count * stride:
+            # Earlier launches on the upload stream may still read the smaller buffer.
+            pipe.retain(pipe.event(pipe.upload), packed_frames, None)
+            packed_frames = pipe.empty(count * stride, dtype=torch.float64)
+            groups["_surface_workspace"] = (packed_frames, packed_offsets, capacity)
         # Every job of a call slices the same offset snapshot: stage it once per
         # call, pixel tile and workspace. The key holds the snapshot and the
         # workspace, so neither a later snapshot reusing storage nor a recreated
@@ -1403,26 +1408,26 @@ class Projector:
                 if cacheable:
                     groups["_surface_shared_staged"] = staged_key
             if shared:
-                # Stage the frames of every view in one transfer and compose
-                # all views with one launch; grid row y composes view y.
-                stride = (frame_count + (3 if rank == 3 else 0)) * rank
-                if "_surface_frames" not in groups or groups["_surface_frames"].numel() < count * stride:
-                    if "_surface_frames" in groups:
-                        # Earlier launches on the upload stream may still read it.
-                        pipe.retain(pipe.event(pipe.upload), groups["_surface_frames"], None)
-                    groups["_surface_frames"] = pipe.empty(count * stride, dtype=torch.float64)
-                block = groups["_surface_frames"][:count * stride].view(count, stride)
-                packet = torch.cat([value[views].detach().to(device="cpu", dtype=torch.float64)
-                                    for value in frames], dim=1)
-                staged = torch.empty(packet.shape, dtype=torch.float64, device=block.device)
-                _pipeline._copy(staged, packet, pipe.stats)
-                block[:, :frame_count * rank].copy_(staged)
+                # Stage the frame packets of every view in one transfer and
+                # compose all views with one launch; grid row y composes view y.
+                block = packed_frames[:count * stride].view(count, stride)
+                packet = torch.zeros((count, stride), dtype=torch.float64)
+                packet[:, :frame_count * rank] = torch.cat(
+                    [value[views].detach().to(device="cpu", dtype=torch.float64) for value in frames], dim=1)
+                _pipeline._copy(block, packet, pipe.stats)
+                pipe.retain(pipe.event(pipe.upload), packet, packed_frames)
                 if rank == 3:
+                    normal = block[:, 4 * rank:5 * rank]
                     axis_u, axis_v = block[:, 2 * rank:3 * rank], block[:, 3 * rank:4 * rank]
                     if frame32[2] and frame32[3]:
-                        axis_u, axis_v = axis_u.to(torch.float32), axis_v.to(torch.float32)
-                    block[:, 4 * rank:5 * rank].copy_(torch.linalg.cross(axis_u, axis_v, dim=1))
-                pipe.retain(pipe.event(pipe.upload), packet, staged)
+                        scratch = block.view(torch.float32)[:, 10 * rank:13 * rank]
+                        scratch[:, :rank].copy_(axis_u)
+                        scratch[:, rank:2 * rank].copy_(axis_v)
+                        torch.linalg.cross(scratch[:, :rank], scratch[:, rank:2 * rank], dim=1,
+                                           out=scratch[:, 2 * rank:])
+                        normal.copy_(scratch[:, 2 * rank:])
+                    else:
+                        torch.linalg.cross(axis_u, axis_v, dim=1, out=normal)
                 for first in range(0, count, 65535):
                     rows = min(65535, count - first)
                     compose_surface[((pixel_count + 127) // 128, rows), 128, stream](
