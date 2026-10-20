@@ -90,7 +90,7 @@ class _KernelEntries:
 
         def run(*args):
             frames, offsets, source, points, view, start, count, capacity = args[:8]
-            self.records.append(dict(frames=frames.copy(), source=source, points=points,
+            self.records.append(dict(frames=frames.copy(), frame_storage=frames, source=source, points=points,
                                      view=view, rows=rows, start=start, count=count, capacity=capacity))
             return launch(*args)
 
@@ -224,6 +224,7 @@ def test_fused_helper_runs_real_kernel_for_global_batches_into_reused_bounded_ta
                 assert len(observed) == math.ceil(count / 65535)
                 assert sum(record["rows"] for record in observed) == count
             for record in observed:
+                assert np.shares_memory(record["frame_storage"], groups["_surface_workspace"][0].numpy())
                 assert np.shares_memory(record["source"], source_buffer.numpy())
                 assert np.shares_memory(record["points"], point_buffer.numpy())
                 assert 0 <= record["view"] < record["view"] + record["rows"] <= count
@@ -250,19 +251,23 @@ def test_fused_helper_runs_real_kernel_for_global_batches_into_reused_bounded_ta
                         normal = np.cross(frame_values[2].astype(normal_dtype), frame_values[3].astype(normal_dtype))
                         np.testing.assert_array_equal(packet[12:15], normal.astype(np.float64))
             np.testing.assert_array_equal(coverage, np.ones_like(coverage))
-    assert len(pipe.allocations) == (3 if shared_offsets else 2), \
+    assert len(pipe.allocations) == 2, \
         "packed workspaces were allocated again for the tail batch"
+    packed_frames, packed_offsets, capacity = groups["_surface_workspace"]
+    assert "_surface_frames" not in groups
+    assert packed_frames is pipe.allocations[0] and packed_offsets is pipe.allocations[1]
+    maximum_views = max(views.stop - views.start for views, _ in batches)
+    assert packed_frames.dtype == torch.float64
+    assert packed_frames.numel() == (maximum_views if shared_offsets else 1) * packet_size
     workspace_bytes = sum(math.ceil(value.numel() * value.element_size() / 512) * 512 for value in pipe.allocations)
     target_bytes = sum(math.ceil(value.numel() * value.element_size() / 512) * 512 for value in (source_buffer, point_buffer))
     maximum_bytes = target_bytes
     if shared_offsets:
-        maximum_views = max(views.stop - views.start for views, _ in batches)
         maximum_pixels = max(math.prod(part.stop - part.start for part in pixels) for _, pixels in batches)
-        assert groups["_surface_frames"].dtype == torch.float64
-        assert groups["_surface_frames"].numel() == maximum_views * packet_size
-        # One legacy packet, one shared offset tile plus status, and one packet per view.
+        assert capacity == maximum_pixels
+        # One packet per view and one shared offset tile plus status.
         maximum_bytes = sum(math.ceil(size / 512) * 512 for size in (
-            packet_size * 8, (rank * maximum_pixels + 1) * 8, maximum_views * packet_size * 8,
+            maximum_views * packet_size * 8, (rank * maximum_pixels + 1) * 8,
         ))
     assert workspace_bytes <= maximum_bytes, "packed staging exceeded the geometry workspace budget"
     assert any(record["count"] < record["capacity"] for record in entries.records)
@@ -312,14 +317,21 @@ def test_fused_helper_restages_caller_supplied_shared_offsets_for_geometry_vjp(b
             np.testing.assert_array_equal(selected_targets[1].numpy(), expected)
             outputs.append(selected_targets[1].clone())
             packet_size = (len(case.trajectory) + (3 if rank == 3 else 0)) * rank
-            assert groups["_surface_frames"].dtype == torch.float64
-            assert groups["_surface_frames"].numel() == actual_count * packet_size
+            packed_frames, packed_offsets, capacity = groups["_surface_workspace"]
+            assert "_surface_frames" not in groups
+            assert packed_frames.dtype == torch.float64
+            assert packed_frames.numel() == actual_count * packet_size
+            assert np.shares_memory(entries.records[-1]["frame_storage"], packed_frames.numpy())
             if len(outputs) == 1:
                 workspace = groups["_surface_workspace"]
-                frame_buffer = groups["_surface_frames"]
+                assert len(pipe.allocations) == 2
+                assert packed_frames is pipe.allocations[0] and packed_offsets is pipe.allocations[1]
             else:
-                assert groups["_surface_workspace"] is workspace
-                assert (groups["_surface_frames"] is frame_buffer) == (first_count == count)
+                assert (groups["_surface_workspace"] is workspace) == (first_count == count)
+                assert (packed_frames is workspace[0]) == (first_count == count)
+                assert packed_offsets is workspace[1] and capacity == workspace[2]
+                assert len(pipe.allocations) == (3 if first_count < count else 2)
+                assert packed_frames is pipe.allocations[-1 if first_count < count else 0]
     assert len(entries.records) == 2
     assert [record["rows"] for record in entries.records] == [first_count, count]
     assert not torch.equal(outputs[0], outputs[1][:first_count])
