@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The native cone backprojection kernel steps through the z crossings of each xy cell in an inner loop and groups adjacent detector rows in a warp, so the atomic additions of a warp hit neighbouring voxels of one column. Each ray's segments and arithmetic are unchanged; backprojection takes about 1.7–1.8x less time on large cone and helical problems.
 - Projector execution planning takes no allocator snapshot when a full launch clearly fits: lower bounds of the memory limits come from `mem_get_info` and one statistics query, and the exact planner runs only when they do not suffice. Plans are unchanged. Host time per call for small problems drops by about 1 ms. Distributed operators keep the exact planner (#26).
 - Distributed calls and solvers check rank agreement with one fixed-size collective per request instead of Python object exchanges, skip the callback protocol when no callback is given, and accumulate solver norms on the device with one host read per norm. Results are unchanged.
 - The introduction video explains 2.3.0 tiled execution and view, space and hybrid partitions with a computed walnut example; the README GIF is 12 MB instead of 22 MB (#25).

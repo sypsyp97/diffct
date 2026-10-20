@@ -97,7 +97,15 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
             W, H, D = native_volume.shape
             n_views, n_u, n_v = sinogram.shape
             du, dv = detector_spacing
-            grid, tpb = _grid_3d(n_v, n_u, n_views)
+            if backproject:
+                # A warp covers up to 32 adjacent detector rows of one column and view, so its
+                # rays share an xy path and the backprojection atomics coalesce.
+                rows = min(32, 1 << max(0, n_v - 1).bit_length())
+                grid, tpb = _grid_3d(n_v, n_u, n_views, tpb=(rows, 64 // rows, 2))
+                if max(grid[1], grid[2]) > 65535:  # CUDA grid y/z limit: keep the default launch's range
+                    grid, tpb = _grid_3d(n_v, n_u, n_views)
+            else:
+                grid, tpb = _grid_3d(n_v, n_u, n_views)
             arguments = (
                 (d_sino, n_views, n_u, n_v, d_volume, W, H, D)
                 if backproject else
