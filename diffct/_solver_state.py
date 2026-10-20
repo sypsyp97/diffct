@@ -11,6 +11,7 @@ import torch.distributed as dist
 
 from .pipeline import _fragments
 from .storage import NpyStore, TensorStore
+from .distribution import control_status, preflight
 
 
 def count(value, name, positive=False):
@@ -25,47 +26,56 @@ def finite(value, name, positive=False):
     return float(value)
 
 
-def agreement(operator, error=None, token=None):
+def agreement(operator, error=None, token=None, *, cache_key=None):
     """Every rank rejects a bad request before numerical execution starts."""
     world = getattr(operator, "world_size", 1)
     if world == 1:
         if error is not None:
             raise error
         return
-    records = [None] * world
-    dist.all_gather_object(records, (None if error is None else str(error), token),
-                           group=operator.process_group)
-    failures = [record[0] for record in records if record[0] is not None]
-    if failures or any(record[1] != records[0][1] for record in records):
-        raise ValueError("distributed solver agreement failed: " + (failures[0] if failures else "inconsistent checkpoint iteration or controls"))
+    error = None if error is None else ValueError("distributed solver agreement failed: " + str(error))
+    mismatch = "distributed solver agreement failed: inconsistent checkpoint iteration or controls"
+    partition = getattr(operator, "_partition", None)
+    if partition is not None:
+        partition.preflight(error, token, cache_key=cache_key, mismatch=mismatch)
+    else:
+        preflight(error, token, process_group=operator.process_group, world_size=world,
+                  mismatch=mismatch)
+
+
+def owns_values(operator, kind):
+    """Select one copy of each physical ray or voxel for scalar reductions."""
+    partition = getattr(operator, "partition", "views")
+    rank = getattr(operator, "rank", 0)
+    return (getattr(operator, "view_rank", 0) == 0 if kind == "volume"
+            else getattr(operator, "space_rank", 0) == 0) if partition == "hybrid" else (
+        rank == 0 if (kind == "volume") == (partition == "views") else True
+    )
 
 
 def scalar_sum(operator, value, kind):
     """Count physical rays/voxels once, including view/space replicas."""
     world = getattr(operator, "world_size", 1)
-    partition = getattr(operator, "partition", "views")
-    rank = getattr(operator, "rank", 0)
-    owns = (getattr(operator, "view_rank", 0) == 0 if kind == "volume"
-            else getattr(operator, "space_rank", 0) == 0) if partition == "hybrid" else (
-        rank == 0 if (kind == "volume") == (partition == "views") else True
-    )
-    value = float(value) if owns else 0.
+    value = value if owns_values(operator, kind) else 0.
     if world > 1:
         group = operator.process_group
         device = torch.device("cuda", torch.cuda.current_device()) if dist.get_backend(group) == "nccl" else torch.device("cpu")
-        accumulator = torch.tensor(value, dtype=torch.float64, device=device)
+        accumulator = torch.as_tensor(value, dtype=torch.float64, device=device).clone()
         dist.all_reduce(accumulator, group=group)
-        value = accumulator.item()
-    return value
+        return accumulator.item()
+    return float(value)
 
 
 def squared_norm(operator, value, kind, elements=1048576):
     store = TensorStore(value) if isinstance(value, torch.Tensor) else value
     total = 0.
-    for selected in _fragments(tuple(store.shape), elements):
-        # Clone even an FP64 view: norms must never alter caller measurements.
-        block = store.read(selected).to(dtype=torch.float64).clone()
-        total += block.square_().sum().item()
+    if owns_values(operator, kind):
+        total = torch.zeros((), dtype=torch.float64, device=getattr(store, "device", "cpu"))
+        for selected in _fragments(tuple(store.shape), elements):
+            # Clone even an FP64 view: norms must never alter caller measurements.
+            block = store.read(selected).to(dtype=torch.float64).clone()
+            # Preserve the block reductions and their sequential FP64 order.
+            total.add_(block.square_().sum().to(device=total.device))
     return scalar_sum(operator, total, kind)
 
 
@@ -270,15 +280,22 @@ def save_checkpoint(operator, directory, states, metadata, iteration, history, m
     agreement(operator, error, iteration)
 
 
+def callbacks_enabled(operator, callback):
+    """Check callback presence once, including callbacks on only some ranks."""
+    return bool(control_status((int(callback is not None),),
+                               process_group=getattr(operator, "process_group", None),
+                               world_size=getattr(operator, "world_size", 1))[0])
+
+
 def callback_stop(operator, callback, iteration, residual, volume):
     error, stop = None, False
     try:
         stop = callback is not None and callback(iteration, residual, volume) is False
     except Exception as caught:
         error = caught
-    agreement(operator, error)
-    if getattr(operator, "world_size", 1) > 1:
-        records = [None] * operator.world_size
-        dist.all_gather_object(records, stop, group=operator.process_group)
-        stop = any(records)
-    return stop
+    failed, stop = control_status((int(error is not None), int(stop)),
+                                  process_group=getattr(operator, "process_group", None),
+                                  world_size=getattr(operator, "world_size", 1))
+    if failed:
+        agreement(operator, error)
+    return bool(stop)

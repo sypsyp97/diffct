@@ -264,7 +264,8 @@ class ReferenceProjector:
         except (TypeError, ValueError, RuntimeError) as failure:
             error = failure
         if synchronize:
-            owner._partition.preflight(error, metadata)
+            owner._partition.preflight(error, metadata, cache_key="portable surface snapshot",
+                                       revision=owner._agreement_revision())
         elif error is not None:
             raise error
         return snapshots
@@ -560,7 +561,9 @@ class ReferenceProjector:
             error = ValueError(f"input trailing shape must be {shape}")
         else:
             leading = tuple(tensor.shape[:-len(shape)])
-        owner._partition.preflight(error, (is_project, reduce_cotangent, leading))
+        owner._partition.preflight(error, (is_project, reduce_cotangent, leading),
+                                   cache_key="portable input",
+                                   revision=owner._agreement_revision())
         batch_elements = math.prod(leading)
         plan = self._work_chunks(batch_elements) if _plan is None else _plan
         stats = self._stats(is_project, plan)
