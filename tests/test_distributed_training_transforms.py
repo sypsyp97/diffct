@@ -8,7 +8,9 @@ second-derivative cotangent once. No per-rank Jacobian convention is assumed.
 from contextlib import nullcontext
 from datetime import timedelta
 import json
+import os
 from pathlib import Path
+import sys
 import time
 from unittest import mock
 
@@ -183,6 +185,9 @@ def _worker(rank, rendezvous, world_size, partition, transform, native, director
         (Path(directory) / f"rank-{rank}.json").write_text(json.dumps(records), encoding="utf-8")
     finally:
         dist.destroy_process_group()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 def _run(tmp_path, partition, transform, *, native=False):
