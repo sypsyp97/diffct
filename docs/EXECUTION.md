@@ -7,7 +7,7 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 | Setting | Computation | Devices |
 |---|---|---|
 | `backend="auto", precision="fast"` | Native FP32 for scalar spacing and views/space partitions; otherwise PyTorch FP32 | NVIDIA CUDA, or the input's PyTorch device |
-| `backend="numba"` | Native FP32 with its existing fast-math traversal | NVIDIA CUDA; scalar voxel spacing, `precision="fast"`, views/space |
+| `backend="numba"` | Native FP32 fast-math traversal, with FP64 ray clipping and entry setup | NVIDIA CUDA; scalar voxel spacing, `precision="fast"`, views/space |
 | `backend="torch", precision="float32"` | PyTorch FP32 data and local traversal, with FP64 ray clipping and entry setup | CPU, NVIDIA CUDA, PyTorch ROCm |
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
@@ -53,6 +53,14 @@ admission snapshots surface frames and parameters on CPU, then validates owned
 batches on compute devices. Validation batches shrink to fit memory and staging
 limits; they are separate from execution chunks. Portable admission stages
 frames once per validation device.
+
+Retained constructor frames with gradients use the same admission on every
+call, so optimizer updates cannot bypass geometry checks. Flat CUDA frames
+stay on an accelerator for range and pixel checks; only scalar decisions
+need host reads. Fixed constructor trajectories remain snapshots.
+Updated parameterized surfaces are checked on portable calls and native
+data transforms. Native tensor-returning calls check each batch before use;
+`*_into` calls preflight all batches before changing caller output.
 
 Run `python examples/benchmark_trajectory_admission.py --warmup 1 --samples 3`
 to measure this validation with CPU and CUDA trajectories. The script bypasses

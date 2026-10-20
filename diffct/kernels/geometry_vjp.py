@@ -39,15 +39,15 @@ from ..constants import (
 
 
 @cuda.jit(device=True)
-def _face_terms(c, t_org, t_a0, t_b0, length, d):
-    """Return (d/dA_a, d/dB_a) of ``c * tau`` for a face crossed at ``t_org``.
+def _face_terms(c, local_t, entry_tau, entry_tau_minus_one, inv_length, d):
+    """Return face derivatives using float32 distance from the volume entry.
 
-    ``t_org`` is the ray parameter of the crossing; ``t_a0`` and ``t_b0`` are
-    the parameters of A and B on the same unit-speed ray, ``d`` is the unit
-    direction component normal to the face.
+    The entry fractions are computed independently in float64 before traversal,
+    preserving the small fraction when just one endpoint is very distant.
     """
-    tau_minus_one = (t_org - t_b0) / length
-    tau = (t_org - t_a0) / length
+    delta_tau = local_t * inv_length
+    tau_minus_one = entry_tau_minus_one + delta_tau
+    tau = entry_tau + delta_tau
     return c * tau_minus_one / d, -c * tau / d
 
 
@@ -84,6 +84,10 @@ def _fan_2d_geometry_vjp_kernel(
     else:
         det_x = d_detector_positions[iang, idet, 0] / voxel_spacing
         det_y = d_detector_positions[iang, idet, 1] / voxel_spacing
+
+    # Match forward/adjoint setup without changing endpoint composition.
+    src_x, src_y = np.float64(src_x), np.float64(src_y)
+    det_x, det_y = np.float64(det_x), np.float64(det_y)
 
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
@@ -129,11 +133,14 @@ def _fan_2d_geometry_vjp_kernel(
     if t_min >= t_max:
         return
 
-    ent_x = org_x + t_min * dir_x
-    ent_y = org_y + t_min * dir_y
-    ray_x = dir_x
-    ray_y = dir_y
-    t_end = t_max - t_min
+    ent_x = np.float32(org_x + t_min * dir_x)
+    ent_y = np.float32(org_y + t_min * dir_y)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    t_end = np.float32(t_max - t_min)
+    entry_tau = np.float32((t_min - t_a0) / length)
+    entry_tau_minus_one = np.float32((t_min - t_b0) / length)
+    inv_length = np.float32(inv_len)
 
     accum = _ZERO
     t = _ZERO
@@ -167,11 +174,11 @@ def _fan_2d_geometry_vjp_kernel(
         if pend_axis >= 0:
             c = (-f) if first else (f_prev - f)
             if pend_axis == 0:
-                da, db = _face_terms(c, pend_t + t_min, t_a0, t_b0, length, ray_x)
+                da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_x)
                 ga_x += da
                 gb_x += db
             else:
-                da, db = _face_terms(c, pend_t + t_min, t_a0, t_b0, length, ray_y)
+                da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_y)
                 ga_y += da
                 gb_y += db
         first = False
@@ -191,16 +198,16 @@ def _fan_2d_geometry_vjp_kernel(
             iy += step_y
             ty += dt_y
     if ex_axis == 0:
-        da, db = _face_terms(f_prev, t_max, t_a0, t_b0, length, ray_x)
+        da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_x)
         ga_x += da
         gb_x += db
     elif ex_axis == 1:
-        da, db = _face_terms(f_prev, t_max, t_a0, t_b0, length, ray_y)
+        da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_y)
         ga_y += da
         gb_y += db
 
     # Length term: p = s * |D| * S with S = accum / |D| (voxel units).
-    S = accum / length
+    S = accum * inv_length
     ga_x -= S * ray_x
     ga_y -= S * ray_y
     gb_x += S * ray_x
@@ -260,6 +267,10 @@ def _cone_3d_geometry_vjp_kernel(
         det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
         det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
 
+    # Match forward/adjoint setup without changing endpoint composition.
+    src_x, src_y, src_z = np.float64(src_x), np.float64(src_y), np.float64(src_z)
+    det_x, det_y, det_z = np.float64(det_x), np.float64(det_y), np.float64(det_z)
+
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
     if length < _EPSILON:
@@ -318,13 +329,16 @@ def _cone_3d_geometry_vjp_kernel(
     if t_min >= t_max:
         return
 
-    ent_x = org_x + t_min * dir_x
-    ent_y = org_y + t_min * dir_y
-    ent_z = org_z + t_min * dir_z
-    ray_x = dir_x
-    ray_y = dir_y
-    ray_z = dir_z
-    t_end = t_max - t_min
+    ent_x = np.float32(org_x + t_min * dir_x)
+    ent_y = np.float32(org_y + t_min * dir_y)
+    ent_z = np.float32(org_z + t_min * dir_z)
+    ray_x = np.float32(dir_x)
+    ray_y = np.float32(dir_y)
+    ray_z = np.float32(dir_z)
+    t_end = np.float32(t_max - t_min)
+    entry_tau = np.float32((t_min - t_a0) / length)
+    entry_tau_minus_one = np.float32((t_min - t_b0) / length)
+    inv_length = np.float32(inv_len)
 
     accum = _ZERO
     t = _ZERO
@@ -364,15 +378,15 @@ def _cone_3d_geometry_vjp_kernel(
         if pend_axis >= 0:
             c = (-f) if first else (f_prev - f)
             if pend_axis == 0:
-                da, db = _face_terms(c, pend_t + t_min, t_a0, t_b0, length, ray_x)
+                da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_x)
                 ga_x += da
                 gb_x += db
             elif pend_axis == 1:
-                da, db = _face_terms(c, pend_t + t_min, t_a0, t_b0, length, ray_y)
+                da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_y)
                 ga_y += da
                 gb_y += db
             else:
-                da, db = _face_terms(c, pend_t + t_min, t_a0, t_b0, length, ray_z)
+                da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_z)
                 ga_z += da
                 gb_z += db
         first = False
@@ -398,19 +412,19 @@ def _cone_3d_geometry_vjp_kernel(
             iz += step_z
             tz += dt_z
     if ex_axis == 0:
-        da, db = _face_terms(f_prev, t_max, t_a0, t_b0, length, ray_x)
+        da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_x)
         ga_x += da
         gb_x += db
     elif ex_axis == 1:
-        da, db = _face_terms(f_prev, t_max, t_a0, t_b0, length, ray_y)
+        da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_y)
         ga_y += da
         gb_y += db
     elif ex_axis == 2:
-        da, db = _face_terms(f_prev, t_max, t_a0, t_b0, length, ray_z)
+        da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_z)
         ga_z += da
         gb_z += db
 
-    S = accum / length
+    S = accum * inv_length
     ga_x -= S * ray_x
     ga_y -= S * ray_y
     ga_z -= S * ray_z
