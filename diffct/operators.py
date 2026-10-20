@@ -769,6 +769,8 @@ class Projector:
 
         def fits(shape):
             points = surface or pixels != self.detector_shape
+            # Legacy offsets are one host snapshot; world points expand on the device.
+            host_points = points and not (geometry_spec is not None and geometry_spec.kind == "offsets")
             buffers = _pipeline_buffers(self.beam, shape, batch, pixels, points,
                                         geometry_grad=self._geometry_trainable,
                                         ray_accumulators=extra_rays, peers=peers or foreign_output)
@@ -778,7 +780,7 @@ class Projector:
                 and _reservation_bytes(buffers) <= reservation_budget
                 and _largest_buffer_bytes(self.beam, shape, batch, pixels, points) <= allocation_limit
                 and max(self._surface_work_buffers(batch, pixels, spec=geometry_spec, streamed=True), default=0) <= allocation_limit
-                and _host_geometry_bytes(self.beam, batch, pixels, points) <= _pipeline._GEOMETRY_WORK_BYTES
+                and _host_geometry_bytes(self.beam, batch, pixels, host_points) <= _pipeline._GEOMETRY_WORK_BYTES
             )
 
         while not fits(minimum_shape):
@@ -884,7 +886,7 @@ class Projector:
                 buffers = self._surface_work_buffers(batch, pixels, spec=spec)
                 return (sum(buffers) <= budget and max(buffers, default=0) <= allocation
                         and _reservation_bytes(buffers) <= reservation
-                        and _host_geometry_bytes(self.beam, batch, pixels, True)
+                        and _host_geometry_bytes(self.beam, batch, pixels, spec.kind != "offsets")
                         <= _pipeline._GEOMETRY_WORK_BYTES)
 
             if not fits():
@@ -1197,7 +1199,8 @@ class Projector:
                 estimate = size(shape, slots, retained, extra_rays)
                 reservation = (reserved(shape, slots, retained, extra_rays)
                                if estimate <= plan.gpu_budget_bytes else (1 << 63) - 1)
-                host_fits = 2 * _host_geometry_bytes(self.beam, plan.view_chunk_size, pixels, points) <= _pipeline._GEOMETRY_WORK_BYTES
+                host_points = points and not (spec is not None and spec.kind == "offsets")
+                host_fits = 2 * _host_geometry_bytes(self.beam, plan.view_chunk_size, pixels, host_points) <= _pipeline._GEOMETRY_WORK_BYTES
                 if (estimate > plan.gpu_budget_bytes
                         or reservation > plan.reservation_budget_bytes or not host_fits):
                     if schedule == "window":
