@@ -489,6 +489,8 @@ class Projector:
             if self.backend != "torch" and detector_surface is not None:
                 geometry, spec, surface_trainable, surface_metadata = self._surface_validation_inputs()
                 devices = self._devices or (torch.device("cuda", torch.cuda.current_device()),)
+                # Validation budgets depend on whether geometry gradients are needed.
+                self._geometry_trainable = bool(self._learnable) or surface_trainable
                 self._validate_surface_geometry(geometry, spec, devices)
         except (TypeError, ValueError, RuntimeError) as error:
             validation_error = error
@@ -828,10 +830,10 @@ class Projector:
             rank, frames = len(self.volume_shape), 4 if self.beam == "cone" else 3
             capacity = self._surface_capacity(views, pixels)
             columns = 3 if self.beam == "cone" else 2
+            if spec is not None and spec.kind == "offsets" and spec.shared:
+                capacity = math.prod(pixels)
             buffers = (_allocation_bytes(2 * (frames + (3 if rank == 3 else 0)) * rank),
                        _allocation_bytes(2 * (columns * capacity + 1)))
-            if spec is not None and spec.kind == "offsets" and spec.shared:
-                buffers += (_allocation_bytes(2 * (columns * math.prod(pixels) + 1)),)
             if self._geometry_trainable:
                 # Replay one view and a bounded detector row at a time.
                 replay = rank * min(capacity, pixels[-1])
@@ -1339,8 +1341,12 @@ class Projector:
             frame32 += (True,)
         offset32 = ((torch.promote_types(torch.float32, offsets.dtype)
                      if spec.kind == "offsets" else common) == torch.float32)
+        # Offsets shared by all views are staged once per call and composed
+        # with one launch per view instead of per row segment.
+        shared = spec.kind == "offsets" and offsets.ndim == len(pixel_shape) + 1
+        pixel_count = math.prod(pixel_shape)
         if "_surface_workspace" not in groups:
-            capacity = self._surface_capacity(count, pixel_shape)
+            capacity = pixel_count if shared else self._surface_capacity(count, pixel_shape)
             groups["_surface_workspace"] = (
                 pipe.empty((frame_count + (3 if rank == 3 else 0)) * rank, dtype=torch.float64),
                 pipe.empty((3 if rank == 3 else 2) * capacity + 1, dtype=torch.float64), capacity,
@@ -1348,17 +1354,8 @@ class Projector:
         packed_frames, packed_offsets, capacity = groups["_surface_workspace"]
         columns = (0, 1, 2) if rank == 3 else (0, 2)
         source, points = targets[0].view(count, rank), targets[1].view(count, -1, rank)
-        # Offsets shared by all views are staged once per call and composed
-        # with one launch per view instead of per row segment.
-        shared = spec.kind == "offsets" and offsets.ndim == len(pixel_shape) + 1
-        if shared:
-            pixel_count = math.prod(pixel_shape)
-            if ("_surface_shared_offsets" not in groups
-                    or groups["_surface_shared_offsets"][1] < pixel_count):
-                groups["_surface_shared_offsets"] = (
-                    pipe.empty(len(columns) * pixel_count + 1, dtype=torch.float64), pixel_count,
-                )
-            packed_offsets, capacity = groups["_surface_shared_offsets"]
+        # A workspace sized for an earlier, smaller tile keeps the segment path.
+        shared = shared and capacity >= pixel_count
         with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload), cuda.gpus[pipe.device.index]:
             if origin is not None:
                 pipe.upload.wait_stream(origin)
@@ -1367,14 +1364,16 @@ class Projector:
             arrays = tuple(TorchCUDABridge.tensor_to_cuda_array(value)
                            for value in (packed_frames, packed_offsets, source, points))
             if shared:
-                flat = offsets.reshape(pixel_count, 3)
-                for column, original in enumerate(columns):
-                    value = flat[:, original]
-                    if not value.is_cuda:
-                        value = value.to(dtype=torch.float64)
-                    _pipeline._copy(packed_offsets[column * capacity:column * capacity + pixel_count],
-                                    value, pipe.stats)
-                    pipe.retain(pipe.event(pipe.upload), value, packed_offsets)
+                width = pixel_shape[-1]
+                for row in range(pixel_shape[0] if rank == 3 else 1):
+                    line = offsets[row] if rank == 3 else offsets
+                    for column, original in enumerate(columns):
+                        value = line[:, original]
+                        if not value.is_cuda:
+                            value = value.to(dtype=torch.float64)
+                        start = column * capacity + row * width
+                        _pipeline._copy(packed_offsets[start:start + width], value, pipe.stats)
+                        pipe.retain(pipe.event(pipe.upload), value, packed_offsets)
             for local in range(count):
                 packet = torch.cat([value[views.start + local].detach().to(device="cpu", dtype=torch.float64)
                                     for value in frames])
@@ -1398,7 +1397,7 @@ class Projector:
                         tuple(centre) + (0.,) * (3 - rank), self.voxel_spacing,
                     )
                     continue
-                selected = offsets[local]
+                selected = offsets[local] if offsets.ndim == len(pixel_shape) + 2 else offsets
                 for row in range(pixel_shape[0] if rank == 3 else 1):
                     line = selected[row] if rank == 3 else selected
                     for start in range(0, pixel_shape[-1], capacity):
