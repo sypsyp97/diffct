@@ -4,8 +4,9 @@ Numerical references reuse the original NumPy voxel-box oracle. Allocation
 observers record real tensor operations and do not replace geometry code.
 """
 
+import importlib
 import time
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from unittest import mock
 
@@ -77,6 +78,56 @@ class _WorldPointAdds(TorchDispatchMode):
                         zip(result.shape[1:-1], self.case.detector))):
             self.records.append((tuple(result.shape), result.device, result.dtype))
         return result
+
+
+@contextmanager
+def _surface_compositions(case, operator):
+    """Observe tensor additions and actual fused composition launches."""
+    module = importlib.import_module("diffct.kernels.surface_geometry")
+    original_kernel, original_compose = module.compose_surface, operator._surface_geometry_into
+    active = []
+    with _WorldPointAdds(case) as trace, ExitStack() as patches:
+        trace.fused_batches = []
+
+        def compose(geometry, spec, views, pixels, centre, targets, pipe, groups, offsets=None):
+            active.append((views, pixels, targets, pipe.device))
+            try:
+                return original_compose(geometry, spec, views, pixels, centre, targets, pipe, groups, offsets)
+            finally:
+                active.pop()
+
+        class Kernel:
+            def __getitem__(self, configuration):
+                launch = original_kernel[configuration]
+
+                def observed(*args, **kwargs):
+                    assert active, "fused composition bypassed its view/pixel batch"
+                    views, pixels, targets, device = active[-1]
+                    frames, offsets, source, points = args[:4]
+                    local_view, start, count, capacity, rank = args[4:9]
+                    frame32, offset32 = args[10:12]
+                    shape = (views.stop - views.start,
+                             *(selected.stop - selected.start for selected in pixels), rank)
+                    assert tuple(targets[1].shape) == shape
+                    assert targets[0].device == targets[1].device == device
+                    assert targets[0].dtype == targets[1].dtype == torch.float32
+                    assert frames.dtype == offsets.dtype == np.dtype("float64")
+                    assert source.dtype == points.dtype == np.dtype("float32")
+                    assert tuple(source.shape) == (shape[0], rank)
+                    assert tuple(points.shape) == (shape[0], int(np.prod(shape[1:-1])), rank)
+                    assert 0 <= local_view < shape[0] and 0 < count <= capacity
+                    assert 0 <= start < start + count <= int(np.prod(shape[1:-1]))
+                    single = bool(offset32 and all(frame32[1:4 if rank == 3 else 3]))
+                    dtype = torch.float32 if single else torch.float64
+                    trace.records.append((shape, device, dtype))
+                    trace.fused_batches.append((views, pixels, device))
+                    return launch(*args, **kwargs)
+
+                return observed
+
+        patches.enter_context(mock.patch.object(operator, "_surface_geometry_into", side_effect=compose))
+        patches.enter_context(mock.patch.object(module, "compose_surface", Kernel()))
+        yield trace
 
 
 def _check_expansion(records, *, dtype, devices, maximum_views, pixels=None):
@@ -255,7 +306,7 @@ def test_two_native_devices_expand_each_owned_view_shard(kind):
         ("project", image, matrix), ("backproject", rays, matrix.T),
     ):
         samples.clear()
-        with _WorldPointAdds(case) as trace:
+        with _surface_compositions(case, operator) as trace:
             result = getattr(operator, operation)(source)
         _check_expansion(trace.records, dtype=torch.float64,
                          devices={torch.device("cuda:0"), torch.device("cuda:1")}, maximum_views=3)
@@ -264,6 +315,11 @@ def test_two_native_devices_expand_each_owned_view_shard(kind):
         }
         assert all(shape[0] <= (3 if device.index == 0 else 2)
                    for shape, device, _ in trace.records)
+        assert all(set(range(views.start, views.stop)) <= ({0, 1, 2} if device.index == 0 else {3, 4})
+                   for views, _, device in trace.fused_batches)
+        assert all(all(0 <= selected.start < selected.stop <= size
+                       for selected, size in zip(pixels, case.detector))
+                   for _, pixels, _ in trace.fused_batches)
         if kind == "parameterized":
             assert samples and all(set(ids) <= {0, 1, 2} or set(ids) <= {3, 4} for ids in samples)
             assert set().union(*map(set, samples)) == set(range(case.views))

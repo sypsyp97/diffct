@@ -473,3 +473,42 @@ def test_fused_helper_uses_framework_fp32_cross_before_deep_fp64_cancellation():
     assert entries.records
     np.testing.assert_array_equal(entries.records[0]["frames"][12:15], normal.double().numpy()[0])
     assert all(value.numel() * value.element_size() <= 512 for value in pipe.allocations)
+
+
+def test_shard_observer_records_actual_fused_launches_and_keeps_cpu_world_guard():
+    from tests.test_surface_compute_shards import _check_expansion, _surface_compositions
+
+    case = _case("cone", views=5)
+    projector = _projector(case, backend="torch")
+    views, pixels = slice(0, 3), (slice(1, 4), slice(1, 3))
+
+    def sampler(u, v, ids):
+        return torch.stack((3.7 * torch.sin(u / 3.7) + .037 * u.square(),
+                            v, 3.7 * (1 - torch.cos(u / 3.7))), -1)
+
+    shape = (3, 3, 2, 3)
+    targets = (torch.empty((3, 3)).as_subclass(_CudaOffsetMetadata),
+               torch.empty(shape).as_subclass(_CudaOffsetMetadata))
+    entries = _KernelEntries(importlib.import_module("diffct.kernels.surface_geometry").compose_surface)
+    centre, pipe = (.1875, -.3125, .4375), _CpuGeometryPipe()
+    with _cpu_geometry_transport(entries), _surface_compositions(case, projector) as trace:
+        projector._surface_geometry_into(case.trajectory, _GeometrySpec("sampled", sampler),
+                                         views, pixels, centre, targets, pipe, {})
+        _check_expansion(trace.records, dtype=torch.float64, devices={torch.device("cuda:0")},
+                         maximum_views=3, pixels=(3, 2))
+        assert entries.records and trace.fused_batches
+        assert all(actual_views == views and actual_pixels == pixels
+                   for actual_views, actual_pixels, _ in trace.fused_batches)
+        torch.zeros(shape, dtype=torch.float64) + 1.
+        with pytest.raises(AssertionError, match="away from the compute device"):
+            _check_expansion(trace.records, dtype=torch.float64, devices={torch.device("cuda:0")},
+                             maximum_views=3, pixels=(3, 2))
+    axes = [(np.arange(selected.start, selected.stop) + .5 - size / 2) * pitch
+            for size, pitch, selected in zip(case.detector, case.pitch, pixels)]
+    u, v = np.meshgrid(*axes, indexing="ij")
+    offsets = np.stack((3.7 * np.sin(u / 3.7) + .037 * u ** 2,
+                        v, 3.7 * (1 - np.cos(u / 3.7))), -1)
+    offsets = np.broadcast_to(offsets, (3, *offsets.shape))
+    expected = (_world(tuple(value[views].numpy() for value in case.trajectory), offsets, "cone")
+                - np.asarray(centre)).astype(np.float32)
+    np.testing.assert_allclose(targets[1].numpy(), expected, rtol=2e-6, atol=2e-7)

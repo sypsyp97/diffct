@@ -725,6 +725,11 @@ class Projector:
         pixels = tuple(min(limit, size) for limit, size in zip(
             self.detector_chunk_shape or self.detector_shape, self.detector_shape,
         ))
+        if (self.detector_surface is not None and self.volume_chunk_shape is None
+                and self.view_chunk_size is None):
+            # Automatic geometry batches need at most a full volume or one view.
+            points_per_view = math.prod(pixels) * len(self.volume_shape)
+            batch = min(batch, max(1, math.prod(self._planning_volume_shape) // points_per_view))
         minimum_shape = (1,) * len(chunk) if self.volume_chunk_shape is None else chunk
         peers = len(active_devices) > 1 or (self._distributed and self.world_size > 1)
         extra_rays = (2 * int(self.partition == "space") + int(is_project and foreign_output)
@@ -2333,7 +2338,8 @@ class Projector:
         if self.detector_surface is None:
             if plan is not None:
                 self._snapshot_d2h_bytes += sum(value.numel() * value.element_size() for value in self._learnable if value.is_cuda)
-            return None, tuple(component.to(device="cpu" if plan is not None else component.device).clone()
+            return None, tuple(component.clone() if plan is None or component.device.type == "cpu"
+                               else component.to(device="cpu", copy=True)
                                for component in self._learnable)
         # Callback graphs can save mutable captured parameters. Snapshot their
         # values on the host, restoring their original device only when the

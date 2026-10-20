@@ -1,7 +1,8 @@
 """CPU evidence for native geometry staging, snapshots, and pilot ownership."""
 
 from collections import Counter
-from contextlib import nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
+import math
 from types import SimpleNamespace
 from unittest import mock
 
@@ -257,3 +258,131 @@ def test_native_surface_composition_preserves_promoted_order_and_local_gradient_
     for gradient, original, reference in zip(gradients, inputs, expected_gradients):
         assert gradient.shape == original.shape and gradient.dtype == original.dtype
         np.testing.assert_allclose(gradient.detach().numpy(), reference.astype(gradient.detach().numpy().dtype), rtol=1e-6, atol=0)
+
+
+@contextmanager
+def _native_plan_budget(budget):
+    unlimited = (1 << 63) - 1
+    with ExitStack() as patches:
+        for name, value in (("is_available", True), ("current_device", 0),
+                            ("get_allocator_backend", "native")):
+            patches.enter_context(mock.patch.object(torch.cuda, name, return_value=value))
+        patches.enter_context(mock.patch.object(torch.cuda, "_lazy_init", side_effect=AssertionError("planner initialized CUDA")))
+        patches.enter_context(mock.patch.object(operators, "_memory_lower_bounds", return_value=(budget, 1048576, unlimited)))
+        patches.enter_context(mock.patch.object(operators, "_memory_budget", return_value=(budget, 1048576)))
+        patches.enter_context(mock.patch.object(operators, "_reservation_budget", return_value=unlimited))
+        yield
+
+
+def _flat_native_plan_fixture(views=5, **kwargs):
+    case = _case("cone", views=views)
+    surface = lambda u, v: torch.stack((u, v, torch.zeros_like(u)), -1)
+    projector = _projector(case, surface, backend="torch", **kwargs)
+    projector._devices = (torch.device("cuda:0"),)
+    spec, geometry = projector._effective_geometry(None, torch.device("cpu"))
+    return case, projector, spec, geometry
+
+
+def test_automatic_surface_plan_candidates_and_real_pilot_buffer_sizes_stay_bounded_on_cpu():
+    case, projector, spec, geometry = _flat_native_plan_fixture()
+    maximum = max(math.prod(case.shape), math.prod(case.detector) * len(case.shape))
+    sizes = []
+
+    def empty(shape):
+        count = math.prod(shape) if isinstance(shape, (tuple, list)) else shape
+        assert count <= maximum, "automatic geometry staging exceeded the bounded CPU-stream inventory"
+        sizes.append(count)
+        return torch.empty(shape)
+
+    pipe = SimpleNamespace(device=torch.device("cuda:0"), compute=None, empty=empty,
+                           event=lambda stream: None, drain_tensor=lambda *args, **kwargs: None)
+    transfer = mock.MagicMock()
+    transfer.__enter__.return_value.for_device.return_value = pipe
+
+    def ray_job(source, native, geometry, centre, local, global_views, pixels, spec,
+                pipe, groups, index, is_project, **kwargs):
+        shape = (local.stop - local.start, *(value.stop - value.start for value in pixels))
+        actual = (shape[0] * len(case.shape), math.prod(shape) * len(case.shape))
+        buffers = projector._ray_buffers(groups, index, pipe, shape, actual)
+        return buffers["rays"][:math.prod(shape)].view(shape), None, buffers, buffers
+
+    with _native_plan_budget(6144):
+        plan = projector._execution_plan(torch.ones(case.shape), True, geometry_spec=spec)
+        candidates = projector._candidate_plans(plan, True, spec)
+        for candidate in (plan, *candidates):
+            groups = projector._groups_for(candidate, spec)
+            assert max(groups["_max_geometry"]) <= maximum, \
+                "final/candidate surface buffers exceeded the CPU-stream inventory"
+            assert groups["_max_rays"] <= maximum
+        with mock.patch.object(operators._pipeline, "_TransferPipeline", return_value=transfer), \
+                mock.patch.object(projector, "_native_tile", side_effect=lambda source, selected, shape, pipe, project: torch.ones(shape)), \
+                mock.patch.object(projector, "_ray_job", side_effect=ray_job), \
+                mock.patch.object(torch.cuda, "stream", side_effect=lambda stream: nullcontext()):
+            for candidate in candidates:
+                projector._pilot_candidate(SimpleNamespace(device=torch.device("cpu")),
+                                            SimpleNamespace(device=torch.device("cpu")), True,
+                                            geometry, candidate, spec)
+    assert sizes and max(sizes) <= maximum
+
+
+@pytest.mark.parametrize("explicit", ["volume", "views"])
+def test_automatic_surface_bound_preserves_explicit_chunks_and_default_32_views(explicit):
+    settings = {"volume_chunk_shape": (2, 3, 4)} if explicit == "volume" else {"view_chunk_size": 5}
+    case, projector, spec, _ = _flat_native_plan_fixture(views=35 if explicit == "volume" else 5, **settings)
+    with _native_plan_budget(1 << 30 if explicit == "volume" else 6144):
+        plan = projector._execution_plan(torch.ones(case.shape), True, geometry_spec=spec)
+    assert plan.view_chunk_size == (32 if explicit == "volume" else 5)
+
+
+@pytest.mark.parametrize("global_z, local_depths", [(7, (4, 3)), (1, (1, 0, 0))],
+                         ids=["uneven", "empty"])
+def test_surface_plan_batches_are_identical_across_uneven_and_empty_spatial_shards(global_z, local_depths):
+    signatures = []
+    for local_z in local_depths:
+        case, projector, spec, _ = _flat_native_plan_fixture()
+        projector.partition = "space"
+        projector.space_world_size = len(local_depths)
+        projector.global_volume_shape = (global_z, *case.shape[1:])
+        projector.volume_shape = projector.local_volume_shape = (local_z, *case.shape[1:])
+        projector._planning_volume_shape = (math.ceil(global_z / len(local_depths)), *case.shape[1:])
+        with _native_plan_budget(6144):
+            plan = projector._execution_plan(torch.ones(projector.volume_shape), True, geometry_spec=spec)
+            candidates = projector._candidate_plans(plan, True, spec)
+        signatures.append((plan.view_chunk_size, plan.detector_chunk_shape,
+                           tuple((value.schedule, value.view_chunk_size, value.detector_chunk_shape) for value in candidates)))
+    assert len(set(signatures)) == 1, "spatial SUM ranks derived different view/pixel batch payloads"
+
+
+class _CudaCopyMetadata(torch.Tensor):
+    """Model a D2H copy with CPU storage and an explicit copy operation."""
+
+    @property
+    def device(self):
+        return torch.device("cuda:0")
+
+    @property
+    def is_cuda(self):
+        return True
+
+    def to(self, *args, **kwargs):
+        device = kwargs.get("device", args[0] if args else None)
+        if device is not None and torch.device(device).type == "cpu":
+            kwargs["copy"] = True
+            return self.as_subclass(torch.Tensor).to(*args, **kwargs)
+        return super().to(*args, **kwargs)
+
+
+def test_flat_host_snapshot_has_one_copy_when_device_transfer_itself_allocates_on_cpu_adapter():
+    case = _case("cone", views=5)
+    projector = _projector(case, backend="torch")
+    originals = tuple(value.detach().as_subclass(_CudaCopyMetadata).requires_grad_() for value in case.trajectory)
+    projector._learnable = originals
+    plan = _ChunkPlan(case.shape, 2, (torch.device("cuda:0"),), detector_chunk_shape=(3, 2))
+    with _SnapshotCopies(originals) as trace:
+        _, snapshots = projector._effective_geometry(plan, torch.device("cpu"))
+    assert trace.counts == Counter({index: 1 for index in range(len(originals))}), \
+        "host snapshot cloned an already copied transfer result"
+    gradients = torch.autograd.grad(sum(value.sum() for value in snapshots), originals)
+    for original, snapshot, gradient in zip(originals, snapshots, gradients):
+        assert snapshot.device.type == "cpu" and snapshot.untyped_storage()._cdata != original.untyped_storage()._cdata
+        torch.testing.assert_close(gradient.as_subclass(torch.Tensor), torch.ones_like(snapshot), rtol=0, atol=0)
