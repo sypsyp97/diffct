@@ -47,13 +47,11 @@ def test_streamed_surface_budget_counts_only_workspace_frame_packets(beam, share
     with mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"):
         buffers = projector._surface_work_buffers(case.views, case.detector, spec=spec, streamed=True)
     assert buffers[0] == math.ceil(packet_count * packet_size * 8 / 512) * 512
-    # Shared offsets also need a packed tile and its upload buffer.
-    assert len(buffers) == (3 if shared else 2), "budget includes separate frame staging buffers"
+    # Shared offsets upload directly into the packed workspace columns.
+    assert len(buffers) == 2, "budget includes separate surface staging buffers"
     if shared:
         pixels = math.prod(case.detector)
-        assert buffers[1:] == tuple(math.ceil(size / 512) * 512 for size in (
-            (rank * pixels + 1) * 8, 3 * pixels * 8,
-        ))
+        assert buffers[1] == math.ceil((rank * pixels + 1) * 8 / 512) * 512
 
 
 class _ReachedUpload(Exception):
