@@ -425,8 +425,8 @@ interpolation error and is outside the core operator.</p>
 <p>Gradients with respect to trajectory tensors are first order only. Set
 <code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code> on each tensor before you construct <code class="docutils literal notranslate"><span class="pre">Projector</span></code>. The
 projector keeps references to all trajectory components when any component
-requires gradients, and reads their current values on each call. If none require
-gradients, it clones the entire trajectory. For example:</p>
+requires gradients, and reads and validates their current values on each call.
+If none require gradients, it clones the entire trajectory. For example:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Continue from the custom acquisition above.</span>
 <span class="n">target</span> <span class="o">=</span> <span class="n">sinogram</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
 <span class="n">learnable_center</span> <span class="o">=</span> <span class="n">center</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">()</span>
@@ -468,7 +468,7 @@ Native curved-detector admission uses bounded batches on each compute device
 after view sharding. Distributed admission errors reach all ranks before
 numerical execution.</p>
 <p>Parameterize rotations so that axes stay unit length and orthogonal. Frame
-checks run at construction and for each override; sampled surface positions
+checks run at construction and on each call with live default frames or an override; sampled surface positions
 are checked on every operation.</p>
 </section>
 <section id="differentiable-geometry-helpers">

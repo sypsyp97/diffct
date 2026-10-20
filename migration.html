@@ -407,8 +407,9 @@ view count and finite values; direction axes must be unit vectors; parallel
 the ray direction must not be tangent to the detector plane. Flat fan/cone
 sources must differ from their detector centers, and detectors must not be
 edge-on to the source. Surface detectors check actual pixel positions instead.
-Frame checks run at construction and for each override. Surface samples are
-checked on every operation; changing live default tensors does not rerun frame checks.</p>
+Frame checks run at construction and on each call using live default tensors
+or an override. Surface samples are checked on every operation. Invalid optimizer
+updates raise an error before caller-owned output is changed.</p>
 <p>Geometry derivatives are first-order only and are piecewise derivatives of the
 cell-constant Siddon model. At voxel-boundary crossings they need not agree with
 a centered finite difference. Second derivatives with respect to geometry raise

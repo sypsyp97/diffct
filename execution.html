@@ -271,7 +271,7 @@ backend uses the same cell-constant Siddon model and physical coordinates.</p>
 <td><p>NVIDIA CUDA, or the input’s PyTorch device</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">backend=&quot;numba&quot;</span></code></p></td>
-<td><p>Native FP32 with its existing fast-math traversal</p></td>
+<td><p>Native FP32 fast-math traversal, with FP64 ray clipping and entry setup</p></td>
 <td><p>NVIDIA CUDA; scalar voxel spacing, <code class="docutils literal notranslate"><span class="pre">precision=&quot;fast&quot;</span></code>, views/space</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">backend=&quot;torch&quot;,</span> <span class="pre">precision=&quot;float32&quot;</span></code></p></td>
@@ -324,6 +324,24 @@ admission snapshots surface frames and parameters on CPU, then validates owned
 batches on compute devices. Validation batches shrink to fit memory and staging
 limits; they are separate from execution chunks. Portable admission stages
 frames once per validation device.</p>
+<p>Retained constructor frames with gradients use the same admission on every
+call, so optimizer updates cannot bypass geometry checks. Flat CUDA frames
+stay on an accelerator for range and pixel checks; only scalar decisions
+need host reads. Fixed constructor trajectories remain snapshots.
+Updated parameterized surfaces are checked on portable calls and native
+data transforms. Native tensor-returning calls check each batch before use;
+<code class="docutils literal notranslate"><span class="pre">*_into</span></code> calls preflight all batches before changing caller output.</p>
+<p>Native CUDA calls with either surface interface use full execution when the
+device memory, allocation and reservation limits admit the workload. Full
+geometry backward retains the surface composition graph on the compute device
+and pulls back all owned pixels together. This avoids per-row host autograd
+replay. Explicit chunk limits and workloads that cannot fit still use bounded
+streaming.</p>
+<p>Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/benchmark_surface_geometry.py</span></code> for a synthetic helical
+scan with 1338 views, a 736x64 curved detector and a 96x512x512 volume. It reports
+separate synchronized forward, adjoint and geometry-gradient timings for both
+surface interfaces. By default it reports and skips streamed plans; use
+<code class="docutils literal notranslate"><span class="pre">--allow-streamed</span></code> to time that potentially slower fallback.</p>
 <p>Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/benchmark_trajectory_admission.py</span> <span class="pre">--warmup</span> <span class="pre">1</span> <span class="pre">--samples</span> <span class="pre">3</span></code>
 to measure this validation with CPU and CUDA trajectories. The script bypasses
 numerical projection and reports admission time, plus a separate untimed pass

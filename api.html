@@ -273,8 +273,8 @@ rays can be oblique but must not be tangent to the detector plane. If no
 trajectory
 tensor requires gradients, the projector clones the geometry. Otherwise it
 keeps references, reads the current values at every call, and returns
-gradients for those tensors. Live default frames are checked at construction;
-overrides are checked on each call.
+gradients for those tensors. Live default frames and overrides are checked
+on each call.
 <code class="docutils literal notranslate"><span class="pre">project</span></code>, <code class="docutils literal notranslate"><span class="pre">backproject</span></code>, <code class="docutils literal notranslate"><span class="pre">__call__</span></code> and their <code class="docutils literal notranslate"><span class="pre">*_into</span></code> variants
 accept a keyword-only <code class="docutils literal notranslate"><span class="pre">trajectory</span></code> replacing all frames for that call.
 It must retain the constructor’s beam and view count; it is validated and
