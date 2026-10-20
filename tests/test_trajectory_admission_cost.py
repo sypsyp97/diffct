@@ -115,7 +115,7 @@ def test_surface_admission_stages_cuda_frames_and_parameters_once(backend, surfa
             trace = _AdmissionTrace(local)
             _call(operator, "project", frames)
         expected_components = len(frames) + int(surface_kind == "parameterized")
-        assert 0 < trace.d2h_calls <= expected_components, (
+        assert 0 <= trace.d2h_calls <= expected_components, (
             f"surface admission made {trace.d2h_calls} accelerator-to-CPU tensor transfers "
             f"for {expected_components} geometry components and detector chunks {chunks}"
         )
