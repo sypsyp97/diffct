@@ -944,9 +944,14 @@ def test_automatic_gpu_surface_constructor_cpu_validation_and_early_stream_rejec
     def callback(u, v):
         return _flat_surface(u, v).cuda()
 
-    # Constructor may accept GPU offsets for a later fitting full CUDA call,
-    # but its validation must never expand the complete CUDA world geometry.
-    with _StagingGuard(case, case.shape, 1):
+    # Bound constructor validation by available memory, not a fixed view count.
+    # Full FP64 world points exceed this inventory's 75-percent usable budget.
+    free = 4096
+    bytes_per_view = math.prod(case.detector) * 3 * case.trajectory[0].element_size()
+    maximum = int(.75 * free // bytes_per_view)
+    assert 0 < maximum < case.views
+    with _memory_inventory({torch.cuda.current_device(): free}), \
+            _StagingGuard(case, case.shape, maximum):
         projector = _projector(case, callback)
     with _memory_inventory({torch.cuda.current_device(): 8192}), \
             _StagingGuard(case, case.shape, 1), _Launches() as launches:

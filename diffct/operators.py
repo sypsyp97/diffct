@@ -828,9 +828,9 @@ class Projector:
             if shard.start == shard.stop:
                 continue
             batch = min(shard.stop - shard.start, plan.view_chunk_size if plan is not None
-                        else self.view_chunk_size or 1)
+                        else self.view_chunk_size or (shard.stop - shard.start))
             pixels = ((plan.detector_chunk_shape or self.detector_shape) if plan is not None else
-                      tuple(min(size, limit, 64) for size, limit in zip(
+                      tuple(min(size, limit) for size, limit in zip(
                           self.detector_shape, self.detector_chunk_shape or self.detector_shape)))
             budget, allocation, reservation = _memory_lower_bounds(device)
 
