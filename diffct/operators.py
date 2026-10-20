@@ -2385,7 +2385,11 @@ class Projector:
                     )
                 owner._validate_geometry_range()
                 if owner.backend == "torch":
-                    owner._reference = ReferenceProjector(owner, validate=override, synchronize=False)
+                    if override:
+                        owner._reference = ReferenceProjector(owner, synchronize=False)
+                    else:
+                        owner._reference = copy(self._reference)
+                        owner._reference.owner = owner
                     if not override and surface is None:
                         owner._reference._validate_geometry(
                             frames, frames[0].device, admission=True, synchronize=False,

@@ -308,10 +308,11 @@ class ReferenceProjector:
         elif error is not None:
             raise error
 
-    def _rays(self, views, pixels, device, validate=False, stats=None, geometry=None, *, admission=True):
+    def _rays(self, views, pixels, device, validate=False, stats=None, geometry=None):
         owner = self.owner
-        # Admission compares original coordinates before FP32 rounding.
-        dtype = torch.float64 if validate and admission else owner.dtype
+        check_range = (validate and owner.beam not in ("parallel", "parallel3d")
+                       and owner.dtype == torch.float32 and owner.detector_surface is not None)
+        dtype = torch.float64 if check_range else owner.dtype
         axes = [(torch.arange(pixel.start, pixel.stop, dtype=torch.float64, device="cpu")
                  + .5 - size / 2) * pitch
                 for pixel, size, pitch in zip(pixels, owner.detector_shape, owner.detector_spacing)]
@@ -374,9 +375,39 @@ class ReferenceProjector:
                 normal = torch.stack((axis_u[..., 1], -axis_u[..., 0]), dim=-1)
             return points + offsets[..., 2, None] * normal
 
+        if check_range and not native_surface:
+            # Certify ordinary batches without expanding raw FP64 world points.
+            # L1 norms bound Euclidean distances without squaring tiny bases.
+            pitches = local.new_tensor(self.spacing[::-1])
+            maximum = local.abs().amax(dim=tuple(range(1, local.ndim - 1)))
+            axis_u = selected[2]
+            if owner.beam == "cone":
+                basis = (axis_u, selected[3], torch.linalg.cross(axis_u, selected[3], dim=-1))
+                components = (0, 1, 2)
+            else:
+                basis = (axis_u, torch.stack((axis_u[:, 1], -axis_u[:, 0]), dim=-1))
+                components = (0, 2)
+            source_bound = torch.linalg.vector_norm(selected[0] / pitches, ord=1, dim=-1)
+            pixel_bound = torch.linalg.vector_norm(selected[1] / pitches, ord=1, dim=-1)
+            for component, axis in zip(components, basis):
+                pixel_bound = pixel_bound + maximum[:, component] * torch.linalg.vector_norm(
+                    axis / pitches, ord=1, dim=-1,
+                )
+            # Cover rounding in the few frame/offset operations; nonfinite or
+            # boundary-adjacent bounds remain inconclusive and use exact points.
+            slack = 64 * torch.finfo(torch.float64).eps
+            source_bound = source_bound + slack * source_bound.clamp_min(1)
+            pixel_bound = pixel_bound + slack * pixel_bound.clamp_min(1)
+            certified = (torch.isfinite(source_bound) & torch.isfinite(pixel_bound)
+                         & (torch.minimum(source_bound, pixel_bound) <= 1e6)
+                         & (source_bound <= 1e15) & (pixel_bound <= 1e15))
+            if certified.all().item():
+                check_range = False
+                dtype = owner.dtype
+                selected = tuple(value.to(dtype=dtype) for value in selected)
+                local = local.to(dtype=dtype)
         points = world_points(local, selected)
-        if (validate and owner.beam not in ("parallel", "parallel3d") and owner.dtype == torch.float32
-                and owner.detector_surface is not None):
+        if check_range:
             # Raw FP64 coordinates preserve the exact admission boundaries.
             sources = frame(selected[0]).expand_as(points)
             pitches = points.new_tensor(self.spacing[::-1])
