@@ -295,12 +295,7 @@ class ReferenceProjector:
                     origins, directions, _ = self._rays(
                         views, pixels, device, validate=True, geometry=staged[device],
                     )
-                    if (not torch.isfinite(origins.to(dtype=owner.dtype)).all().item()
-                            or not torch.isfinite(directions.to(dtype=owner.dtype)).all().item()):
-                        raise ValueError("detector surface world coordinates must be finite")
-                    if (owner.beam not in ("parallel", "parallel3d")
-                            and torch.any(torch.all(directions == 0, dim=-1)).item()):
-                        raise ValueError("source and detector surface pixels must differ")
+                    self._check_rays(origins, directions)
         except (TypeError, ValueError, RuntimeError) as failure:
             error = failure
         if synchronize:
@@ -308,11 +303,23 @@ class ReferenceProjector:
         elif error is not None:
             raise error
 
-    def _rays(self, views, pixels, device, validate=False, stats=None, geometry=None):
+    def _check_rays(self, origins, directions):
         owner = self.owner
-        check_range = (validate and owner.beam not in ("parallel", "parallel3d")
-                       and owner.dtype == torch.float32 and owner.detector_surface is not None)
-        dtype = torch.float64 if check_range else owner.dtype
+        if (not torch.isfinite(origins.to(dtype=owner.dtype)).all().item()
+                or not torch.isfinite(directions.to(dtype=owner.dtype)).all().item()):
+            raise ValueError("detector surface world coordinates must be finite")
+        if (owner.beam not in ("parallel", "parallel3d")
+                and torch.any(torch.all(directions == 0, dim=-1)).item()):
+            raise ValueError("source and detector surface pixels must differ")
+
+    def _rays(self, views, pixels, device, validate=False, stats=None, geometry=None, *, admit=False):
+        """Rays of one view/pixel batch.
+
+        ``admit`` applies the admission checks of ``_validate_geometry`` to the
+        same sampled offsets before composing the numerical rays, so a
+        parameterized sampler runs once for both.
+        """
+        owner = self.owner
         axes = [(torch.arange(pixel.start, pixel.stop, dtype=torch.float64, device="cpu")
                  + .5 - size / 2) * pitch
                 for pixel, size, pitch in zip(pixels, owner.detector_shape, owner.detector_spacing)]
@@ -338,129 +345,138 @@ class ReferenceProjector:
             offsets = offsets[views]
         elif tuple(offsets.shape) not in (shared_shape, (len(ids), *shared_shape)):
             raise ValueError("detector_surface output shape must match the selected view/pixel batch")
-        if validate:
+        if validate or admit:
             if not torch.isfinite(offsets).all().item():
                 raise ValueError("detector_surface offsets must be finite")
             if owner.beam not in ("cone", "parallel3d") and torch.any(offsets[..., 1] != 0).item():
                 raise ValueError("2D detector_surface middle offsets must be zero")
-        frames = (owner._learnable or owner._trajectory) if geometry is None else geometry[:frame_count]
-        native_surface = owner.backend == "numba" and surface is not None
-        native_legacy = native_surface and not isinstance(surface, ParameterizedSurface)
-        if native_surface and not native_legacy:
-            dtype = torch.float32
-            for component in (*frames, offsets):
-                dtype = torch.promote_types(dtype, component.dtype)
-        local_dtype = offsets.dtype if native_legacy else dtype
-        local = self._transfer(offsets.to(dtype=local_dtype), device, stats)
-        if local.ndim == u.ndim + 1:
-            local = local.unsqueeze(0)
-        dimensions = len(owner.global_volume_shape)
-        selected = tuple(self._transfer(value[views].to(
-            dtype=torch.promote_types(torch.float32, value.dtype) if native_legacy else dtype,
-        ), device, stats) for value in frames)
+        def compose(validate, stats):
+            check_range = (validate and owner.beam not in ("parallel", "parallel3d")
+                           and owner.dtype == torch.float32 and surface is not None)
+            dtype = torch.float64 if check_range else owner.dtype
+            frames = (owner._learnable or owner._trajectory) if geometry is None else geometry[:frame_count]
+            native_surface = owner.backend == "numba" and surface is not None
+            native_legacy = native_surface and not isinstance(surface, ParameterizedSurface)
+            if native_surface and not native_legacy:
+                dtype = torch.float32
+                for component in (*frames, offsets):
+                    dtype = torch.promote_types(dtype, component.dtype)
+            local_dtype = offsets.dtype if native_legacy else dtype
+            local = self._transfer(offsets.to(dtype=local_dtype), device, stats)
+            if local.ndim == u.ndim + 1:
+                local = local.unsqueeze(0)
+            dimensions = len(owner.global_volume_shape)
+            selected = tuple(self._transfer(value[views].to(
+                dtype=torch.promote_types(torch.float32, value.dtype) if native_legacy else dtype,
+            ), device, stats) for value in frames)
 
-        def frame(value):
-            return value.reshape(len(ids), *([1] * u.ndim), dimensions)
+            def frame(value):
+                return value.reshape(len(ids), *([1] * u.ndim), dimensions)
 
-        def world_points(offsets, components):
-            axis_u = frame(components[2])
-            points = frame(components[1]) + offsets[..., 0, None] * axis_u
-            if owner.beam in ("cone", "parallel3d"):
-                axis_v = frame(components[3])
-                points = points + offsets[..., 1, None] * axis_v
-                normal_dtype = torch.promote_types(axis_u.dtype, axis_v.dtype)
-                normal = torch.linalg.cross(axis_u.to(dtype=normal_dtype),
-                                            axis_v.to(dtype=normal_dtype), dim=-1)
+            def world_points(offsets, components):
+                axis_u = frame(components[2])
+                points = frame(components[1]) + offsets[..., 0, None] * axis_u
+                if owner.beam in ("cone", "parallel3d"):
+                    axis_v = frame(components[3])
+                    points = points + offsets[..., 1, None] * axis_v
+                    normal_dtype = torch.promote_types(axis_u.dtype, axis_v.dtype)
+                    normal = torch.linalg.cross(axis_u.to(dtype=normal_dtype),
+                                                axis_v.to(dtype=normal_dtype), dim=-1)
+                else:
+                    normal = torch.stack((axis_u[..., 1], -axis_u[..., 0]), dim=-1)
+                return points + offsets[..., 2, None] * normal
+
+            if check_range and not native_surface:
+                # Certify ordinary batches without expanding raw FP64 world points.
+                # L1 norms bound Euclidean distances without squaring tiny bases.
+                pitches = local.new_tensor(self.spacing[::-1])
+                maximum = local.abs().amax(dim=tuple(range(1, local.ndim - 1)))
+                axis_u = selected[2]
+                if owner.beam == "cone":
+                    basis = (axis_u, selected[3], torch.linalg.cross(axis_u, selected[3], dim=-1))
+                    components = (0, 1, 2)
+                else:
+                    basis = (axis_u, torch.stack((axis_u[:, 1], -axis_u[:, 0]), dim=-1))
+                    components = (0, 2)
+                source_bound = torch.linalg.vector_norm(selected[0] / pitches, ord=1, dim=-1)
+                pixel_bound = torch.linalg.vector_norm(selected[1] / pitches, ord=1, dim=-1)
+                for component, axis in zip(components, basis):
+                    pixel_bound = pixel_bound + maximum[:, component] * torch.linalg.vector_norm(
+                        axis / pitches, ord=1, dim=-1,
+                    )
+                # Cover rounding in the few frame/offset operations; nonfinite or
+                # boundary-adjacent bounds remain inconclusive and use exact points.
+                slack = 64 * torch.finfo(torch.float64).eps
+                source_bound = source_bound + slack * source_bound.clamp_min(1)
+                pixel_bound = pixel_bound + slack * pixel_bound.clamp_min(1)
+                certified = (torch.isfinite(source_bound) & torch.isfinite(pixel_bound)
+                             & (torch.minimum(source_bound, pixel_bound) <= 1e6)
+                             & (source_bound <= 1e15) & (pixel_bound <= 1e15))
+                if certified.all().item():
+                    check_range = False
+                    dtype = owner.dtype
+                    selected = tuple(value.to(dtype=dtype) for value in selected)
+                    local = local.to(dtype=dtype)
+            points = world_points(local, selected)
+            if check_range:
+                # Raw FP64 coordinates preserve the exact admission boundaries.
+                sources = frame(selected[0]).expand_as(points)
+                pitches = points.new_tensor(self.spacing[::-1])
+                source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
+                pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
+                if torch.any(torch.minimum(source_distance, pixel_distance) > 1e6).item():
+                    raise ValueError(
+                        "the source or a detector pixel must lie within 1e6 voxels "
+                        "of the volume center in every view"
+                    )
+                if torch.any((source_distance > 1e15) | (pixel_distance > 1e15)).item():
+                    raise ValueError(
+                        "the source and detector surface pixels must lie within 1e15 voxels "
+                        "of the volume center"
+                    )
+            if native_surface:
+                # Native surface preprocessing composes before staging complete
+                # rays to FP32. Data transforms must preserve that operator.
+                selected = tuple(value.to(dtype=owner.dtype) for value in selected)
+                points = points.to(dtype=owner.dtype)
+            elif validate and dtype != owner.dtype:
+                # Casting the completed point misses cancellation/overflow during
+                # FP32 component arithmetic. Reuse the same sampled offsets.
+                selected = tuple(value.to(dtype=owner.dtype) for value in selected)
+                points = world_points(local.to(dtype=owner.dtype), selected)
+            if owner.beam in ("parallel", "parallel3d"):
+                origins, directions = points, frame(selected[0]).expand_as(points)
             else:
-                normal = torch.stack((axis_u[..., 1], -axis_u[..., 0]), dim=-1)
-            return points + offsets[..., 2, None] * normal
+                sources = frame(selected[0]).expand_as(points)
+                pitches = points.new_tensor(self.spacing[::-1])
+                source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
+                pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
+                if validate:
+                    if torch.any(torch.all(
+                        points.to(dtype=owner.dtype) == sources.to(dtype=owner.dtype), dim=-1,
+                    )).item():
+                        raise ValueError("source and detector surface pixels must differ")
+                # Starting near the volume avoids subtracting its voxel planes
+                # from a distant endpoint; reversing a segment preserves [0, 1].
+                source_nearer = (source_distance <= pixel_distance).unsqueeze(-1)
+                origins = torch.where(source_nearer, sources, points)
+                difference = points - sources
+                directions = torch.where(source_nearer, difference, -difference)
 
-        if check_range and not native_surface:
-            # Certify ordinary batches without expanding raw FP64 world points.
-            # L1 norms bound Euclidean distances without squaring tiny bases.
-            pitches = local.new_tensor(self.spacing[::-1])
-            maximum = local.abs().amax(dim=tuple(range(1, local.ndim - 1)))
-            axis_u = selected[2]
-            if owner.beam == "cone":
-                basis = (axis_u, selected[3], torch.linalg.cross(axis_u, selected[3], dim=-1))
-                components = (0, 1, 2)
-            else:
-                basis = (axis_u, torch.stack((axis_u[:, 1], -axis_u[:, 0]), dim=-1))
-                components = (0, 2)
-            source_bound = torch.linalg.vector_norm(selected[0] / pitches, ord=1, dim=-1)
-            pixel_bound = torch.linalg.vector_norm(selected[1] / pitches, ord=1, dim=-1)
-            for component, axis in zip(components, basis):
-                pixel_bound = pixel_bound + maximum[:, component] * torch.linalg.vector_norm(
-                    axis / pitches, ord=1, dim=-1,
-                )
-            # Cover rounding in the few frame/offset operations; nonfinite or
-            # boundary-adjacent bounds remain inconclusive and use exact points.
-            slack = 64 * torch.finfo(torch.float64).eps
-            source_bound = source_bound + slack * source_bound.clamp_min(1)
-            pixel_bound = pixel_bound + slack * pixel_bound.clamp_min(1)
-            certified = (torch.isfinite(source_bound) & torch.isfinite(pixel_bound)
-                         & (torch.minimum(source_bound, pixel_bound) <= 1e6)
-                         & (source_bound <= 1e15) & (pixel_bound <= 1e15))
-            if certified.all().item():
-                check_range = False
-                dtype = owner.dtype
-                selected = tuple(value.to(dtype=dtype) for value in selected)
-                local = local.to(dtype=dtype)
-        points = world_points(local, selected)
-        if check_range:
-            # Raw FP64 coordinates preserve the exact admission boundaries.
-            sources = frame(selected[0]).expand_as(points)
-            pitches = points.new_tensor(self.spacing[::-1])
-            source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
-            pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
-            if torch.any(torch.minimum(source_distance, pixel_distance) > 1e6).item():
-                raise ValueError(
-                    "the source or a detector pixel must lie within 1e6 voxels "
-                    "of the volume center in every view"
-                )
-            if torch.any((source_distance > 1e15) | (pixel_distance > 1e15)).item():
-                raise ValueError(
-                    "the source and detector surface pixels must lie within 1e15 voxels "
-                    "of the volume center"
-                )
-        if native_surface:
-            # Native surface preprocessing composes before staging complete
-            # rays to FP32. Data transforms must preserve that operator.
-            selected = tuple(value.to(dtype=owner.dtype) for value in selected)
-            points = points.to(dtype=owner.dtype)
-        elif validate and dtype != owner.dtype:
-            # Casting the completed point misses cancellation/overflow during
-            # FP32 component arithmetic. Reuse the same sampled offsets.
-            selected = tuple(value.to(dtype=owner.dtype) for value in selected)
-            points = world_points(local.to(dtype=owner.dtype), selected)
-        if owner.beam in ("parallel", "parallel3d"):
-            origins, directions = points, frame(selected[0]).expand_as(points)
-        else:
-            sources = frame(selected[0]).expand_as(points)
-            pitches = points.new_tensor(self.spacing[::-1])
-            source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
-            pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
-            if validate:
-                if torch.any(torch.all(
-                    points.to(dtype=owner.dtype) == sources.to(dtype=owner.dtype), dim=-1,
-                )).item():
-                    raise ValueError("source and detector surface pixels must differ")
-            # Starting near the volume avoids subtracting its voxel planes
-            # from a distant endpoint; reversing a segment preserves [0, 1].
-            source_nearer = (source_distance <= pixel_distance).unsqueeze(-1)
-            origins = torch.where(source_nearer, sources, points)
-            difference = points - sources
-            directions = torch.where(source_nearer, difference, -difference)
+            pixel_ids = torch.meshgrid(*(torch.arange(pixel.start, pixel.stop, device=device)
+                                         for pixel in pixels), indexing="ij")
+            detector_ids = torch.zeros_like(pixel_ids[0])
+            for coordinate, size in zip(pixel_ids, owner.detector_shape):
+                detector_ids = detector_ids * size + coordinate
+            ray_ids = ((self._transfer(ids, device, stats) - owner.view_slice.start).reshape(
+                len(ids), *([1] * u.ndim),
+            ) * math.prod(owner.detector_shape) + detector_ids).reshape(-1)
+            return origins.reshape(-1, dimensions), directions.reshape(-1, dimensions), ray_ids
 
-        pixel_ids = torch.meshgrid(*(torch.arange(pixel.start, pixel.stop, device=device)
-                                     for pixel in pixels), indexing="ij")
-        detector_ids = torch.zeros_like(pixel_ids[0])
-        for coordinate, size in zip(pixel_ids, owner.detector_shape):
-            detector_ids = detector_ids * size + coordinate
-        ray_ids = ((self._transfer(ids, device, stats) - owner.view_slice.start).reshape(
-            len(ids), *([1] * u.ndim),
-        ) * math.prod(owner.detector_shape) + detector_ids).reshape(-1)
-        return origins.reshape(-1, dimensions), directions.reshape(-1, dimensions), ray_ids
+        if admit:
+            with torch.no_grad():
+                self._check_rays(*compose(True, None)[:2])
+        return compose(validate, stats)
 
     def _intervals(self, origins, directions, tile):
         owner = self.owner
@@ -577,7 +593,7 @@ class ReferenceProjector:
         return indices.flatten()
 
     def _tensor_apply(self, tensor, is_project, reduce_cotangent=False, *, geometry=None,
-                      reduce_output=True, _plan=None):
+                      reduce_output=True, _plan=None, admit=False):
         owner = self.owner
         owner.last_execution_stats = None
         start = time.perf_counter()
@@ -618,7 +634,7 @@ class ReferenceProjector:
                     slices[axis] = slice(first, min(first + step, leading[axis]))
                     pieces.append(self._tensor_apply(tensor[tuple(slices)], is_project, reduce_cotangent,
                                                      geometry=geometry, reduce_output=reduce_output,
-                                                     _plan=plan))
+                                                     _plan=plan, admit=admit))
                     part_stats = owner.last_execution_stats
                     for key in counters:
                         stats[key] += part_stats[key]
@@ -633,13 +649,14 @@ class ReferenceProjector:
         # Empty ownership and empty leading dimensions retain a differentiable seam.
         output = output + _zero_dependency(tensor).to(dtype=owner.dtype)
         if is_project:
-            for tile, world in self._tiles(plan[0]):
+            for tile_index, (tile, world) in enumerate(self._tiles(plan[0])):
                 values = tensor[(..., *tile)]
                 if reduce_cotangent:
                     values = self._reduce(values, owner.view_group, owner.view_world_size, stats)
                 for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                     device = self._device(batch, tensor.device, stats)
-                    origins, directions, rays = self._rays(views, pixels, device, stats=stats, geometry=geometry)
+                    origins, directions, rays = self._rays(views, pixels, device, stats=stats, geometry=geometry,
+                                                           admit=admit and tile_index == 0)
                     indices, lengths = self._intervals(origins, directions, world)
                     local = self._to(values, device, stats).reshape(*leading, math.prod(values.shape[-len(tile):]))
                     selected = torch.index_select(local, -1, indices.flatten()).reshape(*leading, *indices.shape)
@@ -662,7 +679,8 @@ class ReferenceProjector:
                 if reduce_cotangent:
                     values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
                 values = self._to(values, device, stats).reshape(*leading, math.prod(values.shape[-len(shape):]))
-                origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry)
+                origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry,
+                                                    admit=admit)
                 for tile, world in self._tiles(plan[0]):
                     indices, lengths = self._intervals(origins, directions, world)
                     tile_shape = tuple(part.stop - part.start for part in tile)
@@ -687,10 +705,17 @@ class ReferenceProjector:
 
     def _apply(self, tensor, is_project):
         geometry = self._snapshot_geometry()
-        self._validate_geometry(geometry, tensor.device if isinstance(tensor, torch.Tensor) else torch.device("cpu"))
-        if self.owner.world_size > 1 and torch.is_grad_enabled():
-            return _DistributedApply.apply(tensor, self, is_project, False, self.owner._participation(), *geometry)
-        return self._tensor_apply(tensor, is_project, geometry=geometry)
+        owner = self.owner
+        # A single process returns no output before every batch passes, so a
+        # parameterized surface is admitted in the numerical sampling pass and
+        # its sampler runs once per batch. Distributed calls finish all checks
+        # before any rank starts numerics.
+        admit = owner.world_size == 1 and isinstance(owner.detector_surface, ParameterizedSurface)
+        if not admit:
+            self._validate_geometry(geometry, tensor.device if isinstance(tensor, torch.Tensor) else torch.device("cpu"))
+        if owner.world_size > 1 and torch.is_grad_enabled():
+            return _DistributedApply.apply(tensor, self, is_project, False, owner._participation(), *geometry)
+        return self._tensor_apply(tensor, is_project, geometry=geometry, admit=admit)
 
     def _geometry_grad(self, tensor, cotangent, is_project, reduce_cotangent, geometry):
         owner = self.owner
