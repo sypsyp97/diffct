@@ -280,6 +280,10 @@ also pass measured or calibrated poses in the same layout.</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">(src_pos,</span> <span class="pre">det_center,</span> <span class="pre">det_u,</span> <span class="pre">det_v)</span></code>, each <code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">3)</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> / <code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">U,</span> <span class="pre">V)</span></code></p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">parallel3d</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(ray_dir,</span> <span class="pre">det_center,</span> <span class="pre">det_u,</span> <span class="pre">det_v)</span></code>, each <code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">3)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">H,</span> <span class="pre">W)</span></code> / <code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">U,</span> <span class="pre">V)</span></code></p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -289,7 +293,7 @@ for positions, voxel spacing and detector spacing. Voxel spacing is a single
 positive scalar or a positive per-axis tuple in tensor order: <code class="docutils literal notranslate"><span class="pre">(dy,dx)</span></code> or
 <code class="docutils literal notranslate"><span class="pre">(dz,dy,dx)</span></code>. Per-axis spacing uses the PyTorch backend; see <a class="reference internal" href="execution.html"><span class="doc">Precision, training and reconstruction</span></a>.</p>
 <p>Detector axes are unit direction vectors, not pixel-step vectors. The detector
-spacing sets the pixel pitch. A scalar spacing applies to both cone detector axes.
+spacing sets the pixel pitch. A scalar spacing applies to both 3D detector axes.
 With the default flat detector, pixel <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v)</span></code> is at:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>det_center + (u - (U - 1) / 2) * du * det_u
            + (v - (V - 1) / 2) * dv * det_v
@@ -319,8 +323,13 @@ coordinate system above.</p>
 </pre></div>
 </div>
 <p>All components must be finite floating-point tensors with the same nonzero view
-count. <code class="docutils literal notranslate"><span class="pre">ray_dir</span></code> and <code class="docutils literal notranslate"><span class="pre">det_u</span></code> must be orthogonal for parallel beams. <code class="docutils literal notranslate"><span class="pre">det_u</span></code>
-and <code class="docutils literal notranslate"><span class="pre">det_v</span></code> must be orthogonal for cone beams. With flat fan/cone detectors,
+count. <code class="docutils literal notranslate"><span class="pre">ray_dir</span></code> and <code class="docutils literal notranslate"><span class="pre">det_u</span></code> must be orthogonal for 2D parallel beams. <code class="docutils literal notranslate"><span class="pre">det_u</span></code>
+and <code class="docutils literal notranslate"><span class="pre">det_v</span></code> must be orthogonal for 3D beams. <code class="docutils literal notranslate"><span class="pre">parallel3d</span></code> permits oblique
+detectors: the unit ray direction must not be tangent to the detector plane.
+Degeneracy is checked by the frame’s numerical rank in float64.
+Its rays are infinite lines through each pixel. It uses the PyTorch backend
+on CPU or CUDA; <code class="docutils literal notranslate"><span class="pre">backend=&quot;auto&quot;</span></code> selects it automatically and explicit
+<code class="docutils literal notranslate"><span class="pre">backend=&quot;numba&quot;</span></code> is unsupported. With flat fan/cone detectors,
 the source must not coincide with the detector centre or view the detector
 edge-on. The native FP32 backend requires the nearer of source and detector
 centre to lie within 1e6 voxel spacings of the origin. Native surface detectors validate each actual
@@ -336,7 +345,7 @@ acquisitions. The analytical helpers assume a circular orbit (see <a class="refe
 <span id="detector-surfaces"></span><h2>Parameterized detector surfaces<a class="headerlink" href="#parameterized-detector-surfaces" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">Projector(...,</span> <span class="pre">detector_surface=surface)</span></code> places each pixel
 on a native curve. The legacy two-argument callback places pixels
-on an arc, cylinder or another parameterized surface. For cone beams it receives
+on an arc, cylinder or another parameterized surface. For 3D beams it receives
 physical float64 <code class="docutils literal notranslate"><span class="pre">u,</span> <span class="pre">v</span></code> grids on CPU with shape <code class="docutils literal notranslate"><span class="pre">(U,</span> <span class="pre">V)</span></code> and <code class="docutils literal notranslate"><span class="pre">ij</span></code> indexing. It returns local
 <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v,</span> <span class="pre">n)</span></code> offsets shaped <code class="docutils literal notranslate"><span class="pre">(U,</span> <span class="pre">V,</span> <span class="pre">3)</span></code> or <code class="docutils literal notranslate"><span class="pre">(views,</span> <span class="pre">U,</span> <span class="pre">V,</span> <span class="pre">3)</span></code>. Here <code class="docutils literal notranslate"><span class="pre">views</span></code>
 is the total trajectory view count, also in distributed mode. The world point is:</p>
@@ -429,10 +438,65 @@ gradients, it clones the entire trajectory. For example:</p>
 </div>
 <p>This loss uses the same target geometry, so the gradient is zero. For a real
 calibration loop, see <code class="docutils literal notranslate"><span class="pre">examples/geometry_calibration.py</span></code>.</p>
-<p>If poses come from learnable angles or offsets, rebuild the derived tensors and
-the <code class="docutils literal notranslate"><span class="pre">Projector</span></code> inside each optimization step. Parameterize rotations so that
-axes stay unit length and orthogonal. Trajectory frame checks run only at
-construction; sampled surface positions are also checked on every operation.</p>
+<p>If poses come from learnable angles or offsets, rebuild the derived tensors
+inside each optimization step and pass them to the same projector:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">circular_trajectory_3d</span>
+
+<span class="n">angles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">91</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">volume</span><span class="o">.</span><span class="n">device</span><span class="p">)[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">angles</span> <span class="o">=</span> <span class="n">angles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">()</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">([</span><span class="n">angles</span><span class="p">],</span> <span class="n">lr</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+    <span class="n">current</span> <span class="o">=</span> <span class="n">circular_trajectory_3d</span><span class="p">(</span><span class="n">angles</span><span class="p">,</span> <span class="n">sid</span><span class="o">=</span><span class="mf">80.0</span><span class="p">,</span> <span class="n">sdd</span><span class="o">=</span><span class="mf">128.0</span><span class="p">)</span>
+    <span class="n">loss</span> <span class="o">=</span> <span class="p">(</span><span class="n">A</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">trajectory</span><span class="o">=</span><span class="n">current</span><span class="p">)</span> <span class="o">-</span> <span class="n">target</span><span class="p">)</span><span class="o">.</span><span class="n">square</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">project</span></code>, <code class="docutils literal notranslate"><span class="pre">backproject</span></code>, <code class="docutils literal notranslate"><span class="pre">__call__</span></code>, <code class="docutils literal notranslate"><span class="pre">project_into</span></code> and
+<code class="docutils literal notranslate"><span class="pre">backproject_into</span></code> accept the keyword-only <code class="docutils literal notranslate"><span class="pre">trajectory</span></code> argument. It replaces
+the complete tuple for that call and must keep the configured beam and view
+count. Omission or <code class="docutils literal notranslate"><span class="pre">None</span></code> uses the constructor trajectory. Each calculation
+keeps its own geometry snapshot for backward; overrides leave the default
+trajectory unchanged. The <code class="docutils literal notranslate"><span class="pre">*_into</span></code> methods retain their numerical,
+no-autograd contract. Distributed ranks must agree on whether an override is
+present and supply one coherent global trajectory.</p>
+<p>Call-time admission checks flat-detector corners and coordinate bounds, with
+exact pixel checks for ambiguous views. Frames stage once per validation device.
+Native curved-detector admission uses bounded batches on each compute device
+after view sharding. Distributed admission errors reach all ranks before
+numerical execution.</p>
+<p>Parameterize rotations so that axes stay unit length and orthogonal. Frame
+checks run at construction and for each override; sampled surface positions
+are checked on every operation.</p>
+</section>
+<section id="differentiable-geometry-helpers">
+<h2>Differentiable geometry helpers<a class="headerlink" href="#differentiable-geometry-helpers" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">circular_trajectory_2d_parallel</span></code>, <code class="docutils literal notranslate"><span class="pre">circular_trajectory_2d_fan</span></code>,
+<code class="docutils literal notranslate"><span class="pre">circular_trajectory_3d</span></code> and <code class="docutils literal notranslate"><span class="pre">circular_trajectory_3d_parallel</span></code> accept either
+a view count or a nonempty floating-point angle tensor as the first argument.
+Angles are in radians and may be nonuniform or unsorted. A tensor preserves its
+device, dtype and autograd history; <code class="docutils literal notranslate"><span class="pre">device</span></code> and <code class="docutils literal notranslate"><span class="pre">dtype</span></code> only configure
+count-based generation. Parallel helpers cover <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">pi)</span></code> by default; fan and
+cone helpers cover <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">2*pi)</span></code>. The 3D parallel helper lifts the 2D orbit into
+the XY plane with <code class="docutils literal notranslate"><span class="pre">det_v=(0,0,1)</span></code>. In both parallel helpers,
+<code class="docutils literal notranslate"><span class="pre">detector_distance</span></code> is a transverse shift along <code class="docutils literal notranslate"><span class="pre">det_u</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">transform_trajectory(trajectory,</span> <span class="pre">rotation=None,</span> <span class="pre">translation=None,</span> <span class="pre">beam=&quot;cone&quot;)</span></code>
+applies a rigid transform about the world origin. Points become <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">&#64;</span> <span class="pre">p</span> <span class="pre">+</span> <span class="pre">t</span></code>;
+directions become <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">&#64;</span> <span class="pre">d</span></code>. <code class="docutils literal notranslate"><span class="pre">rotation</span></code> is a proper orthogonal matrix shaped
+<code class="docutils literal notranslate"><span class="pre">(d,d)</span></code> or <code class="docutils literal notranslate"><span class="pre">(views,d,d)</span></code>, and <code class="docutils literal notranslate"><span class="pre">translation</span></code> is shaped <code class="docutils literal notranslate"><span class="pre">(d,)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">(views,d)</span></code>. Use the same dtype and device as the trajectory. Both shared and
+per-view transforms preserve gradients to the frames and transform parameters.
+The helper validates frames and transforms; <code class="docutils literal notranslate"><span class="pre">Projector</span></code> checks actual
+detector pixels. Surface offsets may define valid rays even when the reference
+detector center coincides with the source.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">transform_trajectory</span>
+
+<span class="n">shift</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">volume</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">current</span> <span class="o">=</span> <span class="n">transform_trajectory</span><span class="p">(</span><span class="n">current</span><span class="p">,</span> <span class="n">translation</span><span class="o">=</span><span class="n">shift</span><span class="p">)</span>
+<span class="n">shifted</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">trajectory</span><span class="o">=</span><span class="n">current</span><span class="p">)</span>
+</pre></div>
+</div>
 <p>Limits:</p>
 <ul class="simple">
 <li><p>Second derivatives with respect to geometry raise an error.</p></li>
@@ -506,6 +570,7 @@ for loss scaling.</p></li>
 <li><a class="reference internal" href="#custom-acquisition-example">Custom acquisition example</a></li>
 <li><a class="reference internal" href="#parameterized-detector-surfaces">Parameterized detector surfaces</a></li>
 <li><a class="reference internal" href="#geometry-gradients">Geometry gradients</a></li>
+<li><a class="reference internal" href="#differentiable-geometry-helpers">Differentiable geometry helpers</a></li>
 </ul>
 </li>
 </ul>

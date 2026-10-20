@@ -286,8 +286,8 @@ backend uses the same cell-constant Siddon model and physical coordinates.</p>
 </table>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">backend=&quot;auto&quot;</span></code> selects PyTorch for either strict precision mode, per-axis
-spacing, and hybrid ownership. An incompatible explicit Numba request raises
-an error. <code class="docutils literal notranslate"><span class="pre">Projector.backend</span></code>, <code class="docutils literal notranslate"><span class="pre">.precision</span></code> and <code class="docutils literal notranslate"><span class="pre">.dtype</span></code> describe the selected
+spacing, hybrid ownership and <code class="docutils literal notranslate"><span class="pre">parallel3d</span></code> beams. An incompatible explicit Numba
+request raises an error. <code class="docutils literal notranslate"><span class="pre">Projector.backend</span></code>, <code class="docutils literal notranslate"><span class="pre">.precision</span></code> and <code class="docutils literal notranslate"><span class="pre">.dtype</span></code> describe the selected
 execution. Supplying a float64 input to <code class="docutils literal notranslate"><span class="pre">precision=&quot;fast&quot;</span></code> still yields FP32.
 Create trajectories and data in float64 for a double-precision baseline;
 casting an already rounded trajectory cannot recover its original precision.
@@ -315,6 +315,19 @@ Local regression evidence covers CPU, one NVIDIA GPU and four-process Gloo.
 ROCm hardware, several physical GPUs, NCCL and cross-node execution need the
 corresponding deployment checks. Existing published native performance numbers
 do not measure the portable precision backend or hybrid execution.</p>
+<section id="call-time-trajectory-validation">
+<h2>Call-time trajectory validation<a class="headerlink" href="#call-time-trajectory-validation" title="Link to this heading">¶</a></h2>
+<p>An ordinary flat detector’s trajectory override is checked at its corners,
+with work proportional to the view count. If these bounds cannot exclude a
+source/pixel coincidence in the execution dtype, the affected views fall back
+to bounded pixel checks. Curved detectors still check sampled pixels; frames
+and surface parameters are staged on CPU once per admission.</p>
+<p>Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/benchmark_trajectory_admission.py</span> <span class="pre">--warmup</span> <span class="pre">1</span> <span class="pre">--samples</span> <span class="pre">3</span></code>
+to measure this validation with CPU and CUDA trajectories. The script bypasses
+numerical projection and reports admission time, plus a separate untimed pass
+counting validation rays and tensor transfers. These are not projection
+throughput measurements.</p>
+</section>
 <section id="batch-dimensions-and-axis-spacing">
 <h2>Batch dimensions and axis spacing<a class="headerlink" href="#batch-dimensions-and-axis-spacing" title="Link to this heading">¶</a></h2>
 <p>Any leading batch/channel dimensions precede the configured volume or ray
@@ -520,6 +533,7 @@ Use <code class="docutils literal notranslate"><span class="pre">ParameterizedSu
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Precision, training and reconstruction</a><ul>
+<li><a class="reference internal" href="#call-time-trajectory-validation">Call-time trajectory validation</a></li>
 <li><a class="reference internal" href="#batch-dimensions-and-axis-spacing">Batch dimensions and axis spacing</a></li>
 <li><a class="reference internal" href="#streaming-analytical-reconstruction">Streaming analytical reconstruction</a></li>
 <li><a class="reference internal" href="#hybrid-ownership-and-losses">Hybrid ownership and losses</a></li>

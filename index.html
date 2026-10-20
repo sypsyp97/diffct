@@ -256,7 +256,7 @@
 <h1>diffct: Differentiable CT Operators<a class="headerlink" href="#diffct-differentiable-ct-operators" title="Link to this heading">¶</a></h1>
 <p>diffct provides differentiable CUDA projectors and matched adjoints for computed
 tomography (CT) in PyTorch. It supports 2D parallel and fan beams and 3D cone
-beams. Each view can follow any trajectory, and autograd gives gradients for the
+and parallel beams. Each view can follow any trajectory, and autograd gives gradients for the
 volume and for trajectory tensors. Detector pixels can follow parameterized
 surfaces, with first-order gradients for their parameters. Views can be split
 across several GPUs.</p>
@@ -283,6 +283,7 @@ execution. Backend, precision and solver contracts are in <a class="reference in
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="execution.html">Precision, training and reconstruction</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="execution.html#call-time-trajectory-validation">Call-time trajectory validation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="execution.html#batch-dimensions-and-axis-spacing">Batch dimensions and axis spacing</a></li>
 <li class="toctree-l2"><a class="reference internal" href="execution.html#streaming-analytical-reconstruction">Streaming analytical reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="execution.html#hybrid-ownership-and-losses">Hybrid ownership and losses</a></li>
@@ -294,6 +295,7 @@ execution. Backend, precision and solver contracts are in <a class="reference in
 <li class="toctree-l2"><a class="reference internal" href="trajectories.html#custom-acquisition-example">Custom acquisition example</a></li>
 <li class="toctree-l2"><a class="reference internal" href="trajectories.html#parameterized-detector-surfaces">Parameterized detector surfaces</a></li>
 <li class="toctree-l2"><a class="reference internal" href="trajectories.html#geometry-gradients">Geometry gradients</a></li>
+<li class="toctree-l2"><a class="reference internal" href="trajectories.html#differentiable-geometry-helpers">Differentiable geometry helpers</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="chunking.html">Large Volumes and Chunked Execution</a><ul>

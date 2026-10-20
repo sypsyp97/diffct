@@ -257,6 +257,88 @@
 <span class="c1"># Trajectory Generation Functions</span>
 <span class="c1"># ============================================================================</span>
 
+<div class="viewcode-block" id="transform_trajectory">
+<a class="viewcode-back" href="../../api.html#diffct.geometry.transform_trajectory">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">transform_trajectory</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="n">rotation</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">translation</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">beam</span><span class="o">=</span><span class="s1">'cone'</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Apply ``p' = R p + t`` to points and ``d' = R d`` to directions.</span>
+
+<span class="sd">    Rotation and translation can be shared or have one entry per view. All</span>
+<span class="sd">    inputs must share dtype and device. Ordinary tensor operations preserve</span>
+<span class="sd">    gradients to the frames and transform parameters.</span>
+<span class="sd">    """</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">_validate_trajectory</span>
+
+    <span class="k">if</span> <span class="n">beam</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">'parallel'</span><span class="p">,</span> <span class="s1">'fan'</span><span class="p">,</span> <span class="s1">'cone'</span><span class="p">,</span> <span class="s1">'parallel3d'</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"beam must be 'parallel', 'fan', 'cone', or 'parallel3d'"</span><span class="p">)</span>
+    <span class="c1"># Frames alone do not specify the sampled detector surface.</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">views</span> <span class="o">=</span> <span class="n">_validate_trajectory</span><span class="p">(</span><span class="n">trajectory</span><span class="p">,</span> <span class="n">beam</span><span class="p">,</span> <span class="n">detector_surface</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">first</span> <span class="o">=</span> <span class="n">trajectory</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">dimensions</span> <span class="o">=</span> <span class="n">first</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="p">(</span><span class="o">*</span><span class="n">trajectory</span><span class="p">,</span> <span class="n">rotation</span><span class="p">,</span> <span class="n">translation</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_floating_point</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">"frames and transforms must be floating-point tensors"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">value</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">first</span><span class="o">.</span><span class="n">dtype</span> <span class="ow">or</span> <span class="n">value</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">first</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"frames and transforms must share dtype and device"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">():</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"frames and transforms must be finite"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">rotation</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">rotation</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">((</span><span class="n">dimensions</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">),</span> <span class="p">(</span><span class="n">views</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"rotation must have shape (d, d) or (views, d, d)"</span><span class="p">)</span>
+        <span class="n">matrix</span> <span class="o">=</span> <span class="n">rotation</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">double</span><span class="p">()</span>
+        <span class="n">identity</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="n">dimensions</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">matrix</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">matrix</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">expand_as</span><span class="p">(</span><span class="n">matrix</span><span class="p">)</span>
+        <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">matrix</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">)</span> <span class="o">@</span> <span class="n">matrix</span><span class="p">,</span> <span class="n">identity</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">)</span>
+                <span class="ow">or</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">matrix</span><span class="p">),</span> <span class="n">matrix</span><span class="o">.</span><span class="n">new_ones</span><span class="p">(</span><span class="n">matrix</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">2</span><span class="p">]),</span>
+                                      <span class="n">rtol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"rotation must be orthogonal and proper (determinant +1)"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">translation</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">translation</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">((</span><span class="n">dimensions</span><span class="p">,),</span> <span class="p">(</span><span class="n">views</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">)):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"translation must have shape (d,) or (views, d)"</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">trajectory</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">rotation</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="p">(</span><span class="n">rotation</span> <span class="o">@</span> <span class="n">value</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">translation</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="p">(</span><span class="n">index</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">or</span> <span class="p">(</span><span class="n">index</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">beam</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">'fan'</span><span class="p">,</span> <span class="s1">'cone'</span><span class="p">))):</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="n">value</span> <span class="o">+</span> <span class="n">translation</span>
+        <span class="n">result</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">result</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="circular_trajectory_3d_parallel">
+<a class="viewcode-back" href="../../api.html#diffct.geometry.circular_trajectory_3d_parallel">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">circular_trajectory_3d_parallel</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">detector_distance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">start_angle</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+                                    <span class="n">end_angle</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s1">'cuda'</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Lift the 2D parallel orbit into XY, with a vertical detector v axis.</span>
+
+<span class="sd">    ``n_views`` accepts a count or a finite floating angle vector in radians.</span>
+<span class="sd">    The default orbit spans pi; detector_distance is the legacy transverse</span>
+<span class="sd">    offset along detector u. Angle tensors retain their dtype, device and graph.</span>
+<span class="sd">    """</span>
+    <span class="n">frames</span> <span class="o">=</span> <span class="n">circular_trajectory_2d_parallel</span><span class="p">(</span>
+        <span class="n">n_views</span><span class="p">,</span> <span class="n">detector_distance</span><span class="p">,</span> <span class="n">start_angle</span><span class="p">,</span> <span class="n">end_angle</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">zero</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">frames</span><span class="p">[</span><span class="mi">0</span><span class="p">][:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">lifted</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">((</span><span class="n">value</span><span class="p">,</span> <span class="n">zero</span><span class="p">),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">frames</span><span class="p">)</span>
+    <span class="n">vertical</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">((</span><span class="n">zero</span><span class="p">,</span> <span class="n">zero</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">zero</span><span class="p">)),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="o">*</span><span class="n">lifted</span><span class="p">,</span> <span class="n">vertical</span><span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_circular_angles</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">start_angle</span><span class="p">,</span> <span class="n">end_angle</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_floating_point</span><span class="p">(</span><span class="n">n_views</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">"angles must have floating-point dtype"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">n_views</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span> <span class="ow">or</span> <span class="n">n_views</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"angles must be a nonempty one-dimensional tensor"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">n_views</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">():</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"angles must be finite"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">n_views</span><span class="o">.</span><span class="n">numel</span><span class="p">(),</span> <span class="n">n_views</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">n_views</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">step</span> <span class="o">=</span> <span class="p">(</span><span class="n">end_angle</span> <span class="o">-</span> <span class="n">start_angle</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_views</span>
+    <span class="n">angles</span> <span class="o">=</span> <span class="n">start_angle</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span> <span class="o">*</span> <span class="n">step</span>
+    <span class="k">return</span> <span class="n">angles</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span>
+
+
 <span class="k">def</span><span class="w"> </span><span class="nf">_check_source_positions</span><span class="p">(</span><span class="n">src_pos</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Reject non-finite sources and sources at the isocenter, which have no viewing direction."""</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">src_pos</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">():</span>
@@ -278,8 +360,9 @@
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
-<span class="sd">    n_views : int</span>
-<span class="sd">        Number of projection views.</span>
+<span class="sd">    n_views : int or torch.Tensor</span>
+<span class="sd">        Number of projection views, or a nonempty finite floating angle vector</span>
+<span class="sd">        in radians. Angle tensors preserve their dtype, device and autograd graph.</span>
 <span class="sd">    sid : float</span>
 <span class="sd">        Source-to-Isocenter Distance (SID), in physical units.</span>
 <span class="sd">    sdd : float</span>
@@ -317,8 +400,7 @@
         <span class="n">end_angle</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span>
 
     <span class="c1"># Generate angles (equivalent to linspace with endpoint=False)</span>
-    <span class="n">step</span> <span class="o">=</span> <span class="p">(</span><span class="n">end_angle</span> <span class="o">-</span> <span class="n">start_angle</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_views</span>
-    <span class="n">angles</span> <span class="o">=</span> <span class="n">start_angle</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span> <span class="o">*</span> <span class="n">step</span>
+    <span class="n">angles</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span> <span class="o">=</span> <span class="n">_circular_angles</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">start_angle</span><span class="p">,</span> <span class="n">end_angle</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
 
     <span class="c1"># Preallocate position matrices</span>
     <span class="n">src_pos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
@@ -828,8 +910,9 @@
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
-<span class="sd">    n_views : int</span>
-<span class="sd">        Number of projection views.</span>
+<span class="sd">    n_views : int or torch.Tensor</span>
+<span class="sd">        Number of projection views, or a nonempty finite floating angle vector</span>
+<span class="sd">        in radians. Angle tensors preserve their dtype, device and autograd graph.</span>
 <span class="sd">    sid : float</span>
 <span class="sd">        Source-to-Isocenter Distance (SID), in physical units.</span>
 <span class="sd">    sdd : float</span>
@@ -863,8 +946,7 @@
         <span class="n">end_angle</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span>
 
     <span class="c1"># Generate angles</span>
-    <span class="n">step</span> <span class="o">=</span> <span class="p">(</span><span class="n">end_angle</span> <span class="o">-</span> <span class="n">start_angle</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_views</span>
-    <span class="n">angles</span> <span class="o">=</span> <span class="n">start_angle</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span> <span class="o">*</span> <span class="n">step</span>
+    <span class="n">angles</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span> <span class="o">=</span> <span class="n">_circular_angles</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">start_angle</span><span class="p">,</span> <span class="n">end_angle</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
 
     <span class="c1"># Preallocate position matrices</span>
     <span class="n">src_pos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
@@ -1071,8 +1153,9 @@
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
-<span class="sd">    n_views : int</span>
-<span class="sd">        Number of projection views.</span>
+<span class="sd">    n_views : int or torch.Tensor</span>
+<span class="sd">        Number of projection views, or a nonempty finite floating angle vector</span>
+<span class="sd">        in radians. Angle tensors preserve their dtype, device and autograd graph.</span>
 <span class="sd">    detector_distance : float, optional</span>
 <span class="sd">        Distance from isocenter to detector origin (default: 0.0).</span>
 <span class="sd">    start_angle : float, optional</span>
@@ -1104,8 +1187,7 @@
         <span class="n">end_angle</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span>  <span class="c1"># Half rotation for parallel beam</span>
 
     <span class="c1"># Generate angles</span>
-    <span class="n">step</span> <span class="o">=</span> <span class="p">(</span><span class="n">end_angle</span> <span class="o">-</span> <span class="n">start_angle</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_views</span>
-    <span class="n">angles</span> <span class="o">=</span> <span class="n">start_angle</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span> <span class="o">*</span> <span class="n">step</span>
+    <span class="n">angles</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span> <span class="o">=</span> <span class="n">_circular_angles</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">start_angle</span><span class="p">,</span> <span class="n">end_angle</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
 
     <span class="c1"># Preallocate position matrices</span>
     <span class="n">ray_dir</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_views</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>

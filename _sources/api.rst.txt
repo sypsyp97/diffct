@@ -12,6 +12,8 @@ High-level Projector
 
 ``Projector`` takes trajectory tensors as described in :doc:`trajectories`. For
 multiple GPUs and nodes, see :doc:`multi_gpu`.
+Each operation also accepts ``trajectory=...`` to replace the full trajectory
+for that call, preserving its view count and the constructor default.
 
 ``detector_surface`` defines native pixel positions for both projection and
 matched backprojection. See :ref:`detector-surfaces` for its coordinate and
@@ -96,6 +98,7 @@ Geometry Helpers
 **3D trajectories**
 
 .. autofunction:: circular_trajectory_3d
+.. autofunction:: circular_trajectory_3d_parallel
 .. autofunction:: random_trajectory_3d
 .. autofunction:: spiral_trajectory_3d
 .. autofunction:: sinusoidal_trajectory_3d
@@ -110,6 +113,10 @@ Geometry Helpers
 .. autofunction:: circular_trajectory_2d_fan
 .. autofunction:: sinusoidal_trajectory_2d_fan
 .. autofunction:: custom_trajectory_2d_fan
+
+**Rigid transforms**
+
+.. autofunction:: transform_trajectory
 
 Analytical Reconstruction Helpers
 ---------------------------------
