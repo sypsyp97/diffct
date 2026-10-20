@@ -34,6 +34,26 @@ def _world(frames, offsets, beam):
     return result
 
 
+@pytest.mark.parametrize("beam", ["cone", "fan", "parallel"])
+@pytest.mark.parametrize("shared", [False, True], ids=["per-view", "shared"])
+def test_streamed_surface_budget_counts_only_workspace_frame_packets(beam, shared):
+    case = _case(beam, views=97)
+    surface = lambda u, v: torch.stack((u, v, torch.zeros_like(u)), -1)
+    projector = _projector(case, surface, backend="torch")
+    spec = _GeometrySpec("offsets", dtype=torch.float64, shared=shared)
+    rank = len(case.shape)
+    packet_size = (len(case.trajectory) + (3 if rank == 3 else 0)) * rank
+    packet_count = case.views if shared else 1
+    with mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"):
+        buffers = projector._surface_work_buffers(case.views, case.detector, spec=spec, streamed=True)
+    assert buffers[0] == math.ceil(packet_count * packet_size * 8 / 512) * 512
+    # Shared offsets upload directly into the packed workspace columns.
+    assert len(buffers) == 2, "budget includes separate surface staging buffers"
+    if shared:
+        pixels = math.prod(case.detector)
+        assert buffers[1] == math.ceil((rank * pixels + 1) * 8 / 512) * 512
+
+
 class _ReachedUpload(Exception):
     pass
 

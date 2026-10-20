@@ -10,6 +10,8 @@ class _GeometrySpec:
     kind: str
     sampler: object = None
     dtype: object = None
+    # One (U, V, 3) host offset snapshot shared by all views.
+    shared: bool = False
 
 
 class ParameterizedSurface:
