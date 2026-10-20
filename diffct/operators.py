@@ -836,9 +836,6 @@ class Projector:
             # Shared offsets pack the frame packets of every view of a job.
             buffers = (_allocation_bytes(2 * (views if shared else 1) * (frames + (3 if rank == 3 else 0)) * rank),
                        _allocation_bytes(2 * (columns * capacity + 1)))
-            if shared:
-                # Device copy of the shared offset tile before column packing.
-                buffers += (_allocation_bytes(2 * 3 * capacity),)
             if self._geometry_trainable:
                 # Replay one view and a bounded detector row at a time.
                 replay = rank * min(capacity, pixels[-1])
@@ -1393,18 +1390,18 @@ class Projector:
             arrays = tuple(TorchCUDABridge.tensor_to_cuda_array(value)
                            for value in (packed_frames, packed_offsets, source, points))
             if restage:
-                # One host-to-device transfer, or one per detector row for a
-                # non-contiguous tile; the float64 columns are packed on the device.
-                device_offsets = torch.empty(offsets.shape, dtype=offsets.dtype, device=packed_offsets.device)
-                if offsets.is_contiguous():
-                    _pipeline._copy(device_offsets, offsets, pipe.stats)
+                # Pack the float64 columns where the offsets live, then copy each
+                # column into the workspace without a device staging buffer.
+                flat = offsets.detach().reshape(pixel_count, 3)
+                if offsets.is_cuda:
+                    for column, original in enumerate(columns):
+                        packed_offsets[column * capacity:column * capacity + pixel_count].copy_(flat[:, original])
                 else:
-                    for row in range(offsets.shape[0]):
-                        _pipeline._copy(device_offsets[row], offsets[row], pipe.stats)
-                pipe.retain(pipe.event(pipe.upload), offsets, device_offsets)
-                flat = device_offsets.reshape(pixel_count, 3)
-                for column, original in enumerate(columns):
-                    packed_offsets[column * capacity:column * capacity + pixel_count].copy_(flat[:, original])
+                    host = flat[:, list(columns)].T.to(dtype=torch.float64).contiguous()
+                    for column in range(len(columns)):
+                        _pipeline._copy(packed_offsets[column * capacity:column * capacity + pixel_count],
+                                        host[column], pipe.stats)
+                    pipe.retain(pipe.event(pipe.upload), host, packed_offsets)
                 if cacheable:
                     groups["_surface_shared_staged"] = staged_key
             if shared:
@@ -1412,8 +1409,8 @@ class Projector:
                 # compose all views with one launch; grid row y composes view y.
                 block = packed_frames[:count * stride].view(count, stride)
                 packet = torch.zeros((count, stride), dtype=torch.float64)
-                packet[:, :frame_count * rank] = torch.cat(
-                    [value[views].detach().to(device="cpu", dtype=torch.float64) for value in frames], dim=1)
+                for index, value in enumerate(frames):
+                    packet[:, index * rank:(index + 1) * rank].copy_(value[views].detach())
                 _pipeline._copy(block, packet, pipe.stats)
                 pipe.retain(pipe.event(pipe.upload), packet, packed_frames)
                 if rank == 3:
