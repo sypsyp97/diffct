@@ -187,8 +187,8 @@ Geometry gradients
 Gradients with respect to trajectory tensors are first order only. Set
 ``requires_grad=True`` on each tensor before you construct ``Projector``. The
 projector keeps references to all trajectory components when any component
-requires gradients, and reads their current values on each call. If none require
-gradients, it clones the entire trajectory. For example:
+requires gradients, and reads and validates their current values on each call.
+If none require gradients, it clones the entire trajectory. For example:
 
 .. code-block:: python
 
@@ -237,7 +237,7 @@ after view sharding. Distributed admission errors reach all ranks before
 numerical execution.
 
 Parameterize rotations so that axes stay unit length and orthogonal. Frame
-checks run at construction and for each override; sampled surface positions
+checks run at construction and on each call with live default frames or an override; sampled surface positions
 are checked on every operation.
 
 Differentiable geometry helpers

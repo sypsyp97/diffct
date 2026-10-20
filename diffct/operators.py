@@ -71,7 +71,7 @@ def _detector_spacing(value, beam):
     return (pitch, pitch)
 
 
-def _validate_trajectory(trajectory, beam, *, detector_surface=False):
+def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True):
     dimensions = 3 if beam in ("cone", "parallel3d") else 2
     count = 4 if dimensions == 3 else 3
     if not isinstance(trajectory, (tuple, list)) or len(trajectory) != count:
@@ -93,8 +93,9 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False):
         n_views = component.shape[0]
         if not torch.isfinite(component).all().item():
             raise ValueError("trajectory tensors must contain only finite values")
-        geometry.append(component.detach().clone())
+        geometry.append(component.detach().clone() if clone else component.detach())
 
+    device = next((value.device for value in geometry if value.is_cuda), geometry[0].device)
     axes = (geometry[0], geometry[2]) if beam == "parallel" else (
         (geometry[2], geometry[3]) if beam == "cone" else (
             (geometry[0], geometry[2], geometry[3]) if beam == "parallel3d" else (geometry[2],)
@@ -106,11 +107,11 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False):
             raise ValueError("trajectory direction axes must be unit vectors")
     if beam in ("parallel", "cone", "parallel3d"):
         first, second = (geometry[0], geometry[2]) if beam == "parallel" else (geometry[2], geometry[3])
-        dots = torch.sum(first * second.to(first.device), dim=1)
+        dots = torch.sum(first.to(device) * second.to(device), dim=1)
         if torch.any(torch.abs(dots) > 1e-4).item():
             raise ValueError("trajectory direction axes must be orthogonal")
     if beam == "parallel3d":
-        direction = geometry[0].double()
+        direction = geometry[0].to(device=device, dtype=torch.float64)
         frame = torch.stack((direction, geometry[2].to(direction.device, torch.float64),
                              geometry[3].to(direction.device, torch.float64)), dim=-1)
         # Numerical rank rejects a tangent frame at machine roundoff without
@@ -119,7 +120,7 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False):
             raise ValueError("parallel3d rays must not be tangent to the detector plane")
     if beam in ("fan", "cone") and not detector_surface:
         # float64 avoids overflow of half-precision input and dtype mismatches in cross().
-        source = geometry[0].double()
+        source = geometry[0].to(device=device, dtype=torch.float64)
         principal = geometry[1].to(source.device, torch.float64) - source
         lengths = torch.linalg.vector_norm(principal, dim=1)
         if torch.any(lengths == 0).item():
@@ -302,8 +303,8 @@ class Projector:
     trajectory
     tensor requires gradients, the projector clones the geometry. Otherwise it
     keeps references, reads the current values at every call, and returns
-    gradients for those tensors. Live default frames are checked at construction;
-    overrides are checked on each call.
+    gradients for those tensors. Live default frames and overrides are checked
+    on each call.
     ``project``, ``backproject``, ``__call__`` and their ``*_into`` variants
     accept a keyword-only ``trajectory`` replacing all frames for that call.
     It must retain the constructor's beam and view count; it is validated and
@@ -531,11 +532,14 @@ class Projector:
             # Both FP32 backends set up each segment from the endpoint nearer
             # the volume centre. Measure per-axis distances in voxel units.
             spacing = voxel_spacing_tuple(self.voxel_spacing, len(self.global_volume_shape))
+            device = next((value.device for value in self._trajectory[:2] if value.is_cuda),
+                          self._trajectory[0].device)
+            pitches = torch.tensor(spacing[::-1], device=device, dtype=torch.float64)
             distances = torch.stack([
                 torch.linalg.vector_norm(
-                    component.double() / component.new_tensor(spacing[::-1], dtype=torch.float64),
+                    component.to(device=device, dtype=torch.float64) / pitches,
                     dim=1,
-                ).cpu()
+                )
                 for component in self._trajectory[:2]
             ])
             if torch.any(distances.min(dim=0).values > 1e6).item():
@@ -2353,25 +2357,39 @@ class Projector:
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         owner, error, surface_metadata = self, None, None
+        override = trajectory is not None
+        if trajectory is None and self._learnable:
+            trajectory = self._learnable
         if trajectory is not None:
             try:
                 frames, views = _validate_trajectory(
                     trajectory, self.beam, detector_surface=self.detector_surface is not None,
+                    clone=override,
                 )
                 if views != self._n_views:
                     raise ValueError("per-call trajectory must keep the constructor view count")
                 owner = copy(self)
                 owner._trajectory = frames
-                owner._learnable = tuple(trajectory) if any(value.requires_grad for value in trajectory) else ()
-                owner._geometry_cache, owner._schedule_cache = {}, {}
+                owner._learnable = (tuple(trajectory)
+                                    if not override or any(value.requires_grad for value in trajectory) else ())
+                owner._geometry_cache = {}
+                if override:
+                    owner._schedule_cache = {}
                 surface = owner.detector_surface
-                owner._geometry_trainable = bool(owner._learnable) or (
-                    isinstance(surface, ParameterizedSurface)
-                    and any(value.requires_grad for value in surface.parameters)
-                )
+                # Default spatial ranks retain the constructor's collectively
+                # agreed backward participation, even with locally fixed frames.
+                if override:
+                    owner._geometry_trainable = bool(owner._learnable) or (
+                        isinstance(surface, ParameterizedSurface)
+                        and any(value.requires_grad for value in surface.parameters)
+                    )
                 owner._validate_geometry_range()
                 if owner.backend == "torch":
-                    owner._reference = ReferenceProjector(owner, synchronize=False)
+                    owner._reference = ReferenceProjector(owner, validate=override, synchronize=False)
+                    if not override and surface is None:
+                        owner._reference._validate_geometry(
+                            frames, frames[0].device, admission=True, synchronize=False,
+                        )
                 else:
                     value = args[0]
                     input_device = torch.device(value.device) if hasattr(value, "device") else torch.device("cpu")
@@ -2380,12 +2398,13 @@ class Projector:
                         else torch.device("cuda", torch.cuda.current_device()),
                     )
                     if surface is not None:
-                        geometry, spec, trainable, surface_metadata = owner._surface_validation_inputs()
-                        owner._geometry_trainable = owner._geometry_trainable or trainable
-                        owner._validate_surface_geometry(geometry, spec, devices)
-                        del geometry
+                        if override:
+                            geometry, spec, trainable, surface_metadata = owner._surface_validation_inputs()
+                            owner._geometry_trainable = owner._geometry_trainable or trainable
+                            owner._validate_surface_geometry(geometry, spec, devices)
+                            del geometry
                     else:
-                        geometry = tuple(value.detach().to(device="cpu") for value in frames)
+                        geometry = frames
                         pixels = owner.detector_chunk_shape or tuple(min(size, 64) for size in owner.detector_shape)
                         local_views = owner.view_slice.stop - owner.view_slice.start
                         for device_rank, device in enumerate(devices):
@@ -2422,9 +2441,18 @@ class Projector:
         # the numerical operation runs inside a data transform.
         with torch._C._DisableFuncTorch():
             self._partition.preflight(
-                error, (trajectory is not None, owner._geometry_trainable, surface_metadata),
+                error, (override, owner._geometry_trainable, surface_metadata),
                 cache_key="operator request", revision=owner._agreement_revision(),
             )
+        if isinstance(owner.detector_surface, ParameterizedSurface):
+            # Backward may replay the sampler after the caller replaces it.
+            # Capture Python references here; execution owns tensor snapshots.
+            if owner is self:
+                owner = copy(self)
+            owner.detector_surface = copy(owner.detector_surface)
+            if owner._reference is not None:
+                owner._reference = copy(owner._reference)
+                owner._reference.owner = owner
         result = getattr(owner, operation)(*args)
         if owner is not self:
             self.last_execution_stats = owner.last_execution_stats
@@ -2450,6 +2478,11 @@ class Projector:
             return output
         with torch.no_grad():
             plan, geometry_spec, geometry = self._prepare_execution(source, is_project, sink)
+            if (self.world_size == 1 and geometry_spec is not None
+                    and geometry_spec.kind == "sampled"):
+                # Caller-owned outputs must stay intact if a later batch is invalid.
+                # Tensor-returning calls already validate each batch before use.
+                self._validate_surface_geometry(geometry, geometry_spec, plan.devices, plan)
             self._run_store_streamed(source, sink, is_project, geometry if geometry else None, plan, geometry_spec)
         return output
 

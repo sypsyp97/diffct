@@ -168,7 +168,8 @@ class ReferenceProjector:
         self.spacing = voxel_spacing_tuple(owner.voxel_spacing, len(owner.global_volume_shape))
         self.chunk_shape, self.view_chunk_size, self.detector_chunk_shape = self._work_chunks()
         if not validate:
-            # Native owners already validated geometry before transform dispatch.
+            # Call-time owners validate frames separately and sample surfaces
+            # from the invocation's single geometry snapshot below.
             return
         with torch.enable_grad():
             geometry = self._snapshot_geometry(synchronize=synchronize)
@@ -273,8 +274,7 @@ class ReferenceProjector:
     def _validate_geometry(self, geometry, fallback, *, admission=False, synchronize=True):
         """Finish every local geometry check before any rank starts numerics."""
         owner = self.owner
-        if not admission and (owner.detector_surface is None or
-                              (owner.world_size == 1 and isinstance(owner.detector_surface, ParameterizedSurface))):
+        if not admission and owner.detector_surface is None:
             return
         devices = tuple(torch.device(device) for device in (owner._devices or (fallback,)))
         error = None
@@ -294,7 +294,6 @@ class ReferenceProjector:
                     device = devices[batch % len(devices)]
                     origins, directions, _ = self._rays(
                         views, pixels, device, validate=True, geometry=staged[device],
-                        admission=admission,
                     )
                     if (not torch.isfinite(origins.to(dtype=owner.dtype)).all().item()
                             or not torch.isfinite(directions.to(dtype=owner.dtype)).all().item()):
