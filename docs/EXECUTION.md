@@ -39,24 +39,27 @@ Numba CUDA or require a CUDA runtime; native execution initializes them on
 first use. The CUDA compiler extras are needed for native Numba execution.
 ROCm uses PyTorch's `"cuda"` device namespace, as described in the
 [PyTorch HIP notes](https://docs.pytorch.org/docs/stable/notes/hip.html).
-Local regression evidence covers CPU, one NVIDIA GPU and four-process Gloo.
-ROCm hardware, several physical GPUs, NCCL and cross-node execution need the
-corresponding deployment checks. Existing published native performance numbers
-do not measure the portable precision backend or hybrid execution.
+Hardware support depends on the installed PyTorch build and process-group
+backend. Existing published native performance numbers do not measure the
+portable precision backend or hybrid execution.
 
 ## Call-time trajectory validation
 
 An ordinary flat detector's trajectory override is checked at its corners,
 with work proportional to the view count. If these bounds cannot exclude a
 source/pixel coincidence in the execution dtype, the affected views fall back
-to bounded pixel checks. Curved detectors still check sampled pixels; frames
-and surface parameters are staged on CPU once per admission.
+to bounded pixel checks. Curved detectors still check sampled pixels. Native
+admission snapshots surface frames and parameters on CPU, then validates owned
+batches on compute devices. Validation batches shrink to fit memory and staging
+limits; they are separate from execution chunks. Portable admission stages
+frames once per validation device.
 
 Run `python examples/benchmark_trajectory_admission.py --warmup 1 --samples 3`
 to measure this validation with CPU and CUDA trajectories. The script bypasses
 numerical projection and reports admission time, plus a separate untimed pass
 counting validation rays and tensor transfers. These are not projection
-throughput measurements.
+throughput measurements. For CPU-only admission measurements, add
+`--backend torch --frame-device cpu`.
 
 ## Batch dimensions and axis spacing
 
@@ -128,8 +131,10 @@ execution contracts.
 
 `partition="hybrid", partition_grid=(view_ranks, space_ranks)` uses
 `rank = view_rank * space_ranks + space_rank`; the grid product must equal the
-process-group size. Each space rank owns a balanced first-axis slab and each
-view rank owns a balanced view shard. Both retain global physical coordinates.
+process-group size. With `partition_grid=None`, the operator chooses a near-square
+factorization, with at least as many view ranks as space ranks.
+Each space rank owns a balanced first-axis slab; each view rank owns a balanced
+view shard. Both retain global physical coordinates.
 Forward ray contributions sum across space ranks; adjoint/analytical volume
 tiles sum across view ranks. Empty and uneven shards participate normally.
 Distributed PyTorch-backend projectors require the same `volume_chunk_shape`,

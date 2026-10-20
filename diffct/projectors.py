@@ -262,8 +262,8 @@ class ParallelProjectorFunction(torch.autograd.Function):
     method with a cell-constant image basis for parallel beam CT geometry. The forward pass computes
     the sinogram from a 2D image using parallel beam geometry. The backward pass
     computes gradients using the adjoint backprojection operation. Requires
-    CUDA-capable hardware and a properly configured CUDA environment; all input
-    tensors must reside on the same CUDA device.
+    NVIDIA CUDA hardware. Geometry tensors are moved to the image's device;
+    execution uses float32.
 
     Examples
     --------
@@ -285,7 +285,7 @@ class ParallelProjectorFunction(torch.autograd.Function):
         Parameters
         ----------
         image : torch.Tensor
-            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.
+            Floating-point CUDA image of shape (H, W), converted to float32 for execution.
         ray_dir : torch.Tensor
             Ray direction unit vectors for each view, shape (n_views, 2).
         det_origin : torch.Tensor
@@ -306,8 +306,8 @@ class ParallelProjectorFunction(torch.autograd.Function):
 
         Notes
         -----
-        - All input tensors must be on the same CUDA device.
-        - The operation is fully differentiable and supports autograd.
+        - Geometry tensors are moved to the image's CUDA device and converted to float32.
+        - Data derivatives support higher orders; geometry derivatives are first-order only.
         - Supports arbitrary parallel beam geometries.
         - Uses cell-constant Siddon ray tracing.
 
@@ -400,7 +400,7 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
         Parameters
         ----------
         sinogram : torch.Tensor
-            2D input sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.
+            Floating-point CUDA sinogram of shape (n_views, num_detectors), converted to float32 for execution.
         ray_dir : torch.Tensor
             Ray direction unit vectors for each view, shape (n_views, 2).
         det_origin : torch.Tensor
@@ -423,8 +423,8 @@ class ParallelBackprojectorFunction(torch.autograd.Function):
 
         Notes
         -----
-        - All input tensors must be on the same CUDA device.
-        - The operation is fully differentiable and supports autograd.
+        - Geometry tensors are moved to the sinogram's CUDA device and converted to float32.
+        - Data derivatives support higher orders; geometry derivatives are first-order only.
         - Supports arbitrary parallel beam geometries.
         - Uses the adjoint of cell-constant Siddon ray tracing.
 
@@ -517,7 +517,7 @@ class FanProjectorFunction(torch.autograd.Function):
         Parameters
         ----------
         image : torch.Tensor
-            2D input image tensor of shape (H, W), must be on a CUDA device and of type float32.
+            Floating-point CUDA image of shape (H, W), converted to float32 for execution.
         src_pos : torch.Tensor
             Source positions for each view, shape (n_views, 2), in physical units.
         det_center : torch.Tensor
@@ -538,8 +538,8 @@ class FanProjectorFunction(torch.autograd.Function):
 
         Notes
         -----
-        - All input tensors must be on the same CUDA device.
-        - The operation is fully differentiable and supports autograd.
+        - Geometry tensors are moved to the image's CUDA device and converted to float32.
+        - Data derivatives support higher orders; geometry derivatives are first-order only.
         - Supports arbitrary fan beam geometries.
         - Uses cell-constant Siddon ray tracing.
 
@@ -632,7 +632,7 @@ class FanBackprojectorFunction(torch.autograd.Function):
         Parameters
         ----------
         sinogram : torch.Tensor
-            2D input fan beam sinogram tensor of shape (n_views, num_detectors), must be on a CUDA device and of type float32.
+            Floating-point CUDA fan sinogram of shape (n_views, num_detectors), converted to float32 for execution.
         src_pos : torch.Tensor
             Source positions for each view, shape (n_views, 2), in physical units.
         det_center : torch.Tensor
@@ -655,8 +655,8 @@ class FanBackprojectorFunction(torch.autograd.Function):
 
         Notes
         -----
-        - All input tensors must be on the same CUDA device.
-        - The operation is fully differentiable and supports autograd.
+        - Geometry tensors are moved to the sinogram's CUDA device and converted to float32.
+        - Data derivatives support higher orders; geometry derivatives are first-order only.
         - Supports arbitrary fan beam geometries.
         - Uses the adjoint of cell-constant Siddon ray tracing.
 
@@ -750,7 +750,7 @@ class ConeProjectorFunction(torch.autograd.Function):
         Parameters
         ----------
         volume : torch.Tensor
-            3D input volume tensor of shape (D, H, W), must be on a CUDA device and of type float32.
+            Floating-point CUDA volume of shape (D, H, W), converted to float32 for execution.
         src_pos : torch.Tensor
             Source positions for each view, shape (n_views, 3), in physical units.
         det_center : torch.Tensor
@@ -777,8 +777,8 @@ class ConeProjectorFunction(torch.autograd.Function):
 
         Notes
         -----
-        - All input tensors must be on the same CUDA device.
-        - The operation is fully differentiable and supports autograd.
+        - Geometry tensors are moved to the volume's CUDA device and converted to float32.
+        - Data derivatives support higher orders; geometry derivatives are first-order only.
         - Supports arbitrary source and detector trajectories, not limited to circular orbits.
         - Uses cell-constant Siddon ray tracing.
 
@@ -881,7 +881,7 @@ class ConeBackprojectorFunction(torch.autograd.Function):
         Parameters
         ----------
         sinogram : torch.Tensor
-            3D input cone beam projection tensor of shape (n_views, det_u, det_v), must be on a CUDA device and of type float32.
+            Floating-point CUDA cone sinogram of shape (n_views, det_u, det_v), converted to float32 for execution.
         src_pos : torch.Tensor
             Source positions for each view, shape (n_views, 3), in physical units.
         det_center : torch.Tensor
@@ -913,8 +913,8 @@ class ConeBackprojectorFunction(torch.autograd.Function):
 
         Notes
         -----
-        - All input tensors must be on the same CUDA device.
-        - The operation is fully differentiable and supports autograd.
+        - Geometry tensors are moved to the sinogram's CUDA device and converted to float32.
+        - Data derivatives support higher orders; geometry derivatives are first-order only.
         - Supports arbitrary source and detector trajectories.
         - Uses the adjoint of cell-constant Siddon ray tracing.
 

@@ -10,6 +10,10 @@ across several GPUs.
 
 Code written for diffct 1.x must be updated; see :doc:`migration`.
 
+This site documents the source checkout, including
+`unreleased APIs <https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md#unreleased>`_.
+Install from source for features not yet in a tagged release.
+
 Install
 -------
 

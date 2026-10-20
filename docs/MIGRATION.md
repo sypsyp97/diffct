@@ -19,20 +19,28 @@ orbit. Use a helper or pass your calibrated tensors directly.
 | `parallel` | `(ray_dir, det_origin, det_u)` | `(views, 2)` | `(H, W)` | `U` or `(U,)` | `(views, U)` |
 | `fan` | `(src_pos, det_center, det_u)` | `(views, 2)` | `(H, W)` | `U` or `(U,)` | `(views, U)` |
 | `cone` | `(src_pos, det_center, det_u, det_v)` | `(views, 3)` | `(D, H, W)` | `(U, V)` | `(views, U, V)` |
+| `parallel3d` | `(ray_dir, det_center, det_u, det_v)` | `(views, 3)` | `(D, H, W)` | `(U, V)` | `(views, U, V)` |
 
 Geometry coordinates are `(x, y)` or `(x, y, z)`, while volume indices are
 `(y, x)` or `(z, y, x)`. Cone sinograms use `(views, U, V)`, not the common
 image-display convention `(views, V, U)`; transpose imported measurements if
-necessary. In distributed mode, only the leading view dimension is sharded.
+necessary. Distributed `partition="views"` shards views; `"space"` shards
+the first volume axis; `"hybrid"` combines both. Use `A.volume_shape` and
+`A.projection_shape` for the required local shapes.
 
 Trajectory tensors may be on CPU or CUDA. Projection and backprojection inputs
-must be floating-point CPU or CUDA tensors of exactly the documented shape,
-without batch or channel dimensions. CPU arrays automatically stream through
-CUDA tiles; see [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution). Computation
-and outputs are float32 even if the input is float64; autograd returns input
-gradients in the input's device and dtype.
-`voxel_spacing` is one positive scalar (isotropic voxels). `detector_spacing`
-is one positive scalar for 2D, and a scalar or `(u_pitch, v_pitch)` for cone.
+must be floating-point tensors with the documented trailing shape. Leading
+batch/channel dimensions are preserved. Native CPU arrays stream through
+CUDA tiles; `backend="torch"` computes on the input's CPU or supported
+PyTorch accelerator. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
+`precision="fast"` (default) and `"float32"` return float32;
+`precision="float64"` uses the PyTorch backend and returns float64. Autograd
+returns input gradients in the input's device and dtype.
+`voxel_spacing` is a positive scalar or a tuple `(dy, dx)` / `(dz, dy, dx)`.
+Per-axis spacing uses the PyTorch backend. `detector_spacing` is a positive
+scalar for 2D, and a scalar or `(u_pitch, v_pitch)` for 3D.
+`parallel3d` uses infinite lines on the PyTorch backend; explicit
+`backend="numba"` is unsupported. See [precision and execution](https://github.com/sypsyp97/diffct/blob/main/docs/EXECUTION.md).
 
 ## Minimal migration example
 
@@ -101,16 +109,23 @@ clone: editing your original tensors later does not update that operator.
 
 If any trajectory tensor has `requires_grad=True` at construction, the operator
 keeps references to the supplied tensors and reads their current values on each
-call. When a trajectory is computed from learnable parameters such as angles or
-shifts, rebuild that trajectory and the `Projector` inside each optimization
-step to create the new autograd graph. See
+call. When a trajectory is computed from learnable angles or shifts, rebuild
+the trajectory inside each optimization step. Reuse the projector with
+`project(volume, trajectory=current)` or `backproject(sinogram, trajectory=current)`.
+The keyword-only override must preserve the beam and view count. Each call
+keeps its geometry graph and leaves the constructor trajectory unchanged.
+`__call__`, `project_into` and `backproject_into` also accept the override;
+store methods remain numerical. See
 [`examples/geometry_calibration.py`](https://github.com/sypsyp97/diffct/blob/main/examples/geometry_calibration.py).
 
 Keep every geometry valid as it changes: components must have the same nonzero
 view count and finite values; direction axes must be unit vectors; parallel
-`ray_dir`/`det_u` and cone `det_u`/`det_v` must be orthogonal. Fan/cone sources
-must differ from their detector centers, and detectors must not be edge-on to
-the source. These checks run at construction, not after each parameter update.
+`ray_dir`/`det_u` and 3D `det_u`/`det_v` must be orthogonal. For `parallel3d`,
+the ray direction must not be tangent to the detector plane. Flat fan/cone
+sources must differ from their detector centers, and detectors must not be
+edge-on to the source. Surface detectors check actual pixel positions instead.
+Frame checks run at construction and for each override. Surface samples are
+checked on every operation; changing live default tensors does not rerun frame checks.
 
 Geometry derivatives are first-order only and are piecewise derivatives of the
 cell-constant Siddon model. At voxel-boundary crossings they need not agree with

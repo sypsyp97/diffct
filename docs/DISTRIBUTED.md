@@ -1,6 +1,6 @@
 # Multiple GPUs and nodes
 
-By default, `Projector` partitions views across GPUs/ranks. Spatial tiles and view batches
+By default, `Projector` partitions views across the selected GPUs/ranks. Native spatial tiles and view batches
 are selected automatically when data is CPU-backed or the estimated CUDA
 working set does not fit. Each GPU then holds a tile instead of a complete
 volume. Distributed mode stores each rank's sinogram shard; single-process
@@ -30,9 +30,10 @@ scalar reductions on the rank's CUDA device, then copy the scalar back to CPU.
 The CPU CGLS example supports one process with one or several GPUs.
 
 Install diffct as described in the [root README](https://github.com/sypsyp97/diffct/blob/main/README.md) and run
-commands from the repository root. CUDA is required for projection and
-backprojection. The multi-process examples below also require PyTorch with
-NCCL support.
+commands from the repository root. The native examples below require NVIDIA
+CUDA; their multi-process launches also require NCCL support. Library calls
+with `backend="torch"` can use CPU with Gloo or supported PyTorch accelerators.
+See [backend and precision settings](EXECUTION.md).
 
 ## Fixed spatial ownership
 
@@ -63,19 +64,21 @@ partition, global shapes, scan settings and parameter shape/dtype/count.
 
 Ownership changes loss and norm counting:
 
-| Quantity | `partition="views"` | `partition="space"` |
-| --- | --- | --- |
-| Data term on `project()` | Sum local view losses; global mean uses global ray count | Identical replicated ray loss: divide by world size before backward |
-| Loss on `backproject()` | Replicated volume loss: divide by world size | Sum losses on owned local slabs |
-| Volume-only regularizer | Full replicated term on every rank | Each rank evaluates its owned contribution; boundary-coupled regularizers need their own halo exchange |
-| CGLS volume norm | Count the replicated state once | SUM owned slab norms |
-| CGLS ray norm | SUM local view norms | Count the replicated rays once |
+| Quantity | `partition="views"` | `partition="space"` | `partition="hybrid"` |
+| --- | --- | --- | --- |
+| Data term on `project()` | Sum local view losses | Divide replicated ray losses by `world_size` | Divide local view losses by `space_world_size` |
+| Loss on `backproject()` | Divide replicated volume losses by `world_size` | Sum losses on owned slabs | Divide owned slab losses by `view_world_size` |
+| Volume-only regularizer | Full replicated term on every rank | Each rank evaluates its owned contribution | Each space rank evaluates its contribution; replicated across view ranks |
+| CGLS volume norm | Count the replicated state once | SUM owned slab norms | SUM slab norms, counting view replicas once |
+| CGLS ray norm | SUM local view norms | Count the replicated rays once | SUM view norms, counting space replicas once |
 
 For reporting, reduce detached scalars with the same ownership convention.
 Every rank makes the same calls, even with empty views or empty slabs. Do not
 add a DDP reduction to gradients already summed by the operator. Existing
-SIRT/TV/calibration examples use views mode; this change does not implement
-spatial halos for their regularizers.
+SIRT/TV/calibration examples use views mode. The library's `total_variation`
+exchanges neighboring faces for space and hybrid partitions; custom
+boundary-coupled regularizers must provide their own halo exchange.
+For a global mean, also divide local sums by the global physical element count.
 
 Disk-backed CGLS keeps all `x,s,p` volume states plus `r,q` ray states in local
 stores. It retains `q` until the global `alpha` is known and vector updates
@@ -92,8 +95,12 @@ and measurements for resume, using each rank's completed checkpoint directory.
 Choose one process per GPU for this spatial mode, and stream within each
 owned slab if it exceeds its GPU budget. The full solver working set includes
 all three volume states, ray states, geometry and pipeline buffers; fitting
-one volume alone does not establish capacity. View-by-space process grids are
-a separate extension. Multi-node capacity/runtime requires hardware validation.
+one volume alone does not establish capacity. The library also supports
+`partition="hybrid", partition_grid=(view_ranks, space_ranks)` on the PyTorch
+backend. Parent-group ranks map as `view_rank * space_ranks + space_rank`.
+Volumes are replicated across view ranks and projections across space ranks.
+The disk example accepts only views and space partitions. See
+[hybrid ownership](EXECUTION.md#hybrid-ownership-and-losses).
 
 ## One process, multiple GPUs
 
@@ -116,7 +123,8 @@ sinogram.square().sum().backward()                   # volume.grad on cuda:0
 ```
 
 No process group is required. Views are split into contiguous shards in device
-list order. Outputs return to the input tensor's device as float32;
+list order. Outputs return to the input tensor's device in the selected precision
+(float32 for the default native path);
 input gradients use the input's device and dtype. Uneven view counts are
 supported, and devices with no views do not launch an empty CUDA grid.
 Use the ordinary full-sinogram loss in this mode; no world-size scaling applies.
@@ -184,7 +192,7 @@ all ranks must agree on whether any trajectory tensor requires gradients.
   `local_measurements = full_measurements[operator.view_slice].to(device)`.
   Alternatively, load just that range without storing the full sinogram per rank.
 - `operator.projection_shape` is `(local_views, detectors)` for parallel/fan beams
-  or `(local_views, U, V)` for cone beams. It is the output shape of `project()`
+  or `(local_views, U, V)` for cone/parallel3d beams. It is the output shape of `project()`
   and the required input shape of `backproject()`.
 - `backproject(local_measurements)` sums contributions from all ranks and returns
   a full replicated volume on each rank's input device. It is the matched
@@ -198,7 +206,8 @@ then refer to that group. The caller owns group initialization and cleanup.
 
 ### Loss scaling
 
-These rules apply to `distributed=True`, using the operator's process group:
+These rules apply to `distributed=True, partition="views"`, using the
+operator's process group. Space and hybrid divisors are in the table above.
 
 - **Projection data terms:** form the loss from local views and call `backward()`
   on every rank. The operator SUM-reduces volume and learnable-geometry gradients.

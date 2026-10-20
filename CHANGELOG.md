@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Callable detector surfaces expand world points on each compute device after view sharding, preserving native composition precision. Memory planning uses local view counts and composition dtypes. Streamed surface execution accepts CUDA offsets, including `ParameterizedSurface` outputs. Offset snapshots stay on CPU with gradient connections intact. Construction bounds validation storage, and distributed calls check actual callback layouts and propagate validation errors before numerical work.
-- Streamed surface composition writes bounded offset fragments into reusable ray-geometry buffers. Geometry backward replays bounded fragments without retaining complete CUDA composition graphs. Flat-detector execution keeps its reusable host-to-device staging.
-
 ### Added
 
 - Per-call `trajectory` overrides on `Projector` operations, preserving the constructor default and each call's geometry graph without rebuilding the projector.
@@ -26,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Detector surfaces expand world points on each compute device after view sharding, preserving native composition precision. Memory planning uses local view counts and composition dtypes. Streamed execution accepts CPU or CUDA offsets from both surface interfaces (#30).
+- Surface snapshots preserve gradient connections on CPU. Streamed composition and geometry backward use bounded fragments. Distributed calls check callback layouts and propagate validation errors before numerical work (#30).
+- Native surface admission sizes validation batches from available memory and staging limits, replacing fixed one-view batches (#32).
 - Rigid trajectory transforms accept valid surface detector frames whose reference center coincides with the source or whose reference plane is edge-on.
 - Call-time trajectory validation checks flat detectors by corners and coordinate bounds, with exact pixel checks for ambiguous views. Frames stage once per validation device. Native surface validation uses bounded batches on each compute device after view sharding.
 

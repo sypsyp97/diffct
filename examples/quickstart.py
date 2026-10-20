@@ -1,8 +1,8 @@
 """The Projector API in one file: parallel, fan and cone beams.
 
 For each beam this projects a phantom, backprojects, checks the adjoint
-identity <A x, y> = <x, A^T y>, and differentiates a loss with respect to the
-volume and to the trajectory.
+identity <A x, y> = <x, A^T y>, and differentiates a volume loss.
+The cone example also computes source-position gradients.
 
     python examples/quickstart.py
 """

@@ -37,16 +37,18 @@
 > **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
 > For Apple Silicon, use the [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
+This README describes the source checkout, including [unreleased APIs](CHANGELOG.md#unreleased). Per-call trajectories, angle-tensor circular helpers, `transform_trajectory`, `parallel3d` and `native_volume_layout` require installation from source.
+
 ## Why diffct
 
 To our knowledge, diffct is the only open-source GPU CT library that combines arbitrary per-view trajectories, autograd through the volume, first-order gradients through the acquisition geometry, and built-in multi-GPU and multi-node execution. We compared it with LEAP, TIGRE, ASTRA/tomosipo, DiffDRR and others in October 2026.
 
-- **Arbitrary trajectories.** Each view has its own source, detector centre and detector axes. Circular, helical, saddle, sinusoidal, random and calibrated scans use the same code. Trajectory tensors with `requires_grad=True` receive geometry gradients for calibration.
+- **Arbitrary trajectories.** Each view has its own ray direction or source, detector centre and detector axes. Circular, helical, saddle, sinusoidal, random and calibrated scans use the same code. Trajectory tensors with `requires_grad=True` receive geometry gradients for calibration.
 - **Curved detectors.** `ParameterizedSurface` defines native arc, cylindrical or arbitrary pixels from global coordinates and explicit parameters, sampled in bounded view/pixel batches. Legacy `detector_surface(u, v)` callbacks remain available. Projection and matched backprojection support first-order surface gradients. See [the surface API](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#parameterized-detector-surfaces).
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
 - **Large volumes.** Automatic spatial, view and pixel blocks with bounded transfer buffers control working memory. `project_into`/`backproject_into` accept caller-owned tensor or disk stores; tensor autograd keeps complete data on its input device. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or torchrun and NCCL across ranks. Views, space and hybrid partitions control replication of volumes and projections. Speedup depends on workload and communication costs.
-- **Precision and training.** Explicit native/PyTorch backends, FP32/FP64 modes, per-axis voxel spacing, leading batch/channel dimensions and data `torch.func` transforms. The portable path supports CPU and PyTorch CUDA/ROCm devices; see [execution contracts and validation limits](docs/EXECUTION.md).
+- **Precision and training.** Explicit native/PyTorch backends, FP32/FP64 modes, per-axis voxel spacing, leading batch/channel dimensions and data `torch.func` transforms. The portable path supports CPU and PyTorch CUDA/ROCm devices; see [execution contracts](docs/EXECUTION.md).
 - **Solver API.** `cgls`, `sirt` and `tv_reconstruction` report residual history, tolerances and callbacks, with scan/data fingerprints and complete checkpoint state. `cgls_into` keeps state in bounded mapped blocks.
 - **Differentiable FBP and FDK.** `fbp`, `fdk` and approximate `helical_fdk` compose the public filters, weights and analytical backprojectors. Their backward kernels transpose the actual interpolation stencil; custom filters and weights can be learned. See the [analytical guide](docs/source/analytical_learning.rst).
 
@@ -68,7 +70,7 @@ From source, with the examples:
 ```bash
 git clone https://github.com/sypsyp97/diffct.git
 cd diffct && pip install -e ".[cu12]"
-python examples/quickstart.py               # smoke test: prints adjoint mismatch ~1e-8 for each beam
+python examples/quickstart.py               # prints adjoint mismatch and gradients for each beam
 ```
 
 <details>
@@ -110,6 +112,8 @@ loss.backward()                     # x.grad = A^T (A x - y)
 **Geometry gradients.** Reuse one projector with `A.project(volume, trajectory=current)` or `A.backproject(sinogram, trajectory=current)`. Circular helpers accept learnable angle tensors, and `transform_trajectory` applies differentiable rigid transforms. Omitting the override keeps the constructor trajectory. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#geometry-gradients).
 
 **3D parallel beams.** Use `circular_trajectory_3d_parallel(...)` and `beam="parallel3d"`. The PyTorch backend provides matched projection and backprojection on CPU and CUDA.
+
+**Native volume layout.** For unbatched, flat-detector cone operations, set `native_volume_layout=True` to avoid volume layout copies. This applies to the native full-CUDA path on one compute device. Shapes stay `(D, H, W)`; the returned strides follow the kernel layout. The default is `False`. See [chunked execution](docs/REFERENCE.md#chunked-execution) for limits.
 
 **Several GPUs and nodes.** See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#several-gpus-and-nodes) and [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md).
 
@@ -193,7 +197,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 ## Examples
 
-`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `benchmark_trajectory_admission.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 

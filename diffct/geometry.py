@@ -1,7 +1,7 @@
-"""Geometry and trajectory generation for cone beam CT.
+"""Geometry and trajectory generation for 2D and 3D CT.
 
 This module provides functions for generating circular, spiral, sinusoidal, saddle,
-and custom trajectories for cone beam CT scanning geometries.
+and custom trajectories for parallel, fan and cone beams, plus rigid transforms.
 """
 
 import math
@@ -464,8 +464,8 @@ def saddle_trajectory_3d(n_views, sid, sdd, z_amplitude=50.0, radial_amplitude=3
                         start_angle=0.0, device='cuda', dtype=torch.float32):
     """Generate saddle-shaped trajectory geometry for cone-beam CT.
 
-    Creates a saddle-shaped trajectory where the source moves in both z and radial
-    directions following a saddle surface (hyperbolic paraboloid).
+    The source height varies with ``cos(2 * angle)`` and its radius varies
+    with ``sin(2 * angle)``.
 
     Parameters
     ----------
@@ -878,7 +878,7 @@ def circular_trajectory_2d_parallel(n_views, detector_distance=0.0, start_angle=
         Number of projection views, or a nonempty finite floating angle vector
         in radians. Angle tensors preserve their dtype, device and autograd graph.
     detector_distance : float, optional
-        Distance from isocenter to detector origin (default: 0.0).
+        Transverse detector-origin offset along ``det_u`` (default: 0.0).
     start_angle : float, optional
         Starting angle in radians (default: 0.0).
     end_angle : float, optional

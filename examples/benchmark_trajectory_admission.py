@@ -1,6 +1,6 @@
 """Measure public per-call trajectory admission, with numerical execution bypassed.
 
-Baseline: --warmup 0 --samples 1. Repaired: --warmup 1 --samples 3.
+Use --backend torch --frame-device cpu for CPU-only admission measurements.
 Use PYTHONPATH pointing to the checkout being measured. Raw admission timings
 run separately from the instrumented counting pass, never projector throughput.
 """

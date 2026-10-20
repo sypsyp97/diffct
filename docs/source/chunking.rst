@@ -1,6 +1,9 @@
 Large Volumes and Chunked Execution
 ===================================
 
+This page describes the native CUDA path. For portable execution and analytical
+streaming, see :doc:`execution`.
+
 Pass CPU volumes and sinograms to ``Projector`` when complete arrays exceed GPU
 memory. Projection and the matched adjoint execute on CUDA; outputs and data
 gradients return to the input device. Tensor methods still hold complete arrays
@@ -82,6 +85,14 @@ retain contiguous ``(W, H, D)`` access; tensor volumes remain ``(D, H, W)``.
 Forward kernels overwrite each active ray, including missed rays and short
 final batches, so they do not need unconditional output clearing.
 
+``native_volume_layout=True`` optionally retains native full-CUDA cone output
+strides ``(1, D, D * H)`` for an unbatched flat-detector backprojection. The
+shape stays ``(D, H, W)``. Projection accepts that layout without conversion,
+so one compute device can avoid both volume layout copies in ``A^T A``.
+The default is ``False``. Several local devices, surfaces, batches, streaming
+and the PyTorch backend still involve copies. Distributed ranks must agree
+on this setting.
+
 For example, a ``1024**3`` float32 volume is 4 GiB. With 720 views in batches of
 32, returning a complete partial volume after each of the 23 batches would
 transfer 92 GiB. Returning the completed accumulated volume transfers 4 GiB
@@ -162,7 +173,7 @@ writes do not materialize a complete mapped array.
 
 ``project_into`` and ``backproject_into`` return the supplied output. They
 accept tensors, these stores, or structural backends with ``shape``, ``dtype``,
-``read(slices)``, ``write(slices,value,accumulate=False)`` and ``flush()``. Outputs must be
+``read(slices)``, ``write(slices,value,accumulate=False)`` and ``flush()``. Outputs must
 match ``A.dtype`` and be writable. Native fast output is float32; explicit
 ``precision="float64"`` output is float64. Each completed output region overwrites its prior
 contents; no full result is allocated internally. These numerical methods do
@@ -204,7 +215,10 @@ Gradient-connected offsets are snapshotted on CPU and transferred per batch.
 Streamed composition writes offset fragments into reusable float32 geometry
 buffers. Geometry backward replays one view and a bounded detector-row segment
 at a time, without retaining complete CUDA composition graphs.
-Construction also sizes validation batches to the available device budget.
+Native admission starts with the owned view shard and detector rectangle,
+limited by explicit hints. It reduces validation batches to fit device memory,
+allocation and host-staging limits. These batches are independent of execution
+chunks and their automatic 32-view cap.
 Callback allocations remain caller-controlled. Callback values are not cached
 across operations.
 
@@ -228,16 +242,17 @@ shape; ``volume_slice`` gives global ownership and ``volume_shape``/
 ``local_volume_shape`` give the required local tensor/store shape. Projection
 SUMs the slab contributions into replicated ray batches; backprojection
 returns only the owned slab. Physical coordinates remain on the global voxel
-lattice. Empty slabs are valid. This is one spatial process dimension, without
-a combined view-by-space process grid.
+lattice. Empty slabs are valid. The PyTorch backend also supports
+``partition="hybrid", partition_grid=(view_ranks, space_ranks)``; see
+:doc:`execution` for ownership and loss divisors.
 
 Caller-owned CUDA inputs and complete CUDA outputs still occupy their full
 size. Keep arrays, trajectory tensors and learnable surface parameters on CPU
 for bounded GPU residency. CUDA geometry snapshots or CUDA intermediates made
 inside a callback also consume GPU memory outside the streamed tile buffers.
-Analytical FBP/FDK helpers
-retain their existing execution path; this feature belongs to the native
-projection/adjoint pair.
+``fbp``/``fdk`` also support view/spatial chunks and numerical stores; see
+:doc:`execution`. The helical approximation and low-level CUDA helpers retain
+their original execution path.
 
 Runnable iterative reconstruction
 ---------------------------------
@@ -271,9 +286,10 @@ It does not assume later calls can use free splits inside the state segments.
 The state bound also includes compatible idle segments on the caller's stream:
 reusing an oversized cached segment can pin more memory than a fresh allocation.
 The example helpers set ``operator.last_solver_stats`` with state and scratch
-capacity metadata. This report belongs to the examples; the core package
-continues to provide projection and backprojection. The disk entrypoint saves
-it alongside the actual residual, elapsed time and CUDA tensor peak.
+capacity metadata. This report belongs to the example helpers. The library
+also provides numerical CGLS/SIRT/TV solvers; see :doc:`execution`.
+The disk entrypoint saves it alongside the actual residual, elapsed time and
+CUDA tensor peak.
 
 .. code-block:: bash
 

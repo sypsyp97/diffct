@@ -29,6 +29,9 @@ The tuple describes every source position, detector centre and detector axis;
 no circular-orbit fit is required. For example, two illustrative cone views:
 
 ```python
+import torch
+from diffct import Projector
+
 calibrated = tuple(torch.tensor(rows, dtype=torch.float32) for rows in (
     [[-320.0, 0.0, -20.0], [0.0, -300.0, 25.0]],  # source (x, y, z)
     [[192.0, 0.0, -20.0], [0.0, 212.0, 25.0]],    # detector centre (x, y, z)
@@ -152,6 +155,10 @@ Offset snapshots stay on CPU, with their gradient connections intact. Validation
 uses bounded batches and reports local failures to all distributed ranks before
 numerical work. Ranks must agree on the actual callback offset shape and dtype
 at construction and on each call.
+Native admission starts with each device's owned view shard and detector
+rectangle, limited by explicit hints. It shrinks validation batches to fit
+device memory, allocation and host-staging limits. These batches are separate
+from execution chunks and are not capped at the automatic 32-view execution limit.
 Allocations made by the callback itself still depend on its implementation;
 use `ParameterizedSurface` to sample offsets for selected global view IDs.
 The existing trajectory rule still applies: if no component requires gradients,
@@ -183,6 +190,13 @@ pilot work and estimated candidate costs. Copy counters exclude distributed
 layout metadata and planning control messages. Manual `schedule` choices support
 reproducible comparisons. Pinned slots, host fragments and local geometry have
 memory ceilings independent of GPU capacity.
+
+`native_volume_layout=False` is the default. With `True`, unbatched flat-detector
+cone backprojections on the native full-CUDA path return `(D, H, W)` tensors
+with strides `(1, D, D * H)`. Projection accepts this layout without a conversion.
+One compute device can avoid both volume layout copies in `A^T A`.
+Several local devices, surfaces, batches, streaming and the PyTorch backend
+still involve copies. All distributed ranks must agree on this setting.
 
 When complete arrays exceed RAM, use `TensorStore`, `NpyStore` or a structural
 block backend with `project_into`/`backproject_into`. These methods overwrite
@@ -230,7 +244,7 @@ or `(U,V)`. Spatial or detector limits force streaming;
 a view limit alone also forces streamed batches. The automatic view batch is
 capped at 32 and can shrink to fit its geometry/projection buffers. Oversized
 spatial limits are clipped at the volume edge; nondivisible tails retain their
-global voxel positions. Explicit limits are not automatically made smaller.
+global voxel positions. Explicit execution limits are not automatically made smaller.
 
 Streamed compute uses the caller's CUDA stream. Internal buffers share that
 allocation owner across calls on the same stream; upload and download use
@@ -256,8 +270,10 @@ Each tile integrates a disjoint part of the original voxel grid. Forward
 contributions add; adjoint blocks accumulate across view batches. The
 cell-constant Siddon model and matched adjoint are preserved, with float32
 rounding differences from a changed summation order. Very small tiles cost more
-transfers and kernel launches. This API covers native projection and matched
-backprojection; analytical FBP/FDK helpers retain their existing memory path.
+transfers and kernel launches. This section describes native projection and
+matched backprojection. `fbp`/`fdk` also support view/spatial chunks and numerical
+stores; see [streaming analytical reconstruction](EXECUTION.md#streaming-analytical-reconstruction).
+The helical approximation and low-level CUDA helpers retain their original memory path.
 
 See [the CPU-backed CGLS example](../examples/chunked_reconstruction.py), the
 [chunking guide](source/chunking.rst) and [distributed rules](DISTRIBUTED.md).
@@ -271,6 +287,8 @@ to retain its default trajectory tensors; otherwise it snapshots them.
 Alternatively, pass a complete `trajectory=...` tuple on each call. The override
 keeps the configured beam and view count, leaves the default intact and retains
 that calculation's values and graph for backward.
+
+The examples below continue the [README quickstart](../README.md#quickstart).
 
 ```python
 source, det_center, det_u, det_v = (t.clone() for t in trajectory)
@@ -303,8 +321,9 @@ trajectory.
 
 Circular 2D parallel/fan and 3D cone/parallel helpers accept nonempty floating
 angle tensors in radians, preserving their dtype, device and gradients.
-Angles may be nonuniform or unsorted. Count-based calls retain their defaults.
-`transform_trajectory(trajectory, rotation=None, translation=None, beam="cone")`
+Angles may be nonuniform or unsorted. `start_angle`, `end_angle`, `device` and
+`dtype` only configure count-based generation.
+`transform_trajectory(trajectory, rotation=None, translation=None, *, beam="cone")`
 applies a differentiable rigid transform about the world origin: `R @ p + t`
 for points and `R @ d` for directions. Rotation is a proper orthogonal matrix
 shaped `(d,d)` or `(views,d,d)`; translation is `(d,)` or `(views,d)`, using
@@ -325,6 +344,7 @@ Choose the execution mode by how you want to hold the projections:
 | One process, several GPUs | `devices=[0, 1, ...]` | Views computed on several GPUs, then full sinogram gathered on the input device |
 | Distributed views | `distributed=True, partition="views"` after initialization | Rank-local sinogram with shape `A.projection_shape`, indexed by `A.view_slice`; replicated volume |
 | Distributed space | `distributed=True, partition="space"` after initialization | Replicated ray batches; rank-owned volume with local shape `A.volume_shape` and global ownership `A.volume_slice` |
+| Distributed hybrid | `distributed=True, partition="hybrid", partition_grid=(view_ranks, space_ranks)` | Views sharded across view ranks and replicated across space ranks; volumes sharded across space ranks and replicated across view ranks |
 
 CPU-backed arrays use bounded spatial tiles and view batches on each GPU.
 CUDA inputs/outputs occupy their complete size on the caller's device, and a
@@ -353,6 +373,9 @@ gradients across ranks. Divide a loss on replicated backprojection output by
 `world_size`. In space mode, divide replicated projection losses by `world_size`
 and sum owned backprojection losses. Do not add a DDP gradient reduction on
 top of the operator.
+Hybrid mode uses `space_world_size` as the projection-loss replica divisor and
+`view_world_size` as the backprojection-loss replica divisor. See
+[hybrid ownership](EXECUTION.md#hybrid-ownership-and-losses).
 Initialization, loss examples, Slurm details and the cross-node
 check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
 
