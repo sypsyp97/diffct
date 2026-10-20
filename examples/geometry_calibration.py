@@ -19,7 +19,7 @@ import time
 import torch
 import torch.distributed as dist
 
-from diffct import Projector
+from diffct import Projector, circular_trajectory_3d
 from _common import Scan, init_process, shepp_logan_3d, synchronize
 
 
@@ -27,14 +27,8 @@ def circular_orbit(scan, angle_error, detector_shift):
     """Differentiable circular trajectory: nominal angles plus errors, shifted detector."""
     angles = (torch.arange(scan.views, dtype=torch.float64, device=angle_error.device)
               * (2 * math.pi / scan.views) + angle_error)
-    c, s = torch.cos(angles), torch.sin(angles)
-    zero, one = torch.zeros_like(c), torch.ones_like(c)
-    source = torch.stack([-scan.sid * s, scan.sid * c, zero], dim=1)
-    det_u = torch.stack([c, s, zero], dim=1)
-    det_v = torch.stack([zero, zero, one], dim=1)
-    idd = scan.sdd - scan.sid
-    det_center = (torch.stack([idd * s, -idd * c, zero], dim=1)
-                  + detector_shift[0] * det_u + detector_shift[1] * det_v)
+    source, det_center, det_u, det_v = circular_trajectory_3d(angles, scan.sid, scan.sdd)
+    det_center = det_center + detector_shift[0] * det_u + detector_shift[1] * det_v
     return source, det_center, det_u, det_v
 
 
@@ -59,20 +53,19 @@ def main():
     shape = (args.size,) * 3
     phantom = torch.from_numpy(shepp_logan_3d(args.size)).to(device)
 
-    def make_operator(angle_error, detector_shift):
-        return Projector(circular_orbit(scan, angle_error, detector_shift), shape, scan.detector,
-                         detector_spacing=scan.pitch, devices=args.devices, distributed=distributed)
-
     # Ground truth, identical on every rank (fixed seed).
     generator = torch.Generator().manual_seed(7)
     true_angle_error = (torch.randn(args.views, generator=generator, dtype=torch.float64)
                         * math.radians(args.angle_error_deg)).to(device)
     true_shift = torch.tensor([1.5, -1.0], dtype=torch.float64, device=device)
-    with torch.no_grad():
-        measured = make_operator(true_angle_error, true_shift).project(phantom)
-
     angle_error = torch.zeros(args.views, dtype=torch.float64, device=device, requires_grad=True)
     detector_shift = torch.zeros(2, dtype=torch.float64, device=device, requires_grad=True)
+    operator = Projector(circular_orbit(scan, angle_error.detach(), detector_shift.detach()),
+                         shape, scan.detector, detector_spacing=scan.pitch,
+                         devices=args.devices, distributed=distributed)
+    with torch.no_grad():
+        measured = operator.project(phantom, trajectory=circular_orbit(scan, true_angle_error, true_shift))
+
     optimizer = torch.optim.Adam([{"params": [angle_error], "lr": args.lr_angle},
                                   {"params": [detector_shift], "lr": args.lr_shift}])
     rank0 = not distributed or dist.get_rank() == 0
@@ -80,10 +73,9 @@ def main():
     start = time.perf_counter()
     for step in range(args.steps + 1):
         optimizer.zero_grad()
-        # A new trajectory per step: the Projector keeps references to tensors that
-        # require gradients and reads their current values at every call.
-        operator = make_operator(angle_error, detector_shift)
-        loss = (operator.project(phantom) - measured).square().sum()
+        # Rebuild the differentiable trajectory while reusing the configured projector.
+        current = circular_orbit(scan, angle_error, detector_shift)
+        loss = (operator.project(phantom, trajectory=current) - measured).square().sum()
         if step % 50 == 0:  # report the parameters this loss was computed with
             total = loss.detach().clone()
             if distributed:

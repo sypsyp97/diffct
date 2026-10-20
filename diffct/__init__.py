@@ -30,6 +30,8 @@ from .reconstruction import (
 from .solvers import SolverResult, cgls, sirt, tv_reconstruction, cgls_into, total_variation
 
 from .geometry import (
+    transform_trajectory,
+    circular_trajectory_3d_parallel,
     circular_trajectory_3d,
     random_trajectory_3d,
     spiral_trajectory_3d,
@@ -88,6 +90,8 @@ __all__ = [
     'FanBackprojectorFunction',
     'ConeProjectorFunction',
     'ConeBackprojectorFunction',
+    'transform_trajectory',
+    'circular_trajectory_3d_parallel',
     'circular_trajectory_3d',
     'random_trajectory_3d',
     'spiral_trajectory_3d',

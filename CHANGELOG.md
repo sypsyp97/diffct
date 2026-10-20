@@ -14,12 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-call `trajectory` overrides on `Projector` operations, preserving the constructor default and each call's geometry graph without rebuilding the projector.
+- Angle-tensor inputs for circular trajectory helpers and differentiable `transform_trajectory` rigid transforms.
+- `beam="parallel3d"` and `circular_trajectory_3d_parallel`, using infinite parallel rays and the PyTorch backend on CPU and CUDA, with data and first-order geometry gradients.
 - `Projector(native_volume_layout=True)` returns native full-CUDA cone backprojections of unbatched flat-detector inputs as `(D, H, W)` tensors with the kernels' `(W, H, D)`-contiguous strides instead of contiguous copies, and native cone projections accept such tensors without copying. An iterative solver that keeps its volumes in this layout saves two whole-volume copies per normal-operator application on one device. The default is unchanged.
 
 ### Changed
 
 - Projector execution planning takes no allocator snapshot when a full launch clearly fits: lower bounds of the memory limits come from `mem_get_info` and one statistics query, and the exact planner runs only when they do not suffice. Plans are unchanged. Host time per call for small problems drops by about 1 ms. Distributed operators keep the exact planner (#26).
 - The introduction video explains 2.3.0 tiled execution and view, space and hybrid partitions with a computed walnut example; the README GIF is 12 MB instead of 22 MB (#25).
+
+### Fixed
+
+- Rigid trajectory transforms accept valid surface detector frames whose reference center coincides with the source or whose reference plane is edge-on.
+- Call-time trajectory validation checks flat detectors by corners and coordinate bounds, with exact pixel checks for ambiguous views. Frames stage once per validation device. Native surface validation uses bounded batches on each compute device after view sharding.
 
 ## [2.3.0] - 2026-10-14
 

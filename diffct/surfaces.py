@@ -49,7 +49,7 @@ def _detector_grids(detector_shape, spacing, pixels):
 def _sample_offsets(beam, detector_shape, spacing, geometry, spec, views, pixels,
                     *, validate=True, local_geometry=False):
     """Sample one offset batch without expanding world coordinates."""
-    frame_count = 4 if beam == "cone" else 3
+    frame_count = 4 if beam in ("cone", "parallel3d") else 3
     frames = geometry[:frame_count]
     dimensions = len(detector_shape)
     view_count = (views.stop - views.start if local_geometry
@@ -71,7 +71,7 @@ def _sample_offsets(beam, detector_shape, spacing, geometry, spec, views, pixels
     shared_shape = (*pixel_shape, 3)
     if tuple(offsets.shape) not in (shared_shape, (view_count, *shared_shape)):
         raise ValueError("detector surface shape must match the selected view/pixel batch")
-    if validate and beam != "cone" and torch.any(offsets[..., 1] != 0).item():
+    if validate and beam not in ("cone", "parallel3d") and torch.any(offsets[..., 1] != 0).item():
         raise ValueError("2D detector surface middle coordinates must be zero")
     return offsets
 
@@ -80,7 +80,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
                      *, device=None, dtype=None, validate=True, local_geometry=False,
                      native_legacy=False):
     """Build one selected world-point batch on the requested compute device."""
-    frame_count = 4 if beam == "cone" else 3
+    frame_count = 4 if beam in ("cone", "parallel3d") else 3
     frames = geometry[:frame_count]
     device = torch.device("cpu") if device is None else torch.device(device)
     dimensions = len(detector_shape)
@@ -95,7 +95,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
     elif dtype not in (torch.float32, torch.float64):
         raise ValueError("surface geometry dtype must be float32 or float64")
     offset_dtype = offsets.dtype if native_legacy else dtype
-    if beam == "cone":
+    if beam in ("cone", "parallel3d"):
         offsets = offsets.to(device=device, dtype=offset_dtype)
         local = offsets if offsets.ndim == dimensions + 2 else offsets.unsqueeze(0)
         tangent, vertical, depth = local.unbind(-1)
@@ -117,7 +117,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
 
     center, axis_u = frame(frames[1]), frame(frames[2])
     points = center + tangent[..., None] * axis_u
-    if beam == "cone":
+    if beam in ("cone", "parallel3d"):
         axis_v = frame(frames[3])
         normal_dtype = torch.promote_types(axis_u.dtype, axis_v.dtype)
         normal = torch.linalg.cross(axis_u.to(dtype=normal_dtype),
@@ -132,7 +132,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
         for component in (source, points):
             if not torch.isfinite(component).all().item() or not torch.isfinite(component.float()).all().item():
                 raise ValueError("surface world coordinates must be finite in float32")
-        if beam != "parallel" and view_count:
+        if beam not in ("parallel", "parallel3d") and view_count:
             sources = source.unsqueeze(1)
             endpoints = points.reshape(view_count, -1, source.shape[-1])
             if torch.any(torch.all(sources.float() == endpoints.float(), dim=-1)).item():

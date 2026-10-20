@@ -2,6 +2,7 @@
 
 import math
 import numbers
+from copy import copy
 from dataclasses import replace
 import time
 
@@ -16,7 +17,7 @@ from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
 from .utils import TorchCUDABridge, _get_numba_external_stream_for
-from .backends import ReferenceProjector, select_backend, voxel_spacing_tuple
+from .backends import ReferenceProjector, _flat_admission_batches, select_backend, voxel_spacing_tuple
 from .distribution import Partition
 from .projectors import (
     _backproject_into,
@@ -58,21 +59,21 @@ def _positive_float(value, name):
 
 
 def _detector_spacing(value, beam):
-    if beam != "cone":
+    if beam not in ("cone", "parallel3d"):
         if isinstance(value, (tuple, list)):
             raise TypeError("2D detector_spacing must be a scalar")
         return (_positive_float(value, "detector_spacing"),)
     if isinstance(value, (tuple, list)):
         if len(value) != 2:
-            raise TypeError("cone detector_spacing must be a scalar or pair")
+            raise TypeError(f"{beam} detector_spacing must be a scalar or pair")
         return tuple(_positive_float(item, "detector_spacing") for item in value)
     pitch = _positive_float(value, "detector_spacing")
     return (pitch, pitch)
 
 
 def _validate_trajectory(trajectory, beam, *, detector_surface=False):
-    dimensions = 3 if beam == "cone" else 2
-    count = 4 if beam == "cone" else 3
+    dimensions = 3 if beam in ("cone", "parallel3d") else 2
+    count = 4 if dimensions == 3 else 3
     if not isinstance(trajectory, (tuple, list)) or len(trajectory) != count:
         raise TypeError(f"{beam} trajectory must contain {count} tensors")
 
@@ -95,17 +96,27 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False):
         geometry.append(component.detach().clone())
 
     axes = (geometry[0], geometry[2]) if beam == "parallel" else (
-        (geometry[2], geometry[3]) if beam == "cone" else (geometry[2],)
+        (geometry[2], geometry[3]) if beam == "cone" else (
+            (geometry[0], geometry[2], geometry[3]) if beam == "parallel3d" else (geometry[2],)
+        )
     )
     for axis in axes:
         norms = torch.linalg.vector_norm(axis, dim=1)
         if not torch.allclose(norms, torch.ones_like(norms), rtol=1e-4, atol=1e-4):
             raise ValueError("trajectory direction axes must be unit vectors")
-    if beam in ("parallel", "cone"):
-        first, second = (geometry[0], geometry[2]) if beam == "parallel" else axes
+    if beam in ("parallel", "cone", "parallel3d"):
+        first, second = (geometry[0], geometry[2]) if beam == "parallel" else (geometry[2], geometry[3])
         dots = torch.sum(first * second.to(first.device), dim=1)
         if torch.any(torch.abs(dots) > 1e-4).item():
             raise ValueError("trajectory direction axes must be orthogonal")
+    if beam == "parallel3d":
+        direction = geometry[0].double()
+        frame = torch.stack((direction, geometry[2].to(direction.device, torch.float64),
+                             geometry[3].to(direction.device, torch.float64)), dim=-1)
+        # Numerical rank rejects a tangent frame at machine roundoff without
+        # imposing an application-level minimum angle of incidence.
+        if torch.any(torch.linalg.matrix_rank(frame) < 3).item():
+            raise ValueError("parallel3d rays must not be tangent to the detector plane")
     if beam in ("fan", "cone") and not detector_surface:
         # float64 avoids overflow of half-precision input and dtype mismatches in cross().
         source = geometry[0].double()
@@ -276,24 +287,34 @@ class _GeometryGradAutograd(torch.autograd.Function):
 
 
 class Projector:
-    """Project floating tensors along parallel, fan, or cone trajectories.
+    """Project floating tensors along parallel, fan, cone, or parallel3d trajectories.
 
     A parallel trajectory is ``(ray_dir, det_origin, det_u)`` and a fan
     trajectory is ``(src_pos, det_center, det_u)``; each component has shape
     ``(views, 2)``. A cone trajectory is
     ``(src_pos, det_center, det_u, det_v)`` with components shaped
-    ``(views, 3)``. Direction axes are unit vectors; parallel ``ray_dir`` and
-    ``det_u`` and cone ``det_u`` and ``det_v`` are orthogonal. If no trajectory
+    ``(views, 3)``. A parallel3d trajectory is
+    ``(ray_dir, det_center, det_u, det_v)`` with the same 3D component shapes;
+    its infinite ray lines pass through detector pixels. Direction axes are unit
+    vectors; parallel ``ray_dir`` and
+    ``det_u`` and 3D detector ``det_u`` and ``det_v`` are orthogonal. Parallel3d
+    rays can be oblique but must not be tangent to the detector plane. If no
+    trajectory
     tensor requires gradients, the projector clones the geometry. Otherwise it
     keeps references, reads the current values at every call, and returns
     gradients for those tensors; the checks above run only at construction.
+    ``project``, ``backproject``, ``__call__`` and their ``*_into`` variants
+    accept a keyword-only ``trajectory`` replacing all frames for that call.
+    It must retain the constructor's beam and view count; it is validated and
+    snapshotted independently without replacing the default frames. Rebuild
+    computed trajectories from trainable leaves on each optimization step.
     Second derivatives are available for volumes and sinograms, not for the
     geometry.
 
     ``detector_surface(u, v)`` optionally supplies local ``(u, v, n)`` offsets
     for every pixel. It receives centred physical float64 grids on CPU and
     returns a floating-point tensor shaped ``(*detector_shape, 3)`` or
-    ``(views, *detector_shape, 3)``. Cone normals are ``cross(det_u, det_v)``;
+    ``(views, *detector_shape, 3)``. 3D normals are ``cross(det_u, det_v)``;
     2D normals are ``(det_u_y, -det_u_x)`` with zero middle offsets. Offsets
     can be on CPU or CUDA in full-volume and streamed execution. World points
     expand on each compute device after view sharding. Native execution preserves
@@ -310,7 +331,7 @@ class Projector:
     rectangles; their physical origins remain those of the full detector.
 
     Volumes use ``(H, W)`` for parallel and fan beams and ``(D, H, W)`` for
-    cone beams. Sinograms use ``(views, detectors)`` or ``(views, U, V)``.
+    cone and parallel3d beams. Sinograms use ``(views, detectors)`` or ``(views, U, V)``.
     Any leading batch/channel dimensions are preserved. ``voxel_spacing`` is
     a positive scalar or a tuple in volume tensor order: ``(y, x)`` or
     ``(z, y, x)``. Physical coordinates retain the centred global volume frame.
@@ -323,7 +344,8 @@ class Projector:
     CUDA, fast precision and scalar voxel spacing, except for hybrid
     partitions. Other configurations use portable ``"torch"`` execution on
     the input's CPU or supported PyTorch accelerator. Explicit ``"numba"``
-    requires a compatible native configuration. Data ``torch.func``
+    requires a compatible native configuration. Parallel3d uses ``torch``;
+    explicitly selecting ``numba`` for it raises an error. Data ``torch.func``
     transforms use portable operations while preserving selected metadata.
 
     Native CPU inputs stream spatial tiles and view batches through CUDA.
@@ -387,6 +409,11 @@ class Projector:
                  volume_chunk_shape=None, view_chunk_size=None, detector_chunk_shape=None,
                  schedule="auto", partition="views", backend="auto", precision="fast",
                  partition_grid=None, native_volume_layout=False):
+        if beam == "parallel3d":
+            if backend == "numba":
+                raise ValueError("parallel3d requires the torch backend; numba is not supported")
+            if backend == "auto":
+                backend = "torch"
         self.backend = select_backend(backend, precision, voxel_spacing, partition)
         self.native_volume_layout = bool(native_volume_layout)
         self.precision = precision
@@ -401,10 +428,10 @@ class Projector:
             raise ValueError("schedule must be 'auto', 'spatial', 'views', or 'window'")
         self._schedule_cache = {}
         self._snapshot_d2h_bytes = 0
-        if beam not in ("parallel", "fan", "cone"):
-            raise ValueError("beam must be 'parallel', 'fan', or 'cone'")
+        if beam not in ("parallel", "fan", "cone", "parallel3d"):
+            raise ValueError("beam must be 'parallel', 'fan', 'cone', or 'parallel3d'")
         self.beam = beam
-        rank = 3 if beam == "cone" else 2
+        rank = 3 if beam in ("cone", "parallel3d") else 2
         self.volume_shape = _shape(volume_shape, rank, "volume_shape")
         self.global_volume_shape = self.volume_shape
         self.local_volume_shape = self.volume_shape
@@ -417,7 +444,7 @@ class Projector:
             None if view_chunk_size is None
             else _positive_int(view_chunk_size, "view_chunk_size")
         )
-        if beam == "cone":
+        if beam in ("cone", "parallel3d"):
             self.detector_shape = _shape(detector_shape, 2, "detector_shape")
         elif isinstance(detector_shape, (tuple, list)):
             self.detector_shape = _shape(detector_shape, 1, "detector_shape")
@@ -458,43 +485,14 @@ class Projector:
             if isinstance(detector_surface, ParameterizedSurface):
                 surface_trainable = any(parameter.requires_grad for parameter in detector_surface.parameters)
             if self.backend != "torch" and detector_surface is not None:
-                frames = self._learnable or self._trajectory
-                if isinstance(detector_surface, ParameterizedSurface):
-                    geometry = (*frames, *(parameter.detach().to(device="cpu")
-                                           for parameter in detector_surface.parameters))
-                    spec = _GeometrySpec("sampled", detector_surface.sampler, torch.float64)
-                else:
-                    with torch.enable_grad():
-                        offsets = self._surface_offsets()
-                    surface_trainable = offsets.requires_grad
-                    geometry, spec = (*frames, offsets), self._surface_spec(frames, offsets)
-                    surface_metadata = (tuple(offsets.shape), str(offsets.dtype))
+                geometry, spec, surface_trainable, surface_metadata = self._surface_validation_inputs()
                 devices = self._devices or (torch.device("cuda", torch.cuda.current_device()),)
                 self._validate_surface_geometry(geometry, spec, devices)
         except (TypeError, ValueError, RuntimeError) as error:
             validation_error = error
         self._partition.preflight(validation_error, surface_metadata)
         self._geometry_trainable = bool(self._learnable) or surface_trainable
-        if self.dtype == torch.float32 and beam in ("fan", "cone") and detector_surface is None:
-            # Both FP32 backends set up each segment from the endpoint nearer
-            # the volume centre. Measure per-axis distances in voxel units.
-            distances = torch.stack([
-                torch.linalg.vector_norm(
-                    component.double() / component.new_tensor(spacing[::-1], dtype=torch.float64),
-                    dim=1,
-                ).cpu()
-                for component in self._trajectory[:2]
-            ])
-            if torch.any(distances.min(dim=0).values > 1e6).item():
-                raise ValueError(
-                    "the source or the detector center must lie within 1e6 voxels "
-                    "of the volume center in every view"
-                )
-            if torch.any(distances > 1e15).item():
-                raise ValueError(
-                    "the source and the detector center must lie within 1e15 voxels "
-                    "of the volume center"
-                )
+        self._validate_geometry_range()
         self._geometry_cache = {}
         self._agree_geometry_layout()
         if self._distributed and self.world_size > 1:
@@ -526,6 +524,29 @@ class Projector:
         )
         if self.backend == "torch":
             self._reference = ReferenceProjector(self)
+
+    def _validate_geometry_range(self):
+        if self.dtype == torch.float32 and self.beam in ("fan", "cone") and self.detector_surface is None:
+            # Both FP32 backends set up each segment from the endpoint nearer
+            # the volume centre. Measure per-axis distances in voxel units.
+            spacing = voxel_spacing_tuple(self.voxel_spacing, len(self.global_volume_shape))
+            distances = torch.stack([
+                torch.linalg.vector_norm(
+                    component.double() / component.new_tensor(spacing[::-1], dtype=torch.float64),
+                    dim=1,
+                ).cpu()
+                for component in self._trajectory[:2]
+            ])
+            if torch.any(distances.min(dim=0).values > 1e6).item():
+                raise ValueError(
+                    "the source or the detector center must lie within 1e6 voxels "
+                    "of the volume center in every view"
+                )
+            if torch.any(distances > 1e15).item():
+                raise ValueError(
+                    "the source and the detector center must lie within 1e15 voxels "
+                    "of the volume center"
+                )
 
     def _agree_geometry_layout(self):
         if not (self._distributed and self.world_size > 1):
@@ -819,6 +840,20 @@ class Projector:
         for component in (*frames[1:], offsets):
             dtype = torch.promote_types(dtype, component.dtype)
         return _GeometrySpec("offsets", dtype=dtype)
+
+    def _surface_validation_inputs(self):
+        """Stage frame metadata once without expanding surface world points."""
+        with torch.enable_grad():
+            frames = tuple(value.to(device="cpu") for value in (self._learnable or self._trajectory))
+            surface = self.detector_surface
+            if isinstance(surface, ParameterizedSurface):
+                parameters = tuple(value.to(device="cpu") for value in surface.parameters)
+                geometry = (*frames, *parameters)
+                return (geometry, _GeometrySpec("sampled", surface.sampler, torch.float64),
+                        any(value.requires_grad for value in parameters), None)
+            offsets = self._surface_offsets()
+        return ((*frames, offsets.detach()), self._surface_spec(frames, offsets),
+                offsets.requires_grad, (tuple(offsets.shape), str(offsets.dtype)))
 
     def _validate_surface_geometry(self, geometry, spec, devices, plan=None):
         """Validate owned geometry in batches admitted before any numerical work."""
@@ -2227,7 +2262,7 @@ class Projector:
         """
         return self._process_group
 
-    def project(self, volume):
+    def project(self, volume, *, trajectory=None):
         """Project a floating tensor ending in the owned ``volume_shape``.
 
         Leading batch/channel dimensions are preserved ahead of
@@ -2237,6 +2272,9 @@ class Projector:
         Portable execution supports CPU and PyTorch accelerator tensors;
         native execution uses NVIDIA CUDA and streams CPU data when needed.
         """
+        return self._call_with_geometry(trajectory, "_project", volume)
+
+    def _project(self, volume):
         if self._reference is not None:
             return self._reference.project(volume)
         if torch._C._are_functorch_transforms_active():
@@ -2248,7 +2286,7 @@ class Projector:
         plan, geometry_spec, geometry = self._prepare_execution(volume, True)
         return _ProjectorAutograd.apply(volume, self, "project", plan, geometry_spec, self._participation(), *geometry)
 
-    def backproject(self, sinogram):
+    def backproject(self, sinogram, *, trajectory=None):
         """Apply the matched adjoint to a tensor ending in ``projection_shape``.
 
         Cone sinograms use ``(views, U, V)`` order after any leading
@@ -2257,6 +2295,9 @@ class Projector:
         SUM bounded volume contributions; spatial ranks return only the
         owned ``volume_slice``. Divide replicated losses by ``view_world_size``.
         """
+        return self._call_with_geometry(trajectory, "_backproject", sinogram)
+
+    def _backproject(self, sinogram):
         if self._reference is not None:
             return self._reference.backproject(sinogram)
         if torch._C._are_functorch_transforms_active():
@@ -2276,27 +2317,108 @@ class Projector:
         output_shape = self.projection_shape if is_project else self.volume_shape
         if math.prod(leading) == 0:
             return tensor.to(dtype=self.dtype).reshape(*leading, *output_shape)
-        function = self.project if is_project else self.backproject
+        function = self._project if is_project else self._backproject
         return torch.stack([function(value) for value in tensor.reshape(-1, *shape)]).reshape(
             *leading, *output_shape,
         )
 
-    def project_into(self, volume, output):
+    def project_into(self, volume, output, *, trajectory=None):
         """Numerically project into supplied output matching ``self.dtype``.
 
         Returns ``output``; no complete result is allocated. Direct tensors
         requiring autograd must be detached or used under ``torch.no_grad()``.
         Known overlapping/read-only outputs are rejected before execution.
         """
-        return self._execute_into(volume, output, True)
+        return self._call_with_geometry(trajectory, "_execute_into", volume, output, True)
 
-    def backproject_into(self, sinogram, output):
+    def backproject_into(self, sinogram, output, *, trajectory=None):
         """Write the numerical adjoint into block output matching ``self.dtype``.
 
         Accepts tensors or stores with read/write/shape/dtype/flush metadata.
         Returns ``output`` after bounded view/pixel contributions complete.
         """
-        return self._execute_into(sinogram, output, False)
+        return self._call_with_geometry(trajectory, "_execute_into", sinogram, output, False)
+
+    def _call_with_geometry(self, trajectory, operation, *args):
+        # A bound owner keeps outstanding autograd graphs independent while
+        # sharing the immutable partition and runtime configuration.
+        self.last_execution_stats = None
+        self._snapshot_d2h_bytes = 0
+        owner, error, surface_metadata = self, None, None
+        if trajectory is not None:
+            try:
+                frames, views = _validate_trajectory(
+                    trajectory, self.beam, detector_surface=self.detector_surface is not None,
+                )
+                if views != self._n_views:
+                    raise ValueError("per-call trajectory must keep the constructor view count")
+                owner = copy(self)
+                owner._trajectory = frames
+                owner._learnable = tuple(trajectory) if any(value.requires_grad for value in trajectory) else ()
+                owner._geometry_cache, owner._schedule_cache = {}, {}
+                surface = owner.detector_surface
+                owner._geometry_trainable = bool(owner._learnable) or (
+                    isinstance(surface, ParameterizedSurface)
+                    and any(value.requires_grad for value in surface.parameters)
+                )
+                owner._validate_geometry_range()
+                if owner.backend == "torch":
+                    owner._reference = ReferenceProjector(owner, synchronize=False)
+                else:
+                    value = args[0]
+                    input_device = torch.device(value.device) if hasattr(value, "device") else torch.device("cpu")
+                    devices = owner._devices or (
+                        input_device if input_device.type == "cuda"
+                        else torch.device("cuda", torch.cuda.current_device()),
+                    )
+                    if surface is not None:
+                        geometry, spec, trainable, surface_metadata = owner._surface_validation_inputs()
+                        owner._geometry_trainable = owner._geometry_trainable or trainable
+                        owner._validate_surface_geometry(geometry, spec, devices)
+                        del geometry
+                    else:
+                        geometry = tuple(value.detach().to(device="cpu") for value in frames)
+                        pixels = owner.detector_chunk_shape or tuple(min(size, 64) for size in owner.detector_shape)
+                        local_views = owner.view_slice.stop - owner.view_slice.start
+                        for device_rank, device in enumerate(devices):
+                            shard = _balanced_slice(local_views, device_rank, len(devices))
+                            if shard.start == shard.stop:
+                                continue
+                            owned = slice(owner.view_slice.start + shard.start,
+                                          owner.view_slice.start + shard.stop)
+                            staged = tuple(value[owned].to(device=device, dtype=owner.dtype) for value in geometry)
+                            admission_owner = copy(owner)
+                            admission_owner.view_slice = slice(0, shard.stop - shard.start)
+                            for views, selected in _flat_admission_batches(admission_owner, staged, pixels):
+                                source, points = _sample_geometry(
+                                    owner.beam, owner.detector_shape, owner.detector_spacing, staged,
+                                    None, views, selected, owner.voxel_spacing, device=device,
+                                    dtype=owner.dtype, validate=False,
+                                )
+                                if not torch.isfinite(source).all().item() or not torch.isfinite(points).all().item():
+                                    raise ValueError("detector surface world coordinates must be finite")
+                                sources = source.reshape(source.shape[0], *([1] * len(selected)), -1)
+                                if owner.beam != "parallel" and torch.any(torch.all(points == sources, dim=-1)).item():
+                                    raise ValueError("source and detector surface pixels must differ")
+                                directions = (source if owner.beam == "parallel" else
+                                              points - sources)
+                                if not torch.isfinite(directions).all().item():
+                                    raise ValueError("detector surface world coordinates must be finite")
+                                del source, points, sources, directions
+                            del staged
+            except (TypeError, ValueError, RuntimeError) as failure:
+                error = failure
+        # None must participate too: mixed override/default calls or gradient
+        # layouts cannot skip a collective on only one rank.
+        # Metadata transport needs ordinary storage-backed tensors, even when
+        # the numerical operation runs inside a data transform.
+        with torch._C._DisableFuncTorch():
+            self._partition.preflight(error, (trajectory is not None, owner._geometry_trainable, surface_metadata))
+        result = getattr(owner, operation)(*args)
+        if owner is not self:
+            self.last_execution_stats = owner.last_execution_stats
+            self._snapshot_d2h_bytes = owner._snapshot_d2h_bytes
+        return result
 
     def _execute_into(self, value, output, is_project):
         self.last_execution_stats = None
@@ -2319,9 +2441,9 @@ class Projector:
             self._run_store_streamed(source, sink, is_project, geometry if geometry else None, plan, geometry_spec)
         return output
 
-    def __call__(self, volume):
+    def __call__(self, volume, *, trajectory=None):
         """Alias for :meth:`project`."""
-        return self.project(volume)
+        return self.project(volume, trajectory=trajectory)
 
     def _prepare_execution(self, tensor, is_project, output_store=None):
         device = torch.device(getattr(tensor, "device", "cpu"))

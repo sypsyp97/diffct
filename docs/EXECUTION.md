@@ -12,8 +12,8 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
 `backend="auto"` selects PyTorch for either strict precision mode, per-axis
-spacing, and hybrid ownership. An incompatible explicit Numba request raises
-an error. `Projector.backend`, `.precision` and `.dtype` describe the selected
+spacing, hybrid ownership and `parallel3d` beams. An incompatible explicit Numba
+request raises an error. `Projector.backend`, `.precision` and `.dtype` describe the selected
 execution. Supplying a float64 input to `precision="fast"` still yields FP32.
 Create trajectories and data in float64 for a double-precision baseline;
 casting an already rounded trajectory cannot recover its original precision.
@@ -43,6 +43,20 @@ Local regression evidence covers CPU, one NVIDIA GPU and four-process Gloo.
 ROCm hardware, several physical GPUs, NCCL and cross-node execution need the
 corresponding deployment checks. Existing published native performance numbers
 do not measure the portable precision backend or hybrid execution.
+
+## Call-time trajectory validation
+
+An ordinary flat detector's trajectory override is checked at its corners,
+with work proportional to the view count. If these bounds cannot exclude a
+source/pixel coincidence in the execution dtype, the affected views fall back
+to bounded pixel checks. Curved detectors still check sampled pixels; frames
+and surface parameters are staged on CPU once per admission.
+
+Run `python examples/benchmark_trajectory_admission.py --warmup 1 --samples 3`
+to measure this validation with CPU and CUDA trajectories. The script bypasses
+numerical projection and reports admission time, plus a separate untimed pass
+counting validation rays and tensor transfers. These are not projection
+throughput measurements.
 
 ## Batch dimensions and axis spacing
 
