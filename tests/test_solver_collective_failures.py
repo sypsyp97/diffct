@@ -20,7 +20,9 @@ from tests.test_solver_api import _cgls_reference, _checkpoint
 from tests.test_solver_checkpoint_edges import _numerical_calls, _real_problem
 
 
-GROUP_TIMEOUT = 5
+# Fixture I/O may delay a peer before the measured rejection begins.
+GROUP_TIMEOUT = 30
+REJECTION_TIMEOUT = 5
 SENTINEL = 37.
 
 
@@ -43,7 +45,7 @@ def _finish_record(root, rank, record):
     (root / f"rank-{rank}.json").write_text(json.dumps(record), encoding="utf-8")
     # Keep the failing rank alive until its peer returns. Early teardown would
     # turn the actual missing agreement into a connection-closed error.
-    deadline = time.monotonic() + 2 * GROUP_TIMEOUT + 5
+    deadline = time.monotonic() + 2 * REJECTION_TIMEOUT + 5
     while not all((root / f"rank-{peer}.json").exists() for peer in range(2)):
         assert time.monotonic() < deadline, "peer did not return from the bounded solver call"
         time.sleep(.01)
@@ -92,7 +94,7 @@ def _rejected(records):
         assert record["output_writes"] == [], ("rejection wrote caller output", record)
         assert record["output_unchanged"], ("rejection changed caller output", record)
         assert record["input_unchanged"], ("rejection changed measurements", record)
-        assert record["elapsed"] < GROUP_TIMEOUT, ("rejection waited for Gloo timeout", record)
+        assert record["elapsed"] < REJECTION_TIMEOUT, ("rejection exceeded its five-second bound", record)
 
 
 def _workspace_worker(rank, rendezvous, directory, mapped, failure):
