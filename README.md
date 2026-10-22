@@ -37,7 +37,7 @@
 > **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
 > For Apple Silicon, use the [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
-This README describes the source checkout, including [unreleased APIs](CHANGELOG.md#unreleased). Per-call trajectories, angle-tensor circular helpers, `transform_trajectory`, `parallel3d` and `native_volume_layout` require installation from source.
+This README describes the source checkout. Features listed under [Unreleased](CHANGELOG.md#unreleased) require installation from source.
 
 ## Why diffct
 
@@ -146,18 +146,18 @@ volume slabs use `--partition space` under torchrun. Run
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png?v=2.4.1">
-    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png?v=2.4.1" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 512^3 volume">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png?v=2.4.3">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png?v=2.4.3" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 512^3 volume">
   </picture>
 </p>
 
 | 512³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
 |---|---:|---:|---:|
-| Forward projection | 569.99 ms | 151.02 ms (3.8×) | 81.50 ms (7.0×) |
-| Adjoint (backprojection) | 1061.36 ms | 278.75 ms (3.8×) | 220.34 ms (4.8×) |
-| CGLS iteration | 1756.03 ms | 468.05 ms (3.8×) | 333.08 ms (5.3×) |
+| Forward projection | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
+| Adjoint (backprojection) | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
+| CGLS iteration | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
 
-diffct 2.4.1, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25. Default memory settings, without an imposed allocator cap.
+diffct 2.4.3, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25. Default memory settings, without an imposed allocator cap.
 
 Projection times are medians of seven samples after three warmups. CGLS uses three ten-iteration solves after a two-iteration warmup; the median includes initialization and is divided by ten. Timings use synchronized wall time and the slowest rank. Raw samples and configuration: [scaling.json](https://github.com/sypsyp97/diffct/blob/main/docs/assets/scaling.json).
 
@@ -197,7 +197,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 ## Examples
 
-`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `benchmark_trajectory_admission.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `benchmark_trajectory_admission.py`, `benchmark_surface_geometry.py`, `benchmark_gpu_overheads.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 

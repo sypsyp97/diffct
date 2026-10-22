@@ -37,7 +37,7 @@
 > **2.0 版**用逐视角轨迹取代了 1.x 的圆轨迹接口。为 1.x 写的代码需要修改，见[迁移说明](docs/MIGRATION.md)。
 > Apple Silicon 请使用 [Linda-Sophie Schneider 的 MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
 
-本 README 对应源码版本，包含[尚未发布的 API](CHANGELOG.md#unreleased)。逐次调用覆盖轨迹、圆轨迹角度张量、`transform_trajectory`、`parallel3d` 和 `native_volume_layout` 需要从源码安装。
+本 README 对应源码版本。[Unreleased](CHANGELOG.md#unreleased) 中列出的功能需要从源码安装。
 
 ## 为什么使用 diffct
 
@@ -141,18 +141,18 @@ sinogram.square().mean().backward()          # volume.grad 在 CPU
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png?v=2.4.1">
-    <img src="docs/assets/scaling_light.png?v=2.4.1" width="100%" alt="1、4、8 卡上正投影、伴随和 CGLS 每次迭代的耗时，512³ 体数据">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png?v=2.4.3">
+    <img src="docs/assets/scaling_light.png?v=2.4.3" width="100%" alt="1、4、8 卡上正投影、伴随和 CGLS 每次迭代的耗时，512³ 体数据">
   </picture>
 </p>
 
 | 512³ 体数据 | 1 卡 | 4 卡，1 节点 | 8 卡，2 节点 |
 |---|---:|---:|---:|
-| 正投影 | 569.99 ms | 151.02 ms（3.8×） | 81.50 ms（7.0×） |
-| 伴随（反投影） | 1061.36 ms | 278.75 ms（3.8×） | 220.34 ms（4.8×） |
-| CGLS 迭代 | 1756.03 ms | 468.05 ms（3.8×） | 333.08 ms（5.3×） |
+| 正投影 | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
+| 伴随（反投影） | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
+| CGLS 迭代 | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
 
-diffct 2.4.1，FP32，A100 64 GB GPU；圆形锥束，360 个视角，1024×768 探测器，pitch 1.25。采用默认内存设置，不额外限制分配器容量。
+diffct 2.4.3，FP32，A100 64 GB GPU；圆形锥束，360 个视角，1024×768 探测器，pitch 1.25。采用默认内存设置，不额外限制分配器容量。
 
 正投影与反投影各预热三次，再取七次计时的中位数。CGLS 预热两次迭代，再运行三组十次迭代；取包含初始化的耗时中位数，除以十。计时同步 CUDA，并取最慢 rank 的墙钟耗时。原始样本与配置见 [scaling.json](docs/assets/scaling.json)。
 
@@ -192,7 +192,7 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 ## 示例
 
-`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`benchmark_trajectory_admission.py`、`analytical_reconstruction.py`、`learnable_reconstruction.py`、`helical_fdk.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`benchmark_scaling.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
+`quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`benchmark_trajectory_admission.py`、`benchmark_surface_geometry.py`、`benchmark_gpu_overheads.py`、`analytical_reconstruction.py`、`learnable_reconstruction.py`、`helical_fdk.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`benchmark_scaling.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
 
 ## 文档
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "diffct"
-version = "2.4.2"
+version = "2.4.3"
 description = "Differentiable CT projection and reconstruction: precision modes, streaming, distributed execution and geometry gradients"
 readme = "README.md"
 requires-python = ">=3.10"
