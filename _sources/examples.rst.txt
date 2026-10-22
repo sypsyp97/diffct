@@ -16,6 +16,10 @@ The scripts in the repository ``examples/`` directory show how to use
   copy payloads, pilot metadata, timing and CUDA tensor peaks.
 - ``benchmark_trajectory_admission.py``: per-call trajectory validation without
   numerical projection. Use ``--backend torch --frame-device cpu`` on CPU.
+- ``benchmark_surface_geometry.py``: forward, adjoint and geometry-gradient
+  timings of both curved-detector interfaces on a synthetic helical scan.
+- ``benchmark_gpu_overheads.py``: synthetic launch and transfer overheads of
+  trajectories, detector surfaces, solvers and tiled FDK.
 - ``analytical_reconstruction.py``: parallel-beam FBP, fan-beam FBP and cone-beam
   FDK, with a choice of ramp-filter window.
 - ``learnable_reconstruction.py``: build and train a filter and detector weights

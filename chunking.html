@@ -6,7 +6,7 @@
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Multiple GPUs and Nodes" href="multi_gpu.html"><link rel="prev" title="Trajectories and Geometry" href="trajectories.html">
 
     <!-- Generated with Sphinx 9.1.1 and Furo 2025.12.19 -->
-        <title>Large Volumes and Chunked Execution - diffct 2.4.2</title>
+        <title>Large Volumes and Chunked Execution - diffct 2.4.3</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -162,7 +162,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="index.html"><div class="brand">diffct 2.4.2</div></a>
+      <a href="index.html"><div class="brand">diffct 2.4.3</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -183,7 +183,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
   
-  <span class="sidebar-brand-text">diffct 2.4.2</span>
+  <span class="sidebar-brand-text">diffct 2.4.3</span>
   
 </a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -442,9 +442,17 @@ CPU or CUDA offsets. The operator transfers selected offsets to each compute
 device before expanding world points for its owned views or streamed batch.
 Memory planning uses these local view counts and the composition dtype.
 Gradient-connected offsets are snapshotted on CPU and transferred per batch.
-Streamed composition writes offset fragments into reusable float32 geometry
-buffers. Geometry backward replays one view and a bounded detector-row segment
-at a time, without retaining complete CUDA composition graphs.
+A full single-process CUDA call instead keeps admitted CUDA snapshots on the
+input GPU.
+Streamed composition stages a complete admitted view/pixel batch and composes
+it with one launch into reusable float32 geometry buffers. If that workspace
+does not fit, a smaller fallback workspace composes one view and a bounded
+detector-row segment at a time. Geometry backward replays one view and a
+bounded detector-row segment at a time, without retaining complete CUDA
+composition graphs.
+Composition and replay buffers never coexist. Admission charges the larger
+phase total and the largest allocation of either phase; the segment estimate
+counts the buffers of both phases, because one phase can leave segments pinned.
 Native admission starts with the owned view shard and detector rectangle,
 limited by explicit hints. It reduces validation batches to fit device memory,
 allocation and host-staging limits. These batches are independent of execution
@@ -675,7 +683,7 @@ The iteration count is the target total: resuming iteration 2 with
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=de1351e5"></script>
+</div><script src="_static/documentation_options.js?v=7a6bd5fc"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>

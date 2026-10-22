@@ -6,7 +6,7 @@
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Trajectories and Geometry" href="trajectories.html"><link rel="prev" title="Getting Started" href="getting_started.html">
 
     <!-- Generated with Sphinx 9.1.1 and Furo 2025.12.19 -->
-        <title>Precision, training and reconstruction - diffct 2.4.2</title>
+        <title>Precision, training and reconstruction - diffct 2.4.3</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -162,7 +162,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="index.html"><div class="brand">diffct 2.4.2</div></a>
+      <a href="index.html"><div class="brand">diffct 2.4.3</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -183,7 +183,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
   
-  <span class="sidebar-brand-text">diffct 2.4.2</span>
+  <span class="sidebar-brand-text">diffct 2.4.3</span>
   
 </a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -348,6 +348,13 @@ numerical projection and reports admission time, plus a separate untimed pass
 counting validation rays and tensor transfers. These are not projection
 throughput measurements. For CPU-only admission measurements, add
 <code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">torch</span> <span class="pre">--frame-device</span> <span class="pre">cpu</span></code>.</p>
+<p>Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">examples/benchmark_gpu_overheads.py</span> <span class="pre">--warmup</span> <span class="pre">3</span> <span class="pre">--samples</span> <span class="pre">9</span></code> to
+measure launch and transfer overheads on a small synthetic cone-beam case. It
+reports synchronized wall times and incremental peak allocation for trainable
+trajectories, legacy, per-view and sampled surfaces, CGLS, SIRT, TV and tiled
+FDK. Run it once for each checkout with <code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code> set to that checkout.
+Small cases expose dispatch costs; do not extrapolate their ratios to large,
+traversal-bound reconstructions.</p>
 </section>
 <section id="batch-dimensions-and-axis-spacing">
 <h2>Batch dimensions and axis spacing<a class="headerlink" href="#batch-dimensions-and-axis-spacing" title="Link to this heading">¶</a></h2>
@@ -461,7 +468,12 @@ History contains the initial residual and one value per completed iteration.
 Convergence means <code class="docutils literal notranslate"><span class="pre">||y</span> <span class="pre">-</span> <span class="pre">A</span> <span class="pre">x||</span> <span class="pre">&lt;=</span> <span class="pre">atol</span> <span class="pre">+</span> <span class="pre">rtol</span> <span class="pre">*</span> <span class="pre">||y||</span></code>, including the initial
 iterate. <code class="docutils literal notranslate"><span class="pre">callback(iteration,</span> <span class="pre">residual,</span> <span class="pre">volume)</span></code> runs after each completed step;
 return <code class="docutils literal notranslate"><span class="pre">False</span></code> to stop. Inputs and optional <code class="docutils literal notranslate"><span class="pre">x0</span></code> are preserved. Solves detach
-their numerical state from autograd.</p>
+their numerical state from autograd.
+Without a callback, SIRT and TV reuse the residual of the previous history
+entry for the next update, which saves one projection per iteration. With a
+callback, and after a resume, they recompute the residual because the callback
+can change the volume or the operator. CGLS reads its two scalar norms of an
+iteration together.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">diffct</span><span class="w"> </span><span class="kn">import</span> <span class="n">cgls</span><span class="p">,</span> <span class="n">sirt</span><span class="p">,</span> <span class="n">tv_reconstruction</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">cgls</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="n">y</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">iterations</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
@@ -572,7 +584,7 @@ Use <code class="docutils literal notranslate"><span class="pre">ParameterizedSu
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=de1351e5"></script>
+</div><script src="_static/documentation_options.js?v=7a6bd5fc"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>

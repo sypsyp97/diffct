@@ -6,7 +6,7 @@
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Parallel Beam Filtered Backprojection (FBP)" href="fbp_parallel_example.html"><link rel="prev" title="Multiple GPUs and Nodes" href="multi_gpu.html">
 
     <!-- Generated with Sphinx 9.1.1 and Furo 2025.12.19 -->
-        <title>Examples - diffct 2.4.2</title>
+        <title>Examples - diffct 2.4.3</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
@@ -162,7 +162,7 @@
       </label>
     </div>
     <div class="header-center">
-      <a href="index.html"><div class="brand">diffct 2.4.2</div></a>
+      <a href="index.html"><div class="brand">diffct 2.4.3</div></a>
     </div>
     <div class="header-right">
       <div class="theme-toggle-container theme-toggle-header">
@@ -183,7 +183,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
   
-  <span class="sidebar-brand-text">diffct 2.4.2</span>
+  <span class="sidebar-brand-text">diffct 2.4.3</span>
   
 </a><form class="sidebar-search-container" method="get" action="search.html" role="search">
   <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
@@ -269,6 +269,10 @@ rank-owned spatial slabs and completed-iteration checkpoints.</p></li>
 copy payloads, pilot metadata, timing and CUDA tensor peaks.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">benchmark_trajectory_admission.py</span></code>: per-call trajectory validation without
 numerical projection. Use <code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">torch</span> <span class="pre">--frame-device</span> <span class="pre">cpu</span></code> on CPU.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">benchmark_surface_geometry.py</span></code>: forward, adjoint and geometry-gradient
+timings of both curved-detector interfaces on a synthetic helical scan.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">benchmark_gpu_overheads.py</span></code>: synthetic launch and transfer overheads of
+trajectories, detector surfaces, solvers and tiled FDK.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">analytical_reconstruction.py</span></code>: parallel-beam FBP, fan-beam FBP and cone-beam
 FDK, with a choice of ramp-filter window.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">learnable_reconstruction.py</span></code>: build and train a filter and detector weights
@@ -448,7 +452,7 @@ resampling or FDK. See <a class="reference internal" href="trajectories.html#det
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=de1351e5"></script>
+</div><script src="_static/documentation_options.js?v=7a6bd5fc"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>
