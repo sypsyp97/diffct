@@ -146,18 +146,18 @@ volume slabs use `--partition space` under torchrun. Run
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png?v=2.4.1">
-    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png?v=2.4.1" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 512^3 volume">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png?v=2.4.3">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png?v=2.4.3" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 512^3 volume">
   </picture>
 </p>
 
 | 512³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
 |---|---:|---:|---:|
-| Forward projection | 569.99 ms | 151.02 ms (3.8×) | 81.50 ms (7.0×) |
-| Adjoint (backprojection) | 1061.36 ms | 278.75 ms (3.8×) | 220.34 ms (4.8×) |
-| CGLS iteration | 1756.03 ms | 468.05 ms (3.8×) | 333.08 ms (5.3×) |
+| Forward projection | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
+| Adjoint (backprojection) | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
+| CGLS iteration | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
 
-diffct 2.4.1, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25. Default memory settings, without an imposed allocator cap.
+diffct 2.4.3, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25. Default memory settings, without an imposed allocator cap.
 
 Projection times are medians of seven samples after three warmups. CGLS uses three ten-iteration solves after a two-iteration warmup; the median includes initialization and is divided by ten. Timings use synchronized wall time and the slowest rank. Raw samples and configuration: [scaling.json](https://github.com/sypsyp97/diffct/blob/main/docs/assets/scaling.json).
 

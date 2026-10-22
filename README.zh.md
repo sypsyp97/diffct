@@ -141,18 +141,18 @@ sinogram.square().mean().backward()          # volume.grad 在 CPU
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png?v=2.4.1">
-    <img src="docs/assets/scaling_light.png?v=2.4.1" width="100%" alt="1、4、8 卡上正投影、伴随和 CGLS 每次迭代的耗时，512³ 体数据">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaling_dark.png?v=2.4.3">
+    <img src="docs/assets/scaling_light.png?v=2.4.3" width="100%" alt="1、4、8 卡上正投影、伴随和 CGLS 每次迭代的耗时，512³ 体数据">
   </picture>
 </p>
 
 | 512³ 体数据 | 1 卡 | 4 卡，1 节点 | 8 卡，2 节点 |
 |---|---:|---:|---:|
-| 正投影 | 569.99 ms | 151.02 ms（3.8×） | 81.50 ms（7.0×） |
-| 伴随（反投影） | 1061.36 ms | 278.75 ms（3.8×） | 220.34 ms（4.8×） |
-| CGLS 迭代 | 1756.03 ms | 468.05 ms（3.8×） | 333.08 ms（5.3×） |
+| 正投影 | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
+| 伴随（反投影） | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
+| CGLS 迭代 | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
 
-diffct 2.4.1，FP32，A100 64 GB GPU；圆形锥束，360 个视角，1024×768 探测器，pitch 1.25。采用默认内存设置，不额外限制分配器容量。
+diffct 2.4.3，FP32，A100 64 GB GPU；圆形锥束，360 个视角，1024×768 探测器，pitch 1.25。采用默认内存设置，不额外限制分配器容量。
 
 正投影与反投影各预热三次，再取七次计时的中位数。CGLS 预热两次迭代，再运行三组十次迭代；取包含初始化的耗时中位数，除以十。计时同步 CUDA，并取最慢 rank 的墙钟耗时。原始样本与配置见 [scaling.json](docs/assets/scaling.json)。
 
