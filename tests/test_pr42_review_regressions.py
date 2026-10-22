@@ -122,3 +122,104 @@ def test_trajectory_nonfinite_error_precedes_later_shape_error():
     trajectory = (source, centre[:, :1], axis)
     with pytest.raises(ValueError, match="^trajectory tensors must contain only finite values$"):
         Projector(trajectory, case.shape, case.detector, beam="fan", backend="torch")
+
+
+@pytest.mark.parametrize("budget,reservation_budget,admitted", [
+    pytest.param(16_799_000, 22_400_000, True, id="reported-admission"),
+    pytest.param(16_796_672, 18_874_368, True, id="exact-phase-peaks"),
+    pytest.param(16_796_671, 18_874_368, False, id="total-one-byte-short"),
+    pytest.param(16_796_672, 18_874_367, False, id="reservation-one-byte-short"),
+])
+def test_streamed_trainable_shared_surface_admission_checks_phase_peaks(
+        budget, reservation_budget, admitted):
+    case = _case("fan", views=100, learnable=True)
+    case.shape, case.detector = (2048, 2048), (5,)
+
+    def surface(u, v):
+        return torch.stack((u, v, torch.zeros_like(u)), -1)
+
+    projector = _projector(
+        case, surface, backend="torch", volume_chunk_shape=case.shape,
+        view_chunk_size=case.views, detector_chunk_shape=case.detector,
+    )
+    projector._devices = (torch.device("cuda:0"),)
+    spec, _ = projector._effective_geometry(None, torch.device("cpu"))
+    assert projector._geometry_trainable and spec.kind == "offsets" and spec.shared
+    unlimited = (1 << 63) - 1
+
+    with _native_plan_budget(budget), \
+            mock.patch.object(operators, "_memory_budget", return_value=(budget, unlimited)), \
+            mock.patch.object(operators, "_reservation_budget", return_value=reservation_budget):
+        if not admitted:
+            with pytest.raises(RuntimeError, match="memory|budget|minimum|fit|limit"):
+                projector._execution_plan(torch.empty(case.shape), True, geometry_spec=spec)
+            return
+        plan = projector._execution_plan(torch.empty(case.shape), True, geometry_spec=spec)
+        workspace = projector._surface_work_buffers(case.views, case.detector, spec=spec, streamed=True)
+
+    assert plan is not None and plan.surface_batch
+    assert plan.chunk_shape == case.shape
+    assert plan.view_chunk_size == case.views and plan.detector_chunk_shape == case.detector
+    # The 16,789,504-byte pipeline outlives both workspaces. Their peaks are
+    # 5,632 bytes for composition and 7,168 bytes for gradient replay.
+    assert sum(workspace) == max(5_632, 7_168)
+    assert max(workspace) == max(5_120, 512)
+    assert plan.estimated_gpu_bytes == 16_789_504 + max(5_632, 7_168)
+    assert plan.estimated_gpu_bytes <= plan.gpu_budget_bytes == budget
+    assert plan.estimated_reserved_bytes == 18_874_368
+    assert plan.estimated_reserved_bytes <= plan.reservation_budget_bytes == reservation_budget
+    assert plan.allocation_limit == unlimited
+
+
+@pytest.mark.parametrize("allocation_limit,reservation_budget,admitted", [
+    pytest.param(1_440_256, 23_068_672, True, id="exact-phase-reservation-and-allocation"),
+    pytest.param(1_440_256, 23_068_671, False, id="reservation-one-byte-short"),
+    pytest.param(1_440_255, 23_068_672, False, id="sampler-cotangent-one-byte-short"),
+])
+def test_streamed_cuda_sampler_reservation_uses_each_real_phase(
+        monkeypatch, allocation_limit, reservation_budget, admitted):
+    case = _case("fan", views=12000)
+    case.shape, case.detector = (400, 400), (5,)
+    gain = torch.tensor(.01, dtype=torch.float64, requires_grad=True)
+
+    def sampler(u, v, ids, gain):
+        tangent = u.expand(len(ids), *u.shape)
+        return torch.stack((tangent, torch.zeros_like(tangent), gain * tangent.square()), -1)
+
+    surface = ParameterizedSurface(sampler, (gain,))
+    projector = _projector(
+        case, surface, backend="torch", volume_chunk_shape=case.shape,
+        view_chunk_size=case.views, detector_chunk_shape=case.detector,
+    )
+    projector._devices = (torch.device("cuda:0"),)
+    monkeypatch.setattr(surface, "sampler", lambda *args: sampler(*args).as_subclass(_CudaOffsetMetadata))
+    spec, geometry = projector._effective_geometry(None, torch.device("cpu"))
+    offsets = _sample_offsets(
+        case.beam, case.detector, case.pitch, geometry, spec,
+        slice(0, case.views), (slice(0, case.detector[0]),),
+    )
+    assert projector._geometry_trainable and offsets.is_cuda and offsets.dtype == torch.float64
+    budget = 64 * 1024 ** 2
+
+    with _native_plan_budget(budget), \
+            mock.patch.object(operators, "_memory_budget", return_value=(budget, allocation_limit)), \
+            mock.patch.object(operators, "_reservation_budget", return_value=reservation_budget):
+        if not admitted:
+            with pytest.raises(RuntimeError, match="memory|budget|minimum|fit|limit"):
+                projector._execution_plan(torch.empty(case.shape), True, geometry_spec=spec)
+            return
+        plan = projector._execution_plan(torch.empty(case.shape), True, geometry_spec=spec)
+        workspace = projector._surface_work_buffers(case.views, case.detector, spec=spec, streamed=True)
+
+    assert plan is not None and plan.surface_batch
+    assert plan.chunk_shape == case.shape
+    assert plan.view_chunk_size == case.views and plan.detector_chunk_shape == case.detector
+    # Composition has the larger total; replay has the larger allocation.
+    assert sum(workspace) == max(1_536_512, 1_447_424)
+    cotangent_bytes = offsets.numel() * offsets.element_size()
+    assert max(workspace) == (cotangent_bytes + 511) // 512 * 512 == allocation_limit
+    assert plan.estimated_gpu_bytes == 2_033_152 + max(1_536_512, 1_447_424)
+    # Native reservations are 8 MiB for composition and 22 MiB for replay,
+    # each including the pipeline. A merged inventory incorrectly needs 24 MiB.
+    assert plan.estimated_reserved_bytes == max(8, 22) * 1024 ** 2
+    assert plan.estimated_reserved_bytes == plan.reservation_budget_bytes == reservation_budget
