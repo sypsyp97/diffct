@@ -7,13 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-10-22
+
 ### Changed
 
-- Aggregate native geometry validity checks on the GPU and batch flat detector corner admission while preserving eager invalid-geometry errors.
-- Compose admitted sampled and per-view surface tiles across all views and pixels, with budgeted staging and a bounded fallback for small workspaces. Keep eligible full legacy surface snapshots on the input GPU.
-- Reduce CGLS scalar readbacks, keep tensor-store updates and TV reductions on their device, and reuse SIRT/TV residuals when callbacks cannot mutate the operator or volume.
-- Reuse filtered view batches across volume tiles in numerical, single-rank analytical reconstruction and avoid copying a single full-volume contribution through concatenation.
-- Add `examples/benchmark_gpu_overheads.py`, a synthetic benchmark for launch and transfer overheads.
+- Reduce GPU transfers and host synchronization in native geometry admission: validity flags are reduced on the device and flat detector corners are admitted in one batch. Invalid-geometry errors and their order are unchanged (#42).
+- Compose streamed sampled and per-view detector surfaces for a complete admitted view/pixel batch in one launch, with a bounded fallback workspace. Eligible full legacy-surface calls keep their geometry snapshots on the input GPU (#42).
+- Read the two CGLS scalar norms together, keep tensor-store updates and TV reductions on their device, and reuse SIRT/TV residuals when no callback can change the volume or operator (#42).
+- Reuse filtered view batches across volume tiles in single-rank analytical reconstruction (#42).
+- Add `examples/benchmark_gpu_overheads.py`, a synthetic benchmark for launch and transfer overheads (#42).
+
+### Fixed
+
+- Geometry-gradient replay uses the surface workspace that admission selected. Surface admission charges the larger of the composition and replay totals, the largest allocation of either phase, and a reservation bound that counts both phases (#42).
+- Spawned multi-process test workers exit after a successful teardown, which removes intermittent `terminate called without an active exception` aborts in CI (#43).
+- Add a formal check that the union reservation bounds every modelled composition/replay allocation order (#44).
 
 ## [2.4.2] - 2026-10-21
 
