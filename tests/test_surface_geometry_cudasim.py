@@ -184,7 +184,9 @@ def test_fused_helper_runs_real_kernel_for_global_batches_into_reused_bounded_ta
     centre = (.1875, -.3125, .4375)[:rank]
     source_buffer, point_buffer = torch.empty(2 * rank), torch.empty(2 * 25 * rank)
     original_storage = (source_buffer.data_ptr(), point_buffer.data_ptr())
-    groups, pipe = {}, _CpuGeometryPipe()
+    # Exercise the constrained-memory fallback explicitly. Ample-budget
+    # multi-view composition is covered by the native launch-budget tests.
+    groups, pipe = {"_surface_batch": False}, _CpuGeometryPipe()
     kernel = importlib.import_module("diffct.kernels.surface_geometry").compose_surface
     entries = _KernelEntries(kernel)
     with _cpu_geometry_transport(entries):
@@ -523,7 +525,7 @@ def test_noncontiguous_sampler_offsets_reach_kernel_without_complete_offset_copy
     centre, pipe = (.1875, -.3125, .4375), _CpuGeometryPipe()
     with _cpu_geometry_transport(entries), NoCompleteOffsetCopy():
         projector._surface_geometry_into(case.trajectory, _GeometrySpec("sampled", sampler),
-                                         views, pixels, centre, targets, pipe, {})
+                                         views, pixels, centre, targets, pipe, {"_surface_batch": False})
     assert samples == [(1, 2)] and entries.records and allocations
     assert max(allocations) < complete_view_bytes
     local = values if per_view else np.broadcast_to(values, (2, *values.shape))

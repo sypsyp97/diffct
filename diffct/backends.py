@@ -61,7 +61,7 @@ def _rectangles(shape, chunks):
                     for start, step, size in zip(starts, chunks, shape))
 
 
-def _flat_admission_batches(owner, geometry, detector_chunk_shape):
+def _flat_admission_batches(owner, geometry, detector_chunk_shape, *, batched_corners=False):
     """Bound flat admission with corners and exact ambiguous-view fallback."""
     views = owner.view_slice
     if views.start == views.stop:
@@ -70,8 +70,13 @@ def _flat_admission_batches(owner, geometry, detector_chunk_shape):
     # coordinate; finite corner points and source differences bound the grid.
     endpoints = tuple((slice(0, 1),) if size == 1 else (slice(0, 1), slice(size - 1, size))
                       for size in owner.detector_shape)
-    for pixels in itertools.product(*endpoints):
-        yield views, pixels
+    if batched_corners:
+        # Native validation can compose the Cartesian corner set in one batch.
+        # Stepped pixel slices retain the exact global endpoint coordinates.
+        yield views, tuple(slice(0, size, max(1, size - 1)) for size in owner.detector_shape)
+    else:
+        for pixels in itertools.product(*endpoints):
+            yield views, pixels
     if owner.beam in ("parallel", "parallel3d"):
         return
     source, lower = (value[views].to(dtype=owner.dtype) for value in geometry[:2])

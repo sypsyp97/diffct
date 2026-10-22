@@ -100,6 +100,44 @@ class _GeometryTrace(_ExecutionTrace):
         self.origins = {(parameter.device, parameter.untyped_storage()._cdata): index
                         for index, parameter in enumerate(parameters)}
         self.snapshots, self.points = Counter(), []
+        self.workspace_storages = {}
+        self.composing = self.allocating_workspace = False
+
+    def __enter__(self):
+        from diffct.pipeline import _DevicePipeline
+
+        empty, compose = _DevicePipeline.empty, diffct.Projector._surface_geometry_into
+
+        def allocate(pipe, shape, *, dtype=torch.float32):
+            self.allocating_workspace = self.composing and dtype == torch.float64
+            try:
+                return empty(pipe, shape, dtype=dtype)
+            finally:
+                self.allocating_workspace = False
+
+        def composed(owner, geometry, spec, views, pixels, centre, targets, pipe, groups, offsets=None):
+            previous = set(self.workspace_storages)
+            self.composing = True
+            try:
+                result = compose(owner, geometry, spec, views, pixels, centre, targets, pipe, groups, offsets)
+                workspace = groups["_surface_workspace"][:2]
+                retained = {(value.device, value.untyped_storage()._cdata,
+                             self.allocations[value.device, value.untyped_storage()._cdata]) for value in workspace}
+                assert set(self.workspace_storages) - previous <= retained, \
+                    "transient allocation claimed the reusable surface workspace exemption"
+                actual = sum(math.ceil(value.nbytes / 512) * 512 for value in workspace)
+                admitted = sum(owner._surface_work_buffers(
+                    self.view_batch, self.pixels, spec=spec, streamed=True,
+                    batched=groups.get("_surface_batch", True),
+                ))
+                assert actual <= admitted, ("surface workspace exceeds its charged budget", actual, admitted)
+                return result
+            finally:
+                self.composing = False
+
+        self.patches.enter_context(mock.patch.object(_DevicePipeline, "empty", allocate))
+        self.patches.enter_context(mock.patch.object(diffct.Projector, "_surface_geometry_into", composed))
+        return super().__enter__()
 
     def __torch_dispatch__(self, function, types, args=(), kwargs=None):
         result = super().__torch_dispatch__(function, types, args, kwargs)
@@ -120,8 +158,23 @@ class _GeometryTrace(_ExecutionTrace):
             if not isinstance(tensor, torch.Tensor):
                 continue
             if tensor.is_cuda:
-                assert tensor.numel() <= maximum, ("unbounded CUDA geometry/data tensor", str(function), tensor.shape)
-                assert tensor.untyped_storage().nbytes() <= maximum * tensor.element_size(), \
+                storage = tensor.untyped_storage()
+                key = (tensor.device, storage._cdata, self.allocations[tensor.device, storage._cdata])
+                # Only the two actual reusable allocations may exceed the old
+                # world-point count: packed frame scratch and offset status.
+                # Every other temporary keeps the original strict ceiling.
+                frames = 4 if self.case.beam == "cone" else 3
+                workspace_sizes = (self.view_batch * (frames + (3 if rank == 3 else 0)) * rank,
+                                   self.view_batch * math.prod(self.pixels) * rank + 1)
+                if (self.allocating_workspace and str(function) == "aten.empty.memory_format"
+                        and tensor.dtype == torch.float64 and tensor.ndim == 1
+                        and tensor.numel() in workspace_sizes):
+                    self.workspace_storages[key] = storage.nbytes()
+                limit = self.workspace_storages.get(key, maximum * tensor.element_size())
+                assert tensor.numel() * tensor.element_size() <= limit, (
+                    "unbounded CUDA geometry/data tensor", str(function), tensor.shape,
+                )
+                assert storage.nbytes() <= limit, \
                     "full CUDA backing storage hidden behind a bounded view"
             if self.case.views > self.view_batch or any(a > b for a, b in zip(self.case.detector, self.pixels)):
                 assert tuple(tensor.shape) not in ((*self.case.sino_shape, rank), (*self.case.sino_shape, 3)), \

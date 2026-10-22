@@ -18,6 +18,16 @@ import torch
 from .constants import _DTYPE, _TPB_2D, _TPB_3D, _INF, _EPSILON
 
 
+def _raise_geometry_errors(checks):
+    """Read one validity scalar; fetch individual error flags only on failure."""
+    device = next((flag.device for flag, _ in checks if flag.is_cuda), checks[0][0].device)
+    failed = torch.stack([flag.to(device=device) for flag, _ in checks])
+    if failed.any().item():
+        for invalid, (_, message) in zip(failed.tolist(), checks):
+            if invalid:
+                raise ValueError(message)
+
+
 # ============================================================================
 # Device Management Utilities
 # ============================================================================

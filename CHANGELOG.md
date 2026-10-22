@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Aggregate native geometry validity checks on the GPU and batch flat detector corner admission while preserving eager invalid-geometry errors.
+- Compose admitted sampled and per-view surface tiles across all views and pixels, with budgeted staging and a bounded fallback for small workspaces. Keep eligible full legacy surface snapshots on the input GPU.
+- Reduce CGLS scalar readbacks, keep tensor-store updates and TV reductions on their device, and reuse SIRT/TV residuals when callbacks cannot mutate the operator or volume.
+- Reuse filtered view batches across volume tiles in numerical, single-rank analytical reconstruction and avoid copying a single full-volume contribution through concatenation.
+- Add `examples/benchmark_gpu_overheads.py`, a synthetic benchmark for launch and transfer overheads.
+
 ## [2.4.2] - 2026-10-21
 
 ### Fixed

@@ -96,7 +96,7 @@ def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
         x = _initial(operator, data, x0)
         residual = data.clone() if x0 is None else data - operator.project(x)
         norm = math.sqrt(squared_norm(operator, data, "rays"))
-        history = [math.sqrt(squared_norm(operator, residual, "rays"))]
+        history = [norm if x0 is None else math.sqrt(squared_norm(operator, residual, "rays"))]
         completed = 0
         adjoint = (operator.backproject(residual) if iterations and history[0] > atol + rtol * norm
                    else torch.zeros_like(x))
@@ -117,11 +117,15 @@ def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
         states["x"].add_(states["p"], alpha=alpha)
         states["r"].sub_(states["q"], alpha=alpha)
         states["s"] = operator.backproject(states["r"])
-        next_gamma = squared_norm(operator, states["s"], "volume")
+        next_gamma = squared_norm(operator, states["s"], "volume", return_tensor=True)
+        residual_norm = squared_norm(operator, states["r"], "rays", return_tensor=True)
+        # Both reductions retain the same FP64 block/collective order. Read
+        # their results together; denominator breakdown is still checked first.
+        next_gamma, residual_norm = torch.stack((next_gamma, residual_norm.to(next_gamma.device))).cpu().tolist()
         states["p"].mul_(next_gamma / gamma).add_(states["s"])
         gamma = next_gamma
         completed += 1
-        history.append(math.sqrt(squared_norm(operator, states["r"], "rays")))
+        history.append(math.sqrt(residual_norm))
         if checkpoint_directory is not None:
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history,
                             norm, 1048576, gamma=gamma)
@@ -148,11 +152,12 @@ def sirt(operator, measurements, iterations=100, *, x0=None, rtol=1e-6, atol=0.,
         saved, stores = load_checkpoint(operator, resume, metadata, iterations, 1048576, ("x", "row", "column"))
         states = {name: _read_tensor(store, data.device) for name, store in stores.items()}
         completed, history, norm = saved["iteration"], list(saved["residual_history"]), saved["measurement_norm"]
+        residual = None
     else:
         states = dict(x=_initial(operator, data, x0))
         completed, norm = 0, math.sqrt(squared_norm(operator, data, "rays"))
-        initial = data if x0 is None else data - operator.project(states["x"])
-        history = [math.sqrt(squared_norm(operator, initial, "rays"))]
+        residual = data if x0 is None else data - operator.project(states["x"])
+        history = [norm if x0 is None else math.sqrt(squared_norm(operator, residual, "rays"))]
         if iterations and history[0] > atol + rtol * norm:
             row = operator.project(torch.ones_like(states["x"]))
             column = operator.backproject(torch.ones_like(data))
@@ -160,12 +165,15 @@ def sirt(operator, measurements, iterations=100, *, x0=None, rtol=1e-6, atol=0.,
             states["column"] = torch.where(column > 0, column.reciprocal(), 0.)
     threshold, stopped = atol + rtol * norm, False
     while completed < iterations and history[-1] > threshold:
-        residual = data - operator.project(states["x"])
+        # A callback may change either the iterate or the operator after history.
+        if callbacks or residual is None:
+            residual = data - operator.project(states["x"])
         states["x"].add_(states["column"] * operator.backproject(states["row"] * residual), alpha=relaxation)
         if nonnegative:
             states["x"].clamp_(min=0)
         completed += 1
-        history.append(math.sqrt(squared_norm(operator, data - operator.project(states["x"]), "rays")))
+        residual = data - operator.project(states["x"])
+        history.append(math.sqrt(squared_norm(operator, residual, "rays")))
         if checkpoint_directory is not None:
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history, norm, 1048576)
         if callbacks:
@@ -195,14 +203,16 @@ def tv_reconstruction(operator, measurements, iterations=100, weight=1., lr=.1, 
                               for name in ("exp_avg", "exp_avg_sq", "step")}
         optimizer.state[x]["step"] = optimizer.state[x]["step"].reshape(())
         completed, history, norm = saved["iteration"], list(saved["residual_history"]), saved["measurement_norm"]
+        residual = None
     else:
         completed, norm = 0, math.sqrt(squared_norm(operator, data, "rays"))
-        initial = data if x0 is None else data - operator.project(x)
-        history = [math.sqrt(squared_norm(operator, initial, "rays"))]
+        residual = -data if x0 is None else operator.project(x) - data
+        history = [norm if x0 is None else math.sqrt(squared_norm(operator, residual, "rays"))]
     threshold, stopped = atol + rtol * norm, False
     ray_count = scalar_sum(operator, data.numel(), "rays")
     while completed < iterations and history[-1] > threshold:
-        residual = operator.project(x) - data
+        if callbacks or residual is None:
+            residual = operator.project(x) - data
         gradient = operator.backproject(residual) / max(ray_count, 1)
         if weight:
             with torch.enable_grad():
@@ -214,7 +224,8 @@ def tv_reconstruction(operator, measurements, iterations=100, weight=1., lr=.1, 
         optimizer.step()
         x.clamp_(min=0)
         completed += 1
-        history.append(math.sqrt(squared_norm(operator, data - operator.project(x), "rays")))
+        residual = operator.project(x) - data
+        history.append(math.sqrt(squared_norm(operator, residual, "rays")))
         if checkpoint_directory is not None:
             states = dict(x=x, **optimizer.state[x])
             states["step"] = states["step"].reshape(1)

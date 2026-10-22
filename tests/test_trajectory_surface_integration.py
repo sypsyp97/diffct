@@ -611,5 +611,9 @@ def test_native_override_admission_stages_each_original_cuda_frame_once(surface_
     monkeypatch.setattr(torch.Tensor, "cpu", cpu)
     monkeypatch.setattr(Projector, "_project", lambda owner, value: value)
     operator.project(torch.zeros(operator.volume_shape), trajectory=frames)
-    components = len(frames) + int(surface_kind == "parameterized")
-    assert 0 < counts["d2h"] <= components, (surface_kind, counts, components)
+    if surface_kind == "legacy":
+        assert counts["d2h"] == 0, ("legacy admission staged CUDA frames on CPU", counts)
+    else:
+        # Explicit sampler parameters retain their public CPU sampling contract.
+        components = len(frames) + 1
+        assert 0 < counts["d2h"] <= components, (surface_kind, counts, components)

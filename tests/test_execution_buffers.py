@@ -19,9 +19,9 @@ import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_flatten
 
-from diffct import kernels
+from diffct import Projector, kernels
 from diffct import pipeline
-from diffct.chunking import _working_set_bytes
+from diffct.chunking import _allocation_bytes, _working_set_bytes
 from diffct.utils import TorchCUDABridge
 from tests.test_chunked_projector import _boundary_case, _offsets, _surface
 from tests.test_detector_surfaces import (
@@ -58,6 +58,8 @@ class _ExecutionTrace(TorchDispatchMode):
         self.generation = 0
         self.patches = ExitStack()
         self.source_storages = {(tensor.device, tensor.untyped_storage()._cdata) for tensor in host_inputs}
+        self._surface_plans, self._surface_storages = {}, {}
+        self._surface_sizes, self._surface_allocating = (), False
 
     def _metadata(self, tensor):
         metadata = _tensor_metadata(tensor)
@@ -91,8 +93,17 @@ class _ExecutionTrace(TorchDispatchMode):
                 rank = len(self.chunk)
                 limit = max(math.prod(self.chunk), self.batch * math.prod(self.case.detector) * rank,
                             self.batch * rank * (4 if self.case.beam == "cone" else 3))
-                assert tensor.numel() <= limit, ("unbounded CUDA tensor", str(function), metadata)
-                assert metadata["storage_bytes"] <= limit * tensor.element_size(), \
+                allocation = (*key, metadata["allocation"])
+                if (self._surface_allocating and str(function) == "aten.empty.memory_format"
+                        and tensor.dtype == torch.float64 and tensor.ndim == 1
+                        and tensor.numel() <= max(self._surface_sizes)):
+                    self._surface_storages[allocation] = metadata["storage_bytes"]
+                # Only actual retained frame/offset pipeline allocations get
+                # their admitted byte bound, including their typed aliases.
+                # Recycled storage ids cannot inherit an earlier exemption.
+                bound = self._surface_storages.get(allocation, limit * tensor.element_size())
+                assert metadata["bytes"] <= bound, ("unbounded CUDA tensor", str(function), metadata)
+                assert metadata["storage_bytes"] <= bound, \
                     ("unbounded CUDA storage behind a tile view", str(function), metadata)
                 if math.prod(self.case.shape) > math.prod(self.chunk):
                     assert metadata["shape"] not in (self.case.shape, self.case.shape[::-1]), \
@@ -117,6 +128,8 @@ class _ExecutionTrace(TorchDispatchMode):
         return result
 
     def __enter__(self):
+        if self.chunk is not None:
+            self._observe_surface_workspaces()
         original_bridge = TorchCUDABridge.tensor_to_cuda_array
 
         def bridge(tensor):
@@ -137,6 +150,56 @@ class _ExecutionTrace(TorchDispatchMode):
                     if id(value) in originals:
                         self.patches.enter_context(mock.patch.object(module, attribute, originals[id(value)]))
         return super().__enter__()
+
+    def _observe_surface_workspaces(self):
+        empty, compose, execution_stats = (pipeline._DevicePipeline.empty,
+                                           Projector._surface_geometry_into, Projector._execution_stats)
+
+        def planned(owner, plan, is_project):
+            stats = execution_stats(owner, plan, is_project)
+            self._surface_plans[id(stats)] = plan
+            return stats
+
+        def allocate(pipe, shape, *, dtype=torch.float32):
+            self._surface_allocating = bool(self._surface_sizes) and dtype == torch.float64
+            try:
+                return empty(pipe, shape, dtype=dtype)
+            finally:
+                self._surface_allocating = False
+
+        def composed(owner, geometry, spec, views, pixels, centre, targets, pipe, groups, offsets=None):
+            plan = self._surface_plans[id(pipe.stats)]
+            assert pipe.device in plan.devices
+            rank, frames = len(owner.volume_shape), len(owner._trajectory)
+            shape, count = plan.detector_chunk_shape or owner.detector_shape, plan.view_chunk_size
+            shared = spec.kind == "offsets" and spec.shared
+            batched = shared or plan.surface_batch
+            capacity = math.prod(shape) if batched else owner._surface_capacity(count, shape)
+            sizes = ((count if batched else 1) * (frames + (3 if rank == 3 else 0)) * rank,
+                     rank * capacity * (count if batched and not shared else 1) + 1)
+            previous = set(self._surface_storages)
+            self._surface_sizes = sizes
+            try:
+                result = compose(owner, geometry, spec, views, pixels, centre, targets, pipe, groups, offsets)
+                workspace = groups["_surface_workspace"][:2]
+                assert len(workspace) == 2 and all(value.numel() <= size for value, size in zip(workspace, sizes))
+                retained = {(*key, self.allocations[key]) for value in workspace
+                            for key in ((value.device, value.untyped_storage()._cdata),)}
+                assert set(self._surface_storages) - previous <= retained, \
+                    "transient allocation claimed the reusable surface workspace exemption"
+                actual = tuple(_allocation_bytes(value.untyped_storage().nbytes() // 4) for value in workspace)
+                charged = owner._surface_work_buffers(count, shape, plan.slots, spec,
+                                                      streamed=True, batched=plan.surface_batch)
+                assert max(actual) <= min(max(charged), plan.allocation_limit)
+                assert sum(actual) <= sum(charged) <= plan.estimated_gpu_bytes <= plan.gpu_budget_bytes, \
+                    ("surface workspace exceeds its admitted plan", actual, charged, plan)
+                return result
+            finally:
+                self._surface_sizes = ()
+
+        self.patches.enter_context(mock.patch.object(Projector, "_execution_stats", planned))
+        self.patches.enter_context(mock.patch.object(pipeline._DevicePipeline, "empty", allocate))
+        self.patches.enter_context(mock.patch.object(Projector, "_surface_geometry_into", composed))
 
     def _proxy(self, kernel, beam, kind):
         tracer = self

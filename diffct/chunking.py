@@ -23,6 +23,7 @@ class _ChunkPlan:
     foreign_output: bool = False
     reservation_budget_bytes: int = (1 << 63) - 1
     estimated_reserved_bytes: int = 0
+    surface_batch: bool = True
 
 
 def _pixel_tiles(shape, chunk_shape):

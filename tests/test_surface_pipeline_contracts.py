@@ -3,6 +3,7 @@
 from collections import Counter
 from contextlib import ExitStack, contextmanager, nullcontext
 import math
+import inspect
 from types import SimpleNamespace
 from unittest import mock
 
@@ -43,15 +44,18 @@ def test_streamed_surface_budget_counts_only_workspace_frame_packets(beam, share
     spec = _GeometrySpec("offsets", dtype=torch.float64, shared=shared)
     rank = len(case.shape)
     packet_size = (len(case.trajectory) + (3 if rank == 3 else 0)) * rank
-    packet_count = case.views if shared else 1
+    packet_count = case.views
+    # The optional batching selector is new; exercising the old default on the
+    # baseline keeps RED about its insufficient batch inventory, not TypeError.
+    batching = ({"batched": True} if "batched" in inspect.signature(projector._surface_work_buffers).parameters else {})
     with mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"):
-        buffers = projector._surface_work_buffers(case.views, case.detector, spec=spec, streamed=True)
+        buffers = projector._surface_work_buffers(case.views, case.detector, spec=spec, streamed=True, **batching)
     assert buffers[0] == math.ceil(packet_count * packet_size * 8 / 512) * 512
-    # Shared offsets upload directly into the packed workspace columns.
+    # A complete admitted job packs every frame. Shared offsets need one
+    # pixel block; per-view offsets need one block for every selected view.
     assert len(buffers) == 2, "budget includes separate surface staging buffers"
-    if shared:
-        pixels = math.prod(case.detector)
-        assert buffers[1] == math.ceil((rank * pixels + 1) * 8 / 512) * 512
+    pixels = math.prod(case.detector) * (1 if shared else case.views)
+    assert buffers[1] == math.ceil((rank * pixels + 1) * 8 / 512) * 512
 
 
 class _ReachedUpload(Exception):
