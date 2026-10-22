@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_flatten
 
@@ -432,7 +432,7 @@ def _gloo_local_surface_worker(rank, rendezvous):
                     reason="rank-local sampling requires Gloo")
 def test_gloo_surface_sampling_and_world_points_are_rank_local_including_empty_rank(tmp_path):
     rendezvous = (tmp_path / "surface-local-views").resolve().as_uri()
-    context = mp.spawn(_gloo_local_surface_worker, args=(rendezvous,), nprocs=2, join=False)
+    context = spawn(_gloo_local_surface_worker, args=(rendezvous,), nprocs=2, join=False)
     deadline = time.monotonic() + 90
     try:
         while not context.join(timeout=1):
@@ -484,7 +484,7 @@ def _gloo_invalid_native_surface_worker(rank, rendezvous):
                     reason="collective surface admission requires Gloo")
 def test_native_surface_constructor_rejects_one_invalid_rank_collectively(tmp_path):
     rendezvous = (tmp_path / "surface-invalid-rank").resolve().as_uri()
-    context = mp.spawn(_gloo_invalid_native_surface_worker, args=(rendezvous,), nprocs=2, join=False)
+    context = spawn(_gloo_invalid_native_surface_worker, args=(rendezvous,), nprocs=2, join=False)
     deadline = time.monotonic() + 40
     try:
         while not context.join(timeout=1):

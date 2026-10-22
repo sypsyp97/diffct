@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 import diffct
 from tests.test_detector_surfaces import _case, _grids, _matrix
@@ -376,7 +376,7 @@ def _owned(size, rank, count):
 
 
 def _run_four(worker, args, *, timeout=150):
-    context = mp.spawn(worker, args=args, nprocs=4, join=False)
+    context = spawn(worker, args=args, nprocs=4, join=False)
     deadline = time.monotonic() + timeout
     try:
         while not context.join(timeout=1):

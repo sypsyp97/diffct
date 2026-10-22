@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from diffct import Projector, circular_trajectory_3d
 from diffct import chunking
@@ -89,4 +89,4 @@ def _completed_reuse_worker(rank, directory):
 def test_completed_backproject_restores_capacity_for_full_detector_forward_and_repetition(tmp_path):
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("completed allocator-event retirement regression requires the native CUDA allocator")
-    mp.spawn(_completed_reuse_worker, args=(str(tmp_path),), nprocs=1, join=True)
+    spawn(_completed_reuse_worker, args=(str(tmp_path),), nprocs=1, join=True)

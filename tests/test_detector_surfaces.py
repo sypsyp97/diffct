@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from diffct import Projector
 
@@ -701,5 +701,5 @@ def _distributed_surface_worker(rank, beam, views, rendezvous):
                     reason="Two CUDA GPUs and real NCCL are required")
 def test_two_gpu_nccl_surface_sharding_and_sum_semantics(beam, views, tmp_path):
     rendezvous = (tmp_path / "surface-nccl").resolve().as_uri()
-    mp.spawn(_distributed_surface_worker, args=(beam, views, rendezvous),
+    spawn(_distributed_surface_worker, args=(beam, views, rendezvous),
              nprocs=2, join=True)

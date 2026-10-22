@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_flatten
 
@@ -724,7 +724,7 @@ def _nccl_worker(rank, beam, views, rendezvous):
 @pytest.mark.parametrize("views", [1, 5], ids=["empty-rank", "uneven-ranks"])
 def test_nccl_cpu_backed_bounded_collectives_and_sum_semantics(beam, views, tmp_path):
     rendezvous = (tmp_path / "chunk-nccl").resolve().as_uri()
-    mp.spawn(_nccl_worker, args=(beam, views, rendezvous), nprocs=2, join=True)
+    spawn(_nccl_worker, args=(beam, views, rendezvous), nprocs=2, join=True)
 
 
 # Automatic defaults below follow frozen automatic-cpu-backed-volume-tiles-v2.
@@ -1014,7 +1014,7 @@ def _fraction_worker(rank, ceiling_bytes):
 def test_actual_per_process_fraction_constrains_default_streaming_in_isolated_process():
     # Fresh process: real allocator ceiling, no global/device configuration or
     # numerical mocks, no unrelated CUDA cache/process touched.
-    mp.spawn(_fraction_worker, args=(12 * 1024 ** 2,), nprocs=1, join=True)
+    spawn(_fraction_worker, args=(12 * 1024 ** 2,), nprocs=1, join=True)
 
 
 @pytest.mark.cuda
@@ -1090,7 +1090,7 @@ def _remaining_room_worker(rank):
 @cuda_required
 def test_default_cpu_streaming_respects_live_allocator_remaining_room():
     # Isolated real allocator; no memory observations, kernels or outputs mocked.
-    mp.spawn(_remaining_room_worker, nprocs=1, join=True)
+    spawn(_remaining_room_worker, nprocs=1, join=True)
 
 
 @pytest.mark.cuda
@@ -1208,7 +1208,7 @@ def _nccl_cuda_adjoint_memory_worker(rank, rendezvous):
                     reason="Two CUDA GPUs and real NCCL are required")
 def test_nccl_cuda_streamed_adjoint_backward_has_no_extra_full_volume(tmp_path):
     rendezvous = (tmp_path / "cuda-adjoint-memory-nccl").resolve().as_uri()
-    mp.spawn(_nccl_cuda_adjoint_memory_worker, args=(rendezvous,), nprocs=2, join=True)
+    spawn(_nccl_cuda_adjoint_memory_worker, args=(rendezvous,), nprocs=2, join=True)
 
 
 @pytest.mark.cuda

@@ -8,16 +8,14 @@ second-derivative cotangent once. No per-rank Jacobian convention is assumed.
 from contextlib import nullcontext
 from datetime import timedelta
 import json
-import os
 from pathlib import Path
-import sys
 import time
 from unittest import mock
 
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from diffct import Projector
 from diffct.utils import TorchCUDABridge
@@ -185,15 +183,12 @@ def _worker(rank, rendezvous, world_size, partition, transform, native, director
         (Path(directory) / f"rank-{rank}.json").write_text(json.dumps(records), encoding="utf-8")
     finally:
         dist.destroy_process_group()
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(0)
 
 
 def _run(tmp_path, partition, transform, *, native=False):
     world_size = 2 if native else 4
     rendezvous = (tmp_path / "rendezvous").resolve().as_uri()
-    context = mp.spawn(_worker, args=(rendezvous, world_size, partition, transform,
+    context = spawn(_worker, args=(rendezvous, world_size, partition, transform,
                                      native, str(tmp_path)), nprocs=world_size, join=False)
     deadline = time.monotonic() + 180
     try:
