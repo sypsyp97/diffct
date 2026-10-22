@@ -80,16 +80,22 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
     geometry, checks = [], []
     n_views = None
     for component in trajectory:
-        if not isinstance(component, torch.Tensor):
-            raise TypeError("trajectory components must be tensors")
-        if component.ndim != 2 or component.shape[1] != dimensions:
-            raise ValueError(f"trajectory tensors must have shape (views, {dimensions})")
-        if not torch.is_floating_point(component):
-            raise TypeError("trajectory tensors must have floating-point dtype")
-        if component.shape[0] == 0:
-            raise ValueError("trajectory must contain at least one view")
-        if n_views is not None and component.shape[0] != n_views:
-            raise ValueError("trajectory tensors must have the same number of views")
+        try:
+            if not isinstance(component, torch.Tensor):
+                raise TypeError("trajectory components must be tensors")
+            if component.ndim != 2 or component.shape[1] != dimensions:
+                raise ValueError(f"trajectory tensors must have shape (views, {dimensions})")
+            if not torch.is_floating_point(component):
+                raise TypeError("trajectory tensors must have floating-point dtype")
+            if component.shape[0] == 0:
+                raise ValueError("trajectory must contain at least one view")
+            if n_views is not None and component.shape[0] != n_views:
+                raise ValueError("trajectory tensors must have the same number of views")
+        except (TypeError, ValueError):
+            # A deferred value error of an earlier component takes precedence.
+            if checks:
+                _raise_geometry_errors(checks)
+            raise
         n_views = component.shape[0]
         checks.append((~torch.isfinite(component).all(), "trajectory tensors must contain only finite values"))
         geometry.append(component.detach().clone() if clone else component.detach())
@@ -864,13 +870,13 @@ class Projector:
                 if isinstance(self.detector_surface, ParameterizedSurface):
                     # A CUDA sampler needs a device cotangent for its selected output.
                     replay_buffers += (_allocation_bytes(6 * views * math.prod(pixels)),)
-                if sum(replay_buffers) > sum(buffers):
-                    # Composition and replay do not overlap, but admission must
-                    # cover both their peak totals and their largest allocation.
-                    largest = replay_buffers.index(max(replay_buffers))
-                    replay_buffers = tuple(max(size, max(buffers)) if index == largest else size
-                                           for index, size in enumerate(replay_buffers))
-                    return replay_buffers
+                # Composition and replay do not overlap, but admission must
+                # cover both their peak totals and their largest allocation.
+                primary, other = ((replay_buffers, buffers) if sum(replay_buffers) > sum(buffers)
+                                  else (buffers, replay_buffers))
+                largest = primary.index(max(primary))
+                return tuple(max(size, max(other)) if index == largest else size
+                             for index, size in enumerate(primary))
             return buffers
         elements = views * math.prod(pixels) * 3
         dtype = torch.float64 if spec is None or spec.dtype is None else spec.dtype
@@ -2348,7 +2354,8 @@ class Projector:
             self.last_execution_stats = stats
             return tuple(grad.to(device=component.device, dtype=component.dtype)
                          for grad, component in zip(grads, geometry))
-        groups = {device: {} for device in plan.devices}
+        # Replay composition follows the admitted batched/fallback workspace.
+        groups = {device: {"_surface_batch": plan.surface_batch} for device in plan.devices}
         with _pipeline._TransferPipeline(plan.devices, self._pool_elements(plan, geometry_spec), stats,
                                         slots=plan.slots) as transfer:
             for spatial_slice, shape, centre in self._volume_tiles(plan.chunk_shape):

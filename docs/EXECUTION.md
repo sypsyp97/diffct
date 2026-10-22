@@ -223,6 +223,3 @@ Checkpoints fingerprint the actual sampled detector rays. Legacy surface
 callbacks need complete detector grids; their possible per-view offset output
 must fit the fingerprint block budget or the solve raises before execution.
 Use `ParameterizedSurface` to sample and fingerprint larger surfaces in blocks.
-
-See the [GPU execution audit](https://github.com/sypsyp97/diffct/blob/main/docs/GPU_PERFORMANCE.md) for the transfer and synchronization
-audit, retained CPU contracts, and reproducible performance measurements.
