@@ -53,30 +53,32 @@ def owns_values(operator, kind):
     )
 
 
-def scalar_sum(operator, value, kind):
-    """Count physical rays/voxels once, including view/space replicas."""
+def scalar_sum(operator, value, kind, *, return_tensor=False):
+    """Count physical rays/voxels once, optionally retaining the reduction tensor."""
     world = getattr(operator, "world_size", 1)
+    result_device = value.device if isinstance(value, torch.Tensor) else torch.device("cpu")
     value = value if owns_values(operator, kind) else 0.
     if world > 1:
         group = operator.process_group
         device = torch.device("cuda", torch.cuda.current_device()) if dist.get_backend(group) == "nccl" else torch.device("cpu")
         accumulator = torch.as_tensor(value, dtype=torch.float64, device=device).clone()
         dist.all_reduce(accumulator, group=group)
-        return accumulator.item()
+        return accumulator if return_tensor else accumulator.item()
+    if return_tensor:
+        return torch.as_tensor(value, dtype=torch.float64, device=result_device)
     return float(value)
 
 
-def squared_norm(operator, value, kind, elements=1048576):
+def squared_norm(operator, value, kind, elements=1048576, *, return_tensor=False):
     store = TensorStore(value) if isinstance(value, torch.Tensor) else value
-    total = 0.
+    total = torch.zeros((), dtype=torch.float64, device=getattr(store, "device", "cpu"))
     if owns_values(operator, kind):
-        total = torch.zeros((), dtype=torch.float64, device=getattr(store, "device", "cpu"))
         for selected in _fragments(tuple(store.shape), elements):
             # Clone even an FP64 view: norms must never alter caller measurements.
             block = store.read(selected).to(dtype=torch.float64).clone()
             # Preserve the block reductions and their sequential FP64 order.
             total.add_(block.square_().sum().to(device=total.device))
-    return scalar_sum(operator, total, kind)
+    return scalar_sum(operator, total, kind, return_tensor=return_tensor)
 
 
 def copy_blocks(source, target, elements):
@@ -91,9 +93,10 @@ def fill_blocks(target, elements):
 
 
 def update_blocks(target, source, factor, elements, scale=1.):
+    device = getattr(target, "device", "cpu")
     for selected in _fragments(tuple(target.shape), elements):
-        block = target.read(selected).to(device="cpu", dtype=target.dtype).clone()
-        block.mul_(scale).add_(source.read(selected).to(device="cpu", dtype=target.dtype), alpha=factor)
+        block = target.read(selected).to(device=device, dtype=target.dtype).clone()
+        block.mul_(scale).add_(source.read(selected).to(device=device, dtype=target.dtype), alpha=factor)
         target.write(selected, block)
 
 

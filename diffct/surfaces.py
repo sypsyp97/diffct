@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import torch
 
+from .utils import _raise_geometry_errors
 
 @dataclass(frozen=True)
 class _GeometrySpec:
@@ -41,7 +42,8 @@ class ParameterizedSurface:
 
 
 def _detector_grids(detector_shape, spacing, pixels):
-    axes = [(torch.arange(selected.start, selected.stop, dtype=torch.float64, device="cpu") + .5 - size / 2) * pitch
+    axes = [(torch.arange(selected.start, selected.stop, selected.step or 1,
+                          dtype=torch.float64, device="cpu") + .5 - size / 2) * pitch
             for selected, size, pitch in zip(pixels, detector_shape, spacing)]
     if len(axes) == 2:
         return torch.meshgrid(*axes, indexing="ij")
@@ -106,9 +108,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
         depth = offsets[..., 2].to(device=device, dtype=offset_dtype)
         if offsets.ndim == dimensions + 1:
             tangent, depth = tangent.unsqueeze(0), depth.unsqueeze(0)
-    if validate:
-        if not torch.isfinite(offsets).all().item():
-            raise ValueError("detector surface coordinates must be finite")
+    checks = [(~torch.isfinite(offsets).all(), "detector surface coordinates must be finite")] if validate else []
 
     def frame(component):
         selected = component if local_geometry else component[views]
@@ -132,17 +132,18 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
     source = (frames[0] if local_geometry else frames[0][views]).to(device=device, dtype=source_dtype)
     if validate:
         for component in (source, points):
-            if not torch.isfinite(component).all().item() or not torch.isfinite(component.float()).all().item():
-                raise ValueError("surface world coordinates must be finite in float32")
+            checks.append((~torch.isfinite(component).all() | ~torch.isfinite(component.float()).all(),
+                           "surface world coordinates must be finite in float32"))
         if beam not in ("parallel", "parallel3d") and view_count:
             sources = source.unsqueeze(1)
             endpoints = points.reshape(view_count, -1, source.shape[-1])
-            if torch.any(torch.all(sources.float() == endpoints.float(), dim=-1)).item():
-                raise ValueError("source and detector surface pixels must differ")
+            checks.append((torch.any(torch.all(sources.float() == endpoints.float(), dim=-1)),
+                           "source and detector surface pixels must differ"))
             source_distance = torch.linalg.vector_norm(sources.double(), dim=-1) / voxel_spacing
             pixel_distance = torch.linalg.vector_norm(endpoints.double(), dim=-1) / voxel_spacing
-            if torch.any(torch.minimum(source_distance, pixel_distance) > 1e6).item():
-                raise ValueError("surface source or pixel must lie within 1e6 voxels")
-            if torch.any(source_distance > 1e15).item() or torch.any(pixel_distance > 1e15).item():
-                raise ValueError("surface coordinates must lie within 1e15 voxels")
+            checks.append((torch.any(torch.minimum(source_distance, pixel_distance) > 1e6),
+                           "surface source or pixel must lie within 1e6 voxels"))
+            checks.append((torch.any(source_distance > 1e15) | torch.any(pixel_distance > 1e15),
+                           "surface coordinates must lie within 1e15 voxels"))
+        _raise_geometry_errors(checks)
     return source, points

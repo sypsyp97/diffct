@@ -104,7 +104,8 @@ def total_variation(volume, *, operator=None, voxel_spacing=1., eps=1e-6, reduct
     total = local
     elements = volume.numel()
     if operator is not None:
-        global_value = scalar_sum(operator, local.detach().item(), "volume")
-        total = local + (local.new_tensor(global_value) - local.detach())
+        if getattr(operator, "world_size", 1) > 1:
+            global_value = scalar_sum(operator, local.detach(), "volume", return_tensor=True)
+            total = local + (global_value.to(local) - local.detach())
         elements = math.prod(operator.global_volume_shape)
     return total if reduction == "sum" else total / max(elements, 1)

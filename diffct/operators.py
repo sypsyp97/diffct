@@ -16,7 +16,7 @@ from .storage import TensorStore
 from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
-from .utils import TorchCUDABridge, _get_numba_external_stream_for
+from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geometry_errors
 from .backends import ReferenceProjector, _flat_admission_batches, select_backend, voxel_spacing_tuple
 from .distribution import Partition
 from .projectors import (
@@ -77,7 +77,7 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
     if not isinstance(trajectory, (tuple, list)) or len(trajectory) != count:
         raise TypeError(f"{beam} trajectory must contain {count} tensors")
 
-    geometry = []
+    geometry, checks = [], []
     n_views = None
     for component in trajectory:
         if not isinstance(component, torch.Tensor):
@@ -91,8 +91,7 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
         if n_views is not None and component.shape[0] != n_views:
             raise ValueError("trajectory tensors must have the same number of views")
         n_views = component.shape[0]
-        if not torch.isfinite(component).all().item():
-            raise ValueError("trajectory tensors must contain only finite values")
+        checks.append((~torch.isfinite(component).all(), "trajectory tensors must contain only finite values"))
         geometry.append(component.detach().clone() if clone else component.detach())
 
     device = next((value.device for value in geometry if value.is_cuda), geometry[0].device)
@@ -103,28 +102,29 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
     )
     for axis in axes:
         norms = torch.linalg.vector_norm(axis, dim=1)
-        if not torch.allclose(norms, torch.ones_like(norms), rtol=1e-4, atol=1e-4):
-            raise ValueError("trajectory direction axes must be unit vectors")
+        checks.append((~torch.isclose(norms, torch.ones_like(norms), rtol=1e-4, atol=1e-4).all(),
+                       "trajectory direction axes must be unit vectors"))
     if beam in ("parallel", "cone", "parallel3d"):
         first, second = (geometry[0], geometry[2]) if beam == "parallel" else (geometry[2], geometry[3])
         dots = torch.sum(first.to(device) * second.to(device), dim=1)
-        if torch.any(torch.abs(dots) > 1e-4).item():
-            raise ValueError("trajectory direction axes must be orthogonal")
+        checks.append((torch.any(torch.abs(dots) > 1e-4), "trajectory direction axes must be orthogonal"))
     if beam == "parallel3d":
         direction = geometry[0].to(device=device, dtype=torch.float64)
         frame = torch.stack((direction, geometry[2].to(direction.device, torch.float64),
                              geometry[3].to(direction.device, torch.float64)), dim=-1)
         # Numerical rank rejects a tangent frame at machine roundoff without
         # imposing an application-level minimum angle of incidence.
-        if torch.any(torch.linalg.matrix_rank(frame) < 3).item():
-            raise ValueError("parallel3d rays must not be tangent to the detector plane")
+        # Bad entries already have a finite-value error above; keep the rank
+        # solver well-defined until the combined error flags reach the host.
+        frame = torch.where(torch.isfinite(frame), frame, 0.)
+        checks.append((torch.any(torch.linalg.matrix_rank(frame) < 3),
+                       "parallel3d rays must not be tangent to the detector plane"))
     if beam in ("fan", "cone") and not detector_surface:
         # float64 avoids overflow of half-precision input and dtype mismatches in cross().
         source = geometry[0].to(device=device, dtype=torch.float64)
         principal = geometry[1].to(source.device, torch.float64) - source
         lengths = torch.linalg.vector_norm(principal, dim=1)
-        if torch.any(lengths == 0).item():
-            raise ValueError("source and detector center must differ in every view")
+        checks.append((torch.any(lengths == 0), "source and detector center must differ in every view"))
         principal = principal / lengths[:, None]
         det_u = geometry[2].to(source.device, torch.float64)
         if beam == "fan":
@@ -132,9 +132,10 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
         else:
             normal = torch.linalg.cross(det_u, geometry[3].to(source.device, torch.float64), dim=1)
             facing = torch.sum(principal * normal, dim=1)
-        if torch.any(torch.abs(facing) < 1e-4).item():
-            raise ValueError("the detector must not be edge-on to the source in any view")
+        checks.append((torch.any(torch.abs(facing) < 1e-4),
+                       "the detector must not be edge-on to the source in any view"))
 
+    _raise_geometry_errors(checks)
     return tuple(geometry), n_views
 
 
@@ -544,16 +545,14 @@ class Projector:
                 )
                 for component in self._trajectory[:2]
             ])
-            if torch.any(distances.min(dim=0).values > 1e6).item():
-                raise ValueError(
+            _raise_geometry_errors([
+                (torch.any(distances.min(dim=0).values > 1e6),
                     "the source or the detector center must lie within 1e6 voxels "
-                    "of the volume center in every view"
-                )
-            if torch.any(distances > 1e15).item():
-                raise ValueError(
+                    "of the volume center in every view"),
+                (torch.any(distances > 1e15),
                     "the source and the detector center must lie within 1e15 voxels "
-                    "of the volume center"
-                )
+                    "of the volume center"),
+            ])
 
     def _agreement_revision(self):
         surface = self.detector_surface
@@ -768,6 +767,7 @@ class Projector:
         peers = len(active_devices) > 1 or (self._distributed and self.world_size > 1)
         extra_rays = (2 * int(self.partition == "space") + int(is_project and foreign_output)
                       + int(is_project and self.partition == "space" and peers))
+        surface_batch = True
 
         def fits(shape):
             points = surface or pixels != self.detector_shape
@@ -776,17 +776,21 @@ class Projector:
             buffers = _pipeline_buffers(self.beam, shape, batch, pixels, points,
                                         geometry_grad=self._geometry_trainable,
                                         ray_accumulators=extra_rays, peers=peers or foreign_output)
-            buffers += self._surface_work_buffers(batch, pixels, spec=geometry_spec, streamed=True)
+            workspace = self._surface_work_buffers(batch, pixels, spec=geometry_spec,
+                                                   streamed=True, batched=surface_batch)
+            buffers += workspace
             return (
                 sum(buffers) <= budget
                 and _reservation_bytes(buffers) <= reservation_budget
                 and _largest_buffer_bytes(self.beam, shape, batch, pixels, points) <= allocation_limit
-                and max(self._surface_work_buffers(batch, pixels, spec=geometry_spec, streamed=True), default=0) <= allocation_limit
+                and max(workspace, default=0) <= allocation_limit
                 and _host_geometry_bytes(self.beam, batch, pixels, host_points) <= _pipeline._GEOMETRY_WORK_BYTES
             )
 
         while not fits(minimum_shape):
-            if self.view_chunk_size is None and batch > 1:
+            if self.detector_surface is not None and surface_batch:
+                surface_batch = False
+            elif self.view_chunk_size is None and batch > 1:
                 batch = max(1, batch // 2)
             elif self.detector_chunk_shape is None and max(pixels) > 1:
                 axis = max(range(len(pixels)), key=pixels.__getitem__)
@@ -796,25 +800,36 @@ class Projector:
             else:
                 raise RuntimeError("CUDA or host geometry memory budget cannot fit the minimum tile/view/pixel batch; reduce explicit limits")
         while not fits(chunk):
+            if self.detector_surface is not None and surface_batch:
+                surface_batch = False
+                continue
             if self.volume_chunk_shape is not None or max(chunk) == 1:
                 raise RuntimeError("CUDA memory budget cannot fit the requested tile/view batch")
             axis = max(range(len(chunk)), key=chunk.__getitem__)
             smaller = list(chunk)
             smaller[axis] = max(1, smaller[axis] // 2)
             chunk = tuple(smaller)
+        if not surface_batch:
+            # Smaller automatic tiles may now fit the complete workspace.
+            surface_batch = True
+            if not fits(chunk):
+                surface_batch = False
         estimate = _pipeline_bytes(self.beam, chunk, batch, pixels,
                                    surface or pixels != self.detector_shape,
                                    geometry_grad=self._geometry_trainable,
                                    ray_accumulators=extra_rays, peers=peers or foreign_output)
-        estimate += sum(self._surface_work_buffers(batch, pixels, spec=geometry_spec, streamed=True))
+        estimate += sum(self._surface_work_buffers(batch, pixels, spec=geometry_spec,
+                                                  streamed=True, batched=surface_batch))
         return _ChunkPlan(chunk, batch, devices, pixels, budget, allocation_limit,
                           estimated_gpu_bytes=estimate, foreign_output=foreign_output,
+                          surface_batch=surface_batch,
                           reservation_budget_bytes=reservation_budget,
                           estimated_reserved_bytes=_reservation_bytes(_pipeline_buffers(
                               self.beam, chunk, batch, pixels, surface or pixels != self.detector_shape,
                               geometry_grad=self._geometry_trainable,
                               ray_accumulators=extra_rays, peers=peers or foreign_output)
-                              + self._surface_work_buffers(batch, pixels, spec=geometry_spec, streamed=True)))
+                              + self._surface_work_buffers(batch, pixels, spec=geometry_spec,
+                                                           streamed=True, batched=surface_batch)))
 
     def _surface_capacity(self, views, pixels):
         rank, columns = len(self.volume_shape), 3 if self.beam == "cone" else 2
@@ -822,7 +837,12 @@ class Projector:
         maximum = max(views * math.prod(pixels) * rank, views * rank * frames)
         return max(1, min(math.prod(pixels), 21, (maximum - 1) // columns))
 
-    def _surface_work_buffers(self, views, pixels, slots=1, spec=None, *, streamed=False):
+    def _surface_snapshot_buffers(self):
+        """Allocator-rounded FP64 bounds for independent geometry snapshots."""
+        return ((_allocation_bytes(2 * self._n_views * math.prod(self.detector_shape) * 3),)
+                + (_allocation_bytes(2 * self._n_views * len(self.volume_shape)),) * len(self._trajectory))
+
+    def _surface_work_buffers(self, views, pixels, slots=1, spec=None, *, streamed=False, batched=True):
         """Bound device-local offset staging and world-point expression storage."""
         if self.detector_surface is None:
             return ()
@@ -831,20 +851,25 @@ class Projector:
             capacity = self._surface_capacity(views, pixels)
             columns = 3 if self.beam == "cone" else 2
             shared = spec is not None and spec.kind == "offsets" and spec.shared
-            if shared:
+            if shared or batched:
                 capacity = math.prod(pixels)
-            # Shared offsets pack the frame packets of every view of a job.
-            buffers = (_allocation_bytes(2 * (views if shared else 1) * (frames + (3 if rank == 3 else 0)) * rank),
-                       _allocation_bytes(2 * (columns * capacity + 1)))
+            # Batched jobs retain every frame and, unless shared, every offset.
+            buffers = (_allocation_bytes(2 * (views if shared or batched else 1) * (frames + (3 if rank == 3 else 0)) * rank),
+                       _allocation_bytes(2 * (columns * capacity * (views if batched and not shared else 1) + 1)))
             if self._geometry_trainable:
                 # Replay one view and a bounded detector row at a time.
-                replay = rank * min(capacity, pixels[-1])
+                replay = rank * min(self._surface_capacity(views, pixels), pixels[-1])
                 replay_buffers = ((_allocation_bytes(2 * replay),) * 8
                                   + (_allocation_bytes(2 * rank),) * (frames + 3))
                 if isinstance(self.detector_surface, ParameterizedSurface):
                     # A CUDA sampler needs a device cotangent for its selected output.
                     replay_buffers += (_allocation_bytes(6 * views * math.prod(pixels)),)
                 if sum(replay_buffers) > sum(buffers):
+                    # Composition and replay do not overlap, but admission must
+                    # cover both their peak totals and their largest allocation.
+                    largest = replay_buffers.index(max(replay_buffers))
+                    replay_buffers = tuple(max(size, max(buffers)) if index == largest else size
+                                           for index, size in enumerate(replay_buffers))
                     return replay_buffers
             return buffers
         elements = views * math.prod(pixels) * 3
@@ -852,7 +877,13 @@ class Projector:
         buffers = (torch.empty((), dtype=dtype).element_size() * elements,) * (4 * slots)
         if dtype != torch.float64:
             buffers += (8 * elements,) * slots
-        return buffers + (views * 3 * 8 * (4 if self.beam == "cone" else 3),) * slots
+        buffers += (views * 3 * 8 * (4 if self.beam == "cone" else 3),) * slots
+        if spec is None and not isinstance(self.detector_surface, ParameterizedSurface):
+            # The preliminary full plan precedes the callback. Admit independent
+            # snapshots plus one bounded arena for the callback's saved tensors.
+            snapshots = self._surface_snapshot_buffers()
+            buffers += (*snapshots, sum(snapshots))
+        return buffers
 
     def _surface_spec(self, frames, offsets):
         dtype = torch.float32
@@ -873,9 +904,10 @@ class Projector:
     def _surface_validation_inputs(self):
         """Stage frame metadata once without expanding surface world points."""
         with torch.enable_grad():
-            frames = tuple(value.to(device="cpu") for value in (self._learnable or self._trajectory))
+            frames = self._learnable or self._trajectory
             surface = self.detector_surface
             if isinstance(surface, ParameterizedSurface):
+                frames = tuple(value.to(device="cpu") for value in frames)
                 parameters = tuple(value.to(device="cpu") for value in surface.parameters)
                 geometry = (*frames, *parameters)
                 return (geometry, _GeometrySpec("sampled", surface.sampler, torch.float64),
@@ -1154,6 +1186,7 @@ class Projector:
         return dict(operation="project" if is_project else "backproject", schedule=plan.schedule,
                     chunk_shape=tuple(plan.chunk_shape), view_chunk_size=plan.view_chunk_size,
                     detector_chunk_shape=tuple(plan.detector_chunk_shape or self.detector_shape),
+                    surface_batch=plan.surface_batch,
                     window_size=plan.window_size, gpu_budget_bytes=plan.gpu_budget_bytes,
                     estimated_gpu_bytes=plan.estimated_gpu_bytes,
                     reservation_budget_bytes=plan.reservation_budget_bytes,
@@ -1172,14 +1205,16 @@ class Projector:
             return _pipeline_bytes(self.beam, shape, plan.view_chunk_size, pixels, points,
                                    slots=slots, retained=retained, geometry_grad=self._geometry_trainable,
                                    peers=peers, ray_accumulators=ray_accumulators) + sum(
-                                       self._surface_work_buffers(plan.view_chunk_size, pixels, slots, spec, streamed=True))
+                                       self._surface_work_buffers(plan.view_chunk_size, pixels, slots, spec,
+                                                                  streamed=True, batched=plan.surface_batch))
 
         def reserved(shape, slots=1, retained=1, ray_accumulators=0):
             return _reservation_bytes(_pipeline_buffers(
                 self.beam, shape, plan.view_chunk_size, pixels, points,
                 slots=slots, retained=retained, geometry_grad=self._geometry_trainable,
                 peers=peers, ray_accumulators=ray_accumulators)
-                + self._surface_work_buffers(plan.view_chunk_size, pixels, slots, spec, streamed=True))
+                + self._surface_work_buffers(plan.view_chunk_size, pixels, slots, spec,
+                                             streamed=True, batched=plan.surface_batch))
 
         shapes = [plan.chunk_shape]
         if self.volume_chunk_shape is None and len(volume_shape) == 3:
@@ -1256,7 +1291,7 @@ class Projector:
             self.beam, plan.chunk_shape, plan.view_chunk_size, pixels, points,
             slots=plan.slots, retained=plan.window_size, geometry_grad=self._geometry_trainable,
             peers=peers, ray_accumulators=extra_rays) + self._surface_work_buffers(
-                plan.view_chunk_size, pixels, plan.slots, spec, streamed=True)
+                plan.view_chunk_size, pixels, plan.slots, spec, streamed=True, batched=plan.surface_batch)
 
     def _choose_schedule(self, source, sink, is_project, geometry, plan, spec):
         candidates = self._candidate_plans(plan, is_project, spec)
@@ -1266,7 +1301,8 @@ class Projector:
                tuple(device.index for device in plan.devices), str(source.dtype), plan.gpu_budget_bytes,
                plan.allocation_limit, plan.reservation_budget_bytes,
                str(getattr(source, "device", "cpu")), str(getattr(sink, "device", "cpu")),
-               spec.kind if spec is not None else "flat", self.schedule)
+               spec.kind if spec is not None else "flat", self.schedule, plan.surface_batch,
+               spec.shared if spec is not None else False)
         collective = self._distributed and self.world_size > 1
         if not collective and key in self._schedule_cache:
             return self._schedule_cache[key], [], True
@@ -1337,6 +1373,7 @@ class Projector:
                                       geometry, spec, views, pixels)
         origin = torch.cuda.current_stream(offsets.device) if offsets.is_cuda else None
         frames = geometry[:frame_count]
+        frame_origins = tuple(torch.cuda.current_stream(value.device) for value in frames if value.is_cuda)
         common = torch.float32
         for value in (*frames, offsets):
             common = torch.promote_types(common, value.dtype)
@@ -1349,25 +1386,33 @@ class Projector:
         # Offsets shared by all views are staged once per call and composed
         # with one launch for all views instead of per view and row segment.
         shared = spec.kind == "offsets" and offsets.ndim == len(pixel_shape) + 1
+        batched = shared or groups.get("_surface_batch", True)
         pixel_count = math.prod(pixel_shape)
         # One packed frame packet per view: source, center, axes, normal and
         # float32 cross-product scratch. Shared offsets pack every view of a job.
         stride = (frame_count + (3 if rank == 3 else 0)) * rank
         if "_surface_workspace" not in groups:
-            capacity = pixel_count if shared else self._surface_capacity(count, pixel_shape)
+            maximum_views = groups.get("_max_geometry", (count * rank,))[0] // rank
+            capacity = (groups.get("_max_rays", count * pixel_count) // maximum_views
+                        if batched else self._surface_capacity(count, pixel_shape))
             groups["_surface_workspace"] = (
-                pipe.empty((count if shared else 1) * stride, dtype=torch.float64),
-                pipe.empty((3 if rank == 3 else 2) * capacity + 1, dtype=torch.float64), capacity,
+                pipe.empty((maximum_views if batched else 1) * stride, dtype=torch.float64),
+                pipe.empty(rank * capacity * (maximum_views if batched and not shared else 1) + 1,
+                           dtype=torch.float64), capacity,
             )
         packed_frames, packed_offsets, capacity = groups["_surface_workspace"]
         columns = (0, 1, 2) if rank == 3 else (0, 2)
         source, points = targets[0].view(count, rank), targets[1].view(count, -1, rank)
         # A workspace sized for an earlier, smaller tile keeps the segment path.
         shared = shared and capacity >= pixel_count
-        if shared and packed_frames.numel() < count * stride:
+        batched = batched and capacity >= pixel_count
+        if batched and packed_frames.numel() < count * stride:
             # Earlier launches on the upload stream may still read the smaller buffer.
             pipe.retain(pipe.event(pipe.upload), packed_frames, None)
             packed_frames = pipe.empty(count * stride, dtype=torch.float64)
+            if not shared:
+                pipe.retain(pipe.event(pipe.upload), packed_offsets, None)
+                packed_offsets = pipe.empty(rank * capacity * count + 1, dtype=torch.float64)
             groups["_surface_workspace"] = (packed_frames, packed_offsets, capacity)
         # Every job of a call slices the same offset snapshot: stage it once per
         # call, pixel tile and workspace. The key holds the snapshot and the
@@ -1380,39 +1425,55 @@ class Projector:
                            and groups["_surface_shared_staged"][1] is staged_key[1]
                            and groups["_surface_shared_staged"][2] == staged_key[2])
         else:
-            restage = shared
+            restage = batched
             groups.pop("_surface_shared_staged", None)
         with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.upload), cuda.gpus[pipe.device.index]:
             if origin is not None:
                 pipe.upload.wait_stream(origin)
+            for frame_origin in frame_origins:
+                pipe.upload.wait_stream(frame_origin)
             packed_offsets[-1].zero_()
             stream = _get_numba_external_stream_for(pipe.upload)
             arrays = tuple(TorchCUDABridge.tensor_to_cuda_array(value)
                            for value in (packed_frames, packed_offsets, source, points))
             if restage:
-                # Pack the float64 columns where the offsets live, then copy each
-                # column into the workspace without a device staging buffer.
-                flat = offsets.detach().reshape(pixel_count, 3)
+                # Preserve strided sampler outputs: copy directly into admitted
+                # column storage without flattening the input into a temporary.
+                offset_views = 1 if shared else count
+                packed = packed_offsets[:offset_views * rank * capacity].view(offset_views, rank, capacity)
+                selected_offsets = offsets.detach()
+                if selected_offsets.ndim == len(pixel_shape) + 1:
+                    selected_offsets = selected_offsets.unsqueeze(0)
                 if offsets.is_cuda:
                     for column, original in enumerate(columns):
-                        packed_offsets[column * capacity:column * capacity + pixel_count].copy_(flat[:, original])
+                        target = packed[:, column, :pixel_count].view(offset_views, *pixel_shape)
+                        value = selected_offsets[..., original].expand(offset_views, *pixel_shape)
+                        _pipeline._copy(target, value, pipe.stats)
+                        pipe.retain(pipe.event(pipe.upload), value, packed_offsets)
                 else:
-                    host = flat[:, list(columns)].T.to(dtype=torch.float64).contiguous()
-                    for column in range(len(columns)):
-                        _pipeline._copy(packed_offsets[column * capacity:column * capacity + pixel_count],
-                                        host[column], pipe.stats)
+                    host = torch.empty((offset_views, rank, capacity), dtype=torch.float64)
+                    for column, original in enumerate(columns):
+                        host[:, column, :pixel_count].view(offset_views, *pixel_shape).copy_(
+                            selected_offsets[..., original])
+                    _pipeline._copy(packed, host, pipe.stats)
                     pipe.retain(pipe.event(pipe.upload), host, packed_offsets)
-                if cacheable:
+                if shared and cacheable:
                     groups["_surface_shared_staged"] = staged_key
-            if shared:
+            if batched:
                 # Stage the frame packets of every view in one transfer and
                 # compose all views with one launch; grid row y composes view y.
                 block = packed_frames[:count * stride].view(count, stride)
-                packet = torch.zeros((count, stride), dtype=torch.float64)
-                for index, value in enumerate(frames):
-                    packet[:, index * rank:(index + 1) * rank].copy_(value[views].detach())
-                _pipeline._copy(block, packet, pipe.stats)
-                pipe.retain(pipe.event(pipe.upload), packet, packed_frames)
+                if frame_origins:
+                    for index, value in enumerate(frames):
+                        selected = value[views].detach()
+                        _pipeline._copy(block[:, index * rank:(index + 1) * rank], selected, pipe.stats)
+                        pipe.retain(pipe.event(pipe.upload), selected, packed_frames)
+                else:
+                    packet = torch.zeros((count, stride), dtype=torch.float64)
+                    for index, value in enumerate(frames):
+                        packet[:, index * rank:(index + 1) * rank].copy_(value[views].detach())
+                    _pipeline._copy(block, packet, pipe.stats)
+                    pipe.retain(pipe.event(pipe.upload), packet, packed_frames)
                 if rank == 3:
                     normal = block[:, 4 * rank:5 * rank]
                     axis_u, axis_v = block[:, 2 * rank:3 * rank], block[:, 3 * rank:4 * rank]
@@ -1433,7 +1494,7 @@ class Projector:
                         self.beam == "parallel", frame32, offset32,
                         tuple(centre) + (0.,) * (3 - rank), self.voxel_spacing,
                     )
-            for local in range(0 if shared else count):
+            for local in range(0 if batched else count):
                 packet = torch.cat([value[views.start + local].detach().to(device="cpu", dtype=torch.float64)
                                     for value in frames])
                 _pipeline._copy(packed_frames[:frame_count * rank], packet, pipe.stats)
@@ -1556,7 +1617,7 @@ class Projector:
         points = spec is not None or self.detector_chunk_shape is not None or pixels != self.detector_shape
         sizes = ((plan.view_chunk_size * rank, rays * rank) if points
                  else (plan.view_chunk_size * rank,) * (4 if self.beam == "cone" else 3))
-        return {"_max_rays": rays, "_max_geometry": sizes}
+        return {"_max_rays": rays, "_max_geometry": sizes, "_surface_batch": plan.surface_batch}
 
     def _prefetch_job(self, job, source, geometry, spec, transfer, groups, index, is_project,
                       native, reduced, active_rays, next_epoch=False):
@@ -2127,7 +2188,7 @@ class Projector:
         spacing = self.detector_spacing if self.beam == "cone" else self.detector_spacing[0]
         sampled = geometry_spec is not None and geometry_spec.kind in ("sampled", "offsets")
         grads = [torch.zeros(component.shape, dtype=torch.float32,
-                             device="cpu" if sampled else volume.device) for component in geometry]
+                             device=component.device if sampled else volume.device) for component in geometry]
         for device_rank, device in enumerate(devices):
             local_slice = _balanced_slice(local_views, device_rank, len(devices))
             if local_slice.start == local_slice.stop:
@@ -2514,22 +2575,28 @@ class Projector:
                             staged = tuple(value[owned].to(device=device, dtype=owner.dtype) for value in geometry)
                             admission_owner = copy(owner)
                             admission_owner.view_slice = slice(0, shard.stop - shard.start)
-                            for views, selected in _flat_admission_batches(admission_owner, staged, pixels):
+                            nonfinite = torch.zeros((), device=device, dtype=torch.bool)
+                            coincident = torch.zeros_like(nonfinite)
+                            for views, selected in _flat_admission_batches(
+                                admission_owner, staged, pixels, batched_corners=True,
+                            ):
                                 source, points = _sample_geometry(
                                     owner.beam, owner.detector_shape, owner.detector_spacing, staged,
                                     None, views, selected, owner.voxel_spacing, device=device,
                                     dtype=owner.dtype, validate=False,
                                 )
-                                if not torch.isfinite(source).all().item() or not torch.isfinite(points).all().item():
-                                    raise ValueError("detector surface world coordinates must be finite")
+                                nonfinite = nonfinite | ~torch.isfinite(source).all() | ~torch.isfinite(points).all()
                                 sources = source.reshape(source.shape[0], *([1] * len(selected)), -1)
-                                if owner.beam != "parallel" and torch.any(torch.all(points == sources, dim=-1)).item():
-                                    raise ValueError("source and detector surface pixels must differ")
+                                if owner.beam != "parallel":
+                                    coincident = coincident | torch.any(torch.all(points == sources, dim=-1))
                                 directions = (source if owner.beam == "parallel" else
                                               points - sources)
-                                if not torch.isfinite(directions).all().item():
-                                    raise ValueError("detector surface world coordinates must be finite")
+                                nonfinite = nonfinite | ~torch.isfinite(directions).all()
                                 del source, points, sources, directions
+                            _raise_geometry_errors([
+                                (nonfinite, "detector surface world coordinates must be finite"),
+                                (coincident, "source and detector surface pixels must differ"),
+                            ])
                             del staged
             except (TypeError, ValueError, RuntimeError) as failure:
                 error = failure
@@ -2591,7 +2658,25 @@ class Projector:
     def _prepare_execution(self, tensor, is_project, output_store=None):
         device = torch.device(getattr(tensor, "device", "cpu"))
         if self.detector_surface is not None:
-            spec, geometry = self._effective_geometry(None, device)
+            # Only eligible full calls need a preliminary snapshot reservation.
+            # Explicit streamed jobs first obtain exact shared-offset metadata.
+            devices = self._devices or (device,)
+            active_devices = devices[:min(len(devices), self.projection_shape[0])]
+            full_candidate = (not isinstance(self.detector_surface, ParameterizedSurface)
+                              and isinstance(tensor, torch.Tensor) and device.type == "cuda"
+                              and self.world_size == 1 and device in active_devices
+                              and output_store is None and self.volume_chunk_shape is None
+                              and self.view_chunk_size is None and self.detector_chunk_shape is None
+                              and self.schedule == "auto" and self.partition == "views")
+            if full_candidate:
+                plan = self._execution_plan(tensor, is_project, output_store)
+                spec, geometry = self._effective_geometry(plan, device)
+                if plan is None:
+                    return plan, spec, geometry
+            else:
+                spec, geometry = self._effective_geometry(None, torch.device("cpu"))
+            # Exact dtype/shared metadata can admit a borderline full call;
+            # reuse the one host snapshot if the preliminary plan streamed.
             plan = self._execution_plan(tensor, is_project, output_store, spec)
         else:
             plan = self._execution_plan(tensor, is_project, output_store)
@@ -2606,11 +2691,28 @@ class Projector:
             return None, tuple(component.clone() if plan is None or component.device.type == "cpu"
                                else component.to(device="cpu", copy=True)
                                for component in self._learnable)
-        # Callback graphs can save mutable captured parameters. Snapshot their
-        # values on the host, restoring their original device only when the
-        # callback's own backward needs them. Native tile graphs are not saved.
+        # Full CUDA execution has admitted its snapshots before the callback.
+        # Streamed execution and explicit CPU samplers retain host snapshots.
+        local = plan is None and input_device.type == "cuda"
+        capacity = sum(self._surface_snapshot_buffers()) if local else 0
+        arena, cursor = None, 0
+
         def pack(tensor):
-            return tensor.detach().to(device="cpu").clone(), tensor.device
+            nonlocal arena, cursor
+            if (local and tensor.device == input_device and tensor.layout == torch.strided
+                    and not tensor.is_nested and not tensor.is_quantized):
+                itemsize = tensor.element_size()
+                start = (cursor + itemsize - 1) // itemsize * itemsize
+                end = start + tensor.numel() * itemsize
+                if end <= capacity:
+                    with torch.no_grad():
+                        if arena is None:
+                            arena = torch.empty(capacity, dtype=torch.uint8, device=input_device)
+                        saved = arena[start:end].view(tensor.dtype).reshape(tensor.shape)
+                        saved.copy_(tensor.detach())
+                    cursor = end
+                    return saved, tensor.device
+            return tensor.detach().to(device="cpu", copy=True), tensor.device
 
         def unpack(saved):
             tensor, device = saved
@@ -2630,12 +2732,14 @@ class Projector:
                 with torch.autograd.graph.saved_tensors_hooks(pack, unpack):
                     offsets = self._surface_offsets()
                     values = (*frames, offsets)
-                    snapshots = tuple(value.clone() if value.device.type == "cpu" else value.to(device="cpu", copy=True)
+                    snapshots = tuple(value.clone() if (local and value.device == input_device)
+                                      or value.device.type == "cpu" else value.to(device="cpu", copy=True)
                                       for value in values)
                 spec = self._surface_spec(frames, offsets)
                 metadata = (tuple(offsets.shape), str(offsets.dtype))
             self._snapshot_d2h_bytes += sum(value.numel() * value.element_size()
-                                            for value in values if value.is_cuda)
+                                            for value, snapshot in zip(values, snapshots)
+                                            if value.is_cuda and not snapshot.is_cuda)
         except (TypeError, ValueError, RuntimeError) as failure:
             error = failure
         self._partition.preflight(error, metadata, cache_key="surface snapshot",

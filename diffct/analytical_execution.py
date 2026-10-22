@@ -53,6 +53,8 @@ def _sum(value, group, count):
 
 
 def _sum_blocks(value, group, count, block_elements):
+    if count == 1:
+        return value
     flat = value.reshape(-1)
     blocks = [_sum(flat.narrow(0, start, min(block_elements, flat.numel() - start)), group, count)
               for start in range(0, flat.numel(), block_elements)]
@@ -385,6 +387,21 @@ class AnalyticalExecution:
     def tensor_result(self):
         self._prepare_gradients()
         result = torch.zeros(self.volume_shape, device=self.output_device, dtype=self.dtype)
+        inputs = (self.source, self.projection_weights, self.angular_weights, self.filter_response)
+        active_gradients = torch.is_grad_enabled() and any(value is not None and value.requires_grad
+                                                         for value in inputs)
+        if self.partition.world_size == 1 and not active_gradients:
+            # Each tile still accumulates view batches in their original order.
+            # The numerical result itself holds the partial sums between batches.
+            for views, device in self._view_batches():
+                filtered, geometry = self._filtered(views, device)
+                for spatial, _ in _pixel_tiles(self.volume_shape, self.chunk_shape):
+                    partial = (self._native_gather(filtered, geometry, spatial) if self.backend == "numba"
+                               else self._portable_gather(filtered, geometry, views, spatial))
+                    result[spatial].add_(partial.to(self.output_device))
+                    del partial
+                del filtered, geometry
+            return result
         # Every owned tile's backward collective precedes the bundled input
         # transpose, even when this rank owns no data views. Empty space groups
         # have no tile collectives but still contribute zero input cotangents.

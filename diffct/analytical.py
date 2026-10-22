@@ -523,8 +523,7 @@ def _fan_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec,
         d_sino, n_views, n_det, d_reco, Nx, Ny,
         _DTYPE(detector_spacing), d_src_pos, d_det_center, d_det_u_vec,
         cx, cy, _DTYPE(voxel_spacing),
-        _DTYPE(isocenter[0].item() / voxel_spacing),
-        _DTYPE(isocenter[1].item() / voxel_spacing),
+        *(_DTYPE(value / voxel_spacing) for value in isocenter.tolist()),
     )
 
     return reco
@@ -586,9 +585,7 @@ def _cone_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec, det
         _DTYPE(du), _DTYPE(dv),
         d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
         cx, cy, cz, _DTYPE(voxel_spacing),
-        _DTYPE(isocenter[0].item() / voxel_spacing),
-        _DTYPE(isocenter[1].item() / voxel_spacing),
-        _DTYPE(isocenter[2].item() / voxel_spacing),
+        *(_DTYPE(value / voxel_spacing) for value in isocenter.tolist()),
     )
 
     # Convert back to (D, H, W) layout for the user.
@@ -640,7 +637,7 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
         scale = (sdd_n / (2.0 * math.pi * sid_n)).view(
             (-1,) + (1,) * (len(sinogram_shape) - 1)
         )
-        iso = tuple(_DTYPE(value.item() / parameters[-1]) for value in isocenter)
+        iso = tuple(_DTYPE(value / parameters[-1]) for value in isocenter.tolist())
 
     if beam == "cone":
         D, H, W, du, dv, spacing = parameters

@@ -52,9 +52,10 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
     ``offset32`` gives the offset arithmetic dtype. Values are stored exactly
     in float64 staging buffers. Results use caller-owned float32 buffers.
 
-    A launch may compose several views with the same offsets: grid row ``y``
+    A launch may compose several views: grid row ``y``
     writes view ``view_index + y`` from the ``y``-th of ``gridDim.y`` equal
-    frame packets in ``frames``.
+    frame packets in ``frames``. A shared offset buffer holds ``rank * capacity``
+    values plus status; a larger buffer holds one such packet per output view.
     """
     pixel = cuda.grid(1)
     view_index += cuda.blockIdx.y
@@ -68,15 +69,16 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
     if pixel >= count:
         return
 
-    tangent = offsets[pixel]
-    depth = offsets[(rank - 1) * capacity + pixel]
+    offset_base = view_index * rank * capacity if offsets.size > rank * capacity + 1 else 0
+    tangent = offsets[offset_base + pixel]
+    depth = offsets[offset_base + (rank - 1) * capacity + pixel]
     tangent32 = offset32 and frame32[2]
     point32 = frame32[1] and tangent32
     normal32 = frame32[2]
     vertical = np.float64(0.0)
     vertical32 = False
     if rank == 3:
-        vertical = offsets[capacity + pixel]
+        vertical = offsets[offset_base + capacity + pixel]
         vertical32 = offset32 and frame32[3]
         point32 = point32 and vertical32
         normal32 = normal32 and frame32[3]
