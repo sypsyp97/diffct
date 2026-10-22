@@ -6,7 +6,7 @@ import time
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from tests.test_native_volume_layout import (
     DETECTOR, SHAPE, VIEWS, _assert_atomic_close, _assert_native,
@@ -66,7 +66,7 @@ def test_native_layout_two_rank_nccl(tmp_path, mismatch):
     if not dist.is_available() or not dist.is_nccl_available():
         pytest.skip("PyTorch NCCL support is required")
     rendezvous = (tmp_path / "rendezvous").resolve().as_uri()
-    context = mp.spawn(_worker, args=(rendezvous, mismatch), nprocs=2, join=False)
+    context = spawn(_worker, args=(rendezvous, mismatch), nprocs=2, join=False)
     deadline = time.monotonic() + 180
     try:
         while not context.join(timeout=1):

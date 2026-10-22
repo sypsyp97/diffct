@@ -8,7 +8,7 @@ import weakref
 import numpy as np
 import pytest
 import torch
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from diffct import chunking
 import diffct.pipeline as pipeline
@@ -163,4 +163,4 @@ def _lifetime_worker(rank, mode):
 def test_pending_transfer_values_and_error_cleanup_survive_capacity_observation(mode):
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("native retirement controls require the native CUDA allocator")
-    mp.spawn(_lifetime_worker, args=(mode,), nprocs=1, join=True)
+    spawn(_lifetime_worker, args=(mode,), nprocs=1, join=True)

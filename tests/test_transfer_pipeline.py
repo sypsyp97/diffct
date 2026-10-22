@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 from torch.utils._pytree import tree_flatten
 
 import diffct.pipeline as pipeline
@@ -514,7 +514,7 @@ def _resident_nccl_worker(rank, beam, views, rendezvous):
 @pytest.mark.parametrize("beam", ("parallel", "fan", "cone"))
 @pytest.mark.parametrize("views", [1, 3], ids=["empty-rank", "uneven-views"])
 def test_nccl_tile_sum_is_resident_bounded_before_download_including_empty_rank(beam, views, tmp_path):
-    mp.spawn(_resident_nccl_worker, args=(beam, views, (tmp_path / "resident-tile-sum").resolve().as_uri()),
+    spawn(_resident_nccl_worker, args=(beam, views, (tmp_path / "resident-tile-sum").resolve().as_uri()),
              nprocs=2, join=True)
 
 

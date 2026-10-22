@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from diffct import ParameterizedSurface, Projector
 from tests.test_detector_surfaces import _arc_offsets, _case, _finite_difference, _matrix, _numpy
@@ -192,7 +192,7 @@ def test_four_rank_geometry_gradients_sum_once_with_mixed_data_participation(
     partition, references, tmp_path,
 ):
     rendezvous = (tmp_path / f"geometry-{partition}-rendezvous").resolve().as_uri()
-    context = mp.spawn(_distributed_worker, args=(rendezvous, partition, references),
+    context = spawn(_distributed_worker, args=(rendezvous, partition, references),
                        nprocs=4, join=False)
     deadline = time.monotonic() + 60
     try:

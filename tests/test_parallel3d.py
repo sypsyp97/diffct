@@ -9,7 +9,7 @@ import time
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 import diffct
 from diffct import ParameterizedSurface, Projector, TensorStore
@@ -363,7 +363,7 @@ def _distributed_worker(rank, rendezvous):
 @pytest.mark.skipif(not dist.is_available() or not dist.is_gloo_available(), reason="Gloo is required")
 def test_gloo_partitions_override_gradients_and_collective_validation_do_not_hang(tmp_path):
     rendezvous = (tmp_path / "parallel3d-rendezvous").resolve().as_uri()
-    context = mp.spawn(_distributed_worker, args=(rendezvous,), nprocs=2, join=False)
+    context = spawn(_distributed_worker, args=(rendezvous,), nprocs=2, join=False)
     deadline = time.monotonic() + 75
     try:
         while not context.join(timeout=1):

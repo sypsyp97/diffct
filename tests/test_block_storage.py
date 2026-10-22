@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_flatten
 
@@ -545,7 +545,7 @@ def _empty_rank_worker(rank, beam, rendezvous, directory):
                     reason="Two CUDA GPUs and real NCCL are required")
 @pytest.mark.parametrize("beam", BEAMS)
 def test_empty_rank_block_outputs_and_bounded_backprojection_sum(beam, tmp_path):
-    mp.spawn(_empty_rank_worker, args=(beam, (tmp_path / "block-nccl").resolve().as_uri(), str(tmp_path)),
+    spawn(_empty_rank_worker, args=(beam, (tmp_path / "block-nccl").resolve().as_uri(), str(tmp_path)),
              nprocs=2, join=True)
 
 

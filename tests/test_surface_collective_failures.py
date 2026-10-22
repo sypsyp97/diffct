@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from diffct import ParameterizedSurface, Projector, operators
 from diffct.chunking import _ChunkPlan
@@ -35,7 +35,7 @@ GLOO = pytest.mark.skipif(not dist.is_available() or not dist.is_gloo_available(
 
 def _run_two(worker, tmp_path, *args):
     rendezvous = (tmp_path / "rendezvous").resolve().as_uri()
-    context = mp.spawn(worker, args=(rendezvous, str(tmp_path), *args), nprocs=2, join=False)
+    context = spawn(worker, args=(rendezvous, str(tmp_path), *args), nprocs=2, join=False)
     deadline = time.monotonic() + 50
     try:
         while not context.join(timeout=1):
