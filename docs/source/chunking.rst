@@ -212,9 +212,17 @@ CPU or CUDA offsets. The operator transfers selected offsets to each compute
 device before expanding world points for its owned views or streamed batch.
 Memory planning uses these local view counts and the composition dtype.
 Gradient-connected offsets are snapshotted on CPU and transferred per batch.
-Streamed composition writes offset fragments into reusable float32 geometry
-buffers. Geometry backward replays one view and a bounded detector-row segment
-at a time, without retaining complete CUDA composition graphs.
+A full single-process CUDA call instead keeps admitted CUDA snapshots on the
+input GPU.
+Streamed composition stages a complete admitted view/pixel batch and composes
+it with one launch into reusable float32 geometry buffers. If that workspace
+does not fit, a smaller fallback workspace composes one view and a bounded
+detector-row segment at a time. Geometry backward replays one view and a
+bounded detector-row segment at a time, without retaining complete CUDA
+composition graphs.
+Composition and replay buffers never coexist. Admission charges the larger
+phase total and the largest allocation of either phase; the segment estimate
+counts the buffers of both phases, because one phase can leave segments pinned.
 Native admission starts with the owned view shard and detector rectangle,
 limited by explicit hints. It reduces validation batches to fit device memory,
 allocation and host-staging limits. These batches are independent of execution

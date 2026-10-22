@@ -60,6 +60,9 @@ scripts to see their own options.
 | `chunked_reconstruction.py` | CPU-backed CGLS with automatically sized CUDA tiles; optional `--chunk-shape` and `--view-chunk-size`; reports residual and peak CUDA tensor allocation. | 1 GPU, `--devices` in one process |
 | `disk_reconstruction.py` | Blockwise disk-backed CGLS, native flat/cylindrical/saddle geometry, rank-local checkpoints; `--partition space` gives fixed volume ownership. Synthetic data is generated blockwise by default. | 1 GPU, `--devices`, torchrun |
 | `benchmark_execution.py` | Real schedule and z-slab/3D-block comparisons; measured copy payloads, pilot metadata, elapsed time and CUDA tensor peaks. | 1 GPU, `--devices` |
+| `benchmark_trajectory_admission.py` | Per-call trajectory validation without numerical projection: admission time, validation rays and tensor transfers. `--backend torch --frame-device cpu` runs on CPU. | 1 GPU, CPU |
+| `benchmark_surface_geometry.py` | Synthetic helical scan with a curved detector: synchronized forward, adjoint and geometry-gradient timings for both surface interfaces. `--allow-streamed` also times streamed plans. | 1 GPU |
+| `benchmark_gpu_overheads.py` | Small synthetic cone-beam case: launch and transfer overheads of trainable trajectories, detector surfaces, CGLS, SIRT, TV and tiled FDK, with incremental peak allocation. | 1 GPU |
 | `analytical_reconstruction.py` | Parallel-beam FBP, fan-beam FBP and cone-beam FDK. `--window` selects the ramp-filter window. | 1 GPU |
 | `learnable_reconstruction.py` | Build parallel/fan FBP or cone FDK from FFT, weights and analytical gather; optimize filter and detector weights on synthetic noisy data. | 1 GPU |
 | `helical_fdk.py` | Approximate slice-windowed axial helical FDK; expose per-slice view weights and their gradients. | 1 GPU |

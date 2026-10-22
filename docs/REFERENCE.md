@@ -151,7 +151,10 @@ and frames during composition, then converts complete coordinates to float32.
 The PyTorch backend uses the selected precision. Memory planning includes the
 composition dtype and local view counts; samplers with an unknown output dtype
 use a conservative float64 allowance.
-Offset snapshots stay on CPU, with their gradient connections intact. Validation
+Offset snapshots keep their gradient connections. A full single-process CUDA
+call keeps CUDA snapshots on the input GPU when admission includes them and a
+bounded arena for tensors that the callback saves for backward; other calls
+and arena overflow use CPU snapshots. Validation
 uses bounded batches and reports local failures to all distributed ranks before
 numerical work. Ranks must agree on the actual callback offset shape and dtype
 at construction and on each call.
@@ -229,6 +232,11 @@ does not establish that a plan can be allocated.
 The segment estimate assumes standard native allocator settings and fresh
 fixed-buffer inventories; it does not guarantee allocation under arbitrary
 fragmentation or allocator overrides.
+With trainable detector-surface geometry, streamed execution has two workspace
+phases: surface composition and geometry-gradient replay. Their tensors never
+coexist, so the payload estimate uses the larger phase total and the largest
+allocation of either phase. Segments of one phase can stay pinned into the
+next, so the segment estimate counts the buffers of both phases.
 The tensor CGLS example budgets state segments separately from subsequent
 pipeline and norm segments. If these phases cannot fit under the same rules
 used after state allocation, ranks agree to keep solver state on CPU before
@@ -263,6 +271,11 @@ Geometry snapshots
 keep data and first-order geometry backward consistent with the forward call,
 including later parameter changes. Geometry second derivatives remain
 unsupported. No cache or autograd state retains all streamed CUDA tiles.
+Streamed composition stages the frames and offsets of a complete admitted
+view/pixel batch and composes them with one launch. If that workspace does not
+fit, admission selects a smaller fallback workspace that composes one view and
+a bounded detector-row segment at a time. Geometry-gradient replay uses the
+workspace that admission selected.
 For bounded GPU residency, keep data, trajectory tensors and learnable surface
 parameters on CPU. CUDA geometry snapshots and CUDA intermediates created by a
 callback consume additional GPU memory outside the tile buffers.

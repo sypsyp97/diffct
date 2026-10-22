@@ -82,6 +82,14 @@ counting validation rays and tensor transfers. These are not projection
 throughput measurements. For CPU-only admission measurements, add
 `--backend torch --frame-device cpu`.
 
+Run `python examples/benchmark_gpu_overheads.py --warmup 3 --samples 9` to
+measure launch and transfer overheads on a small synthetic cone-beam case. It
+reports synchronized wall times and incremental peak allocation for trainable
+trajectories, legacy, per-view and sampled surfaces, CGLS, SIRT, TV and tiled
+FDK. Run it once for each checkout with `PYTHONPATH` set to that checkout.
+Small cases expose dispatch costs; do not extrapolate their ratios to large,
+traversal-bound reconstructions.
+
 ## Batch dimensions and axis spacing
 
 Any leading batch/channel dimensions precede the configured volume or ray
@@ -183,6 +191,11 @@ Convergence means `||y - A x|| <= atol + rtol * ||y||`, including the initial
 iterate. `callback(iteration, residual, volume)` runs after each completed step;
 return `False` to stop. Inputs and optional `x0` are preserved. Solves detach
 their numerical state from autograd.
+Without a callback, SIRT and TV reuse the residual of the previous history
+entry for the next update, which saves one projection per iteration. With a
+callback, and after a resume, they recompute the residual because the callback
+can change the volume or the operator. CGLS reads its two scalar norms of an
+iteration together.
 
 ```python
 from diffct import cgls, sirt, tv_reconstruction

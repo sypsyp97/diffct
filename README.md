@@ -37,7 +37,7 @@
 > **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
 > For Apple Silicon, use the [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
 
-This README describes the source checkout, including [unreleased APIs](CHANGELOG.md#unreleased). Per-call trajectories, angle-tensor circular helpers, `transform_trajectory`, `parallel3d` and `native_volume_layout` require installation from source.
+This README describes the source checkout. Features listed under [Unreleased](CHANGELOG.md#unreleased) require installation from source.
 
 ## Why diffct
 
@@ -197,7 +197,7 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 ## Examples
 
-`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `benchmark_trajectory_admission.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `benchmark_trajectory_admission.py`, `benchmark_surface_geometry.py`, `benchmark_gpu_overheads.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
 
 ## Documentation
 
