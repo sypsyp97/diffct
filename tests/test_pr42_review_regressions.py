@@ -171,20 +171,14 @@ def test_streamed_trainable_shared_surface_admission_checks_phase_peaks(
     assert plan.allocation_limit == unlimited
 
 
-@pytest.mark.parametrize("allocation_limit,reservation_budget,admitted", [
-    pytest.param(1_440_256, 23_068_672, True, id="exact-phase-reservation-and-allocation"),
-    pytest.param(1_440_256, 23_068_671, False, id="reservation-one-byte-short"),
-    pytest.param(1_440_255, 23_068_672, False, id="sampler-cotangent-one-byte-short"),
-])
-def test_streamed_cuda_sampler_reservation_uses_each_real_phase(
-        monkeypatch, allocation_limit, reservation_budget, admitted):
+def _cuda_fp64_sampler_case(monkeypatch, shape):
     case = _case("fan", views=12000)
-    case.shape, case.detector = (400, 400), (5,)
+    case.shape, case.detector = shape, (5,)
     gain = torch.tensor(.01, dtype=torch.float64, requires_grad=True)
 
     def sampler(u, v, ids, gain):
-        tangent = u.expand(len(ids), *u.shape)
-        return torch.stack((tangent, torch.zeros_like(tangent), gain * tangent.square()), -1)
+        offsets = torch.stack((u, v, gain * u.square()), -1)
+        return offsets.expand(len(ids), *offsets.shape)
 
     surface = ParameterizedSurface(sampler, (gain,))
     projector = _projector(
@@ -199,27 +193,109 @@ def test_streamed_cuda_sampler_reservation_uses_each_real_phase(
         slice(0, case.views), (slice(0, case.detector[0]),),
     )
     assert projector._geometry_trainable and offsets.is_cuda and offsets.dtype == torch.float64
-    budget = 64 * 1024 ** 2
+    assert offsets.requires_grad and offsets.stride(0) == 0
+    assert offsets.untyped_storage().nbytes() == math.prod(case.detector) * 3 * 8
+    return case, projector, spec, offsets
+
+
+def _fan_sampler_phase_buffers(shape, *, batched=True, slots=1):
+    # Independent byte inventory for 12000 fan views, five pixels and FP64 offsets.
+    def rounded(size):
+        return (size + 511) // 512 * 512
+
+    pipeline = ((rounded(4 * math.prod(shape)),) * slots
+                + (rounded(4 * 12000 * 5),) * slots
+                + (rounded(4 * 12000 * 2), rounded(4 * 12000 * 5 * 2)) * (2 * slots))
+    views = 12000 if batched else 1
+    composition = (rounded(8 * views * 3 * 2), rounded(8 * (2 * 5 * views + 1)))
+    # Eight bounded ray temporaries, six frame gradients and the sampler cotangent.
+    replay = (rounded(8 * 2 * 5),) * 8 + (rounded(8 * 2),) * 6 + (rounded(8 * 12000 * 5 * 3),)
+    return pipeline, composition, replay
+
+
+@pytest.mark.parametrize("allocation_limit,reservation_budget,surface_batch", [
+    pytest.param(1_440_256, 28 * 1024 ** 2, True, id="exact-union-reservation-and-allocation"),
+    pytest.param(1_440_256, 28 * 1024 ** 2 - 1, False, id="union-one-byte-short-falls-back"),
+    pytest.param(1_440_256, 22 * 1024 ** 2, False, id="phase-max-only-falls-back"),
+    pytest.param(1_440_256, 22 * 1024 ** 2 - 1, None, id="fallback-reservation-one-byte-short"),
+    pytest.param(1_440_255, 28 * 1024 ** 2, None, id="sampler-cotangent-one-byte-short"),
+])
+def test_streamed_cuda_sampler_reservation_uses_phase_union(
+        monkeypatch, allocation_limit, reservation_budget, surface_batch):
+    case, projector, spec, offsets = _cuda_fp64_sampler_case(monkeypatch, (400, 400))
+    pipeline, composition, replay = _fan_sampler_phase_buffers(case.shape)
+    # Only the larger phase is live, even though reservation includes both phases.
+    budget = sum(pipeline) + max(sum(composition), sum(replay))
 
     with _native_plan_budget(budget), \
             mock.patch.object(operators, "_memory_budget", return_value=(budget, allocation_limit)), \
             mock.patch.object(operators, "_reservation_budget", return_value=reservation_budget):
-        if not admitted:
+        if surface_batch is None:
             with pytest.raises(RuntimeError, match="memory|budget|minimum|fit|limit"):
                 projector._execution_plan(torch.empty(case.shape), True, geometry_spec=spec)
             return
         plan = projector._execution_plan(torch.empty(case.shape), True, geometry_spec=spec)
-        workspace = projector._surface_work_buffers(case.views, case.detector, spec=spec, streamed=True)
+        workspace = projector._surface_work_buffers(
+            case.views, case.detector, spec=spec, streamed=True, batched=plan.surface_batch,
+        )
+        pipeline, composition, replay = _fan_sampler_phase_buffers(case.shape, batched=surface_batch)
+        union_reservation = operators._reservation_bytes(pipeline + composition + replay)
 
-    assert plan is not None and plan.surface_batch
+    assert plan is not None and plan.surface_batch is surface_batch and plan.slots == 1
     assert plan.chunk_shape == case.shape
     assert plan.view_chunk_size == case.views and plan.detector_chunk_shape == case.detector
-    # Composition has the larger total; replay has the larger allocation.
-    assert sum(workspace) == max(1_536_512, 1_447_424)
+    assert sum(workspace) == max(sum(composition), sum(replay))
     cotangent_bytes = offsets.numel() * offsets.element_size()
     assert max(workspace) == (cotangent_bytes + 511) // 512 * 512 == allocation_limit
-    assert plan.estimated_gpu_bytes == 2_033_152 + max(1_536_512, 1_447_424)
-    # Native reservations are 8 MiB for composition and 22 MiB for replay,
-    # each including the pipeline. A merged inventory incorrectly needs 24 MiB.
-    assert plan.estimated_reserved_bytes == max(8, 22) * 1024 ** 2
-    assert plan.estimated_reserved_bytes == plan.reservation_budget_bytes == reservation_budget
+    assert plan.estimated_gpu_bytes == sum(pipeline) + max(sum(composition), sum(replay))
+    assert plan.estimated_gpu_bytes <= plan.gpu_budget_bytes == budget
+    assert plan.estimated_reserved_bytes == union_reservation
+    assert plan.estimated_reserved_bytes <= plan.reservation_budget_bytes == reservation_budget
+
+
+def test_streamed_cuda_sampler_admitted_reservation_covers_pinned_phase_union(monkeypatch):
+    case, projector, spec, _ = _cuda_fp64_sampler_case(monkeypatch, (400, 400))
+    pipeline, composition, replay = _fan_sampler_phase_buffers(case.shape)
+    budget = 64 * 1024 ** 2
+    unlimited = (1 << 63) - 1
+
+    with _native_plan_budget(budget), \
+            mock.patch.object(operators, "_memory_budget", return_value=(budget, unlimited)):
+        plan = projector._execution_plan(torch.empty(case.shape), True, geometry_spec=spec)
+        phase_max = max(operators._reservation_bytes(pipeline + phase)
+                        for phase in (composition, replay))
+        union_reservation = operators._reservation_bytes(pipeline + composition + replay)
+
+    assert plan is not None and plan.surface_batch and plan.slots == 1
+    assert plan.chunk_shape == case.shape
+    assert plan.view_chunk_size == case.views and plan.detector_chunk_shape == case.detector
+    # Freed composition blocks can leave small-pool segments pinned during replay.
+    assert phase_max == 22 * 1024 ** 2 < union_reservation == 28 * 1024 ** 2
+    assert plan.estimated_reserved_bytes >= union_reservation
+
+
+@pytest.mark.parametrize("shape", [(400, 400), (483, 483)], ids=["400x400", "483x483"])
+@pytest.mark.parametrize("is_project", [False, True], ids=["backproject", "project"])
+def test_plan_buffers_reservation_matches_candidate_phase_union(monkeypatch, shape, is_project):
+    case, projector, spec, _ = _cuda_fp64_sampler_case(monkeypatch, shape)
+    pipeline, composition, replay = _fan_sampler_phase_buffers(shape)
+    # This live-byte limit forces a single-slot candidate in both shapes.
+    budget = sum(pipeline) + max(sum(composition), sum(replay))
+    unlimited = (1 << 63) - 1
+    source = torch.empty(case.shape if is_project else case.sino_shape)
+
+    with _native_plan_budget(budget), \
+            mock.patch.object(operators, "_memory_budget", return_value=(budget, unlimited)):
+        plan = projector._execution_plan(source, is_project, geometry_spec=spec)
+        assert plan is not None and plan.surface_batch
+        candidates = projector._candidate_plans(plan, is_project, spec)
+        assert candidates
+        union_buffers = pipeline + composition + replay
+        union_reservation = operators._reservation_bytes(union_buffers)
+        for candidate in candidates:
+            assert candidate.slots == candidate.window_size == 1 and candidate.surface_batch
+            assert candidate.chunk_shape == shape
+            assert candidate.view_chunk_size == case.views and candidate.detector_chunk_shape == case.detector
+            buffers = projector._plan_buffers(candidate, is_project, spec)
+            assert operators._reservation_bytes(buffers) == candidate.estimated_reserved_bytes == union_reservation
+            assert sorted(buffers) == sorted(union_buffers)

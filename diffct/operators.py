@@ -786,8 +786,8 @@ class Projector:
                                                    streamed=True, batched=surface_batch)
             return (
                 sum(buffers) + sum(workspace) <= budget
-                and self._surface_reserved_bytes(buffers, batch, pixels, spec=geometry_spec,
-                                                 streamed=True, batched=surface_batch) <= reservation_budget
+                and _reservation_bytes(buffers + self._surface_reserved_buffers(
+                    batch, pixels, spec=geometry_spec, streamed=True, batched=surface_batch)) <= reservation_budget
                 and _largest_buffer_bytes(self.beam, shape, batch, pixels, points) <= allocation_limit
                 and max(workspace, default=0) <= allocation_limit
                 and _host_geometry_bytes(self.beam, batch, pixels, host_points) <= _pipeline._GEOMETRY_WORK_BYTES
@@ -830,11 +830,12 @@ class Projector:
                           estimated_gpu_bytes=estimate, foreign_output=foreign_output,
                           surface_batch=surface_batch,
                           reservation_budget_bytes=reservation_budget,
-                          estimated_reserved_bytes=self._surface_reserved_bytes(_pipeline_buffers(
+                          estimated_reserved_bytes=_reservation_bytes(_pipeline_buffers(
                               self.beam, chunk, batch, pixels, surface or pixels != self.detector_shape,
                               geometry_grad=self._geometry_trainable,
-                              ray_accumulators=extra_rays, peers=peers or foreign_output),
-                              batch, pixels, spec=geometry_spec, streamed=True, batched=surface_batch))
+                              ray_accumulators=extra_rays, peers=peers or foreign_output)
+                              + self._surface_reserved_buffers(batch, pixels, spec=geometry_spec,
+                                                               streamed=True, batched=surface_batch)))
 
     def _surface_capacity(self, views, pixels):
         rank, columns = len(self.volume_shape), 3 if self.beam == "cone" else 2
@@ -868,9 +869,13 @@ class Projector:
             buffers = [size for size in buffers if size]
         return tuple(buffers)
 
-    def _surface_reserved_bytes(self, buffers, *args, **kwargs):
-        """Reservation bound of `buffers` with each surface workspace phase."""
-        return max(_reservation_bytes(buffers + phase) for phase in self._surface_work_phases(*args, **kwargs))
+    def _surface_reserved_buffers(self, *args, **kwargs):
+        """Every surface workspace allocation of a call, for reservation bounds.
+
+        Phases never hold live tensors together, but blocks of one phase can
+        leave allocator segments pinned for the next, so all of them count.
+        """
+        return tuple(size for phase in self._surface_work_phases(*args, **kwargs) for size in phase)
 
     def _surface_work_phases(self, views, pixels, slots=1, spec=None, *, streamed=False, batched=True):
         """Bound device-local offset staging and world-point expression storage.
@@ -1237,11 +1242,12 @@ class Projector:
                                                                   streamed=True, batched=plan.surface_batch))
 
         def reserved(shape, slots=1, retained=1, ray_accumulators=0):
-            return self._surface_reserved_bytes(_pipeline_buffers(
+            return _reservation_bytes(_pipeline_buffers(
                 self.beam, shape, plan.view_chunk_size, pixels, points,
                 slots=slots, retained=retained, geometry_grad=self._geometry_trainable,
-                peers=peers, ray_accumulators=ray_accumulators),
-                plan.view_chunk_size, pixels, slots, spec, streamed=True, batched=plan.surface_batch)
+                peers=peers, ray_accumulators=ray_accumulators)
+                + self._surface_reserved_buffers(plan.view_chunk_size, pixels, slots, spec,
+                                                 streamed=True, batched=plan.surface_batch))
 
         shapes = [plan.chunk_shape]
         if self.volume_chunk_shape is None and len(volume_shape) == 3:
@@ -1317,7 +1323,7 @@ class Projector:
         return _pipeline_buffers(
             self.beam, plan.chunk_shape, plan.view_chunk_size, pixels, points,
             slots=plan.slots, retained=plan.window_size, geometry_grad=self._geometry_trainable,
-            peers=peers, ray_accumulators=extra_rays) + self._surface_work_buffers(
+            peers=peers, ray_accumulators=extra_rays) + self._surface_reserved_buffers(
                 plan.view_chunk_size, pixels, plan.slots, spec, streamed=True, batched=plan.surface_batch)
 
     def _choose_schedule(self, source, sink, is_project, geometry, plan, spec):
