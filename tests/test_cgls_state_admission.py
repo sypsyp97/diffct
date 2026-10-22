@@ -11,7 +11,7 @@ import sys
 
 import pytest
 import torch
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 from diffct import Projector
 from diffct import chunking
@@ -138,7 +138,7 @@ def test_native_cgls_admission_survives_first_backprojection_with_live_states(ce
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("phase admission regression requires the native CUDA allocator")
     _example("_common")  # Preserve standalone-sdist skipping before starting a worker.
-    mp.spawn(_native_worker, args=(ceiling_mib, cached_mib, backend, str(tmp_path)), nprocs=1, join=True)
+    spawn(_native_worker, args=(ceiling_mib, cached_mib, backend, str(tmp_path)), nprocs=1, join=True)
 
 
 class _CpuSum:

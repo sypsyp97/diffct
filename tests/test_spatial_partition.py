@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 from torch.utils._pytree import tree_flatten
 
 import diffct
@@ -69,7 +69,7 @@ def _fixture(beam, first=5, *, views=5, trainable=False):
 
 def _run_processes(worker, args, *, timeout=90):
     """Bound hangs and terminate only this test's own worker processes."""
-    context = mp.spawn(worker, args=args, nprocs=2, join=False)
+    context = spawn(worker, args=args, nprocs=2, join=False)
     deadline = time.monotonic() + timeout
     try:
         while not context.join(timeout=1):

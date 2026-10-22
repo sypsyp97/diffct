@@ -13,7 +13,7 @@ from unittest import mock
 import numpy as np
 import pytest
 import torch
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_flatten
 
@@ -153,7 +153,7 @@ def _cold_native_worker(rank, directory, foreign_stream=False):
 def test_cold_native_32mib_large_flat_cone_repeats_and_disk_cgls(tmp_path):
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("native segment admission regression requires the native CUDA allocator")
-    mp.spawn(_cold_native_worker, args=(str(tmp_path),), nprocs=1, join=True)
+    spawn(_cold_native_worker, args=(str(tmp_path),), nprocs=1, join=True)
 
 
 @pytest.mark.cuda
@@ -161,7 +161,7 @@ def test_cold_native_32mib_large_flat_cone_repeats_and_disk_cgls(tmp_path):
 def test_live_foreign_stream_segment_leaves_room_for_automatic_small_pool_plan(tmp_path):
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("foreign-stream segment admission requires the native CUDA allocator")
-    mp.spawn(_cold_native_worker, args=(str(tmp_path), True), nprocs=1, join=True)
+    spawn(_cold_native_worker, args=(str(tmp_path), True), nprocs=1, join=True)
 
 
 class _IndividualCudaAllocations(TorchDispatchMode):
@@ -218,7 +218,7 @@ def _cgls_individual_worker(rank, entries):
 def test_cgls_checks_individual_state_and_fp64_scratch_against_native_limit(entries):
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("individual segment admission requires the native CUDA allocator")
-    mp.spawn(_cgls_individual_worker, args=(entries,), nprocs=1, join=True)
+    spawn(_cgls_individual_worker, args=(entries,), nprocs=1, join=True)
 
 
 def _native_boundary_worker(rank, allocation_size, reservation):
@@ -243,7 +243,7 @@ def _native_boundary_worker(rank, allocation_size, reservation):
 def test_actual_standard_native_segment_boundaries(allocation_size, reservation):
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("segment sizes belong to the native CUDA allocator")
-    mp.spawn(_native_boundary_worker, args=(allocation_size, reservation), nprocs=1, join=True)
+    spawn(_native_boundary_worker, args=(allocation_size, reservation), nprocs=1, join=True)
 
 
 def _mixed_native_worker(rank):
@@ -267,7 +267,7 @@ def _mixed_native_worker(rank):
 def test_actual_shared_large_pool_6_10_6mib_requires_two_20mib_segments():
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("shared large pool belongs to the native CUDA allocator")
-    mp.spawn(_mixed_native_worker, nprocs=1, join=True)
+    spawn(_mixed_native_worker, nprocs=1, join=True)
 
 
 @torch.no_grad()
@@ -319,7 +319,7 @@ def _packing_worker(rank, explicit):
 def test_real_8_8_5mib_inventory_uses_feasible_plan_or_preserves_rejected_output(explicit):
     if torch.cuda.get_allocator_backend() != "native":
         pytest.skip("native packing admission requires the native CUDA allocator")
-    mp.spawn(_packing_worker, args=(explicit,), nprocs=1, join=True)
+    spawn(_packing_worker, args=(explicit,), nprocs=1, join=True)
 
 
 def test_solver_admission_includes_forward_view_accumulators_when_rays_dominate_volume():

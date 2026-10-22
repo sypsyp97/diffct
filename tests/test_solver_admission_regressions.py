@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from tests._multiprocessing import spawn
 
 import diffct
 from tests.test_detector_surfaces import _case, _grids, _matrix
@@ -120,7 +120,7 @@ def test_finite_streamed_cgls_matches_independent_matrix_recurrence(kind, tmp_pa
 
 def _run_two(worker, tmp_path, *args):
     rendezvous = (tmp_path / "rendezvous").resolve().as_uri()
-    context = mp.spawn(worker, args=(rendezvous, str(tmp_path), *args), nprocs=2, join=False)
+    context = spawn(worker, args=(rendezvous, str(tmp_path), *args), nprocs=2, join=False)
     deadline = time.monotonic() + 150
     try:
         while not context.join(timeout=1):
