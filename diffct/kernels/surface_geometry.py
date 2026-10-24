@@ -7,7 +7,7 @@ from numba import cuda
 from numba.core import config
 from numba.cuda import libdevice
 
-from .spacing import _axis_pitch
+from .spacing import _axis_pitch, _is_per_axis
 
 if config.ENABLE_CUDASIM:
     # The simulator does not implement the libdevice arithmetic stubs.
@@ -115,7 +115,7 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
                   and math.isfinite(source_native) and math.isfinite(point_native))
         coincident = coincident and source_native == point_native
         range_source, range_point = source_value, point
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             pitch = _axis_pitch(voxel_spacing, axis)
             range_source /= pitch
             range_point /= pitch
@@ -135,12 +135,12 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
     elif not parallel:
         if coincident:
             error = np.float64(2.0)
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             source_distance = math.sqrt(source_squared)
             point_distance = math.sqrt(point_squared)
         else:
-            source_distance = math.sqrt(source_squared) / voxel_spacing
-            point_distance = math.sqrt(point_squared) / voxel_spacing
+            source_distance = math.sqrt(source_squared) / _axis_pitch(voxel_spacing, 0)
+            point_distance = math.sqrt(point_squared) / _axis_pitch(voxel_spacing, 0)
         if min(source_distance, point_distance) > 1e6:
             error = np.float64(3.0)
         if source_distance > 1e15 or point_distance > 1e15:

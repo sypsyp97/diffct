@@ -9,6 +9,8 @@ import math
 import numpy as np
 from numba import cuda
 
+from .spacing import _axis_pitch, _is_per_axis
+
 from ..constants import _EPSILON, _FDK_ACCURACY_DECORATOR, _HALF, _ONE, _ZERO
 
 
@@ -30,12 +32,12 @@ def _parallel_2d_fbp_transpose_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    if isinstance(voxel_spacing, tuple):
-        x_v *= voxel_spacing[1]
-        y_v *= voxel_spacing[0]
+    if _is_per_axis(voxel_spacing):
+        x_v *= _axis_pitch(voxel_spacing, 0)
+        y_v *= _axis_pitch(voxel_spacing, 1)
         coordinate_scale = _ONE
     else:
-        coordinate_scale = voxel_spacing
+        coordinate_scale = _axis_pitch(voxel_spacing, 0)
 
     det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF
@@ -90,12 +92,12 @@ def _fan_2d_fbp_transpose_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    if isinstance(voxel_spacing, tuple):
-        x_v *= voxel_spacing[1]
-        y_v *= voxel_spacing[0]
+    if _is_per_axis(voxel_spacing):
+        x_v *= _axis_pitch(voxel_spacing, 0)
+        y_v *= _axis_pitch(voxel_spacing, 1)
         coordinate_scale = _ONE
     else:
-        coordinate_scale = voxel_spacing
+        coordinate_scale = _axis_pitch(voxel_spacing, 0)
 
     det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF
@@ -187,13 +189,13 @@ def _cone_3d_fdk_transpose_kernel(
     y_v = np.float32(iy) + _HALF - cy
     z_v = np.float32(iz) + _HALF - cz
 
-    if isinstance(voxel_spacing, tuple):
-        x_v *= voxel_spacing[2]
-        y_v *= voxel_spacing[1]
-        z_v *= voxel_spacing[0]
+    if _is_per_axis(voxel_spacing):
+        x_v *= _axis_pitch(voxel_spacing, 0)
+        y_v *= _axis_pitch(voxel_spacing, 1)
+        z_v *= _axis_pitch(voxel_spacing, 2)
         coordinate_scale = _ONE
     else:
-        coordinate_scale = voxel_spacing
+        coordinate_scale = _axis_pitch(voxel_spacing, 0)
 
     du_v = du / coordinate_scale
     dv_v = dv / coordinate_scale

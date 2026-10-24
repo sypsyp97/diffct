@@ -9,7 +9,7 @@ import math
 import numpy as np
 from numba import cuda
 
-from .spacing import _axis_pitch, _ray_scale
+from .spacing import _axis_pitch, _is_per_axis, _ray_scale
 
 from ..constants import (
     _FASTMATH_DECORATOR,
@@ -109,7 +109,7 @@ def _cone_3d_forward_kernel(
         v_vec_y = d_det_v_vec[iview, 1]
         v_vec_z = d_det_v_vec[iview, 2]
 
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
             v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
             det_x = (det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
@@ -138,7 +138,7 @@ def _cone_3d_forward_kernel(
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
+    if length == 0 or (not _is_per_axis(voxel_spacing) and length < _EPSILON):
         d_sino[iview, iu, iv] = _ZERO; return
     
     # Normalize 3D ray direction vector for parametric traversal
@@ -337,7 +337,7 @@ def _cone_3d_backward_kernel(
         v_vec_y = d_det_v_vec[iview, 1]
         v_vec_z = d_det_v_vec[iview, 2]
 
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
             v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
             det_x = (det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
@@ -365,11 +365,11 @@ def _cone_3d_backward_kernel(
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
+    if length == 0 or (not _is_per_axis(voxel_spacing) and length < _EPSILON):
         return
     inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len  # Normalized 3D ray direction vector
-    if isinstance(voxel_spacing, tuple):
+    if _is_per_axis(voxel_spacing):
         g = d_sino[iview, iu, iv] * _ray_scale(voxel_spacing, dir_x, dir_y, dir_z)
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
@@ -531,13 +531,13 @@ def _cone_3d_fdk_backproject_kernel(
     y_v = np.float32(iy) + _HALF - cy
     z_v = np.float32(iz) + _HALF - cz
 
-    if isinstance(voxel_spacing, tuple):
-        x_v *= voxel_spacing[2]
-        y_v *= voxel_spacing[1]
-        z_v *= voxel_spacing[0]
+    if _is_per_axis(voxel_spacing):
+        x_v *= _axis_pitch(voxel_spacing, 0)
+        y_v *= _axis_pitch(voxel_spacing, 1)
+        z_v *= _axis_pitch(voxel_spacing, 2)
         coordinate_scale = _ONE
     else:
-        coordinate_scale = voxel_spacing
+        coordinate_scale = _axis_pitch(voxel_spacing, 0)
 
     du_v = du / coordinate_scale
     dv_v = dv / coordinate_scale

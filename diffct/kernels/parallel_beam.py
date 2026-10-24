@@ -10,7 +10,7 @@ import math
 import numpy as np
 from numba import cuda
 
-from .spacing import _axis_pitch, _ray_scale
+from .spacing import _axis_pitch, _is_per_axis, _ray_scale
 
 from ..constants import (
     _FASTMATH_DECORATOR,
@@ -84,7 +84,7 @@ def _parallel_2d_forward_kernel(
     # Read ray direction (parallel for all rays in this view)
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
-    if isinstance(voxel_spacing, tuple):
+    if _is_per_axis(voxel_spacing):
         dir_x /= _axis_pitch(voxel_spacing, 0)
         dir_y /= _axis_pitch(voxel_spacing, 1)
         inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
@@ -104,7 +104,7 @@ def _parallel_2d_forward_kernel(
         # Ray starting point: detector origin + offset along u-direction
         pnt_x = det_ox + u_offset * u_vec_x
         pnt_y = det_oy + u_offset * u_vec_y
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             offset_y = ((np.float64(idet) + _HALF - np.float64(n_det) * _HALF)
                         * det_spacing / _axis_pitch(voxel_spacing, 1))
             pnt_y = det_oy + offset_y * u_vec_y
@@ -265,7 +265,7 @@ def _parallel_2d_backward_kernel(
     # Read ray direction (parallel for all rays in this view)
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
-    if isinstance(voxel_spacing, tuple):
+    if _is_per_axis(voxel_spacing):
         dir_x /= _axis_pitch(voxel_spacing, 0)
         dir_y /= _axis_pitch(voxel_spacing, 1)
         inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
@@ -285,7 +285,7 @@ def _parallel_2d_backward_kernel(
         # Ray starting point: detector origin + offset along u-direction
         pnt_x = det_ox + u_offset * u_vec_x
         pnt_y = det_oy + u_offset * u_vec_y
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             offset_y = ((np.float64(idet) + _HALF - np.float64(n_det) * _HALF)
                         * det_spacing / _axis_pitch(voxel_spacing, 1))
             pnt_y = det_oy + offset_y * u_vec_y
@@ -293,7 +293,7 @@ def _parallel_2d_backward_kernel(
         pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / _axis_pitch(voxel_spacing, 0)
         pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / _axis_pitch(voxel_spacing, 1)
 
-    if isinstance(voxel_spacing, tuple):
+    if _is_per_axis(voxel_spacing):
         val = d_sino[iang, idet] * _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
@@ -393,12 +393,12 @@ def _parallel_2d_fbp_backproject_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    if isinstance(voxel_spacing, tuple):
-        x_v *= voxel_spacing[1]
-        y_v *= voxel_spacing[0]
+    if _is_per_axis(voxel_spacing):
+        x_v *= _axis_pitch(voxel_spacing, 0)
+        y_v *= _axis_pitch(voxel_spacing, 1)
         coordinate_scale = _ONE
     else:
-        coordinate_scale = voxel_spacing
+        coordinate_scale = _axis_pitch(voxel_spacing, 0)
 
     det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF

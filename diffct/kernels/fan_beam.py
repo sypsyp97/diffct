@@ -9,7 +9,7 @@ import math
 import numpy as np
 from numba import cuda
 
-from .spacing import _axis_pitch, _ray_scale
+from .spacing import _axis_pitch, _is_per_axis, _ray_scale
 
 from ..constants import (
     _FASTMATH_DECORATOR,
@@ -92,7 +92,7 @@ def _fan_2d_forward_kernel(
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
 
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
             det_x = det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
             det_y = det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
@@ -113,7 +113,7 @@ def _fan_2d_forward_kernel(
     # Ray direction vector from source to detector element
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
-    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
+    if length == 0 or (not _is_per_axis(voxel_spacing) and length < _EPSILON):
         d_sino[iang, idet] = _ZERO; return
     
     # Normalize ray direction vector for parametric traversal
@@ -268,7 +268,7 @@ def _fan_2d_backward_kernel(
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
 
-        if isinstance(voxel_spacing, tuple):
+        if _is_per_axis(voxel_spacing):
             u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
             det_x = det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
             det_y = det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
@@ -288,11 +288,11 @@ def _fan_2d_backward_kernel(
     # Ray direction vector from source to detector element
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
-    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
+    if length == 0 or (not _is_per_axis(voxel_spacing) and length < _EPSILON):
         return
     inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len  # Normalized ray direction vector
-    if isinstance(voxel_spacing, tuple):
+    if _is_per_axis(voxel_spacing):
         val = d_sino[iang, idet] * _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
@@ -397,12 +397,12 @@ def _fan_2d_fbp_backproject_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    if isinstance(voxel_spacing, tuple):
-        x_v *= voxel_spacing[1]
-        y_v *= voxel_spacing[0]
+    if _is_per_axis(voxel_spacing):
+        x_v *= _axis_pitch(voxel_spacing, 0)
+        y_v *= _axis_pitch(voxel_spacing, 1)
         coordinate_scale = _ONE
     else:
-        coordinate_scale = voxel_spacing
+        coordinate_scale = _axis_pitch(voxel_spacing, 0)
 
     det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF
