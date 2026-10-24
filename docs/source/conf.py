@@ -58,7 +58,8 @@ html_theme_options = {
     'header_links_before_dropdown': 6,
     'navbar_align': 'left',
     'navbar_end': ['theme-switcher', 'navbar-icon-links'],
-    'secondary_sidebar_items': ['page-toc', 'edit-this-page'],
+    # Generated API stubs are not in the repository, so they get no edit link.
+    'secondary_sidebar_items': {'*': ['page-toc', 'edit-this-page'], 'generated/*': ['page-toc']},
     'use_edit_page_button': True,
     'show_toc_level': 2,
     'footer_start': ['copyright'],
@@ -67,6 +68,8 @@ html_theme_options = {
 html_sidebars = {
     'index': [],
     'examples': [],
+    'getting_started': [],
+    'changelog': [],
 }
 
 

@@ -1,6 +1,23 @@
 API Reference
 =============
 
+.. raw:: html
+
+   <script>
+   // The reference used to be one page. Old links such as api.html#diffct.Projector.project
+   // open the generated page of the object, at the same anchor.
+   (function () {
+     var pages = ["diffct.Projector", "diffct.TensorStore", "diffct.NpyStore", "diffct.ParameterizedSurface", "diffct.ParallelProjectorFunction", "diffct.ParallelBackprojectorFunction", "diffct.FanProjectorFunction", "diffct.FanBackprojectorFunction", "diffct.ConeProjectorFunction", "diffct.ConeBackprojectorFunction", "diffct.geometry.circular_trajectory_3d", "diffct.geometry.circular_trajectory_3d_parallel", "diffct.geometry.random_trajectory_3d", "diffct.geometry.spiral_trajectory_3d", "diffct.geometry.sinusoidal_trajectory_3d", "diffct.geometry.saddle_trajectory_3d", "diffct.geometry.custom_trajectory_3d", "diffct.geometry.circular_trajectory_2d_parallel", "diffct.geometry.sinusoidal_trajectory_2d_parallel", "diffct.geometry.custom_trajectory_2d_parallel", "diffct.geometry.circular_trajectory_2d_fan", "diffct.geometry.sinusoidal_trajectory_2d_fan", "diffct.geometry.custom_trajectory_2d_fan", "diffct.geometry.transform_trajectory", "diffct.analytical.detector_coordinates_1d", "diffct.analytical.angular_integration_weights", "diffct.analytical.fan_cosine_weights", "diffct.analytical.cone_cosine_weights", "diffct.analytical.parker_weights", "diffct.analytical.ramp_filter_1d", "diffct.analytical.parallel_weighted_backproject", "diffct.analytical.fan_weighted_backproject", "diffct.analytical.cone_weighted_backproject", "diffct.reconstruction.fbp", "diffct.reconstruction.fdk", "diffct.reconstruction.fbp_into", "diffct.reconstruction.fdk_into", "diffct.reconstruction.helical_fdk", "diffct.reconstruction.helical_view_weights", "diffct.reconstruction.helical_weighted_backproject", "diffct.solvers.SolverResult", "diffct.solvers.cgls", "diffct.solvers.sirt", "diffct.solvers.tv_reconstruction", "diffct.solvers.cgls_into", "diffct.solvers.total_variation"];
+     var target = decodeURIComponent(window.location.hash.slice(1));
+     for (var name = target; name.indexOf(".") > 0; name = name.slice(0, name.lastIndexOf("."))) {
+       if (pages.indexOf(name) >= 0) {
+         window.location.replace("generated/" + name + ".html#" + target);
+         return;
+       }
+     }
+   })();
+   </script>
+
 High-level Projector
 --------------------
 
@@ -31,43 +48,46 @@ Leading batch/channel axes and per-axis voxel spacing are supported; see
 assigns rank-local volume slabs. See :doc:`chunking` for memory, storage,
 geometry and autograd requirements, and :doc:`multi_gpu` for ownership.
 
-Block stores and batched surfaces
-------------------------------------------------------------
+Complete Reconstruction Pipelines
+------------------------------------
+
+.. currentmodule:: diffct.reconstruction
+
+.. autosummary::
+   :toctree: generated
+   :template: api_function.rst
+   :nosignatures:
+
+   fbp
+   fdk
+   fbp_into
+   fdk_into
+   helical_fdk
+   helical_view_weights
+   helical_weighted_backproject
+
+Numerical Solvers
+-----------------
+
+.. currentmodule:: diffct.solvers
 
 .. autosummary::
    :toctree: generated
    :template: api_class.rst
    :nosignatures:
 
-   TensorStore
-   NpyStore
-   ParameterizedSurface
-
-``project_into`` and ``backproject_into`` use caller-owned numerical outputs.
-``ParameterizedSurface`` exposes mutable geometry as explicit tensor
-parameters and samples bounded global view/pixel rectangles. Legacy two-argument
-surface callbacks remain available. See :ref:`detector-surfaces`.
-
-Low-level Functions
--------------------
-
-These ``autograd.Function`` wrappers take explicit trajectory tensors. Use the
-``forward`` signature as the argument order for ``.apply(...)``. For new code,
-prefer ``Projector``, which checks inputs and manages devices.
-
-.. currentmodule:: diffct
+   SolverResult
 
 .. autosummary::
    :toctree: generated
-   :template: api_autograd_function.rst
+   :template: api_function.rst
    :nosignatures:
 
-   ParallelProjectorFunction
-   ParallelBackprojectorFunction
-   FanProjectorFunction
-   FanBackprojectorFunction
-   ConeProjectorFunction
-   ConeBackprojectorFunction
+   cgls
+   sirt
+   tv_reconstruction
+   cgls_into
+   total_variation
 
 Geometry Helpers
 ----------------
@@ -112,6 +132,25 @@ Geometry Helpers
 
    transform_trajectory
 
+Block stores and batched surfaces
+---------------------------------
+
+.. currentmodule:: diffct
+
+.. autosummary::
+   :toctree: generated
+   :template: api_class.rst
+   :nosignatures:
+
+   TensorStore
+   NpyStore
+   ParameterizedSurface
+
+``project_into`` and ``backproject_into`` use caller-owned numerical outputs.
+``ParameterizedSurface`` exposes mutable geometry as explicit tensor
+parameters and samples bounded global view/pixel rectangles. Legacy two-argument
+surface callbacks remain available. See :ref:`detector-surfaces`.
+
 Analytical Reconstruction Helpers
 ---------------------------------
 
@@ -153,47 +192,6 @@ interpolated axis, including the cone detector's v axis.
    fan_weighted_backproject
    cone_weighted_backproject
 
-Complete Reconstruction Pipelines
-------------------------------------
-
-.. currentmodule:: diffct.reconstruction
-
-.. autosummary::
-   :toctree: generated
-   :template: api_function.rst
-   :nosignatures:
-
-   fbp
-   fdk
-   fbp_into
-   fdk_into
-   helical_fdk
-   helical_view_weights
-   helical_weighted_backproject
-
-Numerical Solvers
------------------
-
-.. currentmodule:: diffct.solvers
-
-.. autosummary::
-   :toctree: generated
-   :template: api_class.rst
-   :nosignatures:
-
-   SolverResult
-
-.. autosummary::
-   :toctree: generated
-   :template: api_function.rst
-   :nosignatures:
-
-   cgls
-   sirt
-   tv_reconstruction
-   cgls_into
-   total_variation
-
 Ramp Filter Options
 -------------------
 
@@ -231,3 +229,24 @@ The ``window`` argument selects a window applied to the Ram-Lak ramp:
      - Milder than Hann.
    * - ``"hann"`` or ``"hanning"``
      - Strongest high-frequency suppression.
+
+Low-level Functions
+-------------------
+
+These ``autograd.Function`` wrappers take explicit trajectory tensors. Use the
+``forward`` signature as the argument order for ``.apply(...)``. For new code,
+prefer ``Projector``, which checks inputs and manages devices.
+
+.. currentmodule:: diffct
+
+.. autosummary::
+   :toctree: generated
+   :template: api_autograd_function.rst
+   :nosignatures:
+
+   ParallelProjectorFunction
+   ParallelBackprojectorFunction
+   FanProjectorFunction
+   FanBackprojectorFunction
+   ConeProjectorFunction
+   ConeBackprojectorFunction

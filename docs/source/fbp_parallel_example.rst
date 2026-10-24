@@ -13,6 +13,10 @@ filter options and helper signatures, see :doc:`api`.
 Run it
 ------
 
+Run the commands from the root of a source checkout; ``pip install diffct`` does not
+install the ``examples/`` directory. See the "From source" tab in
+:doc:`getting_started`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
+
 .. code-block:: bash
 
    python examples/analytical_reconstruction.py --size 64 --window shepp-logan

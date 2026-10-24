@@ -14,6 +14,10 @@ GPUs in one process, or on several processes and nodes.
 Run it
 ------
 
+Run the commands from the root of a source checkout; ``pip install diffct`` does not
+install the ``examples/`` directory. See the "From source" tab in
+:doc:`getting_started`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
+
 .. code-block:: bash
 
    python examples/iterative_reconstruction.py --trajectory helical

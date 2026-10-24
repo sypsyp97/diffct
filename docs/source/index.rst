@@ -15,7 +15,9 @@ diffct
          <a class="hero-button" href="examples.html">Examples</a>
          <a class="hero-button" href="api.html">API reference</a>
        </div>
-       <pre class="hero-install"><code>pip install "diffct[cu12]"</code></pre>
+       <pre class="hero-install"><code>pip install "diffct[cu13]"   # CUDA 13 PyTorch
+   pip install "diffct[cu12]"   # CUDA 12 PyTorch
+   pip install diffct           # CPU or ROCm, backend="torch"</code></pre>
      </div>
      <div class="hero-visual">
        <img class="dark-light" src="_static/gallery/walnut_rotating.webp" width="360" height="360"
@@ -103,42 +105,7 @@ Features
 Install
 -------
 
-.. tab-set::
-
-   .. tab-item:: CUDA 12
-
-      .. code-block:: bash
-
-         pip install "diffct[cu12]"
-
-      Install a CUDA 12 build of PyTorch first. The extra installs the CUDA
-      compiler libraries that Numba CUDA needs.
-
-   .. tab-item:: CUDA 13
-
-      .. code-block:: bash
-
-         pip install "diffct[cu13]"
-
-      Install a CUDA 13 build of PyTorch first. The extra installs the CUDA
-      compiler libraries that Numba CUDA needs.
-
-   .. tab-item:: CPU or ROCm
-
-      .. code-block:: bash
-
-         pip install diffct
-
-      Install the PyTorch build for your device, then use ``backend="torch"``.
-      Importing diffct and using this backend require no CUDA runtime.
-
-   .. tab-item:: From source
-
-      .. code-block:: bash
-
-         git clone https://github.com/sypsyp97/diffct.git
-         cd diffct && pip install -e ".[cu12]"
-         python examples/quickstart.py
+.. include:: install_steps.inc
 
 Backend, precision and solver contracts are in :doc:`execution`.
 
@@ -174,12 +141,12 @@ Create the acquisition once. Then call ``project()`` and ``backproject()``.
          import torch
          from diffct import Projector, spiral_trajectory_3d
 
-         trajectory = spiral_trajectory_3d(90, sid=160.0, sdd=256.0, z_range=20.0, n_turns=1.0, device="cpu")
-         A = Projector(trajectory, volume_shape=(64, 64, 64), detector_shape=(192, 128), detector_spacing=0.8,
+         trajectory = spiral_trajectory_3d(60, sid=120.0, sdd=192.0, z_range=15.0, n_turns=1.0, device="cpu")
+         A = Projector(trajectory, volume_shape=(48, 48, 48), detector_shape=(144, 96), detector_spacing=0.8,
                        backend="torch")
 
          volume = torch.rand(A.volume_shape)
-         sinogram = A.project(volume)        # (90, 192, 128) line integrals
+         sinogram = A.project(volume)        # (60, 144, 96) line integrals
          adjoint = A.backproject(sinogram)   # matched adjoint A^T
 
          x = torch.zeros_like(volume, requires_grad=True)

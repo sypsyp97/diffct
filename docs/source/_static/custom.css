@@ -68,7 +68,7 @@ html[data-theme="dark"] {
 .feature-grid .sd-card-title, .gallery-grid .sd-card-title { font-size: 1.05rem; }
 .gallery-grid .sd-card-img-top {
   height: 150px;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
   background: #111418;
 }

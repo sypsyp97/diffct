@@ -1,8 +1,9 @@
 Examples
 ========
 
-Each card links to a page with the full script and an explanation. The figures
-are rendered from the same pipelines; see the caption on each page.
+Each card links to a page with commands, an explanation and a result figure. The
+caption of each figure states how it was made. The scripts are in the ``examples/``
+directory of a source checkout; see the "From source" tab in :doc:`getting_started`.
 
 .. grid:: 1 2 3 3
    :gutter: 3

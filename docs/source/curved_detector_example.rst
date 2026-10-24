@@ -15,6 +15,10 @@ gradients on a circular scan.
 Run it
 ------
 
+Run the commands from the root of a source checkout; ``pip install diffct`` does not
+install the ``examples/`` directory. See the "From source" tab in
+:doc:`getting_started`.
+
 .. code-block:: bash
 
    python examples/curved_detector.py
