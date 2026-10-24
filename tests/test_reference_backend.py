@@ -386,7 +386,12 @@ def test_invalid_scalar_or_per_axis_voxel_spacing_is_rejected(beam, spacing):
     ("float32", 1.0), ("float64", 1.0), ("fast", (1.0, 1.0)),
     ("float64", (1.0, 2.0)),
 ])
-def test_numba_rejects_incompatible_precision_or_tuple_spacing(precision, spacing):
+def test_numba_validates_precision_and_tuple_spacing(precision, spacing):
+    if precision == "fast" and torch.cuda.is_available() and torch.version.hip is None:
+        operator = _operator(replace(_case("parallel"), spacing=spacing),
+                             backend="numba", precision=precision)
+        assert operator.backend == "numba" and operator.precision == precision
+        return
     with pytest.raises((ValueError, RuntimeError)) as error:
         _operator(replace(_case("parallel"), spacing=spacing), backend="numba", precision=precision)
     assert not isinstance(error.value, NotImplementedError), "native configuration validation is still pending"
@@ -404,7 +409,7 @@ def test_numba_rejects_unavailable_native_platform(platform, monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["no-cuda", "hip", "float32", "float64", "anisotropic"])
-def test_auto_routes_portable_configurations_to_torch(mode, monkeypatch):
+def test_auto_routes_configurations_to_expected_backend(mode, monkeypatch):
     case = _case("parallel", scalar=mode != "anisotropic")
     precision = mode if mode in ("float32", "float64") else "fast"
     if mode == "no-cuda":
@@ -412,9 +417,12 @@ def test_auto_routes_portable_configurations_to_torch(mode, monkeypatch):
     if mode == "hip":
         # Dispatch simulation only; real HIP tensor execution needs ROCm hardware.
         monkeypatch.setattr(torch.version, "hip", "7.0-test")
-    monkeypatch.setattr(TorchCUDABridge, "tensor_to_cuda_array", _no_numba)
+    expected_backend = ("numba" if mode == "anisotropic" and torch.cuda.is_available()
+                        and torch.version.hip is None else "torch")
+    if expected_backend == "torch":
+        monkeypatch.setattr(TorchCUDABridge, "tensor_to_cuda_array", _no_numba)
     operator = _operator(case, backend="auto", precision=precision)
-    assert operator.backend == "torch" and operator.precision == precision
+    assert operator.backend == expected_backend and operator.precision == precision
     image = _data(case.shape)
     _close(operator.project(image), (_matrix(case) @ image.flatten()).reshape(case.projection_shape),
            precision=precision)

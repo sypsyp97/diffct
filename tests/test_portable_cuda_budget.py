@@ -921,7 +921,8 @@ REASON_SETS = [("voxel_spacing",), ("precision-float32",), ("precision-float64",
                ("voxel_spacing", "precision-float64"), ("voxel_spacing", "precision-float32", "hybrid")]
 
 
-@pytest.mark.parametrize("reasons", REASON_SETS, ids=["+".join(value) for value in REASON_SETS])
+@pytest.mark.parametrize("reasons", [value for value in REASON_SETS if value != ("voxel_spacing",)],
+                         ids=lambda value: "+".join(value))
 def test_auto_fallback_on_nvidia_warns_once_per_instance_and_names_each_reason(
     reasons, nvidia_platform, request,
 ):
@@ -938,7 +939,10 @@ def test_auto_fallback_on_nvidia_warns_once_per_instance_and_names_each_reason(
         )
         message = str(found[0].message)
         for reason in reasons:
-            assert _REASON_WORDS[reason] in message, f"warning does not name {reason!r}: {message}"
+            if reason == "voxel_spacing":
+                assert _REASON_WORDS[reason] not in message, f"spacing is not a fallback reason: {message}"
+            else:
+                assert _REASON_WORDS[reason] in message, f"warning does not name {reason!r}: {message}"
         assert _TORCH_HINT.search(message), f"warning does not mention backend='torch': {message}"
         volume = torch.ones(operator.volume_shape)
         with warnings.catch_warnings(record=True) as records:
@@ -983,9 +987,10 @@ def test_auto_fallback_without_nvidia_cuda_does_not_warn(reasons, platform_name,
 @pytest.mark.cuda
 @requires_nvidia
 @pytest.mark.parametrize("backend", ["auto", "numba"])
-def test_native_selection_on_nvidia_does_not_warn(backend):
+@pytest.mark.parametrize("reasons", [(), ("voxel_spacing",)], ids=["scalar-spacing", "per-axis-spacing"])
+def test_native_selection_on_nvidia_does_not_warn(backend, reasons):
     with warnings.catch_warnings(record=True) as records:
         warnings.simplefilter("always")
-        operator = _construct(backend, ())
+        operator = _construct(backend, reasons)
     assert operator.backend == "numba"
     assert not _user_warnings(records), [str(record.message) for record in records]
