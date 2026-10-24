@@ -91,8 +91,7 @@ def setup(app):
 
     app.connect('build-finished', release_mocked_cuda_cleanup)
 
-    def add_semantic_search(app, pagename, templatename, context, doctree):
-        if pagename == 'search':
-            app.add_js_file('semantic-search.js', loading_method='defer')
+    def add_search_script(app, pagename, templatename, context, doctree):
+        app.add_js_file('search-ui.js', type='module')
 
-    app.connect('html-page-context', add_semantic_search)
+    app.connect('html-page-context', add_search_script)

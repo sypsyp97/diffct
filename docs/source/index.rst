@@ -7,8 +7,9 @@ diffct
 
    <div class="landing-search">
      <form action="search.html" method="get" role="search">
-       <input type="search" name="q" placeholder="Search the documentation" aria-label="Search the documentation" autofocus>
+       <input type="search" name="q" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" autofocus>
      </form>
+     <div class="srch-mount"></div>
    </div>
 
 diffct provides differentiable CUDA projectors and matched adjoints for computed

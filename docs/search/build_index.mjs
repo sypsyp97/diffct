@@ -1,4 +1,4 @@
-// Embed the documentation chunks that `search_chunks.py` wrote, and publish the browser runtime.
+// Embed the documentation chunks, sentences and pages that `search_chunks.py` wrote, and publish the browser runtime.
 //
 //   node build_index.mjs <html-dir>
 //
@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { AutoConfig, env, pipeline } from '@huggingface/transformers';
+import { embeddingTexts } from '../source/_static/search-core.js';
 
 const MODEL = 'onnx-community/embeddinggemma-2-ONNX';
 const REVISION = 'daa72c51243991dfcaf9f9137d2c573d8f7790c0';
@@ -22,7 +23,9 @@ const staticDir = path.join(htmlDir, '_static');
 if (process.env.HF_CACHE_DIR) env.cacheDir = process.env.HF_CACHE_DIR;
 
 const chunks = JSON.parse(fs.readFileSync(path.join(staticDir, 'search-chunks.json'), 'utf8'));
-const texts = chunks.map((c) => `title: ${c.s ? `${c.p} > ${c.s}` : c.p} | text: ${c.t}`);
+const { chunkTexts, sentenceTexts, pageTexts } = embeddingTexts(chunks);
+// Vector file order: chunks, sentences, pages. `search-core.js` reads the same order.
+const texts = [...chunkTexts, ...sentenceTexts, ...pageTexts];
 
 // The checkpoint is multimodal. Without vision and audio configs, only the text model loads.
 const config = await AutoConfig.from_pretrained(MODEL, { revision: REVISION });
@@ -34,8 +37,8 @@ const extractor = await pipeline('feature-extraction', MODEL, {
 
 // Sort by length so that a batch pads little, then restore the order.
 const order = texts.map((_, i) => i).sort((a, b) => texts[a].length - texts[b].length);
-const codes = new Int8Array(chunks.length * DIM);
-const scales = new Float32Array(chunks.length);
+const codes = new Int8Array(texts.length * DIM);
+const scales = new Float32Array(texts.length);
 for (let i = 0; i < order.length; i += BATCH) {
   const ids = order.slice(i, i + BATCH);
   const out = await extractor(ids.map((j) => texts[j]), { pooling: 'mean', normalize: true });
@@ -68,7 +71,7 @@ for (const build of ['asyncify', 'jsep']) {
 }
 
 fs.writeFileSync(path.join(staticDir, 'search-meta.json'), JSON.stringify({
-  model: MODEL, revision: REVISION, dtype: DTYPE, dim: DIM, count: chunks.length,
+  model: MODEL, revision: REVISION, dtype: DTYPE, dim: DIM,
   query_prefix: QUERY_PREFIX,
 }));
-console.log(`Embedded ${chunks.length} chunks (${DTYPE}, ${DIM}-d, int8 storage).`);
+console.log(`Embedded ${chunkTexts.length} chunks, ${sentenceTexts.length} sentences and ${pageTexts.length} pages (${DTYPE}, ${DIM}-d, int8 storage).`);

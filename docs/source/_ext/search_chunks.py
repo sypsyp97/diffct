@@ -1,16 +1,21 @@
 """Write the section chunks that the in-browser semantic search embeds and displays.
 
 After the HTML build, every page is split into chunks of at most MAX_CHARS characters.
-A chunk keeps the page title, the section title and the URL of its anchor.
+A chunk keeps the page title, the section path, the URL of its anchor, the prose (`t`), the code
+(`c`) and the sentence start offsets of the prose (`o`).
 `docs/search/embed.mjs` reads `_static/search-chunks.json` and writes the vectors.
 """
 
 import json
+import re
 from pathlib import Path
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 MAX_CHARS = 1800
+MAX_CODE_CHARS = 1500
+MIN_SENTENCE = 40
+MAX_SENTENCES = 16
 MIN_CHARS = 60
 MIN_PAGE_CHARS = 200  # shorter pages are redirect stubs
 # The changelog repeats words from every page and outranks the guides. Sphinx search still covers it.
@@ -21,16 +26,23 @@ HEADINGS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
 def _clean(node):
     for junk in node.select('.headerlink, button.copybtn, script, style, .linenos'):
         junk.decompose()
-    for pre in node.find_all('pre'):
-        pre.replace_with(NavigableString(' ' + pre.get_text() + ' '))
 
 
 def _text(node):
     return ' '.join(node.get_text(' ', strip=True).split())
 
 
+def _prose_and_code(node):
+    """Return the text of a node without its code blocks, and the text of those blocks."""
+    code = []
+    for pre in node.find_all('pre'):
+        code.append(' '.join(pre.get_text().split()))
+        pre.decompose()
+    return _text(node), ' '.join(code)
+
+
 def _blocks(section):
-    """Yield (anchor id or None, text) for the content directly under one section."""
+    """Yield (anchor id or None, prose, code) for the content directly under one section."""
     for child in section.children:
         if isinstance(child, NavigableString):
             continue
@@ -39,37 +51,52 @@ def _blocks(section):
         if child.name == 'dl' and 'py' in (child.get('class') or []):
             for dt in child.find_all('dt', recursive=False):
                 dd = dt.find_next_sibling('dd')
-                body = _text(dd) if dd is not None else ''
-                yield dt.get('id'), f'{_text(dt)} {body}'.strip()
+                prose, code = _prose_and_code(dd) if dd is not None else ('', '')
+                yield dt.get('id'), prose, f'{_text(dt)} {code}'.strip()
             continue
-        text = _text(child)
-        if text:
-            yield None, text
+        prose, code = _prose_and_code(child)
+        if prose or code:
+            yield None, prose, code
+
+
+def _sentence_starts(text):
+    """Offsets where sentences start. Fragments shorter than MIN_SENTENCE merge into the next."""
+    starts = [0]
+    for match in re.finditer(r'(?<=[.!?])\s+(?=[A-Z0-9`"(])', text):
+        if match.end() - starts[-1] >= MIN_SENTENCE:
+            starts.append(match.end())
+    return starts[:MAX_SENTENCES]
 
 
 def _split(pieces, section_id):
-    """Pack (anchor, text) pieces into chunks of at most MAX_CHARS characters."""
-    chunks, current, size, anchor = [], [], 0, section_id
-    for piece_anchor, text in pieces:
-        while len(text) > MAX_CHARS:
-            cut = text.rfind('\n', 0, MAX_CHARS)
-            cut = text.rfind(' ', 0, MAX_CHARS) if cut < MAX_CHARS // 2 else cut
+    """Pack (anchor, prose, code) pieces into chunks of at most MAX_CHARS characters."""
+    chunks, prose_parts, code_parts, size, anchor = [], [], [], 0, section_id
+
+    def flush():
+        nonlocal prose_parts, code_parts, size
+        if prose_parts or code_parts:
+            chunks.append((anchor, '\n'.join(prose_parts), ' '.join(code_parts)[:MAX_CODE_CHARS]))
+        prose_parts, code_parts, size = [], [], 0
+
+    for piece_anchor, prose, code in pieces:
+        while len(prose) > MAX_CHARS:
+            cut = prose.rfind(' ', 0, MAX_CHARS)
             cut = cut if cut > 0 else MAX_CHARS
-            head, text = text[:cut].strip(), text[cut:].strip()
-            if current:
-                chunks.append((anchor, '\n'.join(current)))
-                current, size = [], 0
-            chunks.append((piece_anchor or section_id, head))
+            head, prose = prose[:cut].strip(), prose[cut:].strip()
+            flush()
+            chunks.append((piece_anchor or section_id, head, ''))
             piece_anchor = None
-        if current and size + len(text) > MAX_CHARS:
-            chunks.append((anchor, '\n'.join(current)))
-            current, size, anchor = [], 0, piece_anchor or section_id
-        if not current:
+        if (prose_parts or code_parts) and size + len(prose) + len(code) // 2 > MAX_CHARS:
+            flush()
+            anchor = piece_anchor or section_id
+        if not (prose_parts or code_parts):
             anchor = piece_anchor or anchor
-        current.append(text)
-        size += len(text) + 1
-    if current:
-        chunks.append((anchor, '\n'.join(current)))
+        if prose:
+            prose_parts.append(prose)
+        if code:
+            code_parts.append(code)
+        size += len(prose) + len(code) // 2 + 1
+    flush()
     return chunks
 
 
@@ -87,8 +114,8 @@ def _page_chunks(html_path, url):
     for section in [top, *top.find_all('section')]:
         trail = [s for s in [*section.find_parents('section'), section] if s is not top]
         title = ' > '.join(_text(s.find(HEADINGS, recursive=False)) for s in trail)
-        for anchor, text in _split(list(_blocks(section)), section.get('id')):
-            if len(text) < MIN_CHARS:
+        for anchor, prose, code in _split(list(_blocks(section)), section.get('id')):
+            if len(prose) + len(code) < MIN_CHARS:
                 continue
             if anchor == top.get('id'):
                 anchor = None
@@ -96,7 +123,9 @@ def _page_chunks(html_path, url):
                 'u': url + (f'#{anchor}' if anchor else ''),
                 'p': page_title,
                 's': '' if section is top else title,
-                't': text,
+                't': prose,
+                'c': code,
+                'o': _sentence_starts(prose) if prose else [],
             })
     return out
 
@@ -111,7 +140,7 @@ def write_chunks(app, exception):
         html_path = Path(app.outdir) / f'{docname}.html'
         if html_path.exists():
             page = _page_chunks(html_path, f'{docname}.html')
-            if sum(len(c['t']) for c in page) >= MIN_PAGE_CHARS:
+            if sum(len(c['t']) + len(c['c']) for c in page) >= MIN_PAGE_CHARS:
                 chunks.extend(page)
     target = Path(app.outdir) / '_static' / 'search-chunks.json'
     target.write_text(json.dumps(chunks, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
