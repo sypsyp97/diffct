@@ -113,7 +113,8 @@ def _parallel_geometry_terms(voxel_spacing, c_x, c_y, ct_x, ct_y, t_min,
                 ray_x, ray_y, dir_x, dir_y, scaled_length, accum)
 
 
-@overload(_parallel_geometry_terms, target="cuda")
+# Match the calling kernel's arithmetic flags for the separate device function.
+@overload(_parallel_geometry_terms, target="cuda", jit_options={"fastmath": True})
 def _parallel_geometry_terms_overload(voxel_spacing, c_x, c_y, ct_x, ct_y, t_min,
                                       ray_x, ray_y, dir_x, dir_y, scaled_length, accum):
     return _parallel_per_axis_terms if isinstance(voxel_spacing, types.BaseTuple) else _parallel_scalar_terms
