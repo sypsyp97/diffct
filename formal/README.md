@@ -8,6 +8,8 @@ The labels describe the evidence each check supplies:
 - **PROOF**: Z3 finds no counterexample over the stated real-number domain, or SymPy proves an exact identity.
 - **BOUNDED**: the check enumerates a specified finite domain. Floating-point comparisons use stated tolerances.
 - **PROPERTY TEST**: Hypothesis samples inputs. A passing run is not an exhaustive result.
+- **MODEL CHECK**: TLC explores every reachable state of a finite protocol under its stated fairness assumptions.
+- **TRACE VALIDATION**: TLC checks an observed execution against protocol transitions and invariants. This checks that execution only.
 
 Proofs apply to small mathematical models, not compiled Numba CUDA kernels.
 Source guards check selected expressions to expose model drift; they do not prove that the whole implementation matches a model.
@@ -53,6 +55,18 @@ They do not compile CUDA code.
 | CGLS keeps q through global qq, alpha and the residual update | BOUNDED: exact rational state exploration | Scalar instance A=3/2, y=4/3; early reuse has a wrong-result counterexample | Premature q overwrite or reuse in the model | General convergence, floating-point arithmetic and source equivalence |
 | CGLS capacity includes x/s/p, r/q and transient dot/pipeline scratch | PROOF: Z3 integers | Independent live regions across projection, norm and update phases; omitting each region has a capacity counterexample | Admitting only a raw volume or omitting solver state/scratch | Allocator rounding, implementation estimates and arbitrary callback memory |
 | Union reservation bounds nonoverlapping surface composition/replay despite pipeline pins; phase maxima do not | BOUNDED: exhaustive reachable allocation/free orders for 512 three-request inventories at eight pool/rounding boundaries and 64 six-request inventories at two small-pool sizes; concrete 24 vs 22 MiB counterexample; four source mutation guards | `test_surface_phase_reservation.py`; `_surface_work_phases`, payload/largest-allocation inventory, union inventory and streamed admission in `_execution_plan`, `_candidate_plans`, `_plan_buffers` | Reusing freed phase bytes in a reservation estimate when other allocations pin their segments | Assumes empty cache, one owner, each request allocated/freed once, composition fully freed before replay, pipeline events anywhere, standard native best-fit pools with splitting/coalescing and birth-order ties; excludes preexisting holes, repeated epochs, events, concurrent owners, allocator overrides, sampler internals, actual CUDA and full source equivalence |
+| Portable device/host budget agreement and collective order | MODEL CHECK: `tla/BudgetAgreement.tla`, `Distributed.tla`; TRACE VALIDATION: real Gloo calls | Scalar budget agreement, collective signatures, empty local work and local trainability | Missing agreement, skipped participants, local errors without collective abort | Finite ranks; abstract chunk planning; the required abort action is absent from current numerical error paths |
+| Live work, output copies, graphs, reduced tiles and host staging fit admitted limits | MODEL CHECK: `tla/MemoryEnvelope.tla`; BOUNDED: Apalache, eight transitions | Explicit component inventory with separate device/host ceilings | Omitted allocation classes, multiple retained tiles, missing cleanup | Assumes exact component sizes and sound admission; does not prove PyTorch allocation estimates or CUDA peaks |
+| Host slots and device buffers preserve copy lifetimes and return to empty pools | MODEL CHECK: `tla/PipelineLifecycle.tla` | Tagged upload, compute, download, read, reuse, exception cleanup and repeated calls | Unfinished reads, premature reuse, retained resources and pool growth | Assumes event completion succeeds; CPU runs do not validate CUDA event wiring |
+| Recording calls select bounded autograd; geometry replay preserves pair order | MODEL CHECK: `tla/AutogradRouting.tla`, `RecomputeOrder.tla`; TRACE VALIDATION: `RecomputeTrace.tla` | Finite grad/transform/geometry/world/batch classifications; actual Function dispatch and geometry pairs | Shallow wrapper inspection, unnecessary pure-forward Function routing, reordered or missing pairs | Trace replay checks one leading piece; the standalone model checks two; these models do not check derivative values |
+| Shared statistics and group caches require serialization | MODEL CHECK: `tla/ThreadSafety.tla`; TRACE VALIDATION: concurrent real calls | Statistics publication/read; group-cache check/create/store | Statistics reset during recursive calls and duplicate modeled groups | The group-cache race is a model witness; only the statistics race is reproduced in real threads |
+
+## TLA+ protocols
+
+The [TLA+ runner](tla/README.md) checks finite protocols, mutations and real CPU/Gloo traces.
+It keeps the existing mathematical and simulator checks unchanged.
+Known implementation failures have required counterexamples. An unexpected repair fails the check until its expectation is reviewed.
+Passing the runner means its positive checks and expected counterexamples agree. It does not mean that every implementation contract holds.
 
 ## Simulator domain
 
