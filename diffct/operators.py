@@ -5,6 +5,7 @@ import numbers
 from copy import copy
 from dataclasses import replace
 import time
+import warnings
 
 import torch
 
@@ -427,6 +428,7 @@ class Projector:
                  volume_chunk_shape=None, view_chunk_size=None, detector_chunk_shape=None,
                  schedule="auto", partition="views", backend="auto", precision="fast",
                  partition_grid=None, native_volume_layout=False):
+        requested_backend = backend
         if beam == "parallel3d":
             if backend == "numba":
                 raise ValueError("parallel3d requires the torch backend; numba is not supported")
@@ -545,6 +547,19 @@ class Projector:
         )
         if self.backend == "torch":
             self._reference = ReferenceProjector(self)
+            if requested_backend == "auto" and torch.cuda.is_available() and torch.version.hip is None:
+                reasons = [reason for applies, reason in (
+                    (isinstance(voxel_spacing, (tuple, list)), "per-axis voxel_spacing"),
+                    (precision != "fast", f"precision={precision!r}"),
+                    (partition == "hybrid", "partition='hybrid'"),
+                    (beam == "parallel3d", "beam='parallel3d'"),
+                ) if applies]
+                warnings.warn(
+                    "backend='auto' selected the portable PyTorch backend, not the native CUDA backend, "
+                    f"because of {', '.join(reasons)}. The portable backend can be much slower for large "
+                    "problems. Pass backend='torch' to select it explicitly and silence this warning.",
+                    UserWarning, stacklevel=2,
+                )
 
     def _validate_geometry_range(self):
         if self.dtype == torch.float32 and self.beam in ("fan", "cone") and self.detector_surface is None:

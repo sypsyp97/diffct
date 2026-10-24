@@ -3,6 +3,7 @@
 import itertools
 import math
 import numbers
+import os
 import time
 from contextlib import nullcontext
 
@@ -10,16 +11,37 @@ import torch
 import torch.distributed as dist
 from torch.autograd import forward_ad
 
+from .chunking import _memory_lower_bounds
+from .distribution import control_status
 from .surfaces import ParameterizedSurface
 
 
-# Maximum automatic ray/plane work array payload; caller data/results and
-# legacy callback allocations are separate. Explicit chunk hints take priority.
+# Maximum automatic ray/plane work array payload for host memory; caller
+# data/results and legacy callback allocations are separate. Explicit chunk
+# hints take priority.
 _REFERENCE_WORK_BYTES = 8 * 1024 * 1024
-# A geometry-gradient pair keeps its autograd graph and backward temporaries:
-# measured at most about 1.5x the forward pair's peak, and its saved graph at
-# about 2.2x the planned plane tables. Geometry backward plans with this many
-# times the leading batch, so one pair stays within the forward pair's memory.
+# Live bytes per ray outside the crossing tables: ray setup, validation and
+# FP64 clipping vectors (see `ReferenceProjector._work_model`).
+_RAY_WORK_BYTES = 1024
+# Largest element count of one automatic CUDA work array. Many PyTorch kernels
+# use 32-bit indexing per tensor, so larger arrays only add risk, not speed.
+_WORK_ELEMENTS = 2 ** 31 - 1
+
+
+def _host_free_bytes():
+    """Free host memory where the platform reports it, else the fixed 8 MiB ceiling."""
+    try:
+        return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        return _REFERENCE_WORK_BYTES
+
+
+# A geometry-gradient pair keeps its autograd graph and backward temporaries.
+# Measured peak of one recomputed pair (forward, graph and autograd.grad): at
+# most 1.27x ReferenceProjector._work_model of its plan and about 1.45x a plain
+# forward pair. Geometry backward plans with 1/this of the CUDA budget (or, on
+# the fixed 8 MiB plan, this many times the leading batch), leaving at least
+# 1.5x slack for the previous pair's tables.
 _GEOMETRY_WORK_FACTOR = 2
 
 
@@ -267,27 +289,161 @@ class ReferenceProjector:
         self._validate_geometry(geometry, geometry[0].device, admission=True,
                                 synchronize=synchronize)
 
-    def _admission_batches(self, geometry):
+    def _admission_batches(self, geometry, plan):
         if self.owner.detector_surface is not None:
-            yield from self._batches()
+            yield from self._batches(*plan[1:])
         else:
-            yield from _flat_admission_batches(self.owner, geometry, self.detector_chunk_shape)
+            yield from _flat_admission_batches(self.owner, geometry, plan[2])
 
-    def _work_chunks(self, batch_elements=1):
+    def _work_budget(self, devices, data_devices=(), *, agree=False):
+        """Automatic work limits as ``(cuda_bytes, host_bytes)``, or None for the 8 MiB plan.
+
+        When every compute device is a CUDA device, ``cuda_bytes`` is a quarter
+        of the smallest memory that the PyTorch allocator can still use on the
+        compute devices and CUDA data devices when the call starts. Host data
+        devices (CPU inputs, outputs or stores) add ``host_bytes`` for host
+        staging copies: a quarter of the free host memory, at most
+        ``cuda_bytes`` and at least 8 MiB. Distributed ranks share the smallest
+        limits, because their collectives follow the tile and batch order.
+        Numerical traversal never records an autograd graph: gradients use
+        `_PortableApply`, and geometry backward recomputes one pair at a time
+        within ``1 / _GEOMETRY_WORK_FACTOR`` of these limits.
+        """
+        owner = self.owner
+        if all(hint is not None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
+                                             owner.detector_chunk_shape)):
+            return None
+        devices = tuple(dict.fromkeys(torch.device(device) for device in devices))
+        data_devices = tuple(torch.device(device) for device in data_devices)
+        budget = None
+        if all(device.type == "cuda" for device in devices):
+            cuda = tuple(dict.fromkeys((*devices, *(device for device in data_devices if device.type == "cuda"))))
+            # _memory_lower_bounds keeps three quarters of the available memory.
+            usable = min(_memory_lower_bounds(device)[0] // 3 for device in cuda) * 4
+            host = (max(_REFERENCE_WORK_BYTES, min(_host_free_bytes() // 4, usable // 4))
+                    if any(device.type != "cuda" for device in data_devices) else None)
+            # No floor: with very little memory the plan shrinks to one voxel
+            # and one ray per step, which still makes progress.
+            budget = (usable // 4, host)
+        if agree and owner.world_size > 1:
+            # MAX of negated values gives the smallest limits. 1 marks the fixed
+            # 8 MiB plan; -2**62 marks a rank without host staging.
+            absent = -(1 << 62)
+            shared, staged = control_status(
+                (1 if budget is None else -budget[0],
+                 absent if budget is None or budget[1] is None else -budget[1]),
+                process_group=owner.process_group, world_size=owner.world_size,
+            )
+            budget = None if shared > 0 else (-shared, None if staged == absent else -staged)
+        return budget
+
+    @staticmethod
+    def _halve(chunks):
+        axis = max(range(len(chunks)), key=chunks.__getitem__)
+        chunks[axis] = max(1, (chunks[axis] + 1) // 2)
+
+    def _tile_fits(self, chunks, batch_elements, budget):
+        """Whether one tile and one ray use at most half of each work budget."""
+        cuda_bytes, host = budget
+        return (sum(self._work_model(chunks, batch_elements)) <= cuda_bytes // 2
+                and math.prod(chunks) * batch_elements <= _WORK_ELEMENTS
+                and (host is None or sum(self._host_model(chunks, batch_elements)) <= host // 2))
+
+    def _work_model(self, chunks, batch_elements):
+        """Upper bound of live CUDA work bytes as (per volume tile, per ray).
+
+        One ray batch with R rays and a tile with P = sum(chunks) + D + 2
+        crossing planes needs at most tile + R * ray bytes. With b bytes per
+        element, D dimensions and L leading batch elements:
+
+        - tile: 3 * L * b + 32 per voxel. Volume tile copies or adjoint blocks
+          (current, previous and zero-filled), a summed tile in distributed
+          reductions, and int64 voxel indices of `_geometry_grad` and stores.
+        - ray: P * ((4 + D + 2 * L) * b + 40) + 2 * L * b + 1024. The crossing
+          table of `_intervals` keeps crossings, sorted times, lengths, midpoints
+          and int64 voxel indices with two int64 temporaries. The previous
+          tile's indices, lengths and gathered values are still alive, and
+          the gather and its product need 2 * L * b. The constant covers ray
+          setup, validation and the FP64 clipping vectors.
+
+        Outputs are accumulated in place, so no full-output copy is made.
+        """
+        element_bytes = torch.empty((), dtype=self.owner.dtype).element_size()
+        dimensions = len(chunks)
+        planes = sum(chunks) + dimensions + 2
+        tile = math.prod(chunks) * (3 * batch_elements * element_bytes + 32)
+        ray = (planes * ((4 + dimensions + 2 * batch_elements) * element_bytes + 40)
+               + 2 * batch_elements * element_bytes + _RAY_WORK_BYTES)
+        return tile, ray
+
+    def _host_model(self, chunks, batch_elements):
+        """Upper bound of host staging bytes as (per volume tile, per ray).
+
+        With host inputs or outputs, a volume tile is staged as a contiguous
+        (and possibly cast) copy, or an adjoint block returns with its int64
+        voxel indices: 2 * L * b + 32 per voxel. Each ray stages input or
+        output values, int64 ray indices and FP64 detector coordinates:
+        2 * L * b + 64.
+        """
+        element_bytes = torch.empty((), dtype=self.owner.dtype).element_size()
+        return (math.prod(chunks) * (2 * batch_elements * element_bytes + 32),
+                2 * batch_elements * element_bytes + 64)
+
+    def _leading_limit(self, plan, budget, batch_elements, piece_bytes=0, on_host=False):
+        """Largest leading batch whose work fits the CUDA and host limits of ``plan``.
+
+        Both models are linear in the leading elements: fixed + L * each. A
+        split stages one output piece of ``piece_bytes`` per leading element
+        on the input's side before copying it into the returned array.
+        """
+        rays = plan[1] * math.prod(plan[2])
+        result = None
+        for model, limit, staged in ((self._work_model, budget[0], not on_host),
+                                     (self._host_model, budget[1], on_host)):
+            if limit is None:
+                continue
+            fixed = model(plan[0], 0)
+            fixed = fixed[0] + rays * fixed[1]
+            each = model(plan[0], 1)
+            each = each[0] + rays * each[1] - fixed
+            if staged and batch_elements * each + fixed > limit:
+                each += piece_bytes
+            allowed = max(1, (limit - fixed) // each)
+            result = allowed if result is None else min(result, allowed)
+        return result
+
+    def _work_chunks(self, batch_elements=1, budget=None):
         owner = self.owner
         chunks = list(owner.volume_chunk_shape or owner.global_volume_shape)
         element_bytes = torch.empty((), dtype=owner.dtype).element_size()
         batch_elements = max(1, batch_elements)
         dimensions = len(chunks)
-        if owner.volume_chunk_shape is None:
-            while (math.prod(chunks) * element_bytes * batch_elements > _REFERENCE_WORK_BYTES
-                   or (sum(chunks) + dimensions + 2) * max(4, dimensions) * element_bytes
-                   * batch_elements > _REFERENCE_WORK_BYTES) and max(chunks) > 1:
-                axis = max(range(dimensions), key=chunks.__getitem__)
-                chunks[axis] = max(1, (chunks[axis] + 1) // 2)
+        if budget is None:
+            if owner.volume_chunk_shape is None:
+                while (math.prod(chunks) * element_bytes * batch_elements > _REFERENCE_WORK_BYTES
+                       or (sum(chunks) + dimensions + 2) * max(4, dimensions) * element_bytes
+                       * batch_elements > _REFERENCE_WORK_BYTES) and max(chunks) > 1:
+                    axis = max(range(dimensions), key=chunks.__getitem__)
+                    chunks[axis] = max(1, (chunks[axis] + 1) // 2)
+            plane_elements = (sum(chunks) + dimensions + 2) * max(4, dimensions)
+            ray_limit = max(1, _REFERENCE_WORK_BYTES // (plane_elements * element_bytes * batch_elements))
+        else:
+            if owner.volume_chunk_shape is None:
+                # A volume tile and one ray use at most half of each budget,
+                # so ray batches keep at least the other half.
+                while not self._tile_fits(chunks, batch_elements, budget) and max(chunks) > 1:
+                    self._halve(chunks)
+            cuda_bytes, host = budget
+            tile, ray = self._work_model(chunks, batch_elements)
+            # The largest per-ray tables are the gathered values (L per crossing)
+            # and the crossing midpoints (D per crossing).
+            elements = (sum(chunks) + dimensions + 2) * max(dimensions, batch_elements)
+            ray_limit = min((cuda_bytes - tile) // ray, _WORK_ELEMENTS // elements)
+            if host is not None:
+                host_tile, host_ray = self._host_model(chunks, batch_elements)
+                ray_limit = min(ray_limit, (host - host_tile) // host_ray)
+            ray_limit = max(1, ray_limit)
         view_chunk = owner.view_chunk_size or min(32, owner._n_views)
-        plane_elements = (sum(chunks) + dimensions + 2) * max(4, dimensions)
-        ray_limit = max(1, _REFERENCE_WORK_BYTES // (plane_elements * element_bytes * batch_elements))
         detector = list(owner.detector_chunk_shape or owner.detector_shape)
         if owner.detector_chunk_shape is None:
             while math.prod(detector) > max(1, ray_limit // view_chunk):
@@ -360,6 +516,8 @@ class ReferenceProjector:
         devices = tuple(torch.device(device) for device in (owner._devices or (fallback,)))
         error = None
         try:
+            # Validation has no collectives, so each rank sizes its own batches.
+            plan = self._work_chunks(budget=self._work_budget(devices))
             frame_count = 4 if owner.beam in ("cone", "parallel3d") else 3
             parameters = geometry[frame_count:]
             if isinstance(owner.detector_surface, ParameterizedSurface):
@@ -370,7 +528,8 @@ class ReferenceProjector:
                 # remain bounded and move only when a ray batch needs them.
                 staged = {device: (*tuple(value.to(device=device) for value in geometry[:frame_count]),
                                     *parameters) for device in set(devices)}
-                batches = self._admission_batches(staged[devices[0]]) if admission else self._batches()
+                batches = (self._admission_batches(staged[devices[0]], plan) if admission
+                           else self._batches(*plan[1:]))
                 for batch, (views, pixels) in enumerate(batches):
                     device = devices[batch % len(devices)]
                     origins, directions, _ = self._rays(
@@ -673,6 +832,9 @@ class ReferenceProjector:
             indices = indices * size + coordinate
         return indices.flatten()
 
+    # Numerical traversal never records autograd: `_PortableApply` provides
+    # gradients, and in-place accumulation must not build CopySlices graphs.
+    @torch.no_grad()
     def _tensor_apply(self, tensor, is_project, reduce_cotangent=False, *, geometry=None,
                       reduce_output=True, _plan=None, admit=False):
         owner = self.owner
@@ -692,68 +854,102 @@ class ReferenceProjector:
                                    cache_key="portable input",
                                    revision=owner._agreement_revision())
         batch_elements = math.prod(leading)
-        plan = self._work_chunks(batch_elements) if _plan is None else _plan
+        if _plan is None:
+            budget = self._work_budget(owner._devices or (tensor.device,), (tensor.device,), agree=True)
+            plan = self._work_chunks(batch_elements, budget)
+        else:
+            plan, budget = _plan
         stats = self._stats(is_project, plan)
         # Ray/voxel chunks cannot shrink below one. Split leading dimensions
         # as views when even that minimum would exceed the automatic payload.
         # Full explicit hints keep their priority over this automatic limit.
         if any(hint is None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
                                          owner.detector_chunk_shape)):
-            planes = (sum(plan[0]) + len(shape) + 2) * max(4, len(shape))
-            per_batch = max(math.prod(plan[0]), planes * plan[1] * math.prod(plan[2]))
-            batch_limit = max(1, _REFERENCE_WORK_BYTES // (per_batch * torch.empty(
-                (), dtype=owner.dtype,
-            ).element_size()))
+            if budget is None:
+                planes = (sum(plan[0]) + len(shape) + 2) * max(4, len(shape))
+                per_batch = max(math.prod(plan[0]), planes * plan[1] * math.prod(plan[2]))
+                batch_limit = max(1, _REFERENCE_WORK_BYTES // (per_batch * torch.empty(
+                    (), dtype=owner.dtype,
+                ).element_size()))
+            else:
+                piece = math.prod(output_shape) * torch.empty((), dtype=owner.dtype).element_size()
+                batch_limit = self._leading_limit(plan, budget, batch_elements, piece,
+                                                  on_host=tensor.device.type != "cuda")
             if batch_elements > batch_limit:
                 axis = max(range(len(leading)), key=leading.__getitem__)
                 step = max(1, batch_limit // (batch_elements // leading[axis]))
-                pieces = []
                 counters = ("ray_tile_pairs", "store_reads", "store_writes", "read_bytes", "write_bytes",
                             "h2d_bytes", "d2h_bytes", "p2p_bytes", "collective_calls", "collective_bytes")
+                # Copy each piece into the returned array; only one piece is extra.
+                result = _zero_dependency(tensor).to(dtype=owner.dtype).expand(
+                    *leading, *output_shape).clone(memory_format=torch.contiguous_format)
                 for first in range(0, leading[axis], step):
                     slices = [slice(None)] * len(leading)
                     slices[axis] = slice(first, min(first + step, leading[axis]))
-                    pieces.append(self._tensor_apply(tensor[tuple(slices)], is_project, reduce_cotangent,
-                                                     geometry=geometry, reduce_output=reduce_output,
-                                                     _plan=plan, admit=admit))
+                    result[tuple(slices)] = self._tensor_apply(
+                        tensor[tuple(slices)], is_project, reduce_cotangent, geometry=geometry,
+                        reduce_output=reduce_output, _plan=(plan, budget), admit=admit,
+                    )
                     part_stats = owner.last_execution_stats
+                    stats["schedule"] = part_stats["schedule"]
                     for key in counters:
                         stats[key] += part_stats[key]
                     for device in part_stats["devices"]:
                         if device not in stats["devices"]:
                             stats["devices"].append(device)
-                result = torch.cat(pieces, dim=axis)
                 stats["elapsed_seconds"] = time.perf_counter() - start
                 owner.last_execution_stats = stats
                 return result
-        output = torch.zeros((*leading, math.prod(output_shape)), device=tensor.device, dtype=owner.dtype)
-        # Empty ownership and empty leading dimensions retain a differentiable seam.
-        output = output + _zero_dependency(tensor).to(dtype=owner.dtype)
+        # The returned array is the only full-size output: it starts as zeros
+        # (a differentiable seam for empty ownership and empty leading
+        # dimensions) and every contribution accumulates in place.
+        output = _zero_dependency(tensor).to(dtype=owner.dtype).expand(
+            *leading, math.prod(output_shape)).clone(memory_format=torch.contiguous_format)
         if is_project:
-            for tile_index, (tile, world) in enumerate(self._tiles(plan[0])):
-                values = tensor[(..., *tile)]
-                if reduce_cotangent:
-                    values = self._reduce(values, owner.view_group, owner.view_world_size, stats)
+            tiles = list(self._tiles(plan[0]))
+
+            def accumulate(values, tile, world, origins, directions, rays, device):
+                indices, lengths = self._intervals(origins, directions, world)
+                local = self._to(values, device, stats).reshape(*leading, math.prod(values.shape[-len(tile):]))
+                selected = torch.index_select(local, -1, indices.flatten()).reshape(*leading, *indices.shape)
+                contributions = self._to((selected * lengths).sum(-1), tensor.device, stats)
+                output.scatter_add_(-1, rays.expand(*leading, -1), contributions)
+                stats["ray_tile_pairs"] += 1
+
+            if reduce_cotangent:
+                # A replicated cotangent is summed one tile at a time, so only
+                # one summed tile is alive; each tile sets up the rays again.
+                stats["schedule"] = "spatial"
+                for tile_index, (tile, world) in enumerate(tiles):
+                    values = self._reduce(tensor[(..., *tile)], owner.view_group, owner.view_world_size, stats)
+                    for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                        device = self._device(batch, tensor.device, stats)
+                        origins, directions, rays = self._rays(views, pixels, device, stats=stats,
+                                                               geometry=geometry,
+                                                               admit=admit and tile_index == 0)
+                        rays = self._transfer(rays, tensor.device, stats)
+                        accumulate(values, tile, world, origins, directions, rays, device)
+                    del values
+            else:
+                # Set up each ray batch once for all volume tiles. Every ray
+                # still receives its tile contributions in tile order.
+                stats["schedule"] = "views"
                 for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                     device = self._device(batch, tensor.device, stats)
                     origins, directions, rays = self._rays(views, pixels, device, stats=stats, geometry=geometry,
-                                                           admit=admit and tile_index == 0)
-                    indices, lengths = self._intervals(origins, directions, world)
-                    local = self._to(values, device, stats).reshape(*leading, math.prod(values.shape[-len(tile):]))
-                    selected = torch.index_select(local, -1, indices.flatten()).reshape(*leading, *indices.shape)
-                    contributions = self._to((selected * lengths).sum(-1), tensor.device, stats)
+                                                           admit=admit)
                     rays = self._transfer(rays, tensor.device, stats)
-                    output = output.scatter_add(-1, rays.expand(*leading, -1), contributions)
-                    stats["ray_tile_pairs"] += 1
+                    for tile, world in tiles:
+                        accumulate(tensor[(..., *tile)], tile, world, origins, directions, rays, device)
             if reduce_output and owner.space_world_size > 1:
-                reduced = torch.zeros_like(output)
+                # Each ray belongs to one batch: replace its partial sum in place.
                 for views, pixels in self._batches(*plan[1:]):
                     _, _, rays = self._rays(views, pixels, tensor.device, stats=stats, geometry=geometry)
                     values = torch.index_select(output, -1, rays)
                     values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
-                    reduced = reduced.scatter_add(-1, rays.expand(*leading, -1), values)
-                output = reduced
+                    output.scatter_(-1, rays.expand(*leading, -1), values)
         else:
+            volume = output.view(*leading, *output_shape)
             for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                 device = self._device(batch, tensor.device, stats)
                 values = tensor[(..., *self._pixel_slices(views, pixels))]
@@ -769,17 +965,15 @@ class ReferenceProjector:
                     block = values.new_zeros((*leading, math.prod(tile_shape))).scatter_add(
                         -1, indices.flatten().expand(*leading, -1), contributions,
                     )
-                    voxels = self._voxel_ids(tile, owner.volume_shape, tensor.device)
-                    output = output.scatter_add(-1, voxels.expand(*leading, -1), self._to(block, tensor.device, stats))
+                    # Add the tile block into its strided output view: no voxel
+                    # index tensor is built or kept by autograd.
+                    volume[(..., *tile)].add_(self._to(block, tensor.device, stats).reshape(*leading, *tile_shape))
                     stats["ray_tile_pairs"] += 1
             if reduce_output and owner.view_world_size > 1:
-                reduced = torch.zeros_like(output)
+                # Each voxel belongs to one tile: replace its partial sum in place.
                 for tile, _ in self._tiles(plan[0]):
-                    voxels = self._voxel_ids(tile, owner.volume_shape, tensor.device)
-                    values = self._reduce(torch.index_select(output, -1, voxels), owner.view_group,
-                                          owner.view_world_size, stats)
-                    reduced = reduced.scatter_add(-1, voxels.expand(*leading, -1), values)
-                output = reduced
+                    view = volume[(..., *tile)]
+                    view.copy_(self._reduce(view, owner.view_group, owner.view_world_size, stats))
         stats["elapsed_seconds"] = time.perf_counter() - start
         owner.last_execution_stats = stats
         return output.reshape(*leading, *output_shape)
@@ -811,32 +1005,42 @@ class ReferenceProjector:
         leading = tuple(flat.shape[:-1])
         batch_elements = math.prod(leading)
         # One pair's geometry graph plus its backward temporaries is bounded by
-        # this factor times the forward work arrays of the same plan.
-        plan = self._work_chunks(max(1, batch_elements) * _GEOMETRY_WORK_FACTOR)
+        # _GEOMETRY_WORK_FACTOR times the forward work arrays of the same plan.
+        budget = self._work_budget(owner._devices or (cotangent.device,), (cotangent.device, tensor.device),
+                                   agree=True)
+        if budget is None:
+            plan = self._work_chunks(max(1, batch_elements) * _GEOMETRY_WORK_FACTOR)
+        else:
+            budget = tuple(None if limit is None else limit // _GEOMETRY_WORK_FACTOR for limit in budget)
+            plan = self._work_chunks(batch_elements, budget)
+        # One reduction buffer the size of the cotangent; partial sums are added in place.
         reduced = torch.zeros_like(flat)
         if is_project:
             for views, pixels in self._batches(*plan[1:]):
                 _, _, ids = self._rays(views, pixels, cotangent.device, geometry=geometry)
                 values = self._reduce(torch.index_select(flat, -1, ids), owner.space_group,
                                       owner.space_world_size, stats)
-                reduced = reduced.scatter_add(-1, ids.expand(*leading, -1), values)
+                reduced.scatter_add_(-1, ids.expand(*leading, -1), values)
         else:
             for tile, _ in self._tiles(plan[0]):
                 ids = self._voxel_ids(tile, owner.volume_shape, cotangent.device)
                 values = self._reduce(torch.index_select(flat, -1, ids), owner.view_group,
                                       owner.view_world_size, stats)
-                reduced = reduced.scatter_add(-1, ids.expand(*leading, -1), values)
+                reduced.scatter_add_(-1, ids.expand(*leading, -1), values)
         # Split leading dimensions recursively, as _tensor_apply does, when even
         # the smallest chunks exceed the automatic payload. Every rank uses the
         # same pieces in the same order.
         batch_limit = None
         if any(hint is None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
                                          owner.detector_chunk_shape)):
-            planes = (sum(plan[0]) + len(input_shape) + 2) * max(4, len(input_shape))
-            per_batch = max(math.prod(plan[0]), planes * plan[1] * math.prod(plan[2]))
-            batch_limit = max(1, _REFERENCE_WORK_BYTES // (per_batch * _GEOMETRY_WORK_FACTOR * torch.empty(
-                (), dtype=owner.dtype,
-            ).element_size()))
+            if budget is None:
+                planes = (sum(plan[0]) + len(input_shape) + 2) * max(4, len(input_shape))
+                per_batch = max(math.prod(plan[0]), planes * plan[1] * math.prod(plan[2]))
+                batch_limit = max(1, _REFERENCE_WORK_BYTES // (per_batch * _GEOMETRY_WORK_FACTOR * torch.empty(
+                    (), dtype=owner.dtype,
+                ).element_size()))
+            else:
+                batch_limit = self._leading_limit(plan, budget, batch_elements, on_host=tensor.device.type != "cuda")
 
         def split(piece):
             sizes = [part.stop - part.start for part in piece]
@@ -924,11 +1128,17 @@ class ReferenceProjector:
         """Bounded numerical store I/O with the same sparse ray coefficients."""
         owner = self.owner
         owner.last_execution_stats = None
-        start, stats = time.perf_counter(), self._stats(is_project)
+        start = time.perf_counter()
         fallback = torch.device(getattr(source, "device", "cpu"))
         output_device = torch.device(getattr(sink, "device", "cpu"))
         geometry = self._snapshot_geometry()
         self._validate_geometry(geometry, fallback)
+        # CUDA compute devices use the CUDA budget; host stores bound host staging.
+        plan = self._work_chunks(budget=self._work_budget(
+            owner._devices or (fallback,), (fallback, output_device), agree=True,
+        ))
+        stats = self._stats(is_project, plan)
+        stats["schedule"] = "views" if is_project else "spatial"
 
         def read(slices, device):
             value = source.read(slices)
@@ -943,11 +1153,11 @@ class ReferenceProjector:
             stats["write_bytes"] += value.numel() * value.element_size()
 
         if is_project:
-            for batch, (views, pixels) in enumerate(self._batches()):
+            for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                 device = self._device(batch, fallback, stats)
                 origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry)
                 values = torch.zeros(len(origins), device=device, dtype=owner.dtype)
-                for tile, world in self._tiles():
+                for tile, world in self._tiles(plan[0]):
                     block = read(tile, device).reshape(-1)
                     indices, lengths = self._intervals(origins, directions, world)
                     values = values + (block[indices] * lengths).sum(-1)
@@ -956,10 +1166,10 @@ class ReferenceProjector:
                 shape = (views.stop - views.start, *(part.stop - part.start for part in pixels))
                 write(self._pixel_slices(views, pixels), values.reshape(shape))
         else:
-            for tile, world in self._tiles():
+            for tile, world in self._tiles(plan[0]):
                 tile_shape = tuple(part.stop - part.start for part in tile)
                 values = torch.zeros(math.prod(tile_shape), device=output_device, dtype=owner.dtype)
-                for batch, (views, pixels) in enumerate(self._batches()):
+                for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                     device = self._device(batch, fallback, stats)
                     block = read(self._pixel_slices(views, pixels), device).reshape(-1)
                     origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry)

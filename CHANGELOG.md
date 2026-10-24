@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Second derivatives with respect to the geometry now raise an error on the single-process portable path, as documented. Before, they returned a value.
 - Forward-mode derivatives (`torch.func.jvp`, `jacfwd`) with respect to `Projector` trajectory tensors now raise an error. Before, they returned zero tangents.
 
+### Changed
+
+- The portable PyTorch backend sizes its automatic volume tiles, view batches and pixel batches from CUDA memory when the compute devices are CUDA or ROCm devices. One call uses at most a quarter of the memory that the PyTorch allocator can still use when the call starts. This quarter covers work arrays and reduction buffers; geometry backward recomputes each pair with half of that limit. CPU inputs, outputs and host stores with CUDA compute devices stage at most a quarter of the free host memory. One work array stays below 2^31 elements. CPU calls keep the 8 MiB ceiling and their previous plans. Distributed ranks agree on the smallest limits. Results change only in floating-point summation order.
+- Portable projection sets up the rays of a view/pixel batch once and reuses them for every volume tile. Projections, backprojections and their gradients are bitwise unchanged for the same chunks. Distributed backward through a backprojection keeps the previous tile order and holds one summed cotangent tile at a time.
+- Portable outputs accumulate in place, so a call no longer holds a second full-size output. Execution statistics report the loop order that ran.
+- `Projector(backend="auto")` emits one `UserWarning` when it selects the portable backend on an NVIDIA CUDA machine. The warning names the reasons. `backend="torch"` silences it.
+
 ## [2.4.3] - 2026-10-22
 
 ### Changed

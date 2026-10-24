@@ -151,15 +151,48 @@ tangent requires gradients. It keeps the geometry snapshot, and the input only
 when geometry gradients are needed. Backward applies the matched adjoint for
 data gradients. For geometry gradients, it recomputes one ray batch and tile at
 a time, so that memory does not grow with the number of batches. Each geometry
-batch keeps a small autograd graph, so automatic geometry batches are half as
-large and large leading batches are split, as in the forward call. Geometry
-gradients cost one extra traversal. Projector's portable path uses an
-8 MiB ceiling for automatically sized intermediate arrays in ordinary tensor calls, excluding caller
-data, returned arrays and allocations inside legacy surface callbacks. Explicit
-chunk hints take priority. The portable reference path can be slower, so start
-with explicit spatial/view/pixel limits for large scans. For large mapped
-batches, also use `torch.vmap(..., chunk_size=...)` to control the transform's
-workspace. Returned arrays and gradients still require their own memory.
+batch keeps a small autograd graph, so automatic geometry batches use a smaller
+budget (see below) and large leading batches are split, as in the forward call.
+Geometry gradients cost one extra traversal. Returned arrays and gradients
+still require their own memory.
+
+Projector's portable path sizes its automatically chunked intermediate arrays
+from the compute device. Caller inputs, the returned array and allocations
+inside surface callbacks or samplers are excluded.
+
+- CUDA compute devices (NVIDIA CUDA or PyTorch ROCm, through `devices=[...]` or
+  a CUDA input): one call uses at most a quarter of the memory that the PyTorch
+  allocator can still use when the call starts, for its work arrays and
+  distributed reduction buffers. A per-ray and per-voxel byte model sizes the
+  work arrays. It counts the crossing tables of the volume tiles that a ray
+  batch visits, the previous tile's tables, volume tile copies, ray setup and
+  validation. Outputs accumulate in place, so the call makes no temporary copy
+  of the full output. With `devices=[...]`, the smallest device sets the size.
+  Distributed ranks use the smallest value of all ranks, because their
+  collectives follow the same tile and batch order. Distributed backward
+  through a backprojection sums one cotangent tile at a time. There is no
+  floor: with very little memory the plan shrinks to one voxel and one ray per
+  step. One work array stays below 2^31 elements.
+- CPU inputs, outputs or `*_into` stores with CUDA compute devices add a host
+  staging limit: a quarter of the free host memory, at most the CUDA limit and
+  at least 8 MiB. Where the platform does not report free host memory, the
+  limit is 8 MiB.
+- CPU and other devices keep a fixed 8 MiB ceiling and their previous plans.
+
+Geometry backward recomputes each ray batch and tile with the CUDA limit
+divided by two. One recomputed pair, including its autograd graph and
+`torch.autograd.grad`, measured at most 1.3 times the work-array model of its
+plan, so a pair stays within the same quarter. It also keeps one
+cotangent-sized reduction buffer and the geometry gradients.
+
+Explicit chunk hints take priority over these limits. For large mapped batches,
+also use `torch.vmap(..., chunk_size=...)` to control the transform's workspace.
+
+With `backend="auto"`, a `Projector` that falls back to the portable backend on
+an NVIDIA CUDA machine emits one `UserWarning` at construction. The warning
+names the reasons: per-axis `voxel_spacing`, a `precision` other than
+`"fast"`, `partition="hybrid"` or `beam="parallel3d"`. Pass `backend="torch"`
+to select the portable backend explicitly and silence the warning.
 Analytical tile order can reread and refilter the source for another volume
 tile. The native path admits tiles against available CUDA memory. The separate
 `helical_fdk` approximation and low-level CUDA helpers retain their original
