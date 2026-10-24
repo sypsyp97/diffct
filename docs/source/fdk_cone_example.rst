@@ -4,6 +4,12 @@ Cone Beam Feldkamp-Davis-Kress (FDK)
 This page describes the cone-beam part of ``examples/analytical_reconstruction.py``.
 For filter options and helper signatures, see :doc:`api`.
 
+.. figure:: _static/gallery/fdk_cone.png
+   :alt: Cone-beam projection and FDK slices
+   :class: example-figure
+
+   Rendered on CPU by ``docs/assets/make_gallery_figures.py`` with ``backend="torch"``. Volume 96³.
+
 Run it
 ------
 

@@ -7,6 +7,12 @@ different, voxel-driven interpolation operator. Its backward pass scatters the
 same interpolation coefficients, including distance weights and normalization.
 It does not substitute the Siddon projector for the analytical transpose.
 
+.. figure:: _static/gallery/analytical_learning.png
+   :alt: FBP with the Ram-Lak filter and with a learned filter
+   :class: example-figure
+
+   Rendered on CPU by ``docs/assets/make_gallery_figures.py`` with ``backend="torch"``.
+
 The reconstruction APIs return signed images in the selected precision on the
 input device. Clamping is a caller decision. In the default native fast mode,
 low-precision measurements are promoted to float32 before geometry,

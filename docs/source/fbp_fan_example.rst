@@ -4,6 +4,12 @@ Fan Beam Filtered Backprojection (FBP)
 This page describes the fan-beam part of ``examples/analytical_reconstruction.py``.
 For filter options and helper signatures, see :doc:`api`.
 
+.. figure:: _static/gallery/fbp_fan.png
+   :alt: Fan-beam phantom, sinogram and FBP reconstruction
+   :class: example-figure
+
+   Rendered on CPU by ``docs/assets/make_gallery_figures.py`` with ``backend="torch"``.
+
 Run it
 ------
 

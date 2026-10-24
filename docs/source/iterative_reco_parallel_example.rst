@@ -5,6 +5,12 @@ This page shows a 2D parallel-beam reconstruction loop with ``diffct.Projector``
 The maintained iterative script is ``examples/iterative_reconstruction.py``, which
 reconstructs 3D cone-beam scans. See :doc:`iterative_reco_cone_example`.
 
+.. figure:: _static/gallery/iterative_parallel.png
+   :alt: Parallel-beam least-squares reconstruction with Adam
+   :class: example-figure
+
+   Rendered on CPU by ``docs/assets/make_gallery_figures.py`` with ``backend="torch"``. The code below, run with the PyTorch backend.
+
 Objective
 ---------
 

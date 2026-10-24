@@ -1,0 +1,84 @@
+/* diffct documentation theme overrides for pydata-sphinx-theme */
+html[data-theme="light"] {
+  --pst-color-primary: #1f6fb2;
+  --pst-color-secondary: #d9751c;
+  --pst-color-link-hover: #d9751c;
+}
+html[data-theme="dark"] {
+  --pst-color-primary: #6cb2ea;
+  --pst-color-secondary: #f2a541;
+  --pst-color-link-hover: #f2a541;
+}
+
+/* Landing page: hide the plain title, the hero replaces it. */
+.bd-article > section#diffct > h1 { display: none; }
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 2rem;
+  align-items: center;
+  margin: 1rem 0 2.5rem;
+}
+.hero-kicker {
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1.15;
+  margin: 0 0 0.75rem;
+  color: var(--pst-color-text-base);
+}
+.hero-subtitle {
+  font-size: 1.15rem;
+  color: var(--pst-color-text-muted);
+  margin: 0 0 1.5rem;
+}
+.hero-buttons { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1.25rem; }
+.hero-button {
+  display: inline-block;
+  padding: 0.5rem 1.1rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--pst-color-primary);
+  color: var(--pst-color-primary);
+  font-weight: 600;
+  text-decoration: none !important;
+}
+.hero-button.primary { background: var(--pst-color-primary); color: var(--pst-color-background); }
+.hero-button:hover { border-color: var(--pst-color-secondary); color: var(--pst-color-secondary); }
+.hero-button.primary:hover { background: var(--pst-color-secondary); color: var(--pst-color-background); }
+.hero-install { display: inline-block; margin: 0; padding: 0.5rem 0.9rem; }
+.hero-visual { text-align: center; }
+.hero-visual img { width: 100%; max-width: 360px; height: auto; }
+
+@media (max-width: 720px) {
+  .hero { grid-template-columns: 1fr; gap: 1rem; }
+  .hero-visual { order: -1; }
+  .hero-visual img { max-width: 220px; }
+  .hero-kicker { font-size: 1.8rem; }
+}
+
+/* Cards */
+.feature-grid .sd-card, .gallery-grid .sd-card {
+  border-radius: 0.5rem;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.feature-grid .sd-card:hover, .gallery-grid .sd-card:hover {
+  border-color: var(--pst-color-secondary);
+  transform: translateY(-2px);
+}
+.feature-grid .sd-card-title, .gallery-grid .sd-card-title { font-size: 1.05rem; }
+.gallery-grid .sd-card-img-top {
+  height: 150px;
+  object-fit: cover;
+  object-position: center;
+  background: #111418;
+}
+
+/* Example result figures */
+figure.example-figure img { border-radius: 0.4rem; }
+figure.example-figure figcaption { font-size: 0.85rem; color: var(--pst-color-text-muted); }
+
+.performance-table { width: 100%; }
+.performance-table td:not(:first-child), .performance-table th:not(:first-child) { text-align: right; }
+
+/* The landing page has no sidebars; use the full content width. */
+.bd-main .bd-content .bd-article-container:has(section#diffct) { max-width: 72rem; }

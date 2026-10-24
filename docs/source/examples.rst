@@ -1,6 +1,89 @@
 Examples
 ========
 
+Each card links to a page with the full script and an explanation. The figures
+are rendered from the same pipelines; see the caption on each page.
+
+.. grid:: 1 2 3 3
+   :gutter: 3
+   :class-container: gallery-grid
+
+   .. grid-item-card:: Parallel-beam FBP
+      :link: fbp_parallel_example
+      :link-type: doc
+      :img-top: _static/gallery/fbp_parallel.png
+      :img-alt: Parallel-beam phantom, sinogram and FBP reconstruction
+
+      FBP on a 2D phantom, with a choice of ramp-filter window.
+
+   .. grid-item-card:: Fan-beam FBP
+      :link: fbp_fan_example
+      :link-type: doc
+      :img-top: _static/gallery/fbp_fan.png
+      :img-alt: Fan-beam phantom, sinogram and FBP reconstruction
+
+      Fan-beam FBP with cosine weights over a full turn.
+
+   .. grid-item-card:: Cone-beam FDK
+      :link: fdk_cone_example
+      :link-type: doc
+      :img-top: _static/gallery/fdk_cone.png
+      :img-alt: Cone-beam projection and FDK slices
+
+      FDK on a circular cone-beam orbit.
+
+   .. grid-item-card:: Learnable FBP
+      :link: analytical_learning
+      :link-type: doc
+      :img-top: _static/gallery/analytical_learning.png
+      :img-alt: FBP with the Ram-Lak filter and a learned filter
+
+      Learn the FBP filter and detector weights through autograd.
+
+   .. grid-item-card:: Parallel-beam iterative
+      :link: iterative_reco_parallel_example
+      :link-type: doc
+      :img-top: _static/gallery/iterative_parallel.png
+      :img-alt: Parallel-beam least-squares reconstruction with Adam
+
+      Least-squares reconstruction with autograd and Adam.
+
+   .. grid-item-card:: Fan-beam iterative
+      :link: iterative_reco_fan_example
+      :link-type: doc
+      :img-top: _static/gallery/iterative_fan.png
+      :img-alt: Fan-beam least-squares reconstruction with Adam
+
+      The same least-squares loop for a fan beam.
+
+   .. grid-item-card:: Cone-beam iterative
+      :link: iterative_reco_cone_example
+      :link-type: doc
+      :img-top: _static/gallery/iterative_cone.png
+      :img-alt: Coronal slices of a simulated helical scan
+
+      CGLS, SIRT and TV on circular, helical, saddle or sinusoidal scans.
+
+   .. grid-item-card:: Measured walnut
+      :link: walnut_example
+      :link-type: doc
+      :img-top: _static/gallery/walnut.png
+      :img-alt: FDK, SIRT, CGLS and TV slices of a measured walnut
+
+      FDK, SIRT, CGLS and TV on 240 measured cone-beam views.
+
+   .. grid-item-card:: Curved detector
+      :link: curved_detector_example
+      :link-type: doc
+      :img-top: _static/gallery/curved_detector.png
+      :img-alt: Projections on a native cylindrical detector
+
+      Native cylindrical detector: projection, matched adjoint and surface
+      gradients.
+
+All scripts
+-----------
+
 The scripts in the repository ``examples/`` directory show how to use
 ``diffct``. Run them from the repository root.
 
@@ -40,16 +123,15 @@ The scripts in the repository ``examples/`` directory show how to use
 See ``examples/README.md`` in the repository for all launch modes.
 
 .. toctree::
-   :maxdepth: 1
+   :hidden:
    :caption: Analytical Reconstruction
 
    fbp_parallel_example
    fbp_fan_example
    fdk_cone_example
-   analytical_learning
 
 .. toctree::
-   :maxdepth: 1
+   :hidden:
    :caption: Iterative Reconstruction
 
    iterative_reco_parallel_example
@@ -57,22 +139,8 @@ See ``examples/README.md`` in the repository for all launch modes.
    iterative_reco_cone_example
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Measured Data
+   :hidden:
+   :caption: Measured Data and Detectors
 
    walnut_example
-
-Native curved detector
-----------------------
-
-.. code-block:: bash
-
-   python examples/curved_detector.py
-
-This small CUDA example uses the native curved operators directly, without
-resampling or FDK. See :ref:`detector-surfaces` for the callback contract.
-
-.. literalinclude:: ../../examples/curved_detector.py
-   :language: python
-   :linenos:
-   :caption: Native cylindrical detector operators
+   curved_detector_example

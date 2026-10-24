@@ -6,9 +6,12 @@ High-level Projector
 
 .. currentmodule:: diffct
 
-.. autoclass:: Projector
-   :members:
-   :special-members: __call__
+.. autosummary::
+   :toctree: generated
+   :template: api_class.rst
+   :nosignatures:
+
+   Projector
 
 ``Projector`` takes trajectory tensors as described in :doc:`trajectories`. For
 multiple GPUs and nodes, see :doc:`multi_gpu`.
@@ -31,14 +34,14 @@ geometry and autograd requirements, and :doc:`multi_gpu` for ownership.
 Block stores and batched surfaces
 ------------------------------------------------------------
 
-.. autoclass:: TensorStore
-   :members:
+.. autosummary::
+   :toctree: generated
+   :template: api_class.rst
+   :nosignatures:
 
-.. autoclass:: NpyStore
-   :members:
-
-.. autoclass:: ParameterizedSurface
-   :members:
+   TensorStore
+   NpyStore
+   ParameterizedSurface
 
 ``project_into`` and ``backproject_into`` use caller-owned numerical outputs.
 ``ParameterizedSurface`` exposes mutable geometry as explicit tensor
@@ -54,41 +57,17 @@ prefer ``Projector``, which checks inputs and manages devices.
 
 .. currentmodule:: diffct
 
-.. autoclass:: ParallelProjectorFunction
-   :class-doc-from: init
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. autosummary::
+   :toctree: generated
+   :template: api_autograd_function.rst
+   :nosignatures:
 
-.. autoclass:: ParallelBackprojectorFunction
-   :class-doc-from: init
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: FanProjectorFunction
-   :class-doc-from: init
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: FanBackprojectorFunction
-   :class-doc-from: init
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: ConeProjectorFunction
-   :class-doc-from: init
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-.. autoclass:: ConeBackprojectorFunction
-   :class-doc-from: init
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   ParallelProjectorFunction
+   ParallelBackprojectorFunction
+   FanProjectorFunction
+   FanBackprojectorFunction
+   ConeProjectorFunction
+   ConeBackprojectorFunction
 
 Geometry Helpers
 ----------------
@@ -97,26 +76,41 @@ Geometry Helpers
 
 **3D trajectories**
 
-.. autofunction:: circular_trajectory_3d
-.. autofunction:: circular_trajectory_3d_parallel
-.. autofunction:: random_trajectory_3d
-.. autofunction:: spiral_trajectory_3d
-.. autofunction:: sinusoidal_trajectory_3d
-.. autofunction:: saddle_trajectory_3d
-.. autofunction:: custom_trajectory_3d
+.. autosummary::
+   :toctree: generated
+   :template: api_function.rst
+   :nosignatures:
+
+   circular_trajectory_3d
+   circular_trajectory_3d_parallel
+   random_trajectory_3d
+   spiral_trajectory_3d
+   sinusoidal_trajectory_3d
+   saddle_trajectory_3d
+   custom_trajectory_3d
 
 **2D trajectories**
 
-.. autofunction:: circular_trajectory_2d_parallel
-.. autofunction:: sinusoidal_trajectory_2d_parallel
-.. autofunction:: custom_trajectory_2d_parallel
-.. autofunction:: circular_trajectory_2d_fan
-.. autofunction:: sinusoidal_trajectory_2d_fan
-.. autofunction:: custom_trajectory_2d_fan
+.. autosummary::
+   :toctree: generated
+   :template: api_function.rst
+   :nosignatures:
+
+   circular_trajectory_2d_parallel
+   sinusoidal_trajectory_2d_parallel
+   custom_trajectory_2d_parallel
+   circular_trajectory_2d_fan
+   sinusoidal_trajectory_2d_fan
+   custom_trajectory_2d_fan
 
 **Rigid transforms**
 
-.. autofunction:: transform_trajectory
+.. autosummary::
+   :toctree: generated
+   :template: api_function.rst
+   :nosignatures:
+
+   transform_trajectory
 
 Analytical Reconstruction Helpers
 ---------------------------------
@@ -144,60 +138,61 @@ explicitly for non-circular or ambiguous geometry, including a single view. The
 three weighted backprojection helpers need at least two detector bins along each
 interpolated axis, including the cone detector's v axis.
 
-.. autofunction:: detector_coordinates_1d
+.. autosummary::
+   :toctree: generated
+   :template: api_function.rst
+   :nosignatures:
 
-.. autofunction:: angular_integration_weights
-
-.. autofunction:: fan_cosine_weights
-
-.. autofunction:: cone_cosine_weights
-
-.. autofunction:: parker_weights
-
-.. autofunction:: ramp_filter_1d
-
-.. autofunction:: parallel_weighted_backproject
-
-.. autofunction:: fan_weighted_backproject
-
-.. autofunction:: cone_weighted_backproject
+   detector_coordinates_1d
+   angular_integration_weights
+   fan_cosine_weights
+   cone_cosine_weights
+   parker_weights
+   ramp_filter_1d
+   parallel_weighted_backproject
+   fan_weighted_backproject
+   cone_weighted_backproject
 
 Complete Reconstruction Pipelines
 ------------------------------------
 
 .. currentmodule:: diffct.reconstruction
 
-.. autofunction:: fbp
+.. autosummary::
+   :toctree: generated
+   :template: api_function.rst
+   :nosignatures:
 
-.. autofunction:: fdk
-
-.. autofunction:: fbp_into
-
-.. autofunction:: fdk_into
-
-.. autofunction:: helical_fdk
-
-.. autofunction:: helical_view_weights
-
-.. autofunction:: helical_weighted_backproject
+   fbp
+   fdk
+   fbp_into
+   fdk_into
+   helical_fdk
+   helical_view_weights
+   helical_weighted_backproject
 
 Numerical Solvers
 -----------------
 
 .. currentmodule:: diffct.solvers
 
-.. autoclass:: SolverResult
-   :members:
+.. autosummary::
+   :toctree: generated
+   :template: api_class.rst
+   :nosignatures:
 
-.. autofunction:: cgls
+   SolverResult
 
-.. autofunction:: sirt
+.. autosummary::
+   :toctree: generated
+   :template: api_function.rst
+   :nosignatures:
 
-.. autofunction:: tv_reconstruction
-
-.. autofunction:: cgls_into
-
-.. autofunction:: total_variation
+   cgls
+   sirt
+   tv_reconstruction
+   cgls_into
+   total_variation
 
 Ramp Filter Options
 -------------------

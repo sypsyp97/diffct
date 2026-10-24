@@ -4,6 +4,12 @@ Parallel Beam Filtered Backprojection (FBP)
 This page describes the ``examples/analytical_reconstruction.py`` pipeline. For
 filter options and helper signatures, see :doc:`api`.
 
+.. figure:: _static/gallery/fbp_parallel.png
+   :alt: Parallel-beam phantom, sinogram and FBP reconstruction
+   :class: example-figure
+
+   Rendered on CPU by ``docs/assets/make_gallery_figures.py`` with ``backend="torch"``.
+
 Run it
 ------
 
