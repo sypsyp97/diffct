@@ -302,8 +302,8 @@ class ReferenceProjector:
         of the smallest memory that the PyTorch allocator can still use on the
         compute devices and CUDA data devices when the call starts. Host data
         devices (CPU inputs, outputs or stores) add ``host_bytes`` for host
-        staging copies: a quarter of the free host memory, at most
-        ``cuda_bytes`` and at least 8 MiB. Distributed ranks share the smallest
+        staging copies: the smaller of a quarter of the free host memory and
+        ``cuda_bytes``, but at least 8 MiB. Distributed ranks share the smallest
         limits, because their collectives follow the tile and batch order.
         Numerical traversal never records an autograd graph: gradients use
         `_PortableApply`, and geometry backward recomputes one pair at a time
@@ -411,6 +411,35 @@ class ReferenceProjector:
             allowed = max(1, (limit - fixed) // each)
             result = allowed if result is None else min(result, allowed)
         return result
+
+    def _agreed_limit(self, limit):
+        """The smallest ``limit`` of all ranks, so every rank splits leading dimensions alike."""
+        owner = self.owner
+        if owner.world_size == 1:
+            return limit
+        shared, = control_status((-limit,), process_group=owner.process_group, world_size=owner.world_size)
+        return -shared
+
+    @staticmethod
+    def _leading_pieces(leading, batch_limit):
+        """Leading-dimension slices with at most ``batch_limit`` elements, in row-major order.
+
+        The largest axis splits first; a piece that is still too large splits
+        again along its own largest axis.
+        """
+        def split(piece):
+            sizes = [part.stop - part.start for part in piece]
+            count = math.prod(sizes)
+            if batch_limit is None or count <= batch_limit:
+                yield piece
+                return
+            axis = max(range(len(sizes)), key=sizes.__getitem__)
+            step = max(1, batch_limit // (count // sizes[axis]))
+            for first in range(piece[axis].start, piece[axis].stop, step):
+                yield from split((*piece[:axis], slice(first, min(first + step, piece[axis].stop)),
+                                  *piece[axis + 1:]))
+
+        yield from split(tuple(slice(0, size) for size in leading))
 
     def _work_chunks(self, batch_elements=1, budget=None):
         owner = self.owner
@@ -863,8 +892,9 @@ class ReferenceProjector:
         # Ray/voxel chunks cannot shrink below one. Split leading dimensions
         # as views when even that minimum would exceed the automatic payload.
         # Full explicit hints keep their priority over this automatic limit.
-        if any(hint is None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
-                                         owner.detector_chunk_shape)):
+        # Pieces already fit, so a piece call (``_plan`` given) never splits.
+        if _plan is None and any(hint is None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
+                                                           owner.detector_chunk_shape)):
             if budget is None:
                 planes = (sum(plan[0]) + len(shape) + 2) * max(4, len(shape))
                 per_batch = max(math.prod(plan[0]), planes * plan[1] * math.prod(plan[2]))
@@ -873,21 +903,18 @@ class ReferenceProjector:
                 ).element_size()))
             else:
                 piece = math.prod(output_shape) * torch.empty((), dtype=owner.dtype).element_size()
-                batch_limit = self._leading_limit(plan, budget, batch_elements, piece,
-                                                  on_host=tensor.device.type != "cuda")
+                # The local output piece differs between ranks; all ranks use the smallest limit.
+                batch_limit = self._agreed_limit(self._leading_limit(plan, budget, batch_elements, piece,
+                                                                     on_host=tensor.device.type != "cuda"))
             if batch_elements > batch_limit:
-                axis = max(range(len(leading)), key=leading.__getitem__)
-                step = max(1, batch_limit // (batch_elements // leading[axis]))
                 counters = ("ray_tile_pairs", "store_reads", "store_writes", "read_bytes", "write_bytes",
                             "h2d_bytes", "d2h_bytes", "p2p_bytes", "collective_calls", "collective_bytes")
-                # Copy each piece into the returned array; only one piece is extra.
+                # Each piece is copied into the returned array, so only one piece is extra.
                 result = _zero_dependency(tensor).to(dtype=owner.dtype).expand(
                     *leading, *output_shape).clone(memory_format=torch.contiguous_format)
-                for first in range(0, leading[axis], step):
-                    slices = [slice(None)] * len(leading)
-                    slices[axis] = slice(first, min(first + step, leading[axis]))
-                    result[tuple(slices)] = self._tensor_apply(
-                        tensor[tuple(slices)], is_project, reduce_cotangent, geometry=geometry,
+                for piece in self._leading_pieces(leading, batch_limit):
+                    result[piece] = self._tensor_apply(
+                        tensor[piece], is_project, reduce_cotangent, geometry=geometry,
                         reduce_output=reduce_output, _plan=(plan, budget), admit=admit,
                     )
                     part_stats = owner.last_execution_stats
@@ -1006,30 +1033,37 @@ class ReferenceProjector:
         batch_elements = math.prod(leading)
         # One pair's geometry graph plus its backward temporaries is bounded by
         # _GEOMETRY_WORK_FACTOR times the forward work arrays of the same plan.
+        replicas = owner.space_world_size if is_project else owner.view_world_size
         budget = self._work_budget(owner._devices or (cotangent.device,), (cotangent.device, tensor.device),
                                    agree=True)
         if budget is None:
             plan = self._work_chunks(max(1, batch_elements) * _GEOMETRY_WORK_FACTOR)
         else:
+            if replicas > 1:
+                # The summed cotangent buffer is charged to the limit of its side.
+                side = 0 if cotangent.device.type == "cuda" or budget[1] is None else 1
+                charged = max(0, budget[side] - flat.numel() * flat.element_size())
+                budget = (*budget[:side], self._agreed_limit(charged), *budget[side + 1:])
             budget = tuple(None if limit is None else limit // _GEOMETRY_WORK_FACTOR for limit in budget)
             plan = self._work_chunks(batch_elements, budget)
-        # One reduction buffer the size of the cotangent; partial sums are added in place.
-        reduced = torch.zeros_like(flat)
-        if is_project:
+        # Without output replicas the cotangent is already the sum; otherwise one
+        # cotangent-sized buffer collects the partial sums in place.
+        reduced = flat if replicas == 1 else torch.zeros_like(flat)
+        if replicas > 1 and is_project:
             for views, pixels in self._batches(*plan[1:]):
                 _, _, ids = self._rays(views, pixels, cotangent.device, geometry=geometry)
                 values = self._reduce(torch.index_select(flat, -1, ids), owner.space_group,
                                       owner.space_world_size, stats)
                 reduced.scatter_add_(-1, ids.expand(*leading, -1), values)
-        else:
+        elif replicas > 1:
             for tile, _ in self._tiles(plan[0]):
                 ids = self._voxel_ids(tile, owner.volume_shape, cotangent.device)
                 values = self._reduce(torch.index_select(flat, -1, ids), owner.view_group,
                                       owner.view_world_size, stats)
                 reduced.scatter_add_(-1, ids.expand(*leading, -1), values)
-        # Split leading dimensions recursively, as _tensor_apply does, when even
-        # the smallest chunks exceed the automatic payload. Every rank uses the
-        # same pieces in the same order.
+        # Split leading dimensions, as _tensor_apply does, when even the smallest
+        # chunks exceed the automatic payload. Every rank uses the same pieces
+        # in the same order.
         batch_limit = None
         if any(hint is None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
                                          owner.detector_chunk_shape)):
@@ -1040,21 +1074,9 @@ class ReferenceProjector:
                     (), dtype=owner.dtype,
                 ).element_size()))
             else:
-                batch_limit = self._leading_limit(plan, budget, batch_elements, on_host=tensor.device.type != "cuda")
-
-        def split(piece):
-            sizes = [part.stop - part.start for part in piece]
-            count = math.prod(sizes)
-            if batch_limit is None or count <= batch_limit:
-                yield piece
-                return
-            axis = max(range(len(sizes)), key=sizes.__getitem__)
-            step = max(1, batch_limit // (count // sizes[axis]))
-            for first in range(piece[axis].start, piece[axis].stop, step):
-                yield from split((*piece[:axis], slice(first, min(first + step, piece[axis].stop)),
-                                  *piece[axis + 1:]))
-
-        pieces = split(tuple(slice(0, size) for size in leading))
+                batch_limit = self._agreed_limit(self._leading_limit(plan, budget, batch_elements,
+                                                                     on_host=tensor.device.type != "cuda"))
+        pieces = self._leading_pieces(leading, batch_limit)
         # Recompute one ray batch and tile at a time in the forward traversal
         # order, so input SUMs keep their collective order and only one pair's
         # graph is alive. The loss is <reduced cotangent, A_local(geometry) input>.

@@ -174,16 +174,20 @@ inside surface callbacks or samplers are excluded.
   floor: with very little memory the plan shrinks to one voxel and one ray per
   step. One work array stays below 2^31 elements.
 - CPU inputs, outputs or `*_into` stores with CUDA compute devices add a host
-  staging limit: a quarter of the free host memory, at most the CUDA limit and
-  at least 8 MiB. Where the platform does not report free host memory, the
-  limit is 8 MiB.
+  staging limit. It is the smaller of a quarter of the free host memory and the
+  CUDA limit, but never less than 8 MiB, the fixed CPU ceiling. Where the
+  platform does not report free host memory, the limit is 8 MiB.
 - CPU and other devices keep a fixed 8 MiB ceiling and their previous plans.
 
 Geometry backward recomputes each ray batch and tile with the CUDA limit
 divided by two. One recomputed pair, including its autograd graph and
 `torch.autograd.grad`, measured at most 1.3 times the work-array model of its
-plan, so a pair stays within the same quarter. It also keeps one
-cotangent-sized reduction buffer and the geometry gradients.
+plan, so a pair stays within the same quarter. Distributed ranks with output
+replicas also keep one buffer with the summed cotangent; its size is taken from
+the limit first. Without replicas, no such buffer is allocated. The geometry
+gradients need their own memory. Large leading batches are split into pieces
+that every rank chooses alike, and each piece of a forward call is copied into
+the returned array, so at most one piece is extra.
 
 Explicit chunk hints take priority over these limits. For large mapped batches,
 also use `torch.vmap(..., chunk_size=...)` to control the transform's workspace.
