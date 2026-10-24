@@ -110,14 +110,18 @@ def _cone_3d_forward_kernel(
         v_vec_z = d_det_v_vec[iview, 2]
 
         if _is_per_axis(voxel_spacing):
-            u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
-            v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
-            det_x = (det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
-                     + (v_phys * v_vec_x) / _axis_pitch(voxel_spacing, 0))
-            det_y = (det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
-                     + (v_phys * v_vec_y) / _axis_pitch(voxel_spacing, 1))
-            det_z = (det_cz + (u_phys * u_vec_z) / _axis_pitch(voxel_spacing, 2)
-                     + (v_phys * v_vec_z) / _axis_pitch(voxel_spacing, 2))
+            # Keep flat endpoint composition in FP64 across spatial slabs.
+            src_x = np.float64(d_src_pos[iview, 0]) / np.float64(_axis_pitch(voxel_spacing, 0))
+            src_y = np.float64(d_src_pos[iview, 1]) / np.float64(_axis_pitch(voxel_spacing, 1))
+            src_z = np.float64(d_src_pos[iview, 2]) / np.float64(_axis_pitch(voxel_spacing, 2))
+            u_phys = (np.float64(iu) + _HALF - np.float64(n_u) * _HALF) * np.float64(du)
+            v_phys = (np.float64(iv) + _HALF - np.float64(n_v) * _HALF) * np.float64(dv)
+            det_x = (np.float64(d_det_center[iview, 0]) + u_phys * np.float64(u_vec_x)
+                     + v_phys * np.float64(v_vec_x)) / np.float64(_axis_pitch(voxel_spacing, 0))
+            det_y = (np.float64(d_det_center[iview, 1]) + u_phys * np.float64(u_vec_y)
+                     + v_phys * np.float64(v_vec_y)) / np.float64(_axis_pitch(voxel_spacing, 1))
+            det_z = (np.float64(d_det_center[iview, 2]) + u_phys * np.float64(u_vec_z)
+                     + v_phys * np.float64(v_vec_z)) / np.float64(_axis_pitch(voxel_spacing, 2))
         else:
             u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
             v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
@@ -338,14 +342,18 @@ def _cone_3d_backward_kernel(
         v_vec_z = d_det_v_vec[iview, 2]
 
         if _is_per_axis(voxel_spacing):
-            u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
-            v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
-            det_x = (det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
-                     + (v_phys * v_vec_x) / _axis_pitch(voxel_spacing, 0))
-            det_y = (det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
-                     + (v_phys * v_vec_y) / _axis_pitch(voxel_spacing, 1))
-            det_z = (det_cz + (u_phys * u_vec_z) / _axis_pitch(voxel_spacing, 2)
-                     + (v_phys * v_vec_z) / _axis_pitch(voxel_spacing, 2))
+            # Keep flat endpoint composition in FP64 across spatial slabs.
+            src_x = np.float64(d_src_pos[iview, 0]) / np.float64(_axis_pitch(voxel_spacing, 0))
+            src_y = np.float64(d_src_pos[iview, 1]) / np.float64(_axis_pitch(voxel_spacing, 1))
+            src_z = np.float64(d_src_pos[iview, 2]) / np.float64(_axis_pitch(voxel_spacing, 2))
+            u_phys = (np.float64(iu) + _HALF - np.float64(n_u) * _HALF) * np.float64(du)
+            v_phys = (np.float64(iv) + _HALF - np.float64(n_v) * _HALF) * np.float64(dv)
+            det_x = (np.float64(d_det_center[iview, 0]) + u_phys * np.float64(u_vec_x)
+                     + v_phys * np.float64(v_vec_x)) / np.float64(_axis_pitch(voxel_spacing, 0))
+            det_y = (np.float64(d_det_center[iview, 1]) + u_phys * np.float64(u_vec_y)
+                     + v_phys * np.float64(v_vec_y)) / np.float64(_axis_pitch(voxel_spacing, 1))
+            det_z = (np.float64(d_det_center[iview, 2]) + u_phys * np.float64(u_vec_z)
+                     + v_phys * np.float64(v_vec_z)) / np.float64(_axis_pitch(voxel_spacing, 2))
         else:
             u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
             v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
