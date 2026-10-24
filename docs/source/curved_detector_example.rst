@@ -6,18 +6,19 @@ detector, checks the matched backprojection and computes volume and surface
 gradients on a circular scan.
 
 .. figure:: _static/gallery/curved_detector.png
-   :alt: Projections on a native cylindrical detector
+   :alt: Projections of a patient volume on a cylindrical detector
    :class: example-figure
 
-   Rendered on CPU by ``docs/assets/make_gallery_figures.py`` with ``backend="torch"``.
-   The geometry is the example's, scaled by two, with a 64³ phantom.
+   Vendor images of TCIA case L213 (see :ref:`data-sources`) as a volume,
+   projected onto a cylindrical detector centred on the source: 888 columns,
+   radius 949 mm, source 541 mm from the isocentre. Views at 0°, 60° and 120°.
 
 Run it
 ------
 
 Run the commands from the root of a source checkout; ``pip install diffct`` does not
 install the ``examples/`` directory. See the "From source" tab in
-:doc:`getting_started`.
+:doc:`installation`.
 
 .. code-block:: bash
 

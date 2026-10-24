@@ -5,17 +5,19 @@ This page describes the cone-beam part of ``examples/analytical_reconstruction.p
 For filter options and helper signatures, see :doc:`api`.
 
 .. figure:: _static/gallery/fdk_cone.png
-   :alt: Cone-beam projection and FDK slices
+   :alt: Cone-beam projection and FDK slices of a 3D phantom
    :class: example-figure
 
-   Rendered on CPU by ``docs/assets/make_gallery_figures.py`` with ``backend="torch"``. Volume 96³.
+   3D Shepp-Logan phantom, 256³, 360 views on a circular orbit. The off-centre
+   slice and the coronal section show the approximation error of FDK away from the
+   orbit plane.
 
 Run it
 ------
 
 Run the commands from the root of a source checkout; ``pip install diffct`` does not
 install the ``examples/`` directory. See the "From source" tab in
-:doc:`getting_started`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
+:doc:`installation`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
 
 .. code-block:: bash
 

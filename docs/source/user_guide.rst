@@ -8,18 +8,18 @@ APIs. Start with :doc:`getting_started` if you have not installed diffct yet.
    :gutter: 3
    :class-container: feature-grid
 
-   .. grid-item-card:: Execution and backends
-      :link: execution
-      :link-type: doc
-
-      Backends, precision modes and solver contracts.
-
    .. grid-item-card:: Trajectories and geometry
       :link: trajectories
       :link-type: doc
 
       Per-view trajectory tensors, built-in generators, custom scans, detector
       surfaces and geometry gradients.
+
+   .. grid-item-card:: Execution and backends
+      :link: execution
+      :link-type: doc
+
+      Backends, precision modes and solver contracts.
 
    .. grid-item-card:: Memory and chunking
       :link: chunking
@@ -53,8 +53,8 @@ APIs. Start with :doc:`getting_started` if you have not installed diffct yet.
    :hidden:
    :maxdepth: 2
 
-   execution
    trajectories
+   execution
    chunking
    multi_gpu
    analytical_learning

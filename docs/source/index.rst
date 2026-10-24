@@ -20,8 +20,10 @@ diffct
    pip install diffct           # CPU or ROCm, backend="torch"</code></pre>
      </div>
      <div class="hero-visual">
-       <img class="dark-light" src="_static/gallery/walnut_rotating.webp" width="360" height="360"
-            alt="Rotating surface render of a walnut reconstructed with diffct">
+       <a href="clinical_helical_example.html"><img class="dark-light" src="_static/gallery/hero.png"
+            alt="Axial and coronal slices of a measured clinical helical CT scan reconstructed with diffct"></a>
+       <p class="hero-caption">Measured clinical helical scan, reconstructed with diffct:
+       7140 views, curved detector, CGLS on 8 GPUs. Data: TCIA LDCT, CC BY 4.0.</p>
      </div>
    </section>
 
@@ -33,6 +35,39 @@ parameterized surfaces, with first-order gradients for their parameters. Views
 can be split across several GPUs.
 
 Code written for diffct 1.x must be updated; see :doc:`migration`.
+
+Gallery
+-------
+
+.. grid:: 1 2 3 3
+   :gutter: 3
+   :class-container: gallery-grid
+
+   .. grid-item-card:: Clinical helical CT
+      :link: clinical_helical_example
+      :link-type: doc
+      :img-top: _static/gallery/thumb_helical_chest.png
+      :img-alt: Axial slice of a measured chest helical scan
+
+      Measured patient projections: flying focal spot, curved detector, 8 GPUs.
+
+   .. grid-item-card:: Gradient-based reconstruction
+      :link: gradient_reconstruction
+      :link-type: doc
+      :img-top: _static/gallery/thumb_gradient.png
+      :img-alt: Walnut reconstructed by minimizing the MSE with Adam
+
+      The volume as parameters: project, compare with the measurement, optimize.
+
+   .. grid-item-card:: Analytical reconstruction
+      :link: fbp_parallel_example
+      :link-type: doc
+      :img-top: _static/gallery/thumb_fbp_parallel.png
+      :img-alt: Parallel-beam FBP of an abdominal slice
+
+      Differentiable FBP and FDK with learnable filters and weights.
+
+See all examples in the :doc:`examples` gallery.
 
 Features
 --------
@@ -153,40 +188,7 @@ Create the acquisition once. Then call ``project()`` and ``backproject()``.
          loss = 0.5 * (A.project(x) - sinogram).square().sum()
          loss.backward()                     # x.grad = A^T (A x - y)
 
-See :doc:`getting_started` for shapes, devices and troubleshooting.
-
-Gallery
--------
-
-.. grid:: 1 2 3 3
-   :gutter: 3
-   :class-container: gallery-grid
-
-   .. grid-item-card:: Measured walnut
-      :link: walnut_example
-      :link-type: doc
-      :img-top: _static/gallery/walnut.png
-      :img-alt: FDK, SIRT, CGLS and TV slices of a measured walnut
-
-      FDK, SIRT, CGLS and TV on 240 measured cone-beam views.
-
-   .. grid-item-card:: Cone-beam iterative
-      :link: iterative_reco_cone_example
-      :link-type: doc
-      :img-top: _static/gallery/iterative_cone.png
-      :img-alt: Coronal slices of a simulated helical scan
-
-      CGLS, SIRT and TV on circular, helical, saddle or sinusoidal scans.
-
-   .. grid-item-card:: Learnable FBP
-      :link: analytical_learning
-      :link-type: doc
-      :img-top: _static/gallery/analytical_learning.png
-      :img-alt: FBP with the Ram-Lak filter and a learned filter
-
-      Learn the FBP filter through autograd.
-
-See all examples in the :doc:`examples` gallery.
+See :doc:`quickstart` for shapes, devices and troubleshooting.
 
 Performance
 -----------

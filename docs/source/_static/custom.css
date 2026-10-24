@@ -47,12 +47,13 @@ html[data-theme="dark"] {
 .hero-button.primary:hover { background: var(--pst-color-secondary); color: var(--pst-color-background); }
 .hero-install { display: inline-block; margin: 0; padding: 0.5rem 0.9rem; }
 .hero-visual { text-align: center; }
-.hero-visual img { width: 100%; max-width: 360px; height: auto; }
+.hero-visual img { width: 100%; max-width: 520px; height: auto; border-radius: 0.6rem; background: #000; }
+.hero-caption { font-size: 0.8rem; color: var(--pst-color-text-muted); margin: 0.5rem 0 0; }
 
 @media (max-width: 720px) {
   .hero { grid-template-columns: 1fr; gap: 1rem; }
   .hero-visual { order: -1; }
-  .hero-visual img { max-width: 220px; }
+  .hero-visual img { max-width: 100%; }
   .hero-kicker { font-size: 1.8rem; }
 }
 

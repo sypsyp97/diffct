@@ -12,7 +12,7 @@ Run it
 
 Run the commands from the root of a source checkout; ``pip install diffct`` does not
 install the ``examples/`` directory. See the "From source" tab in
-:doc:`getting_started`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
+:doc:`installation`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
 
 .. code-block:: bash
 
@@ -29,7 +29,7 @@ The figure shows axial and coronal centre slices. The reconstructions are:
 Use ``--algorithms`` with no values to run FDK only. Use ``--window`` to change the
 FDK filter.
 
-.. image:: ../assets/walnut_measured.png
+.. image:: _static/gallery/walnut.png
    :alt: Measured walnut: FDK, SIRT, CGLS and TV reconstructions
 
 Simulated helical scan

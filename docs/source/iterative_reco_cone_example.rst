@@ -6,17 +6,18 @@ Cone Beam Iterative Reconstruction
 GPUs in one process, or on several processes and nodes.
 
 .. figure:: _static/gallery/iterative_cone.png
-   :alt: Coronal slices of a simulated helical scan
+   :alt: Axial and coronal slices of a simulated helical scan
    :class: example-figure
 
-   Simulated helical walnut scan from :doc:`walnut_example`: 720 views, 256³, 1% noise.
+   Simulated helical walnut scan from :doc:`walnut_example`: 720 views, 256³,
+   1% noise.
 
 Run it
 ------
 
 Run the commands from the root of a source checkout; ``pip install diffct`` does not
 install the ``examples/`` directory. See the "From source" tab in
-:doc:`getting_started`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
+:doc:`installation`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
 
 .. code-block:: bash
 
