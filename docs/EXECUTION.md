@@ -146,11 +146,14 @@ fixed and flat; FDK remains an approximate inverse.
 
 Explicit chunks bound working tiles and view batches; autograd still needs its
 complete returned arrays. Portable autograd does not record the ray traversal.
-It keeps the geometry snapshot, and the input only when geometry gradients are
-needed. Backward applies the matched adjoint for data gradients. For geometry
-gradients, it recomputes one ray batch and tile at a time, so that memory does
-not grow with the number of batches. Geometry gradients cost one extra
-traversal. Projector's portable path uses an
+This also applies inside `torch.vmap` and `torch.func.jvp` when an input or
+tangent requires gradients. It keeps the geometry snapshot, and the input only
+when geometry gradients are needed. Backward applies the matched adjoint for
+data gradients. For geometry gradients, it recomputes one ray batch and tile at
+a time, so that memory does not grow with the number of batches. Each geometry
+batch keeps a small autograd graph, so automatic geometry batches are half as
+large and large leading batches are split, as in the forward call. Geometry
+gradients cost one extra traversal. Projector's portable path uses an
 8 MiB ceiling for automatically sized intermediate arrays in ordinary tensor calls, excluding caller
 data, returned arrays and allocations inside legacy surface callbacks. Explicit
 chunk hints take priority. The portable reference path can be slower, so start

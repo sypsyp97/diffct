@@ -8,6 +8,7 @@ from contextlib import nullcontext
 
 import torch
 import torch.distributed as dist
+from torch.autograd import forward_ad
 
 from .surfaces import ParameterizedSurface
 
@@ -15,6 +16,36 @@ from .surfaces import ParameterizedSurface
 # Maximum automatic ray/plane work array payload; caller data/results and
 # legacy callback allocations are separate. Explicit chunk hints take priority.
 _REFERENCE_WORK_BYTES = 8 * 1024 * 1024
+# A geometry-gradient pair keeps its autograd graph and backward temporaries:
+# measured at most about 1.5x the forward pair's peak, and its saved graph at
+# about 2.2x the planned plane tables. Geometry backward plans with this many
+# times the leading batch, so one pair stays within the forward pair's memory.
+_GEOMETRY_WORK_FACTOR = 2
+
+
+def _forward_tangent(value):
+    """Forward-mode tangent of ``value`` at the current level, below vmap batching."""
+    while torch._C._functorch.is_batchedtensor(value):
+        value = torch._C._functorch.get_unwrapped(value)
+    return forward_ad.unpack_dual(value).tangent
+
+
+def _records_autograd(value):
+    """Whether reverse-mode autograd can record ops on ``value``.
+
+    Function transforms wrap tensors (vmap batches, jvp duals) whose own
+    ``requires_grad`` is False even when a wrapped value or tangent requires it.
+    """
+    while isinstance(value, torch.Tensor):
+        if value.requires_grad:
+            return True
+        tangent = _forward_tangent(value)
+        if tangent is not None and _records_autograd(tangent):
+            return True
+        if not torch._C._functorch.is_functorch_wrapped_tensor(value):
+            return False
+        value = torch._C._functorch.get_unwrapped(value)
+    return False
 
 
 def _zero_dependency(value):
@@ -766,7 +797,7 @@ class ReferenceProjector:
         # Recording the traversal would keep ray tables for every tile and ray
         # batch. The Function keeps the geometry snapshot instead.
         if torch.is_grad_enabled() and (owner.world_size > 1 or any(
-                isinstance(value, torch.Tensor) and value.requires_grad for value in (tensor, *geometry))):
+                _records_autograd(value) for value in (tensor, *geometry))):
             return _PortableApply.apply(tensor, self, is_project, False, admit, owner._participation(), *geometry)
         return self._tensor_apply(tensor, is_project, geometry=geometry, admit=admit)
 
@@ -775,9 +806,13 @@ class ReferenceProjector:
         stats = self._stats(is_project)
         # Output replicas contribute one cotangent SUM before local ray math.
         output_shape = owner.projection_shape if is_project else owner.volume_shape
+        input_shape = owner.volume_shape if is_project else owner.projection_shape
         flat = cotangent.detach().reshape(*cotangent.shape[:-len(output_shape)], math.prod(output_shape))
         leading = tuple(flat.shape[:-1])
-        plan = self._work_chunks(math.prod(leading))
+        batch_elements = math.prod(leading)
+        # One pair's geometry graph plus its backward temporaries is bounded by
+        # this factor times the forward work arrays of the same plan.
+        plan = self._work_chunks(max(1, batch_elements) * _GEOMETRY_WORK_FACTOR)
         reduced = torch.zeros_like(flat)
         if is_project:
             for views, pixels in self._batches(*plan[1:]):
@@ -791,10 +826,25 @@ class ReferenceProjector:
                 values = self._reduce(torch.index_select(flat, -1, ids), owner.view_group,
                                       owner.view_world_size, stats)
                 reduced = reduced.scatter_add(-1, ids.expand(*leading, -1), values)
+        # Split leading dimensions as _tensor_apply does when even the smallest
+        # chunks exceed the automatic payload; every rank uses the same pieces.
+        pieces = [(slice(None),) * len(leading)]
+        if any(hint is None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
+                                         owner.detector_chunk_shape)):
+            planes = (sum(plan[0]) + len(input_shape) + 2) * max(4, len(input_shape))
+            per_batch = max(math.prod(plan[0]), planes * plan[1] * math.prod(plan[2]))
+            batch_limit = max(1, _REFERENCE_WORK_BYTES // (per_batch * _GEOMETRY_WORK_FACTOR * torch.empty(
+                (), dtype=owner.dtype,
+            ).element_size()))
+            if batch_elements > batch_limit:
+                axis = max(range(len(leading)), key=leading.__getitem__)
+                step = max(1, batch_limit // (batch_elements // leading[axis]))
+                pieces = [tuple(slice(first, first + step) if index == axis else slice(None)
+                                for index in range(len(leading)))
+                          for first in range(0, leading[axis], step)]
         # Recompute one ray batch and tile at a time in the forward traversal
         # order, so input SUMs keep their collective order and only one pair's
         # graph is alive. The loss is <reduced cotangent, A_local(geometry) input>.
-        data = tensor.detach()
         leaves = tuple(value.detach().requires_grad_() for value in geometry)
         gradients = [torch.zeros_like(value) for value in leaves]
 
@@ -805,39 +855,47 @@ class ReferenceProjector:
                 total.add_(part)
 
         with torch.enable_grad():
-            if is_project:
-                for tile, world in self._tiles(plan[0]):
-                    values = data[(..., *tile)]
-                    if reduce_cotangent:
-                        values = self._reduce(values, owner.view_group, owner.view_world_size, stats)
+            for piece in pieces:
+                data, weights_flat = tensor.detach()[piece], reduced[piece]
+                part = tuple(data.shape[:len(leading)])
+                if is_project:
+                    for tile, world in self._tiles(plan[0]):
+                        values = data[(..., *tile)]
+                        if reduce_cotangent:
+                            values = self._reduce(values, owner.view_group, owner.view_world_size, stats)
+                        count = math.prod(values.shape[-len(tile):])
+                        for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                            device = self._device(batch, data.device, stats)
+                            origins, directions, rays = self._rays(views, pixels, device, stats=stats,
+                                                                   geometry=leaves)
+                            indices, lengths = self._intervals(origins, directions, world)
+                            local = self._to(values, device, stats).reshape(*part, count)
+                            selected = torch.index_select(local, -1, indices.flatten()).reshape(*part, *indices.shape)
+                            weights = self._to(torch.index_select(
+                                weights_flat, -1, self._transfer(rays, weights_flat.device),
+                            ), device, stats)
+                            accumulate(((selected * lengths).sum(-1) * weights).sum(), leaves, gradients)
+                else:
                     for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                         device = self._device(batch, data.device, stats)
-                        origins, directions, rays = self._rays(views, pixels, device, stats=stats, geometry=leaves)
-                        indices, lengths = self._intervals(origins, directions, world)
-                        local = self._to(values, device, stats).reshape(*leading, -1)
-                        selected = torch.index_select(local, -1, indices.flatten()).reshape(*leading, *indices.shape)
-                        weights = self._to(torch.index_select(reduced, -1, self._transfer(rays, reduced.device)),
-                                           device, stats)
-                        accumulate(((selected * lengths).sum(-1) * weights).sum(), leaves, gradients)
-            else:
-                for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
-                    device = self._device(batch, data.device, stats)
-                    values = data[(..., *self._pixel_slices(views, pixels))]
-                    if reduce_cotangent:
-                        values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
-                    values = self._to(values, device, stats).reshape(*leading, -1)
-                    # Tiles pull back to this batch's rays; the rays pull back once.
-                    origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=leaves)
-                    rays = (origins.detach().requires_grad_(), directions.detach().requires_grad_())
-                    ray_gradients = [torch.zeros_like(value) for value in rays]
-                    for tile, world in self._tiles(plan[0]):
-                        indices, lengths = self._intervals(*rays, world)
-                        voxels = self._voxel_ids(tile, owner.volume_shape, reduced.device)
-                        weights = self._to(torch.index_select(reduced, -1, voxels), device, stats)
-                        weights = torch.index_select(weights, -1, indices.flatten()).reshape(*leading, *indices.shape)
-                        accumulate((values[..., None] * lengths * weights).sum(), rays, ray_gradients)
-                    accumulate((origins * ray_gradients[0]).sum() + (directions * ray_gradients[1]).sum(),
-                               leaves, gradients)
+                        values = data[(..., *self._pixel_slices(views, pixels))]
+                        if reduce_cotangent:
+                            values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
+                        values = self._to(values, device, stats).reshape(
+                            *part, math.prod(values.shape[-len(input_shape):]),
+                        )
+                        # Tiles pull back to this batch's rays; the rays pull back once.
+                        origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=leaves)
+                        rays = (origins.detach().requires_grad_(), directions.detach().requires_grad_())
+                        ray_gradients = [torch.zeros_like(value) for value in rays]
+                        for tile, world in self._tiles(plan[0]):
+                            indices, lengths = self._intervals(*rays, world)
+                            voxels = self._voxel_ids(tile, owner.volume_shape, weights_flat.device)
+                            weights = self._to(torch.index_select(weights_flat, -1, voxels), device, stats)
+                            weights = torch.index_select(weights, -1, indices.flatten()).reshape(*part, *indices.shape)
+                            accumulate((values[..., None] * lengths * weights).sum(), rays, ray_gradients)
+                        accumulate((origins * ray_gradients[0]).sum() + (directions * ray_gradients[1]).sum(),
+                                   leaves, gradients)
         result = []
         for value in gradients:
             flat_value = value.reshape(-1)

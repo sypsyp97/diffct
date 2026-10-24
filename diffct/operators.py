@@ -7,7 +7,6 @@ from dataclasses import replace
 import time
 
 import torch
-from torch.autograd import forward_ad
 
 from .chunking import (_ChunkPlan, _allocation_bytes, _host_geometry_bytes, _largest_buffer_bytes, _memory_budget,
                        _memory_lower_bounds, _pipeline_buffers, _pipeline_bytes, _pixel_tiles,
@@ -18,8 +17,8 @@ from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
 from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geometry_errors
-from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, select_backend,
-                       voxel_spacing_tuple)
+from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
+                       select_backend, voxel_spacing_tuple)
 from .distribution import Partition
 from .projectors import (
     _backproject_into,
@@ -76,7 +75,7 @@ def _detector_spacing(value, beam):
 def _reject_trajectory_tangents(trajectory):
     # Projector stores detached frames, which would drop forward-mode tangents.
     if isinstance(trajectory, (tuple, list)) and any(
-            isinstance(value, torch.Tensor) and forward_ad.unpack_dual(value).tangent is not None
+            isinstance(value, torch.Tensor) and _forward_tangent(value) is not None
             for value in trajectory):
         raise RuntimeError(_GEOMETRY_FORWARD_DERIVATIVE)
 
