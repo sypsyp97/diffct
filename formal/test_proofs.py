@@ -15,6 +15,8 @@ normalized in voxel coordinates; zero-length rays are excluded from the metric.
 """
 
 import ast
+import itertools
+import math
 from pathlib import Path
 
 import pytest
@@ -146,6 +148,47 @@ def test_PROOF_normalized_voxel_ray_recovers_physical_length(dimensions, per_axi
     assert sp.sqrt(sp.simplify(metric_squared.subs(dict.fromkeys(pitches, s)))) == s
 
 
+@pytest.mark.parametrize("dimensions", [2, 3])
+@pytest.mark.parametrize("representation", ["scalar", "uniform", "anisotropic"])
+def test_BOUNDED_metric_helper_and_cuda_overload_bodies(simulated_kernels, dimensions, representation):
+    """CPU execution of selected overload bodies, without CUDA compilation.
+
+    Enumerate nonzero world displacements in {-1,0,1}^dimensions. Compare
+    physical norms and a four-piece partition, including a zero-length piece.
+    """
+    import numpy as np
+    from numba import typeof
+    from diffct.kernels import spacing as metrics
+
+    pitches = ((0.7, 1.9) if dimensions == 2 else (0.7, 1.3, 1.9))
+    spacing = (np.float32(1.7) if representation == "scalar" else
+               tuple(np.float32(s) for s in ((1.7,) * dimensions if representation == "uniform" else pitches)))
+    widths = ((float(spacing),) * dimensions if representation == "scalar" else
+              tuple(float(s) for s in reversed(spacing)))
+    spacing_type = typeof(spacing)
+    per_axis_impl = metrics._is_per_axis_overload(spacing_type)
+    pitch_impl = metrics._axis_pitch_overload(spacing_type, typeof(0))
+    direction_type = typeof(np.float64(1))
+    scale_impl = metrics._ray_scale_overload(spacing_type, direction_type, direction_type, direction_type)
+    assert metrics._is_per_axis(spacing) == per_axis_impl(spacing) == (representation != "scalar")
+    for axis, width in enumerate(widths):
+        assert metrics._axis_pitch(spacing, axis) == pitch_impl(spacing, axis) == width
+    for displacement in itertools.product((-1.0, 0.0, 1.0), repeat=dimensions):
+        if not any(displacement):
+            continue
+        voxel = tuple(component / width for component, width in zip(displacement, widths))
+        length = math.hypot(*voxel)
+        direction = tuple(component / length for component in voxel) + (0.0,) * (3 - dimensions)
+        scale = metrics._ray_scale(spacing, *direction)
+        assert scale == scale_impl(spacing, *direction)
+        assert scale > 0
+        expected = math.hypot(*displacement)
+        assert math.isclose(length * scale, expected, rel_tol=2e-7)
+        crossings = (0.0, length / 4, length / 4, length / 2, length)
+        integral = sum((end - start) * scale for start, end in zip(crossings, crossings[1:]))
+        assert math.isclose(integral, expected, rel_tol=2e-7)
+
+
 def test_PROOF_angular_quadrature_total_by_induction_and_nonnegativity():
     """For any n>=2, open weights total span; periodic weights total period.
 
@@ -199,7 +242,7 @@ def _source_statements(node):
 def _spacing_branch_statements(fn, per_axis):
     statements = set()
     for node in ast.walk(fn):
-        if isinstance(node, ast.If) and ast.unparse(node.test) == "isinstance(voxel_spacing, tuple)":
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "_is_per_axis(voxel_spacing)":
             for statement in (node.body if per_axis else node.orelse):
                 statements.update(_source_statements(statement))
     return statements
@@ -279,9 +322,9 @@ def _check_beam_source_bindings(name, tree):
     scalar = _spacing_branch_statements(gather[0], False)
     for index, axis in enumerate(axes):
         assert f"{axis}_v = np.float32(i{axis}) + _HALF - c{axis}" in assignments
-        assert f"{axis}_v *= voxel_spacing[{len(axes) - 1 - index}]" in per_axis
+        assert f"{axis}_v *= _axis_pitch(voxel_spacing, {index})" in per_axis
     assert "coordinate_scale = _ONE" in per_axis
-    assert "coordinate_scale = voxel_spacing" in scalar
+    assert "coordinate_scale = _axis_pitch(voxel_spacing, 0)" in scalar
     detectors = ["n_u", "n_v"] if name == "cone_beam" else ["n_det"]
     for axis, count in zip("uv", detectors):
         assert f"half_{axis} = (np.float32({count}) - _ONE) * _HALF" in assignments
@@ -292,25 +335,65 @@ def _check_beam_source_bindings(name, tree):
 
 def _check_spacing_source_bindings(tree):
     expected = {
+        "_is_per_axis": "return isinstance(spacing, tuple)",
+        "_is_per_axis_overload": """per_axis = isinstance(spacing, types.BaseTuple)
+def impl(spacing):
+    return per_axis
+return impl""",
         "_axis_pitch": """if isinstance(spacing, tuple):
     return spacing[len(spacing) - 1 - axis]
 return spacing""",
+        "_axis_pitch_overload": """if isinstance(spacing, types.BaseTuple):
+    rank = len(spacing)
+    def impl(spacing, axis):
+        return spacing[rank - 1 - axis]
+else:
+    def impl(spacing, axis):
+        return spacing
+return impl""",
+        "_ray_scale_2d": """x = np.float64(spacing[-1]) * dx
+y = np.float64(spacing[-2]) * dy
+squared = x * x + y * y
+return np.float32(math.sqrt(squared))""",
+        "_ray_scale_3d": """x = np.float64(spacing[-1]) * dx
+y = np.float64(spacing[-2]) * dy
+squared = x * x + y * y
+z = np.float64(spacing[0]) * dz
+squared += z * z
+return np.float32(math.sqrt(squared))""",
         "_ray_scale": """if isinstance(spacing, tuple):
-    x = np.float64(spacing[-1]) * dx
-    y = np.float64(spacing[-2]) * dy
-    squared = x * x + y * y
     if len(spacing) == 3:
-        z = np.float64(spacing[0]) * dz
-        squared += z * z
-    return np.float32(math.sqrt(squared))
+        return _ray_scale_3d(spacing, dx, dy, dz)
+    return _ray_scale_2d(spacing, dx, dy, dz)
 return spacing""",
+        "_ray_scale_overload": """if isinstance(spacing, types.BaseTuple):
+    return _ray_scale_3d if len(spacing) == 3 else _ray_scale_2d
+def impl(spacing, dx, dy, dz):
+    return spacing
+return impl""",
     }
     functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
     for name, body in expected.items():
+        if name.endswith("_overload"):
+            helper = name.removesuffix("_overload")
+            assert [ast.unparse(node) for node in functions[name].decorator_list] == [
+                f"overload({helper}, target='cuda')"], name
         statements = [node for node in functions[name].body
                       if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
                               and isinstance(node.value.value, str))]
         assert ast.unparse(ast.Module(body=statements, type_ignores=[])) == ast.unparse(ast.parse(body)), name
+
+
+def _mutate_source_function(source, name, old, new):
+    """Change one occurrence in one function; keep all other bindings intact."""
+    tree = ast.parse(source)
+    for index, fn in enumerate(tree.body):
+        if isinstance(fn, ast.FunctionDef) and fn.name == name:
+            function_source = ast.unparse(fn) + "\n"
+            assert old in function_source, (name, old)
+            tree.body[index] = ast.parse(function_source.replace(old, new, 1)).body[0]
+            return tree
+    raise AssertionError(f"Missing mutation target: {name}")
 
 
 @pytest.mark.parametrize("name", ["fan_beam", "cone_beam", "parallel_beam"])
@@ -325,35 +408,53 @@ def test_BOUNDED_source_binding_guards_for_voxel_metric_helpers():
 
 
 @pytest.mark.parametrize("name", ["fan_beam", "cone_beam", "parallel_beam"])
-@pytest.mark.parametrize("mutation", ["ray-scale", "axis-pitch", "gather-pitch", "normalization"])
-def test_BOUNDED_beam_source_guards_reject_metric_mutations(name, mutation):
+@pytest.mark.parametrize("kernel,mutation", [
+    ("forward", "ray-scale"), ("backward", "ray-scale"),
+    ("forward", "axis-pitch"), ("backward", "axis-pitch"),
+    ("backproject", "gather-pitch"),
+    ("forward", "normalization"), ("backward", "normalization"),
+])
+def test_BOUNDED_beam_source_guards_reject_metric_mutations(name, kernel, mutation):
     """Mutate source text in memory only; every selected drift must be detected."""
     source = (ROOT / "diffct" / "kernels" / f"{name}.py").read_text()
-    gather_pitch = 1 if name == "cone_beam" else 0
+    _check_beam_source_bindings(name, ast.parse(source))
+    prefix = "_cone_3d" if name == "cone_beam" else f"_{name.removesuffix('_beam')}_2d"
+    if kernel == "backproject":
+        kernel = "fdk_backproject" if name == "cone_beam" else "fbp_backproject"
     old, new = {
         "ray-scale": ("_ray_scale(voxel_spacing, dir_x, dir_y,", "_ray_scale(voxel_spacing, dir_x, dir_x,"),
         "axis-pitch": ("/ _axis_pitch(voxel_spacing, 1)", "/ _axis_pitch(voxel_spacing, 0)"),
-        "gather-pitch": (f"y_v *= voxel_spacing[{gather_pitch}]", f"y_v *= voxel_spacing[{gather_pitch + 1}]"),
+        "gather-pitch": ("y_v *= _axis_pitch(voxel_spacing, 1)", "y_v *= _axis_pitch(voxel_spacing, 0)"),
         "normalization": (("inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)",
                            "inv_length = _ONE") if name == "parallel_beam" else
                           ("inv_len = _ONE / length", "inv_len = _ONE")),
     }[mutation]
-    assert old in source
+    mutated = _mutate_source_function(source, f"{prefix}_{kernel}_kernel", old, new)
     with pytest.raises(AssertionError):
-        _check_beam_source_bindings(name, ast.parse(source.replace(old, new)))
+        _check_beam_source_bindings(name, mutated)
 
 
-@pytest.mark.parametrize("old,new", [
-    ("len(spacing) - 1 - axis", "axis"),
-    ("y * y", "x * x"),
-    ("squared += z * z", "squared += 0"),
-    ("return spacing\n", "return spacing * spacing\n"),
+@pytest.mark.parametrize("function,old,new", [
+    ("_is_per_axis", "isinstance(spacing, tuple)", "isinstance(spacing, list)"),
+    ("_is_per_axis_overload", "types.BaseTuple", "types.Number"),
+    ("_axis_pitch", "len(spacing) - 1 - axis", "axis"),
+    ("_axis_pitch_overload", "rank - 1 - axis", "axis"),
+    ("_axis_pitch", "return spacing\n", "return spacing * spacing\n"),
+    ("_axis_pitch_overload", "return spacing\n", "return spacing * spacing\n"),
+    ("_ray_scale_2d", "y * y", "x * x"),
+    ("_ray_scale_3d", "squared += z * z", "squared += 0"),
+    ("_ray_scale", "return spacing\n", "return spacing * spacing\n"),
+    ("_ray_scale_overload", "return spacing\n", "return spacing * spacing\n"),
+    ("_ray_scale", "len(spacing) == 3", "len(spacing) == 2"),
+    ("_ray_scale_overload", "len(spacing) == 3", "len(spacing) == 2"),
+    ("_ray_scale_overload", "target='cuda'", "target='cpu'"),
 ])
-def test_BOUNDED_spacing_source_guards_reject_metric_mutations(old, new):
+def test_BOUNDED_spacing_source_guards_reject_metric_mutations(function, old, new):
     source = (ROOT / "diffct" / "kernels" / "spacing.py").read_text()
-    assert old in source
+    _check_spacing_source_bindings(ast.parse(source))
+    mutated = _mutate_source_function(source, function, old, new)
     with pytest.raises(AssertionError):
-        _check_spacing_source_bindings(ast.parse(source.replace(old, new)))
+        _check_spacing_source_bindings(mutated)
 
 
 def test_BOUNDED_source_binding_guards_for_angular_and_parker_models():
