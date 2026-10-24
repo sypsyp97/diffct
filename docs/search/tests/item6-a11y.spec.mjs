@@ -45,23 +45,24 @@ for (const where of ['landing', 'dialog', 'page']) {
       await expect(lb).toHaveAttribute('role', 'listbox');
       await expect(ui.input).toHaveAttribute('aria-expanded', 'false');
       await typeQuery(ui.input, 'fan beam');
+      await site.waitProbe('embed', (p) => p.text.endsWith('fan beam'));
+      await expect(ui.host).toHaveAttribute('data-state', 'ready');
       await stableSnapshot(ui.listbox);
       await expect(ui.input).toHaveAttribute('aria-expanded', 'true');
-      const options = lb.locator('[role="option"]');
-      expect(await options.count()).toBeGreaterThan(0);
+      // A semantic merge can replace options. Read their attributes in one DOM snapshot.
+      const options = await lb.evaluate((el) => [...el.querySelectorAll('[role="option"]')].map((o) => {
+        const owners = [];
+        for (let p = o.parentElement; p && p !== el; p = p.parentElement) owners.push(p.getAttribute('role') || p.tagName.toLowerCase());
+        return { id: o.id, name: o.textContent.trim(), owners };
+      }), undefined, { timeout: 15_000 });
+      expect(options.length).toBeGreaterThan(0);
       // Every option has an id (needed for aria-activedescendant) and an accessible name.
-      for (const id of await optionIds(ui)) {
+      for (const { id, name, owners } of options) {
         expect(id).toBeTruthy();
-        const name = await lb.locator(`[id="${id}"]`).evaluate((o) => o.textContent.trim());
         expect(name.length).toBeGreaterThan(0);
+        // Options sit in the listbox directly or through presentational groups only.
+        for (const role of owners) expect(['presentation', 'none', 'group']).toContain(role);
       }
-      // Options sit in the listbox directly or through presentational groups only.
-      const owners = await lb.evaluate((el) => [...el.querySelectorAll('[role="option"]')].map((o) => {
-        const roles = [];
-        for (let p = o.parentElement; p && p !== el; p = p.parentElement) roles.push(p.getAttribute('role') || p.tagName.toLowerCase());
-        return roles;
-      }));
-      for (const chain of owners) for (const r of chain) expect(['presentation', 'none', 'group']).toContain(r);
     });
 
     test('aria-activedescendant follows the arrow keys', async ({ page, site, hub }) => {
