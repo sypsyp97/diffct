@@ -1205,9 +1205,13 @@ class Projector:
             components = tuple(component[global_slice] for component in components)
         translated = []
         for index, component in enumerate(components):
+            dtype = torch.promote_types(torch.float32, component.dtype)
+            if self.beam == "cone" and isinstance(self.voxel_spacing, tuple) and len(components) == 4:
+                # Preserve slab translations before staging the native FP32 frame.
+                dtype = torch.float64
             value = component.detach().to(
                 device=component.device if surface else "cpu",
-                dtype=torch.promote_types(torch.float32, component.dtype),
+                dtype=dtype,
             )
             position = index == 1 or (index == 0 and self.beam != "parallel")
             if position:
