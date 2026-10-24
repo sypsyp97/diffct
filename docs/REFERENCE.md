@@ -6,7 +6,7 @@
 |---|---|---|
 | Acquisition | 2D parallel/fan and 3D cone/parallel beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
 | Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives and trajectory forward-mode derivatives raise an error; surface samples are checked on every call |
-| Execution | Native NVIDIA CUDA or portable PyTorch; explicit FP32/FP64, leading batch dimensions, per-axis spacing, devices and distributed ownership | Native fast mode remains FP32; strict/hybrid/per-axis execution uses PyTorch; see [precision and execution](EXECUTION.md) |
+| Execution | Native NVIDIA CUDA or portable PyTorch; explicit FP32/FP64, leading batch dimensions, per-axis spacing, devices and distributed ownership | Native fast mode remains FP32 and supports per-axis spacing; strict/hybrid execution uses PyTorch; see [precision and execution](EXECUTION.md) |
 | Reconstruction | Library CGLS/SIRT/TV; streamed differentiable `fbp`/`fdk`, numerical store outputs, approximate `helical_fdk` and composable helpers | Analytical geometry is fixed and flat; helical/low-level helpers retain their original CUDA contract; `backproject()` is not an inverse |
 | Memory | Automatic spatial/view/pixel blocks, bounded transfers, numerical tensor/file stores and rank-owned volume slabs | Tensor autograd still holds complete inputs/outputs/gradients, but no per-batch ray tables; disk solvers must keep their vector operations blockwise |
 

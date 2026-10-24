@@ -31,7 +31,7 @@ Coordinates are Cartesian ``(x, y[, z])``. Volume indexing is ``[y, x]`` for 2D
 and ``[z, y, x]`` for 3D. The origin is the volume centre. Use one length unit
 for positions, voxel spacing and detector spacing. Voxel spacing is a single
 positive scalar or a positive per-axis tuple in tensor order: ``(dy,dx)`` or
-``(dz,dy,dx)``. Per-axis spacing uses the PyTorch backend; see :doc:`execution`.
+``(dz,dy,dx)``. Both backends support per-axis spacing; see :doc:`execution`.
 
 Detector axes are unit direction vectors, not pixel-step vectors. The detector
 spacing sets the pixel pitch. A scalar spacing applies to both 3D detector axes.

@@ -14,6 +14,18 @@ import numpy as np
 _DTYPE = np.float32
 """Default data type for numerical computations (numpy.float32)."""
 
+
+def _native_spacing(spacing):
+    """Stage tensor-order pitches while retaining the scalar launch type."""
+    if isinstance(spacing, (tuple, list)):
+        pitches = tuple(float(value) for value in spacing)
+        if any(not 1e-6 <= value <= 1e6 for value in pitches):
+            raise ValueError("native voxel_spacing practical range is [1e-6, 1e6] on every axis")
+        if max(pitches) / min(pitches) > 1e4:
+            raise ValueError("native voxel_spacing pitch ratio must not exceed 1e4")
+        return tuple(_DTYPE(value) for value in pitches)
+    return _DTYPE(spacing)
+
 _INF = _DTYPE(np.inf)
 """Floating-point infinity in default data type."""
 

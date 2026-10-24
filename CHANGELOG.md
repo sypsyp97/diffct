@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Native per-axis voxel spacing for projection, matched backprojection, geometry gradients and analytical FBP/FDK. Tensor axis order and physical length units match the PyTorch backend. Native pitches must be in `[1e-6, 1e6]`, with a maximum/minimum ratio of at most `1e4`. Outside these bounds, `numba` raises and `auto` selects PyTorch. On NVIDIA CUDA, the fallback warning names the reason. Scalar native arithmetic and admission are unchanged.
+
 ### Fixed
 
 - Portable (`backend="torch"`) autograd no longer records every ray batch and volume tile. Data gradients apply the matched adjoint, and geometry gradients recompute one ray batch and tile at a time. Saved autograd memory no longer grows with the number of batches, also inside `torch.vmap` and `torch.func.jvp` with differentiable inputs or tangents. Geometry backward splits large leading batches like the forward call and accepts empty leading batches. First-order values are unchanged.
@@ -20,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Portable projection sets up the rays of a view/pixel batch once and reuses them for every volume tile. Projections, backprojections and their gradients are bitwise unchanged for the same chunks. Distributed backward through a backprojection keeps the previous tile order and holds one summed cotangent tile at a time.
 - Portable outputs accumulate in place, so a call no longer holds a second full-size output. Execution statistics report the loop order that ran.
 - `Projector(backend="auto")` emits one `UserWarning` when it selects the portable backend on an NVIDIA CUDA machine. The warning names the reasons. `backend="torch"` silences it.
+- `backend="auto"` selects native NVIDIA execution for per-axis spacing in fast mode with views/space ownership. Strict precision modes and hybrid ownership continue to use PyTorch.
 
 ## [2.4.3] - 2026-10-22
 

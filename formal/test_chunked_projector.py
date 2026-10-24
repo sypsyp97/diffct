@@ -52,20 +52,22 @@ def test_PROOF_positive_integer_partition_has_one_half_open_owner():
 
 
 @pytest.mark.parametrize("rank", [2, 3])
-def test_BOUNDED_exact_cartesian_partition_and_cell_centres(rank):
-    """Enumerate extents 1..3, limits 1..4, every cell, and exact rational spacing."""
-    spacing = Fraction(13, 10)
+@pytest.mark.parametrize("per_axis", [False, True], ids=["scalar", "per-axis"])
+def test_BOUNDED_exact_cartesian_partition_and_cell_centres(rank, per_axis):
+    """Extents 1..3, limits 1..4, every cell; scalar and per-axis rational pitches."""
+    pitches = ((Fraction(7, 10), Fraction(13, 10), Fraction(19, 10))[:rank] if per_axis else
+               (Fraction(13, 10),) * rank)
     for shape in itertools.product(range(1, 4), repeat=rank):
         for chunk in itertools.product(range(1, 5), repeat=rank):
             counts = {}
             for block in _tiles(shape, chunk):
                 lengths = tuple(s.stop - s.start for s in block)
                 shift = tuple((Fraction(s.start) + Fraction(length - size, 2)) * spacing
-                              for s, length, size in zip(block, lengths, shape))
+                              for s, length, size, spacing in zip(block, lengths, shape, pitches))
                 for local in itertools.product(*(range(length) for length in lengths)):
                     global_index = tuple(s.start + i for s, i in zip(block, local))
                     counts[global_index] = counts.get(global_index, 0) + 1
-                    for i, j, size, length, centre in zip(global_index, local, shape, lengths, shift):
+                    for i, j, size, length, centre, spacing in zip(global_index, local, shape, lengths, shift, pitches):
                         global_centre = (Fraction(i) + Fraction(1, 2) - Fraction(size, 2)) * spacing
                         local_centre = (Fraction(j) + Fraction(1, 2) - Fraction(length, 2)) * spacing
                         assert global_centre == local_centre + centre

@@ -231,6 +231,7 @@ def _tiles(shape, chunk_shape, spacing):
         tile_shape = tuple(min(chunk, size - first)
                            for size, chunk, first in zip(shape, chunk_shape, start))
         slices = tuple(slice(first, first + size) for first, size in zip(start, tile_shape))
-        centre = tuple((first + size / 2 - full / 2) * spacing
-                       for first, size, full in zip(start, tile_shape, shape))
+        pitches = spacing if isinstance(spacing, (tuple, list)) else (spacing,) * len(shape)
+        centre = tuple((first + size / 2 - full / 2) * pitch
+                       for first, size, full, pitch in zip(start, tile_shape, shape, pitches))
         yield slices, tile_shape, centre[::-1]

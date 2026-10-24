@@ -13,20 +13,27 @@ Proofs apply to small mathematical models, not compiled Numba CUDA kernels.
 Source guards check selected expressions to expose model drift; they do not prove that the whole implementation matches a model.
 The slab model treats only exactly zero directions as parallel. It excludes `_TINY` approximations and finite `_BIG` sentinels.
 The partition proof assumes ordered, complete crossings. The quadrature proof assumes at least two samples and a nonnegative closure gap.
+Coordinate models use positive scalar or tensor-order per-axis pitches in 2D/3D.
+The ray metric model excludes zero-length rays and uses unit directions in voxel coordinates.
+It proves a squared-length identity; the physical length uses the nonnegative square root.
+Bounded metric checks execute the Python helpers and selected CUDA-overload bodies on the CPU.
+They do not compile CUDA code.
 
 | Property | Method | Code covered | Bug class caught | Exclusions |
 | --- | --- | --- | --- | --- |
 | Slab clipping keeps a nonempty segment inside the box and its endpoint interval | PROOF: Z3 reals | Fan/cone forward and backward ray setup in `diffct/kernels/fan_beam.py` and `cone_beam.py` | Integrating behind an internal source or beyond an internal detector | Rounding, near-zero direction approximation, CUDA compilation |
-| Ordered piece lengths are nonnegative and telescope to the chord length | PROOF: induction/algebra | Siddon `seg_len = t_next - t` accumulation | Missing or double-counting a piece in the mathematical partition | Does not prove the traversal visits every cell or terminates |
-| Voxel and detector coordinate maps have exact inverses and centred reflection | PROOF: SymPy | Voxel-centre gather coordinates; Siddon detector offsets; `detector_coordinates_1d` | Half-cell shifts and wrong inverse offsets | Floating-point index conversion and interpolation bounds |
+| Ordered piece lengths are nonnegative and telescope to the physical chord length; forward and adjoint use the same factor | PROOF: induction/algebra | Siddon `seg_len = t_next - t` accumulation with one positive physical-length factor per ray | Missing/double-counting a piece or using different forward/adjoint factors in the model | Assumes complete crossings; does not prove traversal or termination |
+| Voxel and detector coordinate maps have exact inverses and centred reflection; flat detector composition agrees with world-point scaling | PROOF: SymPy, scalar/per-axis pitches in 2D/3D | Voxel-centre gather coordinates; Siddon detector offsets; `detector_coordinates_1d` | Half-cell shifts and wrong inverse offsets | Floating-point index conversion and interpolation bounds |
+| Normalized voxel-space rays recover physical squared length; uniform per-axis pitches reduce to scalar pitch | PROOF: SymPy, scalar/per-axis pitches in 2D/3D | Mathematical metric used by `spacing.py:_axis_pitch/_ray_scale` | Wrong physical-length units or metric normalization in the model | Nonzero rays, positive pitches, exact arithmetic; excludes casts and CUDA compilation |
 | Trapezoidal quadrature totals its open span or periodic interval | PROOF: algebra | `angular_integration_weights` | Incorrect endpoint/closure contributions in the model | Scan classification and float32 summation |
-| Selected model expressions remain present in the source | BOUNDED: finite source guards | Expressions identified in `test_proofs.py` | A proof silently outliving a changed formula | Not semantic equivalence of the complete function |
+| Python helpers and selected CUDA-overload bodies preserve axis pitches and physical partition lengths | BOUNDED: 2D/3D, scalar/uniform/anisotropic pitches, nonzero displacements in `{-1,0,1}` per axis and four-piece partitions | `_is_per_axis`, `_axis_pitch`, `_ray_scale`, their overload selectors and selected implementations in `spacing.py` | Wrong dispatch, tensor-to-world axis order, metric specialization or scalar return | CPU execution only; excludes CUDA compilation and scalar bitwise compatibility |
+| Selected model expressions remain present in the source; selected metric mutations fail the guards | BOUNDED: AST guards and 34 single-function in-memory mutations, each with an unmodified-source control | Scalar/per-axis metric helpers and CUDA overloads; all three beam pairs, coordinate transforms and analytical gather branches in `test_proofs.py` | A proof silently outliving a changed formula, pitch order, normalization, length factor or CUDA target | Not semantic equivalence of the complete function or evidence of CUDA compilation |
 | Ideal Parker taper pairs sum to one with the source's plus-gamma convention | PROOF: SymPy | `parker_weights` taper arguments | Wrong complementary taper argument | Excludes the runtime `1e-12` denominators, scan classification and arbitrary-trajectory ray pairing |
 | Actual angular weights have the expected total and stay nonnegative; permutations preserve unique-angle weights and duplicate-angle aggregate mass | BOUNDED / PROPERTY TEST | CPU `angular_integration_weights` and scan classification | Half/full-scan normalization and reordered-view errors | Individual weights at duplicate angles, malformed angles and GPU arithmetic |
 | Actual Parker taper pairs sum to one within tolerance; full scans pass through; 240/330/350-degree weighted mass is pi | BOUNDED | CPU `parker_weights`, shared scan classification | Applying both Parker taper and full-scan redundancy | Does not prove general redundant-ray coverage |
 | Ramp windows are even and have unit DC; filtering agrees across FFT paths and physical scaling | BOUNDED / PROPERTY TEST | CPU `_ramp_window` and `ramp_filter_1d` | Asymmetric windows, FFT-path drift, missing pitch factor | Reconstruction accuracy or CUDA gather kernels |
 | Cosine weights and trajectory frames satisfy their geometric invariants; custom parallel paths normalize directions and reject one wrong shape | PROPERTY TEST / BOUNDED | CPU cosine helpers and `diffct/geometry.py` generators | Off-centre detector weights, nonunit or nonorthogonal frames, incorrect shape acceptance | All custom paths, geometry VJP kernels, GPU wrappers |
-| Every tiny-grid image/sinogram basis gives matching forward/adjoint matrices and independent cell intersections | BOUNDED: CUDASIM | Actual parallel/fan/cone forward/backward kernels | Wrong traversal, axis ordering, physical scale, unmatched adjoint | All real-valued inputs, hardware atomics and autograd dispatch |
+| Every tiny-grid image/sinogram basis gives matching forward/adjoint matrices and independent cell intersections | BOUNDED: CUDASIM, scalar/uniform-tuple/anisotropic pitches | Actual parallel/fan/cone forward/backward kernels | Wrong traversal, axis ordering, physical scale, unmatched adjoint | All real-valued inputs, hardware atomics and autograd dispatch |
 | Uniform boxes give analytic chords for internal endpoints, distant endpoints, misses and grazing rays | BOUNDED: CUDASIM | Same production Siddon kernels | The source-inside, distant-source and grazing bugs listed in `CHANGELOG.md` 2.0.0 | Larger grids, all trajectories, CUDA fastmath |
 | Local frame maps recover 2D offsets and have the stated 3D cross normal; arcs have unit-speed circular sections and a flat limit | PROOF: SymPy | Mathematical surface coordinate contract in `docs/REFERENCE.md` | Wrong normal convention, offset order or arc parameter units | Complete source equivalence and floating-point sampling |
 | World-point and arc-radius derivatives obey the chain rule, including a moving detector frame | PROOF: SymPy | Mathematical chain rule used by surface autograd | Missing normal/frame contributions in the model | PyTorch graph dispatch and derivatives at voxel edges |
@@ -34,7 +41,7 @@ The partition proof assumes ordered, complete crossings. The quadrature proof as
 | Every pixel-coordinate VJP agrees with stable independent finite differences | BOUNDED: CUDASIM | Native pixel-position branches of geometry VJP kernels | Wrong endpoint-gradient units or routing | Source/ray-direction VJPs, frame/parameter chain rule, compiled CUDA and autograd |
 | Positive integer chunk limits give each cell one half-open owner; tile-centred coordinates recover the global cell and detector ray | PROOF: Z3 integers / SymPy | Mathematical partition and translation models used by streamed execution | Overlapping/missing cells and half-cell tile-origin errors in the model | Source equivalence, scheduler and floating-point translations |
 | Disjoint block forward maps have the assembled adjoint, including replicated rank SUM and an empty rank | PROOF: finite symbolic model | Four cells, three rays, two blocks and two nonempty/one empty view shards | Missing block embeddings or duplicated replicated losses in the model | Arbitrary distributed programs and real NCCL |
-| Cartesian tiles partition every cell and recover exact rational cell centres | BOUNDED: exhaustive rational arithmetic | Model extents 1..3, chunk limits 1..4, 2D/3D grids | Tail clipping and tensor/world order errors in the model | Production slice generator equivalence and all integer sizes |
+| Cartesian tiles partition every cell and recover exact rational cell centres | BOUNDED: exhaustive rational arithmetic, scalar/per-axis pitches | Model extents 1..3, chunk limits 1..4, 2D/3D grids | Tail clipping and axis-pitch errors in the model | Production slice generator equivalence and all integer sizes |
 | Every tiny-grid block basis gives the independent full forward/adjoint matrix; boundaries and source-inside rays agree | BOUNDED: CUDASIM | Production Siddon kernels on shifted flat/curved blocks and batches of at most two views | Artificial tile boundary ownership, wrong translation/axis order and unmatched block adjoint | PyTorch scheduling, compiled CUDA, allocation bounds and larger domains |
 | Block entry/exit VJP terms sum to independent endpoint/source derivatives | BOUNDED: CUDASIM | Native pixel-position geometry VJP kernels over disjoint blocks | Missing cancellation of artificial boundaries | Frame/callback chain rule, all real-valued geometry and hardware arithmetic |
 | Tagged host/GPU slots preserve completed values across every modeled event interleaving; removing each lifetime dependency exposes a counterexample | BOUNDED: finite state exploration | Idealized upload/compute/download/reuse protocol in `test_execution_protocol.py` | Reading unfinished copies, premature host overwrite or GPU buffer reuse in the model | Production event wiring, actual overlap, allocator ownership and hardware |
@@ -53,7 +60,10 @@ The partition proof assumes ordered, complete crossings. The quadrature proof as
 It bypasses the PyTorch CUDA-tensor bridge. The independent reference intersects each ray with each cell using float64 slab arithmetic.
 It does not reproduce the Siddon traversal.
 
-The matrix check enumerates parallel, fan and cone beams, two rectangular grids, two voxel spacings, and every image and sinogram basis vector.
+The matrix check enumerates parallel, fan and cone beams, two rectangular grids, and every image and sinogram basis vector.
+Each beam/grid pair uses scalar pitches 1.0 and 1.7, a uniform tuple at 1.7,
+and tensor-order anisotropic pitches `(0.7, 1.9)` or `(0.7, 1.3, 1.9)`.
+The independent reference uses physical cell bounds; it does not call the native metric helpers.
 The chord check enumerates named ray cases on those beam/grid/spacing combinations.
 Comparisons use `rtol=3e-5`, `atol=3e-6`; the grazing case also uses a row-dependent image to catch assignment to the wrong voxel row.
 All finite domains and numerical tolerances are in the check files.
@@ -69,7 +79,8 @@ in the test module.
 
 `test_chunked_projector.py` adds exact model checks and bounded checks.
 The Cartesian partition check enumerates 2D/3D extents 1..3,
-limits 1..4 and every cell using spacing 13/10. Production block matrices
+limits 1..4 and every cell using scalar spacing 13/10 and per-axis rational
+pitches `(7/10, 13/10)` or `(7/10, 13/10, 19/10)`. Production block matrices
 enumerate every image/sinogram basis for grids `(H,W)=(3,4)` and
 `(D,H,W)=(3,2,4)`, three views, three or `(2,2)` detector pixels, spacing 1.3,
 flat asymmetric tiles and per-view curved/coupled one-cell tiles. Extra
@@ -129,17 +140,18 @@ On Linux, install CPU torch first:
 ```bash
 python -m pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
 python -m pip install -r formal/requirements.txt
-NUMBA_ENABLE_CUDASIM=1 FORMAL_REQUIRE_CUDASIM=1 python -m pytest formal -q
+python -m pip check
+NUMBA_ENABLE_CUDASIM=1 FORMAL_REQUIRE_CUDASIM=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 \
+  python -m pytest formal -q -ra --junitxml=formal/results.xml
 ```
 
 The pinned requirements install `numba-cuda[cu12]` on Linux.
 On macOS arm64, that target has no compatible wheel. The local command uses Numba's bundled simulator:
 
 ```bash
-uv run --no-project --python 3.12 \
-  --with pytest==9.1.1 --with z3-solver==5.1.0.0 --with sympy==1.14.0 \
-  --with hypothesis==6.168.5 --with numpy==2.4.6 --with torch==2.14.1 \
-  --with numba==0.68.0 python -m pytest formal -q
+NUMBA_ENABLE_CUDASIM=1 FORMAL_REQUIRE_CUDASIM=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 \
+  uv run --no-project --python 3.12 --with-requirements formal/requirements.txt \
+  python -m pytest formal -q -ra --junitxml=formal/results.xml
 ```
 
 `conftest.py` enables CUDASIM before Numba imports. Missing simulator dependencies may skip local kernel checks.

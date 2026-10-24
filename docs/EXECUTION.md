@@ -6,13 +6,13 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 
 | Setting | Computation | Devices |
 |---|---|---|
-| `backend="auto", precision="fast"` | Native FP32 for scalar spacing and views/space partitions; otherwise PyTorch FP32 | NVIDIA CUDA, or the input's PyTorch device |
-| `backend="numba"` | Native FP32 fast-math traversal, with FP64 ray clipping and entry setup | NVIDIA CUDA; scalar voxel spacing, `precision="fast"`, views/space |
+| `backend="auto", precision="fast"` | Native FP32 for scalar or per-axis spacing and views/space partitions; otherwise PyTorch FP32 | NVIDIA CUDA, or the input's PyTorch device |
+| `backend="numba"` | Native FP32 fast-math traversal, with FP64 ray clipping and entry setup | NVIDIA CUDA; `precision="fast"`, views/space |
 | `backend="torch", precision="float32"` | PyTorch FP32 data and local traversal, with FP64 ray clipping and entry setup | CPU, NVIDIA CUDA, PyTorch ROCm |
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
-`backend="auto"` selects PyTorch for either strict precision mode, per-axis
-spacing, hybrid ownership and `parallel3d` beams. An incompatible explicit Numba
+`backend="auto"` selects PyTorch for strict precision modes, hybrid
+ownership, or `parallel3d` beams. An incompatible explicit Numba
 request raises an error. `Projector.backend`, `.precision` and `.dtype` describe the selected
 execution. Supplying a float64 input to `precision="fast"` still yields FP32.
 Create trajectories and data in float64 for a double-precision baseline;
@@ -96,6 +96,28 @@ Any leading batch/channel dimensions precede the configured volume or ray
 shape. Projection and adjoint preserve them, including empty dimensions.
 `voxel_spacing=(dy, dx)` or `(dz, dy, dx)` follows tensor axis order; trajectory
 coordinates remain `(x, y[, z])`. Spacings are fixed physical settings.
+Both backends support per-axis spacing. Native traversal scales each world
+coordinate by its axis pitch and integrates in physical length units.
+Each native per-axis pitch must lie in the closed practical range `[1e-6, 1e6]`.
+The largest pitch divided by the smallest must not exceed `1e4`.
+These bounds are checked before FP32 conversion. FP32 representability alone
+does not prevent extreme pitches from erasing ray segments or overflowing
+geometry gradients. The conservative range limits these scaling effects;
+existing FP32 geometry range checks still apply.
+`backend="numba"` raises outside these bounds. `backend="auto"` selects PyTorch;
+on NVIDIA CUDA, its fallback warning names the violated bound.
+Scalar spacing retains its existing admission checks.
+
+Per-axis finite rays are degenerate only when their endpoints coincide.
+Detector offsets multiply their axis components before division by the pitch.
+Endpoint metric derivatives use FP64 intermediates before the final FP32 cast.
+Scalar spacing retains its existing arithmetic and degeneracy threshold.
+Helical reconstruction accepts `(dz, dy, dx)` and uses `dz` for slice positions.
+
+For 2D parallel rays, scalar spacing preserves the original direction-gradient
+convention. Per-axis spacing differentiates physical ray length. The gradients
+can differ in their radial component. Compare direction perturbations tangent
+to the required unit vector, or parameterize directions with angles.
 
 ```python
 import torch

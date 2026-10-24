@@ -9,6 +9,8 @@ import math
 import numpy as np
 from numba import cuda
 
+from .spacing import _axis_pitch, _is_per_axis, _ray_scale
+
 from ..constants import (
     _FASTMATH_DECORATOR,
     _FDK_ACCURACY_DECORATOR,
@@ -79,26 +81,28 @@ def _fan_2d_forward_kernel(
 
     # === 2D FAN BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Read source position from position matrix (in physical units)
-    src_x = d_src_pos[iang, 0] / voxel_spacing
-    src_y = d_src_pos[iang, 1] / voxel_spacing
+    src_x = d_src_pos[iang, 0] / _axis_pitch(voxel_spacing, 0)
+    src_y = d_src_pos[iang, 1] / _axis_pitch(voxel_spacing, 1)
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector center and orientation vector
-        det_cx = d_det_center[iang, 0] / voxel_spacing
-        det_cy = d_det_center[iang, 1] / voxel_spacing
+        det_cx = d_det_center[iang, 0] / _axis_pitch(voxel_spacing, 0)
+        det_cy = d_det_center[iang, 1] / _axis_pitch(voxel_spacing, 1)
 
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
 
-        # Calculate detector element offset from center
-        u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
-
-        # Calculate 2D detector element position using center + u*u_vec
-        det_x = det_cx + u_offset * u_vec_x
-        det_y = det_cy + u_offset * u_vec_y
+        if _is_per_axis(voxel_spacing):
+            u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
+            det_x = det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+            det_y = det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+        else:
+            u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x
+            det_y = det_cy + u_offset * u_vec_y
     else:
-        det_x = d_detector_positions[iang, idet, 0] / voxel_spacing
-        det_y = d_detector_positions[iang, idet, 1] / voxel_spacing
+        det_x = d_detector_positions[iang, idet, 0] / _axis_pitch(voxel_spacing, 0)
+        det_y = d_detector_positions[iang, idet, 1] / _axis_pitch(voxel_spacing, 1)
 
     # Preserve native endpoint composition, then clip in float64: when both
     # endpoints are distant, float32 loses voxel widths before rebasing.
@@ -109,7 +113,7 @@ def _fan_2d_forward_kernel(
     # Ray direction vector from source to detector element
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
-    if length < _EPSILON:  # Degenerate ray case
+    if length == 0 or (not _is_per_axis(voxel_spacing) and length < _EPSILON):
         d_sino[iang, idet] = _ZERO; return
     
     # Normalize ray direction vector for parametric traversal
@@ -188,7 +192,7 @@ def _fan_2d_forward_kernel(
             ty += dt_y
     
     # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
-    d_sino[iang, idet] = accum * voxel_spacing
+    d_sino[iang, idet] = accum * _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
 
 @_FASTMATH_DECORATOR
 
@@ -250,29 +254,31 @@ def _fan_2d_backward_kernel(
 
     # === 2D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
-    val = d_sino[iang, idet] * voxel_spacing
+    val = d_sino[iang, idet] * _axis_pitch(voxel_spacing, 0)
 
     # Read source position from position matrix (in physical units)
-    src_x = d_src_pos[iang, 0] / voxel_spacing
-    src_y = d_src_pos[iang, 1] / voxel_spacing
+    src_x = d_src_pos[iang, 0] / _axis_pitch(voxel_spacing, 0)
+    src_y = d_src_pos[iang, 1] / _axis_pitch(voxel_spacing, 1)
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector center and orientation vector
-        det_cx = d_det_center[iang, 0] / voxel_spacing
-        det_cy = d_det_center[iang, 1] / voxel_spacing
+        det_cx = d_det_center[iang, 0] / _axis_pitch(voxel_spacing, 0)
+        det_cy = d_det_center[iang, 1] / _axis_pitch(voxel_spacing, 1)
 
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
 
-        # Calculate detector element offset from center
-        u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / voxel_spacing
-
-        # Calculate 2D detector element position using center + u*u_vec
-        det_x = det_cx + u_offset * u_vec_x
-        det_y = det_cy + u_offset * u_vec_y
+        if _is_per_axis(voxel_spacing):
+            u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
+            det_x = det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+            det_y = det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+        else:
+            u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x
+            det_y = det_cy + u_offset * u_vec_y
     else:
-        det_x = d_detector_positions[iang, idet, 0] / voxel_spacing
-        det_y = d_detector_positions[iang, idet, 1] / voxel_spacing
+        det_x = d_detector_positions[iang, idet, 0] / _axis_pitch(voxel_spacing, 0)
+        det_y = d_detector_positions[iang, idet, 1] / _axis_pitch(voxel_spacing, 1)
 
     # Match forward setup while retaining native endpoint composition.
     src_x, src_y = np.float64(src_x), np.float64(src_y)
@@ -282,9 +288,12 @@ def _fan_2d_backward_kernel(
     # Ray direction vector from source to detector element
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
-    if length < _EPSILON: return  # Skip degenerate rays
+    if length == 0 or (not _is_per_axis(voxel_spacing) and length < _EPSILON):
+        return
     inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len  # Normalized ray direction vector
+    if _is_per_axis(voxel_spacing):
+        val = d_sino[iang, idet] * _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Measure the ray parameter from the endpoint nearer the volume centre, so a
@@ -388,16 +397,23 @@ def _fan_2d_fbp_backproject_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    det_spacing_v = det_spacing / voxel_spacing
+    if _is_per_axis(voxel_spacing):
+        x_v *= _axis_pitch(voxel_spacing, 0)
+        y_v *= _axis_pitch(voxel_spacing, 1)
+        coordinate_scale = _ONE
+    else:
+        coordinate_scale = _axis_pitch(voxel_spacing, 0)
+
+    det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF
 
     accum = _ZERO
     for iview in range(n_views):
-        sx = d_src_pos[iview, 0] / voxel_spacing
-        sy = d_src_pos[iview, 1] / voxel_spacing
+        sx = d_src_pos[iview, 0] / coordinate_scale
+        sy = d_src_pos[iview, 1] / coordinate_scale
 
-        dcx = d_det_center[iview, 0] / voxel_spacing
-        dcy = d_det_center[iview, 1] / voxel_spacing
+        dcx = d_det_center[iview, 0] / coordinate_scale
+        dcy = d_det_center[iview, 1] / coordinate_scale
 
         ux = d_det_u_vec[iview, 0]
         uy = d_det_u_vec[iview, 1]

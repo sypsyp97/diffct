@@ -7,7 +7,7 @@ for differentiable CT forward projection and backprojection operations.
 import torch
 import numpy as np
 
-from .constants import _DTYPE
+from .constants import _DTYPE, _native_spacing
 from . import kernels as _kernels
 from .utils import (
     DeviceManager,
@@ -97,6 +97,10 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
             W, H, D = native_volume.shape
             n_views, n_u, n_v = sinogram.shape
             du, dv = detector_spacing
+            native_spacing = _native_spacing(voxel_spacing)
+            if len(geom) == 4 and isinstance(native_spacing, tuple):
+                # Flat per-axis rays retain FP64 traversal parameters.
+                native_spacing = tuple(np.float64(value) for value in native_spacing)
             if backproject:
                 # A warp covers up to 32 adjacent detector rows of one column and view, so its
                 # rays share an xy path and the backprojection atomics coalesce.
@@ -116,7 +120,7 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(du), _DTYPE(dv), *d_geom,
                 _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
-                _DTYPE(voxel_spacing), d_positions,
+                native_spacing, d_positions,
             )
         else:
             H, W = native_volume.shape
@@ -135,7 +139,7 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
                 kernel = _resolve_kernel('_fan_2d_backward_kernel' if backproject else '_fan_2d_forward_kernel')
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(spacing), *d_geom,
-                _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(voxel_spacing), d_positions,
+                _DTYPE(W * 0.5), _DTYPE(H * 0.5), _native_spacing(voxel_spacing), d_positions,
             )
         if after_launch is not None:
             after_launch()
@@ -197,7 +201,10 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
         # Native endpoints bypass the flat center/axes and their gradients.
         n_components = 4 if beam == "cone" else 3
         d_geom = [d_geom[0]] * n_components
-        d_grads = [d_grads[0]] * n_components
+        # Unused output arguments must not alias the source cotangent.
+        unused = torch.empty((0, geom[0].shape[-1]), dtype=torch.float32, device=device)
+        d_unused = TorchCUDABridge.tensor_to_cuda_array(unused)
+        d_grads = [d_grads[0]] + [d_unused] * (n_components - 1)
     else:
         _empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_grad_positions = d_positions
@@ -211,7 +218,7 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
         _resolve_kernel('_cone_3d_geometry_vjp_kernel')[grid, tpb, numba_stream](
             d_vol, W, H, D, TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), *d_geom,
-            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5), _DTYPE(voxel_spacing),
+            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5), _native_spacing(voxel_spacing),
             *d_grads, d_positions, d_grad_positions,
         )
     else:
@@ -224,7 +231,7 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
             TorchCUDABridge.tensor_to_cuda_array(vol), Nx, Ny,
             TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_det,
             _DTYPE(detector_spacing), *d_geom,
-            _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5), _DTYPE(voxel_spacing),
+            _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5), _native_spacing(voxel_spacing),
             *d_grads, d_positions, d_grad_positions,
         )
     return tuple(grad.to(dtype=g.dtype, device=g.device) for grad, g in zip(grads, geometry))

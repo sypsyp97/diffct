@@ -7,6 +7,8 @@ from numba import cuda
 from numba.core import config
 from numba.cuda import libdevice
 
+from .spacing import _axis_pitch, _is_per_axis
+
 if config.ENABLE_CUDASIM:
     # The simulator does not implement the libdevice arithmetic stubs.
     @cuda.jit(device=True, inline=True)
@@ -112,11 +114,16 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
         finite = (finite and math.isfinite(source_value) and math.isfinite(point)
                   and math.isfinite(source_native) and math.isfinite(point_native))
         coincident = coincident and source_native == point_native
+        range_source, range_point = source_value, point
+        if _is_per_axis(voxel_spacing):
+            pitch = _axis_pitch(voxel_spacing, axis)
+            range_source /= pitch
+            range_point /= pitch
         source_squared = _surface_add(
-            source_squared, _surface_multiply(source_value, source_value, False), False,
+            source_squared, _surface_multiply(range_source, range_source, False), False,
         )
         point_squared = _surface_add(
-            point_squared, _surface_multiply(point, point, False), False,
+            point_squared, _surface_multiply(range_point, range_point, False), False,
         )
         points[view_index, pixel_start + pixel, axis] = np.float32(
             _surface_add(point, -centre[axis], final32),
@@ -128,8 +135,12 @@ def compose_surface(frames, offsets, source, points, view_index, pixel_start,
     elif not parallel:
         if coincident:
             error = np.float64(2.0)
-        source_distance = math.sqrt(source_squared) / voxel_spacing
-        point_distance = math.sqrt(point_squared) / voxel_spacing
+        if _is_per_axis(voxel_spacing):
+            source_distance = math.sqrt(source_squared)
+            point_distance = math.sqrt(point_squared)
+        else:
+            source_distance = math.sqrt(source_squared) / _axis_pitch(voxel_spacing, 0)
+            point_distance = math.sqrt(point_squared) / _axis_pitch(voxel_spacing, 0)
         if min(source_distance, point_distance) > 1e6:
             error = np.float64(3.0)
         if source_distance > 1e15 or point_distance > 1e15:

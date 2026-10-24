@@ -112,6 +112,8 @@ loss.backward()                     # x.grad = A^T (A x - y)
 
 **Geometry gradients.** Reuse one projector with `A.project(volume, trajectory=current)` or `A.backproject(sinogram, trajectory=current)`. Circular helpers accept learnable angle tensors, and `transform_trajectory` applies differentiable rigid transforms. Omitting the override keeps the constructor trajectory. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#geometry-gradients).
 
+**Per-axis voxel spacing.** Set `voxel_spacing=(dy, dx)` or `(dz, dy, dx)` in tensor axis order. Both backends support these pitches for projection, projection geometry gradients and FBP/FDK with fixed geometry.
+
 **3D parallel beams.** Use `circular_trajectory_3d_parallel(...)` and `beam="parallel3d"`. The PyTorch backend provides matched projection and backprojection on CPU and CUDA.
 
 **Native volume layout.** For unbatched, flat-detector cone operations, set `native_volume_layout=True` to avoid volume layout copies. This applies to the native full-CUDA path on one compute device. Shapes stay `(D, H, W)`; the returned strides follow the kernel layout. The default is `False`. See [chunked execution](docs/REFERENCE.md#chunked-execution) for limits.

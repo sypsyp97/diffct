@@ -21,6 +21,7 @@ from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geome
 from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
                        select_backend, voxel_spacing_tuple)
 from .distribution import Partition
+from .constants import _native_spacing
 from .projectors import (
     _backproject_into,
     _geometry_vjp,
@@ -363,7 +364,7 @@ class Projector:
     ``dtype`` are public metadata.
 
     ``backend="auto"`` selects the native ``"numba"`` backend for NVIDIA
-    CUDA, fast precision and scalar voxel spacing, except for hybrid
+    CUDA and fast precision with scalar or per-axis voxel spacing, except for hybrid
     partitions. Other configurations use portable ``"torch"`` execution on
     the input's CPU or supported PyTorch accelerator. Explicit ``"numba"``
     requires a compatible native configuration. Parallel3d uses ``torch``;
@@ -481,6 +482,8 @@ class Projector:
         self.detector_spacing = _detector_spacing(detector_spacing, beam)
         spacing = voxel_spacing_tuple(voxel_spacing, rank)
         self.voxel_spacing = spacing if isinstance(voxel_spacing, (tuple, list)) else spacing[0]
+        if self.backend == "numba" and isinstance(self.voxel_spacing, tuple):
+            _native_spacing(self.voxel_spacing)
         if detector_surface is not None and not callable(detector_surface):
             raise TypeError("detector_surface must be callable or None")
         self.detector_surface = detector_surface
@@ -552,11 +555,15 @@ class Projector:
             self._reference = ReferenceProjector(self)
             if requested_backend == "auto" and torch.cuda.is_available() and torch.version.hip is None:
                 reasons = [reason for applies, reason in (
-                    (isinstance(voxel_spacing, (tuple, list)), "per-axis voxel_spacing"),
                     (precision != "fast", f"precision={precision!r}"),
                     (partition == "hybrid", "partition='hybrid'"),
                     (beam == "parallel3d", "beam='parallel3d'"),
                 ) if applies]
+                if isinstance(self.voxel_spacing, tuple):
+                    try:
+                        _native_spacing(self.voxel_spacing)
+                    except ValueError as error:
+                        reasons.append(str(error))
                 warnings.warn(
                     "backend='auto' selected the portable PyTorch backend, not the native CUDA backend, "
                     f"because of {', '.join(reasons)}. The portable backend can be much slower for large "
@@ -631,8 +638,10 @@ class Projector:
         return None
 
     def _volume_tiles(self, chunk_shape):
-        offset = tuple((owned.start + local / 2 - global_size / 2) * self.voxel_spacing
-                       for owned, local, global_size in zip(self.volume_slice, self.volume_shape, self.global_volume_shape))[::-1]
+        pitches = voxel_spacing_tuple(self.voxel_spacing, len(self.volume_shape))
+        offset = tuple((owned.start + local / 2 - global_size / 2) * pitch
+                       for owned, local, global_size, pitch in zip(
+                           self.volume_slice, self.volume_shape, self.global_volume_shape, pitches))[::-1]
         for spatial, shape, centre in _tiles(self.volume_shape, chunk_shape, self.voxel_spacing):
             yield spatial, shape, tuple(value + shift for value, shift in zip(centre, offset))
 
@@ -1196,9 +1205,13 @@ class Projector:
             components = tuple(component[global_slice] for component in components)
         translated = []
         for index, component in enumerate(components):
+            dtype = torch.promote_types(torch.float32, component.dtype)
+            if self.beam == "cone" and isinstance(self.voxel_spacing, tuple) and len(components) == 4:
+                # Preserve slab translations before staging the native FP32 frame.
+                dtype = torch.float64
             value = component.detach().to(
                 device=component.device if surface else "cpu",
-                dtype=torch.promote_types(torch.float32, component.dtype),
+                dtype=dtype,
             )
             position = index == 1 or (index == 0 and self.beam != "parallel")
             if position:
@@ -1511,6 +1524,17 @@ class Projector:
                         value = selected_offsets[..., original].expand(offset_views, *pixel_shape)
                         _pipeline._copy(target, value, pipe.stats)
                         pipe.retain(pipe.event(pipe.upload), value, packed_offsets)
+                elif offset_views * rank * capacity * 8 > _pipeline._GEOMETRY_WORK_BYTES:
+                    # Bound host packing while retaining batched device composition.
+                    for column, original in enumerate(columns):
+                        value = selected_offsets[..., original].expand(offset_views, *pixel_shape)
+                        for local in range(offset_views):
+                            target = packed[local, column, :pixel_count].view(pixel_shape)
+                            for fragment in _pipeline._fragments(
+                                    pixel_shape, _pipeline._GEOMETRY_WORK_BYTES // 8):
+                                host = value[local][fragment].to(dtype=torch.float64).contiguous()
+                                _pipeline._copy(target[fragment], host, pipe.stats)
+                                pipe.retain(pipe.event(pipe.upload), host, packed_offsets)
                 else:
                     host = torch.empty((offset_views, rank, capacity), dtype=torch.float64)
                     for column, original in enumerate(columns):
@@ -2244,7 +2268,8 @@ class Projector:
             return self._geometry_grad_streamed(volume, cotangent, geometry, plan, geometry_spec)
         from numba import cuda
 
-        devices = self._devices or (volume.device,)
+        device = volume.device if volume.is_cuda else cotangent.device
+        devices = self._devices or (device,)
         local_views = self.projection_shape[0]
         spacing = self.detector_spacing if self.beam == "cone" else self.detector_spacing[0]
         sampled = geometry_spec is not None and geometry_spec.kind in ("sampled", "offsets")

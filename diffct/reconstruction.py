@@ -11,7 +11,8 @@ from .analytical import (
     fan_weighted_backproject, parallel_weighted_backproject,
     parker_weights, ramp_filter_1d,
 )
-from .operators import _detector_spacing, _positive_float, _shape, _validate_trajectory
+from .backends import voxel_spacing_tuple
+from .operators import _detector_spacing, _shape, _validate_trajectory
 
 
 def _fixed(value, name):
@@ -39,7 +40,9 @@ def _prepare(sinogram, trajectory, volume_shape, beam, detector_spacing, voxel_s
         raise ValueError("sinogram and trajectory must have the same number of views")
     shape = _shape(volume_shape, rank, "volume_shape")
     pitch = _detector_spacing(detector_spacing, beam)
-    spacing = _positive_float(voxel_spacing, "voxel_spacing")
+    spacing = voxel_spacing_tuple(voxel_spacing, rank)
+    if not isinstance(voxel_spacing, (tuple, list)):
+        spacing = spacing[0]
     geometry = tuple(t.to(device=sinogram.device, dtype=sinogram.dtype) for t in geometry)
     return sinogram, geometry, shape, pitch, spacing
 
@@ -431,7 +434,7 @@ def helical_weighted_backproject(sinogram, trajectory, volume_shape, view_weight
     # One launch per slice; fuse slice weights if measured launch overhead
     # dominates. Preserve ordinary PyTorch weight gradients here.
     for index in range(shape[0]):
-        z = (index + 0.5 - shape[0] / 2) * spacing
+        z = (index + 0.5 - shape[0] / 2) * (spacing[0] if isinstance(spacing, tuple) else spacing)
         shift = sinogram.new_tensor((0, 0, z))
         source, detector, u, v = geometry
         weighted = sinogram * weights[index, :, None, None]
@@ -469,7 +472,7 @@ def helical_fdk(sinogram, trajectory, volume_shape, angles, *, isocenter,
         raise ValueError("angles must describe the source's actual unwrapped rotation")
     if view_weights is None:
         z = (torch.arange(shape[0], device=sinogram.device, dtype=torch.float64)
-             + 0.5 - shape[0] / 2) * spacing
+             + 0.5 - shape[0] / 2) * (spacing[0] if isinstance(spacing, tuple) else spacing)
         view_weights = helical_view_weights(angles, geometry[0][:, 2], z)
     else:
         # Still validate the acquired order when a caller replaces the windows.
