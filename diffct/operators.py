@@ -189,6 +189,9 @@ _ADJOINT_MODE = {
     "project_reduced": "backproject",
 }
 
+# Hard cap on the streamed surface staging capacity.
+_SURFACE_CAPACITY_CAP = 21
+
 
 class _ReducedInput(TensorStore):
     """A requested SUM, performed once per canonical resident tile, never eagerly."""
@@ -841,7 +844,7 @@ class Projector:
         rank, columns = len(self.volume_shape), 3 if self.beam == "cone" else 2
         frames = 4 if self.beam == "cone" else 3
         maximum = max(views * math.prod(pixels) * rank, views * rank * frames)
-        return max(1, min(math.prod(pixels), 21, (maximum - 1) // columns))
+        return max(1, min(math.prod(pixels), _SURFACE_CAPACITY_CAP, (maximum - 1) // columns))
 
     def _surface_snapshot_buffers(self):
         """Allocator-rounded FP64 bounds for independent geometry snapshots."""
