@@ -97,67 +97,111 @@ def _flat_admission_batches(owner, geometry, detector_chunk_shape, *, batched_co
             yield selected, pixels
 
 
-class _DistributedApply(torch.autograd.Function):
-    """Distributed linear map whose adjoint SUMs replicated cotangents."""
+_GEOMETRY_SECOND_DERIVATIVE = "diffct does not support second derivatives with respect to the geometry"
+_GEOMETRY_FORWARD_DERIVATIVE = "diffct does not support forward-mode derivatives with respect to the geometry"
+
+
+class _PortableApply(torch.autograd.Function):
+    """Portable linear map whose backward is the matched adjoint.
+
+    Autograd keeps the input (only for geometry gradients) and the geometry
+    snapshot, never per-batch ray tables. Replicated distributed cotangents
+    are SUMmed by the adjoint.
+    """
 
     @staticmethod
-    def forward(tensor, reference, is_project, reduce_cotangent, participation, *geometry):
-        return reference._tensor_apply(tensor, is_project, reduce_cotangent, geometry=geometry)
+    def forward(tensor, reference, is_project, reduce_cotangent, admit, participation, *geometry):
+        return reference._tensor_apply(tensor, is_project, reduce_cotangent, geometry=geometry, admit=admit)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        tensor, reference, is_project, reduce_cotangent, participation, *geometry = inputs
+        tensor, reference, is_project, reduce_cotangent, admit, participation, *geometry = inputs
         ctx.reference, ctx.is_project = reference, is_project
         ctx.reduce_cotangent = reduce_cotangent
         ctx.dtype = tensor.dtype
-        ctx.save_for_backward(tensor, *geometry)
+        ctx.geometry_grad = _PortableApply._geometry_grad_needed(reference.owner, ctx.needs_input_grad[6:])
+        ctx.save_for_backward(tensor if ctx.geometry_grad else None, *geometry)
         ctx.save_for_forward(tensor, *geometry)
         ctx.set_materialize_grads(False)
 
     @staticmethod
-    def jvp(ctx, tangent, reference, is_project, reduce_cotangent, participation, *geometry_tangents):
-        if any(value is not None for value in geometry_tangents):
-            raise RuntimeError("forward derivatives with respect to geometry are not supported")
-        tensor, *geometry = ctx.saved_tensors
-        tangent = torch.zeros_like(tensor) if tangent is None else tangent
-        return _DistributedApply.apply(tangent, ctx.reference, ctx.is_project, ctx.reduce_cotangent,
-                                       ctx.reference.owner._participation(), *geometry)
+    def _geometry_grad_needed(owner, needs_input_grad):
+        # Distributed ranks run the geometry collectives in lockstep.
+        return owner._geometry_trainable if owner.world_size > 1 else any(needs_input_grad)
 
     @staticmethod
-    def vmap(info, in_dims, tensor, reference, is_project, reduce_cotangent, participation, *geometry):
-        if any(dimension is not None for dimension in in_dims[4:]):
-            raise RuntimeError("distributed vmap supports data batching with fixed geometry")
+    def jvp(ctx, tangent, reference, is_project, reduce_cotangent, admit, participation, *geometry_tangents):
+        if any(value is not None for value in geometry_tangents):
+            raise RuntimeError(_GEOMETRY_FORWARD_DERIVATIVE)
+        tensor, *geometry = ctx.saved_tensors
+        tangent = torch.zeros_like(tensor) if tangent is None else tangent
+        return _PortableApply.apply(tangent, ctx.reference, ctx.is_project, ctx.reduce_cotangent, False,
+                                    ctx.reference.owner._participation(), *geometry)
+
+    @staticmethod
+    def vmap(info, in_dims, tensor, reference, is_project, reduce_cotangent, admit, participation, *geometry):
+        if any(dimension is not None for dimension in in_dims[5:]):
+            raise RuntimeError("portable vmap supports data batching with fixed geometry")
         dimension = in_dims[0]
         if dimension is not None:
             tensor = tensor.movedim(dimension, 0)
-        result = _DistributedApply.apply(tensor, reference, is_project, reduce_cotangent,
-                                         participation, *geometry)
+        result = _PortableApply.apply(tensor, reference, is_project, reduce_cotangent, admit,
+                                      participation, *geometry)
         return result, 0 if dimension is not None else None
 
     @staticmethod
     def backward(ctx, cotangent):
         tensor, *geometry = ctx.saved_tensors
-        gradient = _DistributedApply.apply(cotangent, ctx.reference, not ctx.is_project, True,
-                                          ctx.reference.owner._participation(), *geometry)
+        owner = ctx.reference.owner
+        gradient = None
+        # The adjoint is this Function again, so data second derivatives work.
+        # Distributed ranks always run it to keep its collectives in lockstep.
+        if ctx.needs_input_grad[0] or owner.world_size > 1:
+            gradient = _PortableApply.apply(cotangent, ctx.reference, not ctx.is_project, True, False,
+                                            owner._participation(), *geometry).to(dtype=ctx.dtype)
         geometry_gradients = (None,) * len(geometry)
-        if ctx.reference.owner._geometry_trainable:
-            gradients = _DistributedGeometry.apply(ctx.reference, tensor, cotangent,
-                                                  ctx.is_project, ctx.reduce_cotangent, *geometry)
+        if ctx.geometry_grad:
+            gradients = _PortableGeometry.apply(ctx.reference, tensor, cotangent,
+                                                ctx.is_project, ctx.reduce_cotangent, *geometry)
             geometry_gradients = tuple(value if needed else None
-                                       for value, needed in zip(gradients, ctx.needs_input_grad[5:]))
-        return gradient.to(dtype=ctx.dtype), None, None, None, None, *geometry_gradients
+                                       for value, needed in zip(gradients, ctx.needs_input_grad[6:]))
+        return gradient, None, None, None, None, None, *geometry_gradients
 
 
-class _DistributedGeometry(torch.autograd.Function):
+class _PortableGeometry(torch.autograd.Function):
     """First-order geometry VJP; data adjoints remain differentiable separately."""
 
     @staticmethod
-    def forward(ctx, reference, tensor, cotangent, is_project, reduce_cotangent, *geometry):
+    def forward(reference, tensor, cotangent, is_project, reduce_cotangent, *geometry):
         return reference._geometry_grad(tensor, cotangent, is_project, reduce_cotangent, geometry)
 
     @staticmethod
+    def setup_context(ctx, inputs, output):
+        pass
+
+    @staticmethod
+    def vmap(info, in_dims, reference, tensor, cotangent, is_project, reduce_cotangent, *geometry):
+        # Reverse-mode Jacobians batch cotangents; evaluate one VJP per entry.
+        if any(dimension is not None for dimension in in_dims[5:]):
+            raise RuntimeError("portable vmap supports data batching with fixed geometry")
+        tensor_dimension, cotangent_dimension = in_dims[1:3]
+        results = []
+        for index in range(info.batch_size):
+            results.append(_PortableGeometry.apply(
+                reference,
+                tensor if tensor_dimension is None else tensor.select(tensor_dimension, index),
+                cotangent if cotangent_dimension is None else cotangent.select(cotangent_dimension, index),
+                is_project, reduce_cotangent, *geometry,
+            ))
+        return tuple(torch.stack(values) for values in zip(*results)), (0,) * len(geometry)
+
+    @staticmethod
     def backward(ctx, *gradients):
-        raise RuntimeError("second derivatives with respect to geometry are not supported")
+        raise RuntimeError(_GEOMETRY_SECOND_DERIVATIVE)
+
+    @staticmethod
+    def jvp(ctx, *tangents):
+        raise RuntimeError(_GEOMETRY_SECOND_DERIVATIVE)
 
 
 class ReferenceProjector:
@@ -165,7 +209,8 @@ class ReferenceProjector:
 
     Each ray batch visits bounded spatial tiles in the global physical frame.
     Storage scales with the planes crossed by those rays, never rays times
-    every voxel. All data operations remain ordinary differentiable PyTorch.
+    every voxel. Autograd uses the matched adjoint for data and recomputes one
+    ray batch and tile at a time for geometry gradients.
     """
 
     def __init__(self, owner, *, validate=True, synchronize=True):
@@ -718,8 +763,11 @@ class ReferenceProjector:
         admit = owner.world_size == 1 and isinstance(owner.detector_surface, ParameterizedSurface)
         if not admit:
             self._validate_geometry(geometry, tensor.device if isinstance(tensor, torch.Tensor) else torch.device("cpu"))
-        if owner.world_size > 1 and torch.is_grad_enabled():
-            return _DistributedApply.apply(tensor, self, is_project, False, owner._participation(), *geometry)
+        # Recording the traversal would keep ray tables for every tile and ray
+        # batch. The Function keeps the geometry snapshot instead.
+        if torch.is_grad_enabled() and (owner.world_size > 1 or any(
+                isinstance(value, torch.Tensor) and value.requires_grad for value in (tensor, *geometry))):
+            return _PortableApply.apply(tensor, self, is_project, False, admit, owner._participation(), *geometry)
         return self._tensor_apply(tensor, is_project, geometry=geometry, admit=admit)
 
     def _geometry_grad(self, tensor, cotangent, is_project, reduce_cotangent, geometry):
@@ -743,13 +791,53 @@ class ReferenceProjector:
                 values = self._reduce(torch.index_select(flat, -1, ids), owner.view_group,
                                       owner.view_world_size, stats)
                 reduced = reduced.scatter_add(-1, ids.expand(*leading, -1), values)
+        # Recompute one ray batch and tile at a time in the forward traversal
+        # order, so input SUMs keep their collective order and only one pair's
+        # graph is alive. The loss is <reduced cotangent, A_local(geometry) input>.
+        data = tensor.detach()
+        leaves = tuple(value.detach().requires_grad_() for value in geometry)
+        gradients = [torch.zeros_like(value) for value in leaves]
+
+        def accumulate(loss, inputs, totals):
+            # The zero dependency keeps unused inputs connected.
+            loss = loss + sum(_zero_dependency(value) for value in inputs)
+            for total, part in zip(totals, torch.autograd.grad(loss, inputs)):
+                total.add_(part)
+
         with torch.enable_grad():
-            leaves = tuple(value.detach().requires_grad_() for value in geometry)
-            local = self._tensor_apply(tensor.detach(), is_project, reduce_cotangent,
-                                       geometry=leaves, reduce_output=False)
-            loss = (local * reduced.reshape_as(cotangent)).sum()
-            loss = loss + sum(_zero_dependency(value) for value in leaves)
-            gradients = torch.autograd.grad(loss, leaves)
+            if is_project:
+                for tile, world in self._tiles(plan[0]):
+                    values = data[(..., *tile)]
+                    if reduce_cotangent:
+                        values = self._reduce(values, owner.view_group, owner.view_world_size, stats)
+                    for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                        device = self._device(batch, data.device, stats)
+                        origins, directions, rays = self._rays(views, pixels, device, stats=stats, geometry=leaves)
+                        indices, lengths = self._intervals(origins, directions, world)
+                        local = self._to(values, device, stats).reshape(*leading, -1)
+                        selected = torch.index_select(local, -1, indices.flatten()).reshape(*leading, *indices.shape)
+                        weights = self._to(torch.index_select(reduced, -1, self._transfer(rays, reduced.device)),
+                                           device, stats)
+                        accumulate(((selected * lengths).sum(-1) * weights).sum(), leaves, gradients)
+            else:
+                for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                    device = self._device(batch, data.device, stats)
+                    values = data[(..., *self._pixel_slices(views, pixels))]
+                    if reduce_cotangent:
+                        values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
+                    values = self._to(values, device, stats).reshape(*leading, -1)
+                    # Tiles pull back to this batch's rays; the rays pull back once.
+                    origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=leaves)
+                    rays = (origins.detach().requires_grad_(), directions.detach().requires_grad_())
+                    ray_gradients = [torch.zeros_like(value) for value in rays]
+                    for tile, world in self._tiles(plan[0]):
+                        indices, lengths = self._intervals(*rays, world)
+                        voxels = self._voxel_ids(tile, owner.volume_shape, reduced.device)
+                        weights = self._to(torch.index_select(reduced, -1, voxels), device, stats)
+                        weights = torch.index_select(weights, -1, indices.flatten()).reshape(*leading, *indices.shape)
+                        accumulate((values[..., None] * lengths * weights).sum(), rays, ray_gradients)
+                    accumulate((origins * ray_gradients[0]).sum() + (directions * ray_gradients[1]).sum(),
+                               leaves, gradients)
         result = []
         for value in gradients:
             flat_value = value.reshape(-1)

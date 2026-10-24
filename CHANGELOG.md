@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Portable (`backend="torch"`) autograd no longer records every ray batch and volume tile. Data gradients apply the matched adjoint, and geometry gradients recompute one ray batch and tile at a time. Saved autograd memory no longer grows with the number of batches, and first-order values are unchanged.
+- Second derivatives with respect to the geometry now raise an error on the single-process portable path, as documented. Before, they returned a value.
+- Forward-mode derivatives (`torch.func.jvp`, `jacfwd`) with respect to `Projector` trajectory tensors now raise an error. Before, they returned zero tangents.
+
 ## [2.4.3] - 2026-10-22
 
 ### Changed
