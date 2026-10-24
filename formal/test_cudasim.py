@@ -1,7 +1,8 @@
 """BOUNDED checks of the actual Siddon kernels in Numba's CPU simulator.
 
-The finite matrix domain has three beam types, two grids, two voxel pitches,
-three views, and every image and sinogram basis vector. There is no sampling.
+The finite matrix domain has three beam types, two grids, scalar pitches 1/1.7,
+uniform tuples at 1.7 and anisotropic tensor-order tuples (0.7, 1.9) or
+(0.7, 1.3, 1.9), three views, and every image/sinogram basis. No sampling.
 The chord domain enumerates the named rays below on the same grids and pitches.
 These checks do not establish unbounded correctness or CUDA fastmath behavior.
 """
@@ -15,7 +16,10 @@ import pytest
 BEAMS = ("parallel", "fan", "cone")
 GRID_IDS = (0, 1)
 PITCHES = (1.0, 1.7)
-MATRIX_DOMAIN = tuple(itertools.product(BEAMS, GRID_IDS, PITCHES))
+MATRIX_DOMAIN = tuple((beam, grid, pitch)
+                      for beam, grid in itertools.product(BEAMS, GRID_IDS)
+                      for pitch in (*PITCHES, (1.7,) * (3 if beam == "cone" else 2),
+                                    (0.7, 1.3, 1.9) if beam == "cone" else (0.7, 1.9)))
 RTOL = 3e-5
 ATOL = 3e-6
 
@@ -23,6 +27,15 @@ ATOL = 3e-6
 def _shape(beam, grid):
     # Two-dimensional arrays use (y, x); cone kernel arrays use (x, y, z).
     return ((2, 3, 2), (3, 2, 3))[grid] if beam == "cone" else ((2, 3), (3, 2))[grid]
+
+
+def _xyz_pitches(pitch, dimensions):
+    """Independent physical cell widths from the tensor-order spacing contract."""
+    import numpy as np
+
+    widths = pitch[::-1] if isinstance(pitch, tuple) else (pitch,) * dimensions
+    assert len(widths) == dimensions
+    return np.asarray(widths, dtype=np.float64)
 
 
 def _slab_length(origin, direction, lower, upper, segment):
@@ -62,15 +75,16 @@ def _cell_matrix(beam, shape, pitch, geometry, detectors, detector_pitch):
     import numpy as np
 
     xyz_shape = shape if beam == "cone" else shape[::-1]
-    half = np.asarray(xyz_shape, dtype=np.float64) * pitch / 2
+    widths = _xyz_pitches(pitch, len(shape))
+    half = np.asarray(xyz_shape, dtype=np.float64) * widths / 2
     matrix = np.zeros((len(geometry[0]) * math.prod(detectors), math.prod(shape)))
     for ray_index, origin, direction, segment in _rays(beam, geometry, detectors, detector_pitch):
         row = np.ravel_multi_index(ray_index, (len(geometry[0]), *detectors))
         for index in np.ndindex(shape):
             xyz_index = index if beam == "cone" else index[::-1]
-            lower = np.asarray(xyz_index, dtype=np.float64) * pitch - half
+            lower = np.asarray(xyz_index, dtype=np.float64) * widths - half
             column = np.ravel_multi_index(index, shape)
-            matrix[row, column] = _slab_length(origin, direction, lower, lower + pitch, segment)
+            matrix[row, column] = _slab_length(origin, direction, lower, lower + widths, segment)
     return matrix
 
 
@@ -79,11 +93,12 @@ def _launch(kernels, beam, image, sino, pitch, geometry, detector_pitch, backwar
     import numpy as np
 
     f = np.float32
+    native_pitch = tuple(f(value) for value in pitch) if isinstance(pitch, tuple) else f(pitch)
     if beam == "cone":
         nx, ny, nz = image.shape
         views, nu, nv = sino.shape
         tail = (f(detector_pitch), f(detector_pitch), *geometry,
-                f(nx / 2), f(ny / 2), f(nz / 2), f(pitch))
+                f(nx / 2), f(ny / 2), f(nz / 2), native_pitch)
         args = ((sino, views, nu, nv, image, nx, ny, nz) if backward else
                 (image, nx, ny, nz, sino, views, nu, nv))
         kernel = getattr(kernels, "_cone_3d_backward_kernel" if backward else "_cone_3d_forward_kernel")
@@ -91,7 +106,7 @@ def _launch(kernels, beam, image, sino, pitch, geometry, detector_pitch, backwar
     else:
         ny, nx = image.shape
         views, ndet = sino.shape
-        tail = (f(detector_pitch), *geometry, f(nx / 2), f(ny / 2), f(pitch))
+        tail = (f(detector_pitch), *geometry, f(nx / 2), f(ny / 2), native_pitch)
         args = ((sino, views, ndet, image, nx, ny) if backward else
                 (image, nx, ny, sino, views, ndet))
         kernel = getattr(kernels, f"_{beam}_2d_{'backward' if backward else 'forward'}_kernel")
@@ -104,15 +119,16 @@ def _matrix_geometry(beam, pitch):
     source = [(-5, .17), (.23, 5), (-4, -3)]
     detector = [(5, .17), (.23, -5), (4, 3)]
     u = [(0, 1), (1, 0), (-.6, .8)]
+    widths = _xyz_pitches(pitch, 3 if beam == "cone" else 2)
     if beam == "parallel":
         return tuple(np.asarray(a, dtype=np.float32) for a in (
             [(1, 0), (0, -1), (.8, .6)],
-            np.asarray(source) * pitch, u))
+            np.asarray(source) * widths, u))
     if beam == "cone":
         source = [(*p, .19) for p in source]
         detector = [(*p, -.13) for p in detector]
         u = [(*p, 0) for p in u]
-    geometry = [np.asarray(source) * pitch, np.asarray(detector) * pitch, u]
+    geometry = [np.asarray(source) * widths, np.asarray(detector) * widths, u]
     if beam == "cone":
         geometry.append([(0, 0, 1)] * 3)
     return tuple(np.asarray(a, dtype=np.float32) for a in geometry)
@@ -127,7 +143,7 @@ def test_bounded_all_basis_matrices(simulated_kernels, beam, grid, pitch):
     detectors = (2 + grid, 2) if beam == "cone" else (2 + grid,)
     sino_shape = (3, *detectors)
     geometry = _matrix_geometry(beam, pitch)
-    detector_pitch = .7 * pitch
+    detector_pitch = .7 * (pitch[-1] if isinstance(pitch, tuple) else pitch)
     forward = np.zeros((math.prod(sino_shape), math.prod(shape)))
     adjoint = np.zeros(forward.T.shape)
     for column in range(math.prod(shape)):
@@ -171,8 +187,9 @@ def test_bounded_uniform_box_chords(simulated_kernels, beam, grid, pitch, case, 
     shape = _shape(beam, grid)
     if beam == "cone":
         start, end = (*start, .17), (*end, .17)
-    start = np.asarray(start, dtype=np.float32) * np.float32(pitch)
-    end = np.asarray(end, dtype=np.float32) * np.float32(pitch)
+    widths = _xyz_pitches(pitch, len(shape))
+    start = np.asarray(start, dtype=np.float32) * widths.astype(np.float32)
+    end = np.asarray(end, dtype=np.float32) * widths.astype(np.float32)
     if beam == "parallel":
         direction = end.astype(np.float64) - start.astype(np.float64)
         direction /= np.linalg.norm(direction)
@@ -185,10 +202,11 @@ def test_bounded_uniform_box_chords(simulated_kernels, beam, grid, pitch, case, 
     detectors = (1, 1) if beam == "cone" else (1,)
     image = np.ones(shape, dtype=np.float32)
     sino = np.zeros((1, *detectors), dtype=np.float32)
-    _launch(simulated_kernels, beam, image, sino, pitch, geometry, .7 * pitch)
+    detector_pitch = .7 * (pitch[-1] if isinstance(pitch, tuple) else pitch)
+    _launch(simulated_kernels, beam, image, sino, pitch, geometry, detector_pitch)
     xyz_shape = shape if beam == "cone" else shape[::-1]
-    half = np.asarray(xyz_shape) * pitch / 2
-    _, origin, direction, segment = next(_rays(beam, geometry, detectors, .7 * pitch))
+    half = np.asarray(xyz_shape) * widths / 2
+    _, origin, direction, segment = next(_rays(beam, geometry, detectors, detector_pitch))
     expected = _slab_length(origin, direction, -half, half, segment)
     np.testing.assert_allclose(sino.item(), expected, rtol=RTOL, atol=ATOL)
 
@@ -196,6 +214,6 @@ def test_bounded_uniform_box_chords(simulated_kernels, beam, grid, pitch, case, 
     if case == "grazing_grid_plane":
         image = (np.indices(shape)[1 if beam == "cone" else 0] + 1).astype(np.float32)
         sino.fill(0)
-        _launch(simulated_kernels, beam, image, sino, pitch, geometry, .7 * pitch)
-        weights = _cell_matrix(beam, shape, pitch, geometry, detectors, .7 * pitch)
+        _launch(simulated_kernels, beam, image, sino, pitch, geometry, detector_pitch)
+        weights = _cell_matrix(beam, shape, pitch, geometry, detectors, detector_pitch)
         np.testing.assert_allclose(sino.ravel(), weights @ image.ravel(), rtol=RTOL, atol=ATOL)
