@@ -1028,8 +1028,7 @@ class ReferenceProjector:
         # Output replicas contribute one cotangent SUM before local ray math.
         output_shape = owner.projection_shape if is_project else owner.volume_shape
         input_shape = owner.volume_shape if is_project else owner.projection_shape
-        flat = cotangent.detach().reshape(*cotangent.shape[:-len(output_shape)], math.prod(output_shape))
-        leading = tuple(flat.shape[:-1])
+        leading = tuple(cotangent.shape[:-len(output_shape)])
         batch_elements = math.prod(leading)
         # One pair's geometry graph plus its backward temporaries is bounded by
         # _GEOMETRY_WORK_FACTOR times the forward work arrays of the same plan.
@@ -1039,28 +1038,27 @@ class ReferenceProjector:
         if budget is None:
             plan = self._work_chunks(max(1, batch_elements) * _GEOMETRY_WORK_FACTOR)
         else:
-            if replicas > 1:
-                # The summed cotangent buffer is charged to the limit of its side.
-                side = 0 if cotangent.device.type == "cuda" or budget[1] is None else 1
-                charged = max(0, budget[side] - flat.numel() * flat.element_size())
-                budget = (*budget[:side], self._agreed_limit(charged), *budget[side + 1:])
             budget = tuple(None if limit is None else limit // _GEOMETRY_WORK_FACTOR for limit in budget)
             plan = self._work_chunks(batch_elements, budget)
-        # Without output replicas the cotangent is already the sum; otherwise one
-        # cotangent-sized buffer collects the partial sums in place.
-        reduced = flat if replicas == 1 else torch.zeros_like(flat)
+        # One cotangent-sized buffer is outside the work budget. Clone before
+        # reshaping so a strided cotangent cannot create a second full copy.
+        # Replicated sums replace disjoint batches or tiles in that same buffer.
+        reduced = cotangent.detach()
+        if replicas > 1:
+            reduced = reduced.clone(memory_format=torch.contiguous_format)
+        reduced = reduced.reshape(*leading, math.prod(output_shape))
         if replicas > 1 and is_project:
             for views, pixels in self._batches(*plan[1:]):
                 _, _, ids = self._rays(views, pixels, cotangent.device, geometry=geometry)
-                values = self._reduce(torch.index_select(flat, -1, ids), owner.space_group,
+                values = self._reduce(torch.index_select(reduced, -1, ids), owner.space_group,
                                       owner.space_world_size, stats)
-                reduced.scatter_add_(-1, ids.expand(*leading, -1), values)
+                reduced.scatter_(-1, ids.expand(*leading, -1), values)
         elif replicas > 1:
             for tile, _ in self._tiles(plan[0]):
                 ids = self._voxel_ids(tile, owner.volume_shape, cotangent.device)
-                values = self._reduce(torch.index_select(flat, -1, ids), owner.view_group,
+                values = self._reduce(torch.index_select(reduced, -1, ids), owner.view_group,
                                       owner.view_world_size, stats)
-                reduced.scatter_add_(-1, ids.expand(*leading, -1), values)
+                reduced.scatter_(-1, ids.expand(*leading, -1), values)
         # Split leading dimensions, as _tensor_apply does, when even the smallest
         # chunks exceed the automatic payload. Every rank uses the same pieces
         # in the same order.
