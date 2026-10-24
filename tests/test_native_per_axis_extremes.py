@@ -1,11 +1,10 @@
-"""N3 amendment: unsafe FP32 pitches fail clearly or remain numerically correct.
+"""N3 amendment: out-of-range pitches reject native execution.
 
 Run with NUMBA_ENABLE_CUDASIM=1 NUMBA_CUDA_USE_NVIDIA_BINDING=0. Extreme
-anisotropy may be rejected by numba, but auto must execute without an error.
+anisotropy must be rejected by numba; auto must warn and use torch.
 Pitch ratios of 100 must execute the production native kernels.
 """
 
-from contextlib import nullcontext
 from dataclasses import replace
 import re
 
@@ -14,7 +13,7 @@ import torch
 
 from tests._native_per_axis_spacing import (
     GEOMETRY_ATOL, GEOMETRY_RTOL, NATIVE_REQUIRED,
-    case, close, cuda_device, data, native_device, native_only, operator,
+    case, close, cuda_device as cuda_device, data, native_device as native_device, native_only, operator,
 )
 
 
@@ -48,7 +47,7 @@ def assert_fp32_range_error(error):
 @pytest.mark.parametrize("backend", ["numba", "auto"])
 @pytest.mark.parametrize("name", ["fan-ratio-1e8", "cone-subnormal-pitch"])
 @pytest.mark.parametrize("operation", ["project", "backproject"])
-def test_n3_extreme_pitches_match_float64_or_reject_safely(native_device, backend, name, operation):
+def test_n3_extreme_pitches_reject_native_or_use_warned_torch(native_device, backend, name, operation):
     scan = extreme_scan(name)
     image, rays = .5 + data(scan.shape).abs(), .5 + data(scan.projection_shape, phase=.31).abs()
     value, weight = (image, rays) if operation == "project" else (rays, image)
@@ -58,21 +57,18 @@ def test_n3_extreme_pitches_match_float64_or_reject_safely(native_device, backen
     expected_gradient, = torch.autograd.grad((expected * weight.double()).sum(), reference_data)
     assert torch.isfinite(expected).all() and expected.abs().max() > 0
     assert torch.isfinite(expected_gradient).all() and expected_gradient.abs().max() > 0
-    try:
-        native = operator(scan, backend=backend)
-        assert native.backend in (("numba",) if backend == "numba" else ("numba", "torch"))
-        selected_device = native_device if native.backend == "numba" else torch.device("cpu")
-        native_data = value.to(selected_device).requires_grad_()
-        with native_only() if native.backend == "numba" else nullcontext():
-            actual = getattr(native, operation)(native_data)
-            gradient, = torch.autograd.grad((actual * weight.to(selected_device)).sum(), native_data)
-    except (ValueError, RuntimeError, OverflowError) as error:
-        if backend != "numba":
-            raise
-        assert_fp32_range_error(error)
-        fallback = operator(scan, backend="auto")
-        assert fallback.backend == "torch", "auto must keep torch after a native FP32 range rejection"
+    if backend == "numba":
+        with pytest.raises((ValueError, RuntimeError, OverflowError)) as caught:
+            operator(scan, backend=backend)
+        assert_fp32_range_error(caught.value)
         return
+    with pytest.warns(Warning) as notices:
+        fallback = operator(scan, backend=backend)
+    assert fallback.backend == "torch"
+    assert_fp32_range_error(notices[0].message)
+    portable_data = value.requires_grad_()
+    actual = getattr(fallback, operation)(portable_data)
+    gradient, = torch.autograd.grad((actual * weight).sum(), portable_data)
     assert torch.isfinite(actual).all() and torch.isfinite(gradient).all()
     close(actual, expected)
     close(gradient, expected_gradient)
@@ -81,7 +77,7 @@ def test_n3_extreme_pitches_match_float64_or_reject_safely(native_device, backen
 @NATIVE_REQUIRED
 @pytest.mark.parametrize("backend", ["numba", "auto"])
 @pytest.mark.parametrize("operation", ["project", "backproject"])
-def test_n3_extreme_fan_geometry_vjp_is_finite_and_correct_or_rejects(native_device, backend, operation):
+def test_n3_extreme_fan_geometry_vjp_rejects_native_or_uses_warned_torch(native_device, backend, operation):
     scan = extreme_scan("fan-vjp-1e40", learnable=True)
     image, rays = .5 + data(scan.shape).abs(), .5 + data(scan.projection_shape, phase=.31).abs()
     value, weight = (image, rays) if operation == "project" else (rays, image)
@@ -92,22 +88,18 @@ def test_n3_extreme_fan_geometry_vjp_is_finite_and_correct_or_rejects(native_dev
     assert torch.isfinite(expected).all() and expected.abs().max() > 0
     assert all(torch.isfinite(gradient).all() for gradient in wanted)
     assert wanted[0].abs().max() > 0 and any(gradient.abs().max() > 1 for gradient in wanted[1:])
-    try:
-        native = operator(scan, backend=backend)
-        assert native.backend in (("numba",) if backend == "numba" else ("numba", "torch"))
-        selected_device = native_device if native.backend == "numba" else torch.device("cpu")
-        native_data = value.to(selected_device).requires_grad_()
-        with native_only() if native.backend == "numba" else nullcontext():
-            actual = getattr(native, operation)(native_data)
-            gradients = torch.autograd.grad((actual * weight.to(selected_device)).sum(),
-                                            (native_data, *scan.trajectory))
-    except (ValueError, RuntimeError, OverflowError) as error:
-        if backend != "numba":
-            raise
-        assert_fp32_range_error(error)
-        fallback = operator(scan, backend="auto")
-        assert fallback.backend == "torch", "auto must keep torch after a native FP32 range rejection"
+    if backend == "numba":
+        with pytest.raises((ValueError, RuntimeError, OverflowError)) as caught:
+            operator(scan, backend=backend)
+        assert_fp32_range_error(caught.value)
         return
+    with pytest.warns(Warning) as notices:
+        fallback = operator(scan, backend=backend)
+    assert fallback.backend == "torch"
+    assert_fp32_range_error(notices[0].message)
+    portable_data = value.requires_grad_()
+    actual = getattr(fallback, operation)(portable_data)
+    gradients = torch.autograd.grad((actual * weight).sum(), (portable_data, *scan.trajectory))
     assert torch.isfinite(actual).all()
     close(actual, expected)
     for index, (gradient, expected_gradient) in enumerate(zip(gradients, wanted)):
