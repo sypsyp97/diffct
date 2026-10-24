@@ -124,7 +124,7 @@ def test_n2_nccl_views_and_space_values_and_autograd(tmp_path, beam, kind, parti
             process.join(timeout=5)
 
 
-def _large_operator(spacing):
+def _large_operator(spacing, *, view_chunk_size=None):
     views = 24
     angle = .217 + torch.arange(views, dtype=torch.float32) * (2 * math.pi / views)
     zero = torch.zeros_like(angle)
@@ -140,7 +140,8 @@ def _large_operator(spacing):
                      # Keep the vertical field inside both physical boxes.
                      # Timing must compare rays with the same hit coverage.
                      beam="cone", voxel_spacing=spacing, detector_spacing=(.7, .05),
-                     detector_surface=cylinder, backend="auto", devices=[0], distributed=False)
+                     detector_surface=cylinder, backend="auto", devices=[0], distributed=False,
+                     view_chunk_size=view_chunk_size)
 
 
 def test_n4_cylindrical_project_within_twenty_percent_of_scalar():
@@ -217,7 +218,8 @@ def test_unchanged_native_host_geometry_limit_and_memory_admission(spacing):
 
     # Observe allocations and production admission; do not replace the planner.
     with native_only(), mock.patch.object(operators.Projector, "_surface_geometry_into", observed):
-        native = _large_operator(spacing)
+        # Request streaming even when the full workload fits GPU memory.
+        native = _large_operator(spacing, view_chunk_size=1)
         image = torch.ones((81, 512, 512), device="cuda:0")
         rays = torch.ones((24, 888, 625), device="cuda:0")
         for method, value in (("project", image), ("backproject", rays)):
@@ -226,6 +228,7 @@ def test_unchanged_native_host_geometry_limit_and_memory_admission(spacing):
             torch.cuda.reset_peak_memory_stats(0)
             result = getattr(native, method)(value)
             torch.cuda.synchronize()
+            assert native.last_execution_stats is not None
             working_peak = torch.cuda.max_memory_allocated(0) - before
             output_bytes = result.numel() * result.element_size()
             assert working_peak <= native.last_execution_stats["gpu_budget_bytes"] + output_bytes
