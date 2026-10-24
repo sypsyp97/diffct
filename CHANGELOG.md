@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Native per-axis voxel spacing for projection, matched backprojection, geometry gradients and analytical FBP/FDK. Tensor axis order and physical length units match the PyTorch backend. Scalar native arithmetic is unchanged.
-- Native `parallel3d` projection and backprojection with infinite rays and first-order geometry gradients, using the existing 3D traversal and execution paths.
 
 ### Fixed
 

@@ -256,7 +256,7 @@ def _cone_3d_geometry_vjp_kernel(
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
     cx, cy, cz, voxel_spacing,
     d_grad_src, d_grad_det_center, d_grad_det_u, d_grad_det_v,
-    d_detector_positions=None, d_grad_detector_positions=None, parallel=False,
+    d_detector_positions=None, d_grad_detector_positions=None,
 ):
     """Accumulate cone-beam geometry gradients of ``<grad_sino, A x>`` per view."""
     iv, iu, iview = cuda.grid(3)
@@ -301,21 +301,13 @@ def _cone_3d_geometry_vjp_kernel(
     det_x, det_y, det_z = np.float64(det_x), np.float64(det_y), np.float64(det_z)
 
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
-    if parallel:
-        dir_x = np.float64(d_src_pos[iview, 0]) / _axis_pitch(voxel_spacing, 0)
-        dir_y = np.float64(d_src_pos[iview, 1]) / _axis_pitch(voxel_spacing, 1)
-        dir_z = np.float64(d_src_pos[iview, 2]) / _axis_pitch(voxel_spacing, 2)
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
-    if length < _EPSILON and not parallel:
+    if length < _EPSILON:
         return
     inv_len = _ONE / length
     dir_x, dir_y, dir_z = dir_x * inv_len, dir_y * inv_len, dir_z * inv_len
 
-    if parallel:
-        org_x, org_y, org_z = det_x, det_y, det_z
-        t_min, t_max = -_BIG, _BIG
-        t_a0, t_b0 = _ZERO, length
-    elif (src_x * src_x + src_y * src_y + src_z * src_z
+    if (src_x * src_x + src_y * src_y + src_z * src_z
             <= det_x * det_x + det_y * det_y + det_z * det_z):
         org_x = src_x
         org_y = src_y
@@ -402,7 +394,6 @@ def _cone_3d_geometry_vjp_kernel(
     gb_x = _ZERO
     gb_y = _ZERO
     gb_z = _ZERO
-    point_cx, point_cy, point_cz = _ZERO, _ZERO, _ZERO
     f_prev = _ZERO
     pend_axis = ent_axis
     pend_t = _ZERO
@@ -417,20 +408,14 @@ def _cone_3d_geometry_vjp_kernel(
             c = (-f) if first else (f_prev - f)
             if pend_axis == 0:
                 da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_x)
-                if parallel:
-                    point_cx += c
                 ga_x += da
                 gb_x += db
             elif pend_axis == 1:
                 da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_y)
-                if parallel:
-                    point_cy += c
                 ga_y += da
                 gb_y += db
             else:
                 da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_z)
-                if parallel:
-                    point_cz += c
                 ga_z += da
                 gb_z += db
         first = False
@@ -457,20 +442,14 @@ def _cone_3d_geometry_vjp_kernel(
             tz += dt_z
     if ex_axis == 0:
         da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_x)
-        if parallel:
-            point_cx += f_prev
         ga_x += da
         gb_x += db
     elif ex_axis == 1:
         da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_y)
-        if parallel:
-            point_cy += f_prev
         ga_y += da
         gb_y += db
     elif ex_axis == 2:
         da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_z)
-        if parallel:
-            point_cz += f_prev
         ga_z += da
         gb_z += db
 
@@ -499,21 +478,6 @@ def _cone_3d_geometry_vjp_kernel(
         gb_x += S * ray_x
         gb_y += S * ray_y
         gb_z += S * ray_z
-
-    if parallel:
-        # A = detector pixel, B = A + physical ray direction. Sum face
-        # coefficients directly: ga + gb loses small point derivatives
-        # when the detector origin lies far along the infinite line.
-        point_scale = _ray_scale(voxel_spacing, dir_x, dir_y, dir_z)
-        ga_x, gb_x = gb_x, _ZERO
-        ga_y, gb_y = gb_y, _ZERO
-        ga_z, gb_z = gb_z, _ZERO
-        if abs(ray_x) > _TINY:
-            gb_x = -(point_scale / _axis_pitch(voxel_spacing, 0)) * point_cx / ray_x
-        if abs(ray_y) > _TINY:
-            gb_y = -(point_scale / _axis_pitch(voxel_spacing, 1)) * point_cy / ray_y
-        if abs(ray_z) > _TINY:
-            gb_z = -(point_scale / _axis_pitch(voxel_spacing, 2)) * point_cz / ray_z
 
     cuda.atomic.add(d_grad_src, (iview, 0), g * ga_x)
     cuda.atomic.add(d_grad_src, (iview, 1), g * ga_y)

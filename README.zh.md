@@ -112,9 +112,9 @@ loss.backward()                     # x.grad = A^T (A x - y)
 
 **逐轴体素间距。** 按张量轴顺序设置 `voxel_spacing=(dy, dx)` 或 `(dz, dy, dx)`。两个后端都支持逐轴间距的投影、投影几何梯度及固定几何的 FBP/FDK。
 
-**3D 平行束。** 使用 `circular_trajectory_3d_parallel(...)` 和 `beam="parallel3d"`。两个后端都支持无限射线的匹配前向投影和反向投影。
+**3D 平行束。** 使用 `circular_trajectory_3d_parallel(...)` 和 `beam="parallel3d"`，通过 PyTorch 后端在 CPU 或 CUDA 上执行匹配的前向投影和反向投影。
 
-**原生体积布局。** 无 batch、平板锥束或 `parallel3d` 操作可设置 `native_volume_layout=True`，避免体积布局复制。这适用于单计算设备的原生完整 CUDA 路径。形状仍为 `(D, H, W)`，返回张量的步长采用内核布局；默认值为 `False`。限制见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
+**原生体积布局。** 无 batch、平板锥束操作可设置 `native_volume_layout=True`，避免体积布局复制。这适用于单计算设备的原生完整 CUDA 路径。形状仍为 `(D, H, W)`，返回张量的步长采用内核布局；默认值为 `False`。限制见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
 
 **多卡与多节点。** 详见 [REFERENCE](docs/REFERENCE.md#several-gpus-and-nodes)（英文）和 [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md)。
 

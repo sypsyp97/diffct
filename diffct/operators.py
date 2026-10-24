@@ -367,8 +367,8 @@ class Projector:
     CUDA and fast precision with scalar or per-axis voxel spacing, except for hybrid
     partitions. Other configurations use portable ``"torch"`` execution on
     the input's CPU or supported PyTorch accelerator. Explicit ``"numba"``
-    requires a compatible native configuration. Parallel3d traces infinite
-    lines on both backends. Data ``torch.func``
+    requires a compatible native configuration. Parallel3d uses ``torch``;
+    explicitly selecting ``numba`` for it raises an error. Data ``torch.func``
     transforms use portable operations while preserving selected metadata.
 
     Native CPU inputs stream spatial tiles and view batches through CUDA.
@@ -398,7 +398,7 @@ class Projector:
     conservative automatic chunks targeting 8 MiB work arrays. Explicit
     chunk hints take priority. Reports and selection caches retain metadata.
 
-    ``native_volume_layout=True`` makes native full-CUDA cone/parallel3d backprojections of unbatched inputs on a
+    ``native_volume_layout=True`` makes native full-CUDA cone backprojections of unbatched inputs on a
     flat detector return ``(D, H, W)`` tensors with the kernels' ``(W, H, D)``-contiguous strides instead
     of contiguous copies; native projections accept such tensors without a copy. An iterative solver that
     keeps its volumes in this layout then avoids two whole-volume copies per normal-operator application
@@ -433,6 +433,11 @@ class Projector:
                  schedule="auto", partition="views", backend="auto", precision="fast",
                  partition_grid=None, native_volume_layout=False):
         requested_backend = backend
+        if beam == "parallel3d":
+            if backend == "numba":
+                raise ValueError("parallel3d requires the torch backend; numba is not supported")
+            if backend == "auto":
+                backend = "torch"
         self.backend = select_backend(backend, precision, voxel_spacing, partition)
         self.native_volume_layout = bool(native_volume_layout)
         self.precision = precision
@@ -866,8 +871,8 @@ class Projector:
                                                                streamed=True, batched=surface_batch)))
 
     def _surface_capacity(self, views, pixels):
-        rank, columns = len(self.volume_shape), 3 if self.beam in ("cone", "parallel3d") else 2
-        frames = 4 if self.beam in ("cone", "parallel3d") else 3
+        rank, columns = len(self.volume_shape), 3 if self.beam == "cone" else 2
+        frames = 4 if self.beam == "cone" else 3
         maximum = max(views * math.prod(pixels) * rank, views * rank * frames)
         return max(1, min(math.prod(pixels), _SURFACE_CAPACITY_CAP, (maximum - 1) // columns))
 
@@ -913,9 +918,9 @@ class Projector:
         if self.detector_surface is None:
             return ((),)
         if streamed:
-            rank, frames = len(self.volume_shape), 4 if self.beam in ("cone", "parallel3d") else 3
+            rank, frames = len(self.volume_shape), 4 if self.beam == "cone" else 3
             capacity = self._surface_capacity(views, pixels)
-            columns = 3 if self.beam in ("cone", "parallel3d") else 2
+            columns = 3 if self.beam == "cone" else 2
             shared = spec is not None and spec.kind == "offsets" and spec.shared
             if shared or batched:
                 capacity = math.prod(pixels)
@@ -938,7 +943,7 @@ class Projector:
         buffers = (torch.empty((), dtype=dtype).element_size() * elements,) * (4 * slots)
         if dtype != torch.float64:
             buffers += (8 * elements,) * slots
-        buffers += (views * 3 * 8 * (4 if self.beam in ("cone", "parallel3d") else 3),) * slots
+        buffers += (views * 3 * 8 * (4 if self.beam == "cone" else 3),) * slots
         if spec is None and not isinstance(self.detector_surface, ParameterizedSurface):
             # The preliminary full plan precedes the callback. Admit independent
             # snapshots plus one bounded arena for the callback's saved tensors.
@@ -1089,7 +1094,7 @@ class Projector:
                 with torch.cuda.device(device):
                     staged_input = source.to(device=device, dtype=torch.float32, non_blocking=True)
                     # Preserve the native cone layout when the input already uses it.
-                    if not (is_project and self.beam in ("cone", "parallel3d") and staged_input.permute(2, 1, 0).is_contiguous()):
+                    if not (is_project and self.beam == "cone" and staged_input.permute(2, 1, 0).is_contiguous()):
                         staged_input = staged_input.contiguous()
                 staged.append((device, staged_input, staged_geometry))
         except (TypeError, ValueError, RuntimeError) as failure:
@@ -1126,7 +1131,7 @@ class Projector:
 
             # With native_volume_layout every rank holds its cone result in the native (W, H, D) order,
             # so collectives reduce the same element order on every rank.
-            native = self.native_volume_layout and self.beam in ("cone", "parallel3d") and self.detector_surface is None
+            native = self.native_volume_layout and self.beam == "cone" and self.detector_surface is None
             if len(outputs) == 1:
                 result = outputs[0][1].to(device=input_device, non_blocking=True)
             else:
@@ -1200,7 +1205,7 @@ class Projector:
                 device=component.device if surface else "cpu",
                 dtype=torch.promote_types(torch.float32, component.dtype),
             )
-            position = index == 1 or (index == 0 and self.beam not in ("parallel", "parallel3d"))
+            position = index == 1 or (index == 0 and self.beam != "parallel")
             if position:
                 value = value - value.new_tensor(centre)
             translated.append(value if device is None else value.to(device=device, dtype=torch.float32).contiguous())
@@ -1394,7 +1399,7 @@ class Projector:
         points = spec is not None or self.detector_chunk_shape is not None or pixels != self.detector_shape
         geometry = rays * rank if points else plan.view_chunk_size * rank
         batch = (plan.view_chunk_size * rank + geometry if points else
-                 geometry * (4 if self.beam in ("cone", "parallel3d") else 3))
+                 geometry * (4 if self.beam == "cone" else 3))
         return max(math.prod(plan.chunk_shape), rays + batch)
 
     def _native_tile(self, source, spatial, shape, pipe, is_project):
@@ -1402,7 +1407,7 @@ class Projector:
         if len(pipe.host) == 1:
             # A single-slot plan budgets only one live producer epoch.
             pipe.event(pipe.compute).synchronize()
-        staged = pipe.empty(shape if is_project or self.beam not in ("cone", "parallel3d") else shape[::-1])
+        staged = pipe.empty(shape if is_project or self.beam != "cone" else shape[::-1])
         if is_project:
             ready = pipe.upload_store(source, spatial, staged)
             with torch.cuda.stream(pipe.compute):
@@ -1423,7 +1428,7 @@ class Projector:
         from numba import cuda
         from .kernels.surface_geometry import compose_surface
 
-        rank, frame_count = len(self.volume_shape), 4 if self.beam in ("cone", "parallel3d") else 3
+        rank, frame_count = len(self.volume_shape), 4 if self.beam == "cone" else 3
         count = views.stop - views.start
         pixel_shape = tuple(selected.stop - selected.start for selected in pixels)
         # Offsets sampled here derive from the snapshot and the pixel tile;
@@ -1552,7 +1557,7 @@ class Projector:
                     compose_surface[((pixel_count + 127) // 128, rows), 128, stream](
                         TorchCUDABridge.tensor_to_cuda_array(block[first:first + rows].reshape(-1)),
                         *arrays[1:], first, 0, pixel_count, capacity, rank,
-                        self.beam in ("parallel", "parallel3d"), frame32, offset32,
+                        self.beam == "parallel", frame32, offset32,
                         tuple(centre) + (0.,) * (3 - rank), self.voxel_spacing,
                     )
             for local in range(0 if batched else count):
@@ -1584,7 +1589,7 @@ class Projector:
                             pipe.retain(pipe.event(pipe.upload), value, packed_offsets)
                         compose_surface[(size + 127) // 128, 128, stream](
                             *arrays, local, row * pixel_shape[-1] + start, size, capacity, rank,
-                            self.beam in ("parallel", "parallel3d"), frame32, offset32,
+                            self.beam == "parallel", frame32, offset32,
                             tuple(centre) + (0.,) * (3 - rank), self.voxel_spacing,
                         )
             ready = pipe.event(pipe.upload)
@@ -1650,7 +1655,7 @@ class Projector:
             for value in (native, rays, *staged_geometry):
                 value.record_stream(pipe.compute)
             if geometry_vjp:
-                spacing = self.detector_spacing if self.beam in ("cone", "parallel3d") else self.detector_spacing[0]
+                spacing = self.detector_spacing if self.beam == "cone" else self.detector_spacing[0]
                 parts = _geometry_vjp(self.beam, None, rays, tuple(staged_geometry), spacing,
                                       self.voxel_spacing, prepared_volume=native)
             elif is_project:
@@ -1677,7 +1682,7 @@ class Projector:
         rays = plan.view_chunk_size * math.prod(pixels)
         points = spec is not None or self.detector_chunk_shape is not None or pixels != self.detector_shape
         sizes = ((plan.view_chunk_size * rank, rays * rank) if points
-                 else (plan.view_chunk_size * rank,) * (4 if self.beam in ("cone", "parallel3d") else 3))
+                 else (plan.view_chunk_size * rank,) * (4 if self.beam == "cone" else 3))
         return {"_max_rays": rays, "_max_geometry": sizes, "_surface_batch": plan.surface_batch}
 
     def _prefetch_job(self, job, source, geometry, spec, transfer, groups, index, is_project,
@@ -2081,7 +2086,7 @@ class Projector:
                 torch.distributed.all_reduce(accumulator, op=torch.distributed.ReduceOp.SUM, group=self._process_group)
                 stats["collective_calls"] += 1
                 stats["collective_bytes"] += accumulator.numel() * accumulator.element_size()
-            output = accumulator.permute(2, 1, 0).contiguous() if self.beam in ("cone", "parallel3d") else accumulator
+            output = accumulator.permute(2, 1, 0).contiguous() if self.beam == "cone" else accumulator
             ready = pipe.event(pipe.compute)
         if self.partition == "views" and self._distributed and self.world_size > 1 and torch.distributed.get_backend(self._process_group) != "nccl":
             owner = self
@@ -2154,7 +2159,7 @@ class Projector:
                             ray_cache[local.start] = rays, ray_owner
                         ray_cache[local.start][1]["done"] = ready
                     with torch.cuda.stream(pipe.compute):
-                        output = rays if is_project else native.permute(2, 1, 0).contiguous() if self.beam in ("cone", "parallel3d") else native
+                        output = rays if is_project else native.permute(2, 1, 0).contiguous() if self.beam == "cone" else native
                         ready = pipe.event(pipe.compute)
                     result = torch.empty(output.shape, dtype=torch.float32)
                     selected = tuple(slice(0, size) for size in output.shape)
@@ -2170,7 +2175,7 @@ class Projector:
         rank = len(self.volume_shape)
         points = spec is not None or self.detector_chunk_shape is not None or plan.detector_chunk_shape != self.detector_shape
         geometry_bytes = 4 * rank * self.projection_shape[0] * (
-            1 + math.prod(self.detector_shape) if points else (4 if self.beam in ("cone", "parallel3d") else 3) * rectangles)
+            1 + math.prod(self.detector_shape) if points else (4 if self.beam == "cone" else 3) * rectangles)
         uploads = (volume_bytes * (batches * rectangles if plan.schedule == "views" else min(len(plan.devices), self.projection_shape[0]))
                    if is_project else ray_bytes * math.ceil(tiles / plan.window_size))
         if torch.device(getattr(source, "device", "cpu")).type == "cuda":
@@ -2223,7 +2228,7 @@ class Projector:
 
     def _surface_batch_inputs(self, geometry, spec, views, pixels):
         """Create local differentiation leaves before expanding sampled geometry."""
-        frame_count = 4 if self.beam in ("cone", "parallel3d") else 3
+        frame_count = 4 if self.beam == "cone" else 3
         selections = [(views,)] * frame_count
         if spec.kind == "offsets":
             offsets = geometry[frame_count]
@@ -2244,9 +2249,10 @@ class Projector:
             return self._geometry_grad_streamed(volume, cotangent, geometry, plan, geometry_spec)
         from numba import cuda
 
-        devices = self._devices or (volume.device,)
+        device = volume.device if volume.is_cuda else cotangent.device
+        devices = self._devices or (device,)
         local_views = self.projection_shape[0]
-        spacing = self.detector_spacing if self.beam in ("cone", "parallel3d") else self.detector_spacing[0]
+        spacing = self.detector_spacing if self.beam == "cone" else self.detector_spacing[0]
         sampled = geometry_spec is not None and geometry_spec.kind in ("sampled", "offsets")
         grads = [torch.zeros(component.shape, dtype=torch.float32,
                              device=component.device if sampled else volume.device) for component in geometry]
@@ -2373,7 +2379,7 @@ class Projector:
                                                       inputs, geometry_spec, global_slice, pixels, self.voxel_spacing,
                                                       device=None)
                 cpu_geometry = tuple(value.detach() - value.new_tensor(centre)
-                                     if index == 1 or self.beam not in ("parallel", "parallel3d") else value.detach()
+                                     if index == 1 or self.beam != "parallel" else value.detach()
                                      for index, value in enumerate(local_geometry))
             else:
                 cpu_geometry = self._tile_geometry(geometry, global_slice, centre, pipe.device, pixels, geometry_spec)
@@ -2440,7 +2446,7 @@ class Projector:
                      for grad, component in zip(grads, geometry))
 
     def _project_raw(self, volume, geometry):
-        if len(geometry) == 2 or self.beam == "parallel3d":
+        if len(geometry) == 2:
             return _surface_project(
                 self.beam, volume, geometry, self.detector_shape,
                 self.detector_spacing, self.voxel_spacing,
@@ -2462,12 +2468,10 @@ class Projector:
 
     def _backproject_raw(self, sinogram, geometry, volume_shape=None):
         volume_shape = self.volume_shape if volume_shape is None else volume_shape
-        if len(geometry) == 2 or self.beam == "parallel3d":
+        if len(geometry) == 2:
             return _surface_backproject(
                 self.beam, sinogram, geometry, volume_shape,
                 self.detector_spacing, self.voxel_spacing,
-                native_volume_layout=(self.native_volume_layout and self.beam == "parallel3d"
-                                      and self.detector_surface is None),
             )
         if self.beam == "parallel":
             return ParallelBackprojectorFunction.apply(
@@ -2652,9 +2656,9 @@ class Projector:
                                 )
                                 nonfinite = nonfinite | ~torch.isfinite(source).all() | ~torch.isfinite(points).all()
                                 sources = source.reshape(source.shape[0], *([1] * len(selected)), -1)
-                                if owner.beam not in ("parallel", "parallel3d"):
+                                if owner.beam != "parallel":
                                     coincident = coincident | torch.any(torch.all(points == sources, dim=-1))
-                                directions = (source if owner.beam in ("parallel", "parallel3d") else
+                                directions = (source if owner.beam == "parallel" else
                                               points - sources)
                                 nonfinite = nonfinite | ~torch.isfinite(directions).all()
                                 del source, points, sources, directions
@@ -2815,7 +2819,7 @@ class Projector:
 
     def _surface_offsets(self):
         """Sample the legacy callback without expanding a view-by-pixel tensor."""
-        if self.beam in ("cone", "parallel3d"):
+        if self.beam == "cone":
             n_u, n_v = self.detector_shape
             du, dv = self.detector_spacing
             u_axis = (torch.arange(n_u, dtype=torch.float64, device="cpu") + 0.5 - n_u / 2) * du

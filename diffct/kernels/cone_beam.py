@@ -32,7 +32,7 @@ def _cone_3d_forward_kernel(
     d_vol, Nx, Ny, Nz,
     d_sino, n_views, n_u, n_v,
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-    cx, cy, cz, voxel_spacing, d_detector_positions=None, parallel=False,
+    cx, cy, cz, voxel_spacing, d_detector_positions=None,
 ):
     """Compute the 3D cone-beam forward projection with arbitrary source-detector trajectories.
 
@@ -137,12 +137,8 @@ def _cone_3d_forward_kernel(
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
-    if parallel:
-        dir_x = np.float64(d_src_pos[iview, 0]) / _axis_pitch(voxel_spacing, 0)
-        dir_y = np.float64(d_src_pos[iview, 1]) / _axis_pitch(voxel_spacing, 1)
-        dir_z = np.float64(d_src_pos[iview, 2]) / _axis_pitch(voxel_spacing, 2)
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length < _EPSILON and not parallel:  # Degenerate finite segment
+    if length < _EPSILON:  # Degenerate finite segment
         d_sino[iview, iu, iv] = _ZERO; return
     
     # Normalize 3D ray direction vector for parametric traversal
@@ -153,10 +149,7 @@ def _cone_3d_forward_kernel(
     # Measure the ray parameter from the endpoint nearer the volume centre, so a
     # distant source does not make the parameters coarse. Only the
     # source-to-detector segment is integrated.
-    if parallel:
-        org_x, org_y, org_z = det_x, det_y, det_z
-        t_min, t_max = -_BIG, _BIG
-    elif src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
+    if src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
         org_x = src_x
         org_y = src_y
         org_z = src_z
@@ -263,7 +256,7 @@ def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-    cx, cy, cz, voxel_spacing, d_detector_positions=None, parallel=False,
+    cx, cy, cz, voxel_spacing, d_detector_positions=None,
 ):
     """Compute the 3D cone-beam backprojection with arbitrary source-detector trajectories.
 
@@ -371,12 +364,8 @@ def _cone_3d_backward_kernel(
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
-    if parallel:
-        dir_x = np.float64(d_src_pos[iview, 0]) / _axis_pitch(voxel_spacing, 0)
-        dir_y = np.float64(d_src_pos[iview, 1]) / _axis_pitch(voxel_spacing, 1)
-        dir_z = np.float64(d_src_pos[iview, 2]) / _axis_pitch(voxel_spacing, 2)
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length < _EPSILON and not parallel: return  # Skip degenerate finite segments
+    if length < _EPSILON: return  # Skip degenerate finite segments
     inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len  # Normalized 3D ray direction vector
     if isinstance(voxel_spacing, tuple):
@@ -386,10 +375,7 @@ def _cone_3d_backward_kernel(
     # Measure the ray parameter from the endpoint nearer the volume centre, so a
     # distant source does not make the parameters coarse. Only the
     # source-to-detector segment is integrated.
-    if parallel:
-        org_x, org_y, org_z = det_x, det_y, det_z
-        t_min, t_max = -_BIG, _BIG
-    elif src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
+    if src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
         org_x = src_x
         org_y = src_y
         org_z = src_z

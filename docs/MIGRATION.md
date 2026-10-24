@@ -39,9 +39,8 @@ returns input gradients in the input's device and dtype.
 `voxel_spacing` is a positive scalar or a tuple `(dy, dx)` / `(dz, dy, dx)`.
 Both native and PyTorch backends support per-axis spacing. `detector_spacing` is a positive
 scalar for 2D, and a scalar or `(u_pitch, v_pitch)` for 3D.
-`parallel3d` uses infinite lines on both backends. Native execution requires
-NVIDIA CUDA, `precision="fast"` and views/space ownership.
-See [precision and execution](https://github.com/sypsyp97/diffct/blob/main/docs/EXECUTION.md).
+`parallel3d` uses infinite lines on the PyTorch backend; explicit
+`backend="numba"` is unsupported. See [precision and execution](https://github.com/sypsyp97/diffct/blob/main/docs/EXECUTION.md).
 
 ## Minimal migration example
 
