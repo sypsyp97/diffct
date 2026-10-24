@@ -285,9 +285,17 @@ def _check_beam_source_bindings(name, tree):
                 assert f"src_{axis} = d_src_pos[{view}, {index}] / _axis_pitch(voxel_spacing, {index})" in statements
                 assert f"det_c{axis} = d_det_center[{view}, {index}] / _axis_pitch(voxel_spacing, {index})" in statements
                 assert f"det_{axis} = d_detector_positions[{pixel}, {index}] / _axis_pitch(voxel_spacing, {index})" in statements
-                detector = f"det_c{axis} + u_phys * u_vec_{axis} / _axis_pitch(voxel_spacing, {index})"
                 if name == "cone_beam":
-                    detector += f" + v_phys * v_vec_{axis} / _axis_pitch(voxel_spacing, {index})"
+                    assert normalize(
+                        f"src_{axis} = np.float64(d_src_pos[{view}, {index}]) / "
+                        f"np.float64(_axis_pitch(voxel_spacing, {index}))"
+                    ) in per_axis
+                    detector = (f"(np.float64(d_det_center[{view}, {index}]) + "
+                                f"u_phys * np.float64(u_vec_{axis}) + "
+                                f"v_phys * np.float64(v_vec_{axis})) / "
+                                f"np.float64(_axis_pitch(voxel_spacing, {index}))")
+                else:
+                    detector = f"det_c{axis} + u_phys * u_vec_{axis} / _axis_pitch(voxel_spacing, {index})"
                 assert normalize(f"det_{axis} = {detector}") in per_axis
         if name != "parallel_beam":
             assert normalize("t_min, t_max = _ZERO, length") in statements
@@ -303,8 +311,10 @@ def _check_beam_source_bindings(name, tree):
         if name == "cone_beam":
             offsets = ["u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)",
                        "v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)"]
-            physical_offsets = [expression.replace("_offset", "_phys").split(" / _axis_pitch")[0]
-                                for expression in offsets]
+            physical_offsets = [
+                "u_phys = (np.float64(iu) + _HALF - np.float64(n_u) * _HALF) * np.float64(du)",
+                "v_phys = (np.float64(iv) + _HALF - np.float64(n_v) * _HALF) * np.float64(dv)",
+            ]
         else:
             offsets = [f"u_offset = (np.{precision}(idet) + _HALF - np.{precision}(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)"]
             physical_offsets = [offsets[0].replace("u_offset", "u_phys").split(" / _axis_pitch")[0]]
