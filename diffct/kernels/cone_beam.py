@@ -7,7 +7,8 @@ voxel-driven FDK gather kernel for analytical reconstruction pipelines.
 
 import math
 import numpy as np
-from numba import cuda
+from numba import cuda, types
+from numba.extending import overload
 
 from .spacing import _axis_pitch, _is_per_axis, _ray_scale
 
@@ -26,6 +27,27 @@ from ..constants import (
 # ============================================================================
 # 3D Cone Beam Forward Projection Kernel
 # ============================================================================
+
+def _cone_parameter(value, spacing, positions):
+    """Keep flat per-axis traversal parameters precise across spatial slabs."""
+    if isinstance(spacing, tuple) and positions is None:
+        return np.float64(value)
+    return np.float32(value)
+
+
+@overload(_cone_parameter, target="cuda")
+def _cone_parameter_overload(value, spacing, positions):
+    flat = isinstance(positions, types.NoneType) or (
+        isinstance(positions, types.Omitted) and positions.value is None
+    )
+    if isinstance(spacing, types.BaseTuple) and flat:
+        def impl(value, spacing, positions):
+            return np.float64(value)
+    else:
+        def impl(value, spacing, positions):
+            return np.float32(value)
+    return impl
+
 
 @_FASTMATH_DECORATOR
 def _cone_3d_forward_kernel(
@@ -188,14 +210,14 @@ def _cone_3d_forward_kernel(
     if t_min >= t_max:  # No valid 3D intersection
         d_sino[iview, iu, iv] = _ZERO; return
 
-    # Only setup needs float64; traverse in float32 from the volume entry.
-    ent_x = np.float32(org_x + t_min * dir_x)
-    ent_y = np.float32(org_y + t_min * dir_y)
-    ent_z = np.float32(org_z + t_min * dir_z)
-    ray_x = np.float32(dir_x)
-    ray_y = np.float32(dir_y)
-    ray_z = np.float32(dir_z)
-    t_end = np.float32(t_max - t_min)
+    # Flat per-axis rays retain FP64 parameters; existing paths retain FP32.
+    ent_x = _cone_parameter(org_x + t_min * dir_x, voxel_spacing, d_detector_positions)
+    ent_y = _cone_parameter(org_y + t_min * dir_y, voxel_spacing, d_detector_positions)
+    ent_z = _cone_parameter(org_z + t_min * dir_z, voxel_spacing, d_detector_positions)
+    ray_x = _cone_parameter(dir_x, voxel_spacing, d_detector_positions)
+    ray_y = _cone_parameter(dir_y, voxel_spacing, d_detector_positions)
+    ray_z = _cone_parameter(dir_z, voxel_spacing, d_detector_positions)
+    t_end = _cone_parameter(t_max - t_min, voxel_spacing, d_detector_positions)
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     accum = _ZERO  # Accumulated projection value
@@ -415,14 +437,14 @@ def _cone_3d_backward_kernel(
 
     if t_min >= t_max: return
 
-    # Only setup needs float64; traverse in float32 from the volume entry.
-    ent_x = np.float32(org_x + t_min * dir_x)
-    ent_y = np.float32(org_y + t_min * dir_y)
-    ent_z = np.float32(org_z + t_min * dir_z)
-    ray_x = np.float32(dir_x)
-    ray_y = np.float32(dir_y)
-    ray_z = np.float32(dir_z)
-    t_end = np.float32(t_max - t_min)
+    # Match the forward kernel's compile-time traversal precision.
+    ent_x = _cone_parameter(org_x + t_min * dir_x, voxel_spacing, d_detector_positions)
+    ent_y = _cone_parameter(org_y + t_min * dir_y, voxel_spacing, d_detector_positions)
+    ent_z = _cone_parameter(org_z + t_min * dir_z, voxel_spacing, d_detector_positions)
+    ray_x = _cone_parameter(dir_x, voxel_spacing, d_detector_positions)
+    ray_y = _cone_parameter(dir_y, voxel_spacing, d_detector_positions)
+    ray_z = _cone_parameter(dir_z, voxel_spacing, d_detector_positions)
+    t_end = _cone_parameter(t_max - t_min, voxel_spacing, d_detector_positions)
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     t = _ZERO

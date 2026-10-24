@@ -88,6 +88,8 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
         if len(geom) == 2:
             d_positions = d_geom[1]
             d_geom = [d_geom[0]] * (4 if beam == "cone" else 3)
+        elif beam == "cone" and isinstance(voxel_spacing, (tuple, list)):
+            d_positions = None
         else:
             empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_volume = TorchCUDABridge.tensor_to_cuda_array(native_volume)
