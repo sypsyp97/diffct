@@ -70,6 +70,13 @@ for (const build of ['asyncify', 'jsep']) {
   }
 }
 
+// Ship the license texts of the third-party runtime with it.
+const licenseDir = path.join(runtimeDir, 'licenses');
+fs.mkdirSync(licenseDir, { recursive: true });
+for (const name of fs.readdirSync(path.join(import.meta.dirname, 'licenses'))) {
+  fs.copyFileSync(path.join(import.meta.dirname, 'licenses', name), path.join(licenseDir, name));
+}
+
 fs.writeFileSync(path.join(staticDir, 'search-meta.json'), JSON.stringify({
   model: MODEL, revision: REVISION, dtype: DTYPE, dim: DIM,
   query_prefix: QUERY_PREFIX,

@@ -8,7 +8,7 @@ For filter options and helper signatures, see :doc:`api`.
    :alt: Cone-beam projection and FDK slices of a 3D phantom
    :class: example-figure
 
-   3D Shepp-Logan phantom, 256³, 360 views on a circular orbit. The off-centre
+   3D Shepp-Logan phantom, 256³, 720 views on a circular orbit. The off-centre
    slice and the coronal section show the approximation error of FDK away from the
    orbit plane.
 

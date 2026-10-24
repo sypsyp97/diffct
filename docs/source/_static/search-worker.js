@@ -1,7 +1,7 @@
 /*
  * Web Worker for the semantic search: it loads EmbeddingGemma 2 (text tower) and embeds queries,
- * so that typing never blocks the page. Messages in: {type: 'load', meta}, {type: 'embed', id, text}.
- * Messages out: {type: 'progress', loaded, total}, {type: 'ready', backend}, {type: 'error', message},
+ * so that typing never blocks the page. Messages in: {type: 'load', meta, forceWasm}, {type: 'embed', id, text}.
+ * Messages out: {type: 'progress', loaded, total}, {type: 'ready', backend}, {type: 'fallback'}, {type: 'error', message},
  * {type: 'vector', id, vector}.
  */
 const runtimeBase = new URL('search/', self.location.href).href;
@@ -21,7 +21,7 @@ function onProgress(info) {
   self.postMessage({ type: 'progress', loaded, total });
 }
 
-async function load(meta) {
+async function load(meta, forceWasm) {
   const tf = await import(runtimeBase + 'transformers.min.js');
   tf.env.allowLocalModels = false;
   // ONNX Runtime Web ships several WASM builds. WebGPU needs the asyncify build. The CPU
@@ -41,7 +41,7 @@ async function load(meta) {
     device, dtype: meta.dtype, revision: meta.revision, config, progress_callback: onProgress,
   });
   let adapter = null;
-  try { adapter = self.navigator.gpu ? await self.navigator.gpu.requestAdapter() : null; } catch (e) { /* no WebGPU */ }
+  try { adapter = forceWasm ? null : self.navigator.gpu ? await self.navigator.gpu.requestAdapter() : null; } catch (e) { /* no WebGPU */ }
   let backend = 'WASM';
   if (adapter) {
     try {
@@ -49,7 +49,10 @@ async function load(meta) {
       extractor = await tf.pipeline('feature-extraction', meta.model, options('webgpu'));
       backend = 'WebGPU';
     } catch (e) {
-      console.warn('WebGPU failed, using WASM:', e);
+      // ONNX Runtime keeps its WebGPU state in this worker, so the WASM retry needs a fresh one.
+      console.warn('WebGPU failed, asking for a fresh WASM worker:', e);
+      self.postMessage({ type: 'fallback' });
+      return;
     }
   }
   if (!extractor) {
@@ -78,7 +81,7 @@ async function drain() {
 
 self.onmessage = async ({ data }) => {
   if (data.type === 'load') {
-    try { await load(data.meta); drain(); } catch (e) { self.postMessage({ type: 'error', message: String(e) }); }
+    try { await load(data.meta, data.forceWasm); drain(); } catch (e) { self.postMessage({ type: 'error', message: String(e) }); }
   } else if (data.type === 'embed') {
     latest = data;
     if (extractor) drain();

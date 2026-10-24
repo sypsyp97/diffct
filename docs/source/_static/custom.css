@@ -2,7 +2,7 @@
 html[data-theme="light"] {
   --pst-color-primary: #1f6fb2;
   --pst-color-secondary: #d9751c;
-  --pst-color-link-hover: #d9751c;
+  --pst-color-link-hover: #a84a00;
 }
 html[data-theme="dark"] {
   --pst-color-primary: #6cb2ea;

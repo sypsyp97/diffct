@@ -58,6 +58,42 @@ function loadIndex() {
   return engine.indexPromise;
 }
 
+function spawnWorker(index, forceWasm) {
+  const worker = new Worker(new URL('search-worker.js', import.meta.url), { type: 'module' });
+  engine.worker = worker;
+  worker.onmessage = ({ data }) => {
+    if (data.type === 'fallback') {
+      // The worker keeps WebGPU state after a failure: retry the CPU backend in a fresh one.
+      worker.terminate();
+      spawnWorker(index, true);
+      return;
+    }
+    if (data.type === 'progress') {
+      engine.loaded = data.loaded;
+      engine.total = data.total;
+    } else if (data.type === 'ready') {
+      engine.model = 'ready';
+      engine.backend = data.backend;
+      writePrefs({ semantic: 'on', loaded: true });
+    } else if (data.type === 'vector') {
+      if (engine.pending && engine.pending.id === data.id) engine.pending.resolve(data.vector);
+      return;
+    } else if (data.type === 'error') {
+      console.error(data.message);
+      if (data.id === undefined) { engine.model = 'error'; worker.terminate(); engine.worker = null; }
+      if (engine.pending && engine.pending.id === data.id) engine.pending.reject(new Error(data.message));
+    }
+    emit();
+  };
+  worker.onerror = (event) => {
+    console.error(event.message);
+    engine.model = 'error';
+    engine.worker = null;
+    emit();
+  };
+  worker.postMessage({ type: 'load', meta: index.meta, forceWasm });
+}
+
 function startModel() {
   if (engine.worker) return;
   engine.model = 'loading';
@@ -66,34 +102,7 @@ function startModel() {
   engine.total = 0;
   emit();
   loadIndex().then((index) => {
-    if (engine.model !== 'loading') return;
-    const worker = new Worker(new URL('search-worker.js', import.meta.url), { type: 'module' });
-    engine.worker = worker;
-    worker.onmessage = ({ data }) => {
-      if (data.type === 'progress') {
-        engine.loaded = data.loaded;
-        engine.total = data.total;
-      } else if (data.type === 'ready') {
-        engine.model = 'ready';
-        engine.backend = data.backend;
-        writePrefs({ semantic: 'on', loaded: true });
-      } else if (data.type === 'vector') {
-        if (engine.pending && engine.pending.id === data.id) engine.pending.resolve(data.vector);
-        return;
-      } else if (data.type === 'error') {
-        console.error(data.message);
-        if (data.id === undefined) { engine.model = 'error'; worker.terminate(); engine.worker = null; }
-        if (engine.pending && engine.pending.id === data.id) engine.pending.reject(new Error(data.message));
-      }
-      emit();
-    };
-    worker.onerror = (event) => {
-      console.error(event.message);
-      engine.model = 'error';
-      engine.worker = null;
-      emit();
-    };
-    worker.postMessage({ type: 'load', meta: index.meta });
+    if (engine.model === 'loading' && !engine.worker) spawnWorker(index, false);
   }).catch(() => { engine.model = 'error'; emit(); });
 }
 
@@ -228,8 +237,18 @@ function attach({ input, host, mode, maxGroups }) {
     return b;
   }
 
+  // Buttons are created once. A progress tick must not rebuild them, or a focused button loses focus.
+  const keywordOnly = button('Keyword only', stopModel);
+  const download = button('Download', enableModel);
+  const turnOn = button(`Turn on semantic search (\u2248${MODEL_MB} MB download)`, enableModel);
+  let actionsKey = '';
+  function setActions(key, ...nodes) {
+    if (key === actionsKey) return;
+    actionsKey = key;
+    actions.replaceChildren(...nodes);
+  }
+
   function renderStatus() {
-    actions.replaceChildren();
     progress.hidden = engine.model !== 'loading';
     const mb = (bytes) => Math.round(bytes / 1e6);
     const total = groups.reduce((n, g) => n + g.items.length + g.more.length, 0);
@@ -243,16 +262,17 @@ function attach({ input, host, mode, maxGroups }) {
         : `Loading semantic search model (\u2248${MODEL_MB} MB, one time)`;
       if (engine.total) text += `: ${mb(engine.loaded)} of ${mb(engine.total)} MB`;
       progress.value = engine.total ? (100 * engine.loaded) / engine.total : 0;
-      actions.append(button('Keyword only', stopModel));
+      setActions('loading', keywordOnly);
     } else if (engine.model === 'consent') {
       text = `Semantic search matches meaning, also across languages. It needs a one-time download of \u2248${MODEL_MB} MB.`;
-      actions.append(button('Download', enableModel), button('Keyword only', stopModel));
+      setActions('consent', download, keywordOnly);
     } else if (engine.model === 'off') {
       text = 'Keyword search only.';
-      actions.append(button(`Turn on semantic search (\u2248${MODEL_MB} MB download)`, enableModel));
+      setActions('off', turnOn);
     } else if (engine.model === 'error') {
       text = 'Semantic search does not work in this browser. These are keyword matches.';
     }
+    if (!['loading', 'consent', 'off'].includes(engine.model)) setActions('none');
     // Screen readers still hear the result count.
     count.textContent = query && !semanticPending ? `${total} result${total === 1 ? '' : 's'}` : '';
     host.dataset.state = semanticPending ? 'pending' : engine.model;
@@ -413,6 +433,8 @@ function attach({ input, host, mode, maxGroups }) {
   input.addEventListener('focus', onFocus);
   if (document.activeElement === input) onFocus();
   input.addEventListener('keydown', (event) => {
+    // Selecting an input-method candidate sends Enter and arrow keys. They are not search commands.
+    if (event.isComposing || event.keyCode === 229) return;
     const all = options();
     const at = all.findIndex((o) => o.id === activeId);
     if (event.key === 'ArrowDown' && all.length) {
@@ -434,11 +456,13 @@ function attach({ input, host, mode, maxGroups }) {
   let nativeQuery = '';
   function runNative(q) {
     const native = document.getElementById('search-results');
-    if (!native || !window.Search || typeof window.Search.performSearch !== 'function') return;
+    // Sphinx declares `const Search` at top level, so it is a global binding, not `window.Search`.
+    if (!native || typeof Search === 'undefined' || typeof Search.performSearch !== 'function') return;
+    if (typeof Search.stopPulse === 'function') Search.stopPulse();
     nativeQuery = q;
     native.replaceChildren();
     native.classList.remove('srch-stale');
-    if (q) window.Search.performSearch(q);
+    if (q) Search.performSearch(q);
   }
   if (mode === 'page') {
     input.form.addEventListener('submit', (event) => {
