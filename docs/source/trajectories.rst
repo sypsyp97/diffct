@@ -31,7 +31,7 @@ Coordinates are Cartesian ``(x, y[, z])``. Volume indexing is ``[y, x]`` for 2D
 and ``[z, y, x]`` for 3D. The origin is the volume centre. Use one length unit
 for positions, voxel spacing and detector spacing. Voxel spacing is a single
 positive scalar or a positive per-axis tuple in tensor order: ``(dy,dx)`` or
-``(dz,dy,dx)``. Per-axis spacing uses the PyTorch backend; see :doc:`execution`.
+``(dz,dy,dx)``. Both backends support per-axis spacing; see :doc:`execution`.
 
 Detector axes are unit direction vectors, not pixel-step vectors. The detector
 spacing sets the pixel pitch. A scalar spacing applies to both 3D detector axes.
@@ -73,9 +73,10 @@ count. ``ray_dir`` and ``det_u`` must be orthogonal for 2D parallel beams. ``det
 and ``det_v`` must be orthogonal for 3D beams. ``parallel3d`` permits oblique
 detectors: the unit ray direction must not be tangent to the detector plane.
 Degeneracy is checked by the frame's numerical rank in float64.
-Its rays are infinite lines through each pixel. It uses the PyTorch backend
-on CPU or CUDA; ``backend="auto"`` selects it automatically and explicit
-``backend="numba"`` is unsupported. With flat fan/cone detectors,
+Its rays are infinite lines through each pixel. Both backends support this beam.
+Native execution requires NVIDIA CUDA, ``precision="fast"`` and views/space
+ownership. The PyTorch backend also supports CPU and strict precision modes.
+With flat fan/cone detectors,
 the source must not coincide with the detector centre or view the detector
 edge-on. The native FP32 backend requires the nearer of source and detector
 centre to lie within 1e6 voxel spacings of the origin. Native surface detectors validate each actual

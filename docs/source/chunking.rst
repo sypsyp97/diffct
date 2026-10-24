@@ -85,8 +85,8 @@ retain contiguous ``(W, H, D)`` access; tensor volumes remain ``(D, H, W)``.
 Forward kernels overwrite each active ray, including missed rays and short
 final batches, so they do not need unconditional output clearing.
 
-``native_volume_layout=True`` optionally retains native full-CUDA cone output
-strides ``(1, D, D * H)`` for an unbatched flat-detector backprojection. The
+``native_volume_layout=True`` optionally retains native full-CUDA cone or
+``parallel3d`` output strides ``(1, D, D * H)`` for an unbatched flat-detector backprojection. The
 shape stays ``(D, H, W)``. Projection accepts that layout without conversion,
 so one compute device can avoid both volume layout copies in ``A^T A``.
 The default is ``False``. Several local devices, surfaces, batches, streaming

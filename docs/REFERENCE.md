@@ -6,7 +6,7 @@
 |---|---|---|
 | Acquisition | 2D parallel/fan and 3D cone/parallel beams; per-view geometry and parameterized detector surfaces | Unit direction axes; no arbitrary-trajectory `sf`, `sf_tr` or `sf_tt` backend |
 | Autograd | Volume/sinogram gradients and second derivatives; first-order trajectory and surface gradients | Geometry second derivatives and trajectory forward-mode derivatives raise an error; surface samples are checked on every call |
-| Execution | Native NVIDIA CUDA or portable PyTorch; explicit FP32/FP64, leading batch dimensions, per-axis spacing, devices and distributed ownership | Native fast mode remains FP32; strict/hybrid/per-axis execution uses PyTorch; see [precision and execution](EXECUTION.md) |
+| Execution | Native NVIDIA CUDA or portable PyTorch; explicit FP32/FP64, leading batch dimensions, per-axis spacing, devices and distributed ownership | Native fast mode remains FP32 and supports per-axis spacing; strict/hybrid execution uses PyTorch; see [precision and execution](EXECUTION.md) |
 | Reconstruction | Library CGLS/SIRT/TV; streamed differentiable `fbp`/`fdk`, numerical store outputs, approximate `helical_fdk` and composable helpers | Analytical geometry is fixed and flat; helical/low-level helpers retain their original CUDA contract; `backproject()` is not an inverse |
 | Memory | Automatic spatial/view/pixel blocks, bounded transfers, numerical tensor/file stores and rank-owned volume slabs | Tensor autograd still holds complete inputs/outputs/gradients, but no per-batch ray tables; disk solvers must keep their vector operations blockwise |
 
@@ -196,7 +196,7 @@ reproducible comparisons. Pinned slots, host fragments and local geometry have
 memory ceilings independent of GPU capacity.
 
 `native_volume_layout=False` is the default. With `True`, unbatched flat-detector
-cone backprojections on the native full-CUDA path return `(D, H, W)` tensors
+cone or `parallel3d` backprojections on the native full-CUDA path return `(D, H, W)` tensors
 with strides `(1, D, D * H)`. Projection accepts this layout without a conversion.
 One compute device can avoid both volume layout copies in `A^T A`.
 Several local devices, surfaces, batches, streaming and the PyTorch backend
@@ -416,8 +416,9 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   Detector pitch is a separate argument:
   a scalar in 2D, a scalar or `(du, dv)` pair in 3D.
   `detector_shape=(U, V)` and 3D sinograms always follow `(views, U, V)`.
-- `parallel3d` traces infinite lines through detector pixels on the PyTorch
-  backend; `backend="auto"` selects it, and explicit `backend="numba"` rejects.
+- `parallel3d` traces infinite lines through detector pixels on both backends.
+  `backend="auto"` selects native execution on NVIDIA CUDA in fast mode with
+  views/space ownership.
   `circular_trajectory_3d_parallel` lifts the 2D parallel orbit into XY with
   `det_v=(0,0,1)` and the same default `[0, pi)` range. In both parallel
   generators, `detector_distance` shifts the centre along `det_u`.

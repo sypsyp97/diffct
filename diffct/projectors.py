@@ -7,7 +7,7 @@ for differentiable CT forward projection and backprojection operations.
 import torch
 import numpy as np
 
-from .constants import _DTYPE
+from .constants import _DTYPE, _native_spacing
 from . import kernels as _kernels
 from .utils import (
     DeviceManager,
@@ -49,7 +49,7 @@ def __getattr__(name):
 
 def _empty_detector_positions(device, beam):
     """Use a rank-correct empty array because CUDA cannot marshal None."""
-    shape = (0, 0, 0, 3) if beam == "cone" else (0, 0, 2)
+    shape = (0, 0, 0, 3) if beam in ("cone", "parallel3d") else (0, 0, 2)
     tensor = torch.empty(shape, dtype=torch.float32, device=device)
     return tensor, TorchCUDABridge.tensor_to_cuda_array(tensor)
 
@@ -61,7 +61,7 @@ def _prepare_volume(beam, volume):
     ``native_volume_layout=True``, already has the native layout and is used without a copy.
     """
     volume = volume.detach().to(dtype=torch.float32)
-    if beam == "cone":
+    if beam in ("cone", "parallel3d"):
         native = volume.permute(2, 1, 0)
         if native.is_contiguous():
             return native
@@ -87,13 +87,13 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
         d_geom = [TorchCUDABridge.tensor_to_cuda_array(component) for component in geom]
         if len(geom) == 2:
             d_positions = d_geom[1]
-            d_geom = [d_geom[0]] * (4 if beam == "cone" else 3)
+            d_geom = [d_geom[0]] * (4 if beam in ("cone", "parallel3d") else 3)
         else:
             empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_volume = TorchCUDABridge.tensor_to_cuda_array(native_volume)
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         stream = _get_numba_external_stream_for(torch.cuda.current_stream(device))
-        if beam == "cone":
+        if beam in ("cone", "parallel3d"):
             W, H, D = native_volume.shape
             n_views, n_u, n_v = sinogram.shape
             du, dv = detector_spacing
@@ -116,7 +116,8 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(du), _DTYPE(dv), *d_geom,
                 _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
-                _DTYPE(voxel_spacing), d_positions,
+                _native_spacing(voxel_spacing), d_positions,
+                *((True,) if beam == "parallel3d" else ()),
             )
         else:
             H, W = native_volume.shape
@@ -135,7 +136,7 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
                 kernel = _resolve_kernel('_fan_2d_backward_kernel' if backproject else '_fan_2d_forward_kernel')
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(spacing), *d_geom,
-                _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(voxel_spacing), d_positions,
+                _DTYPE(W * 0.5), _DTYPE(H * 0.5), _native_spacing(voxel_spacing), d_positions,
             )
         if after_launch is not None:
             after_launch()
@@ -165,13 +166,17 @@ def _surface_project(beam, volume, geometry, detector_shape, detector_spacing, v
         return _project_into(beam, prepared, geometry, detector_spacing, voxel_spacing, sino)
 
 
-def _surface_backproject(beam, sinogram, geometry, volume_shape, detector_spacing, voxel_spacing):
+def _surface_backproject(beam, sinogram, geometry, volume_shape, detector_spacing, voxel_spacing,
+                         *, native_volume_layout=False):
     """Run the matched native adjoint with one detector endpoint per pixel."""
     with _cuda_context(sinogram.device):
-        native_shape = volume_shape[::-1] if beam == "cone" else volume_shape
+        native_shape = volume_shape[::-1] if beam in ("cone", "parallel3d") else volume_shape
         volume = torch.zeros(native_shape, dtype=torch.float32, device=sinogram.device)
         _backproject_into(beam, sinogram, geometry, detector_spacing, voxel_spacing, volume)
-        return volume.permute(2, 1, 0).contiguous() if beam == "cone" else volume
+        if beam in ("cone", "parallel3d"):
+            volume = volume.permute(2, 1, 0)
+            return volume if native_volume_layout else volume.contiguous()
+        return volume
 
 
 # ============================================================================
@@ -195,14 +200,14 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
     if len(geom) == 2:
         d_positions, d_grad_positions = d_geom[1], d_grads[1]
         # Native endpoints bypass the flat center/axes and their gradients.
-        n_components = 4 if beam == "cone" else 3
+        n_components = 4 if beam in ("cone", "parallel3d") else 3
         d_geom = [d_geom[0]] * n_components
         d_grads = [d_grads[0]] * n_components
     else:
         _empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_grad_positions = d_positions
     numba_stream = _get_numba_external_stream_for(torch.cuda.current_stream(device))
-    if beam == "cone":
+    if beam in ("cone", "parallel3d"):
         W, H, D = vol.shape
         n_views, n_u, n_v = cot.shape
         du, dv = detector_spacing
@@ -211,8 +216,9 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
         _resolve_kernel('_cone_3d_geometry_vjp_kernel')[grid, tpb, numba_stream](
             d_vol, W, H, D, TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), *d_geom,
-            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5), _DTYPE(voxel_spacing),
+            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5), _native_spacing(voxel_spacing),
             *d_grads, d_positions, d_grad_positions,
+            *((True,) if beam == "parallel3d" else ()),
         )
     else:
         Ny, Nx = vol.shape
@@ -224,7 +230,7 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
             TorchCUDABridge.tensor_to_cuda_array(vol), Nx, Ny,
             TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_det,
             _DTYPE(detector_spacing), *d_geom,
-            _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5), _DTYPE(voxel_spacing),
+            _DTYPE(Nx * 0.5), _DTYPE(Ny * 0.5), _native_spacing(voxel_spacing),
             *d_grads, d_positions, d_grad_positions,
         )
     return tuple(grad.to(dtype=g.dtype, device=g.device) for grad, g in zip(grads, geometry))

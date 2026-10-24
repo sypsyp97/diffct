@@ -27,7 +27,7 @@ import math
 
 import torch
 
-from .constants import _DTYPE
+from .constants import _DTYPE, _native_spacing
 from .utils import (
     DeviceManager,
     TorchCUDABridge,
@@ -431,7 +431,7 @@ def _parallel_weighted_backproject_raw(sinogram, ray_dir, det_origin, det_u_vec,
     _resolve_kernel('_parallel_2d_fbp_backproject_kernel')[grid, tpb, numba_stream](
         d_sino, n_views, n_det, d_reco, Nx, Ny,
         _DTYPE(detector_spacing), d_ray_dir, d_det_origin, d_det_u_vec,
-        cx, cy, _DTYPE(voxel_spacing),
+        cx, cy, _native_spacing(voxel_spacing),
     )
 
     return reco * (1.0 / (2.0 * math.pi))
@@ -522,8 +522,9 @@ def _fan_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec,
     _resolve_kernel('_fan_2d_fbp_backproject_kernel')[grid, tpb, numba_stream](
         d_sino, n_views, n_det, d_reco, Nx, Ny,
         _DTYPE(detector_spacing), d_src_pos, d_det_center, d_det_u_vec,
-        cx, cy, _DTYPE(voxel_spacing),
-        *(_DTYPE(value / voxel_spacing) for value in isocenter.tolist()),
+        cx, cy, _native_spacing(voxel_spacing),
+        *(_DTYPE(value if isinstance(voxel_spacing, (tuple, list)) else value / voxel_spacing)
+          for value in isocenter.tolist()),
     )
 
     return reco
@@ -584,8 +585,9 @@ def _cone_weighted_backproject_raw(sinogram, src_pos, det_center, det_u_vec, det
         d_sino, n_views, n_u, n_v, d_reco, Nx, Ny, Nz,
         _DTYPE(du), _DTYPE(dv),
         d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-        cx, cy, cz, _DTYPE(voxel_spacing),
-        *(_DTYPE(value / voxel_spacing) for value in isocenter.tolist()),
+        cx, cy, cz, _native_spacing(voxel_spacing),
+        *(_DTYPE(value if isinstance(voxel_spacing, (tuple, list)) else value / voxel_spacing)
+          for value in isocenter.tolist()),
     )
 
     # Convert back to (D, H, W) layout for the user.
@@ -637,7 +639,8 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
         scale = (sdd_n / (2.0 * math.pi * sid_n)).view(
             (-1,) + (1,) * (len(sinogram_shape) - 1)
         )
-        iso = tuple(_DTYPE(value / parameters[-1]) for value in isocenter.tolist())
+        iso = tuple(_DTYPE(value if isinstance(parameters[-1], (tuple, list)) else value / parameters[-1])
+                    for value in isocenter.tolist())
 
     if beam == "cone":
         D, H, W, du, dv, spacing = parameters
@@ -647,7 +650,7 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
         _resolve_kernel('_cone_3d_fdk_transpose_kernel')[grid, tpb, stream](
             d_sino, *sinogram_shape, d_image, W, H, D, _DTYPE(du), _DTYPE(dv),
             *d_geometry, _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
-            _DTYPE(spacing), *iso,
+            _native_spacing(spacing), *iso,
         )
     else:
         pitch, H, W, spacing = parameters
@@ -657,7 +660,7 @@ def _analytical_transpose_raw(image, beam, geometry, parameters, isocenter, sino
                                  else '_fan_2d_fbp_transpose_kernel')
         kernel[grid, tpb, stream](
             d_sino, *sinogram_shape, d_image, W, H, _DTYPE(pitch), *d_geometry,
-            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(spacing), *iso,
+            _DTYPE(W * 0.5), _DTYPE(H * 0.5), _native_spacing(spacing), *iso,
         )
     return sinogram * scale
 

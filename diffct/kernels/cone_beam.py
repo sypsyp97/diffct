@@ -9,6 +9,8 @@ import math
 import numpy as np
 from numba import cuda
 
+from .spacing import _axis_pitch, _ray_scale
+
 from ..constants import (
     _FASTMATH_DECORATOR,
     _FDK_ACCURACY_DECORATOR,
@@ -30,7 +32,7 @@ def _cone_3d_forward_kernel(
     d_vol, Nx, Ny, Nz,
     d_sino, n_views, n_u, n_v,
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-    cx, cy, cz, voxel_spacing, d_detector_positions=None,
+    cx, cy, cz, voxel_spacing, d_detector_positions=None, parallel=False,
 ):
     """Compute the 3D cone-beam forward projection with arbitrary source-detector trajectories.
 
@@ -89,15 +91,15 @@ def _cone_3d_forward_kernel(
 
     # === 3D CONE BEAM GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Read source position from position matrix (in physical units)
-    src_x = d_src_pos[iview, 0] / voxel_spacing
-    src_y = d_src_pos[iview, 1] / voxel_spacing
-    src_z = d_src_pos[iview, 2] / voxel_spacing
+    src_x = d_src_pos[iview, 0] / _axis_pitch(voxel_spacing, 0)
+    src_y = d_src_pos[iview, 1] / _axis_pitch(voxel_spacing, 1)
+    src_z = d_src_pos[iview, 2] / _axis_pitch(voxel_spacing, 2)
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector center and orientation vectors
-        det_cx = d_det_center[iview, 0] / voxel_spacing
-        det_cy = d_det_center[iview, 1] / voxel_spacing
-        det_cz = d_det_center[iview, 2] / voxel_spacing
+        det_cx = d_det_center[iview, 0] / _axis_pitch(voxel_spacing, 0)
+        det_cy = d_det_center[iview, 1] / _axis_pitch(voxel_spacing, 1)
+        det_cz = d_det_center[iview, 2] / _axis_pitch(voxel_spacing, 2)
 
         u_vec_x = d_det_u_vec[iview, 0]
         u_vec_y = d_det_u_vec[iview, 1]
@@ -108,17 +110,24 @@ def _cone_3d_forward_kernel(
         v_vec_z = d_det_v_vec[iview, 2]
 
         # Calculate detector element offset from center
-        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
-        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
+        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
+        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
 
         # Calculate 3D detector element position using center + u*u_vec + v*v_vec
         det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
         det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
         det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+        if isinstance(voxel_spacing, tuple):
+            u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
+            v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
+            det_y = (det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
+                     + (v_phys / _axis_pitch(voxel_spacing, 1)) * v_vec_y)
+            det_z = (det_cz + (u_phys / _axis_pitch(voxel_spacing, 2)) * u_vec_z
+                     + (v_phys / _axis_pitch(voxel_spacing, 2)) * v_vec_z)
     else:
-        det_x = d_detector_positions[iview, iu, iv, 0] / voxel_spacing
-        det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
-        det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
+        det_x = d_detector_positions[iview, iu, iv, 0] / _axis_pitch(voxel_spacing, 0)
+        det_y = d_detector_positions[iview, iu, iv, 1] / _axis_pitch(voxel_spacing, 1)
+        det_z = d_detector_positions[iview, iu, iv, 2] / _axis_pitch(voxel_spacing, 2)
 
     # Preserve native endpoint composition, then clip in float64: when both
     # endpoints are distant, float32 loses voxel widths before rebasing.
@@ -128,8 +137,12 @@ def _cone_3d_forward_kernel(
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
+    if parallel:
+        dir_x = np.float64(d_src_pos[iview, 0]) / _axis_pitch(voxel_spacing, 0)
+        dir_y = np.float64(d_src_pos[iview, 1]) / _axis_pitch(voxel_spacing, 1)
+        dir_z = np.float64(d_src_pos[iview, 2]) / _axis_pitch(voxel_spacing, 2)
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length < _EPSILON:  # Degenerate ray case
+    if length < _EPSILON and not parallel:  # Degenerate finite segment
         d_sino[iview, iu, iv] = _ZERO; return
     
     # Normalize 3D ray direction vector for parametric traversal
@@ -140,7 +153,10 @@ def _cone_3d_forward_kernel(
     # Measure the ray parameter from the endpoint nearer the volume centre, so a
     # distant source does not make the parameters coarse. Only the
     # source-to-detector segment is integrated.
-    if src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
+    if parallel:
+        org_x, org_y, org_z = det_x, det_y, det_z
+        t_min, t_max = -_BIG, _BIG
+    elif src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
         org_x = src_x
         org_y = src_y
         org_z = src_z
@@ -235,7 +251,7 @@ def _cone_3d_forward_kernel(
             tz += dt_z
     
     # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
-    d_sino[iview, iu, iv] = accum * voxel_spacing
+    d_sino[iview, iu, iv] = accum * _ray_scale(voxel_spacing, dir_x, dir_y, dir_z)
 
 @_FASTMATH_DECORATOR
 
@@ -247,7 +263,7 @@ def _cone_3d_backward_kernel(
     d_sino, n_views, n_u, n_v,
     d_vol, Nx, Ny, Nz,
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
-    cx, cy, cz, voxel_spacing, d_detector_positions=None,
+    cx, cy, cz, voxel_spacing, d_detector_positions=None, parallel=False,
 ):
     """Compute the 3D cone-beam backprojection with arbitrary source-detector trajectories.
 
@@ -307,18 +323,18 @@ def _cone_3d_backward_kernel(
 
     # === 3D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
-    g = d_sino[iview, iu, iv] * voxel_spacing
+    g = d_sino[iview, iu, iv] * _axis_pitch(voxel_spacing, 0)
 
     # Read source position from position matrix (in physical units)
-    src_x = d_src_pos[iview, 0] / voxel_spacing
-    src_y = d_src_pos[iview, 1] / voxel_spacing
-    src_z = d_src_pos[iview, 2] / voxel_spacing
+    src_x = d_src_pos[iview, 0] / _axis_pitch(voxel_spacing, 0)
+    src_y = d_src_pos[iview, 1] / _axis_pitch(voxel_spacing, 1)
+    src_z = d_src_pos[iview, 2] / _axis_pitch(voxel_spacing, 2)
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector center and orientation vectors
-        det_cx = d_det_center[iview, 0] / voxel_spacing
-        det_cy = d_det_center[iview, 1] / voxel_spacing
-        det_cz = d_det_center[iview, 2] / voxel_spacing
+        det_cx = d_det_center[iview, 0] / _axis_pitch(voxel_spacing, 0)
+        det_cy = d_det_center[iview, 1] / _axis_pitch(voxel_spacing, 1)
+        det_cz = d_det_center[iview, 2] / _axis_pitch(voxel_spacing, 2)
 
         u_vec_x = d_det_u_vec[iview, 0]
         u_vec_y = d_det_u_vec[iview, 1]
@@ -329,17 +345,24 @@ def _cone_3d_backward_kernel(
         v_vec_z = d_det_v_vec[iview, 2]
 
         # Calculate detector element offset from center
-        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / voxel_spacing
-        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / voxel_spacing
+        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
+        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
 
         # Calculate 3D detector element position using center + u*u_vec + v*v_vec
         det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
         det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
         det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+        if isinstance(voxel_spacing, tuple):
+            u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
+            v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
+            det_y = (det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
+                     + (v_phys / _axis_pitch(voxel_spacing, 1)) * v_vec_y)
+            det_z = (det_cz + (u_phys / _axis_pitch(voxel_spacing, 2)) * u_vec_z
+                     + (v_phys / _axis_pitch(voxel_spacing, 2)) * v_vec_z)
     else:
-        det_x = d_detector_positions[iview, iu, iv, 0] / voxel_spacing
-        det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
-        det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
+        det_x = d_detector_positions[iview, iu, iv, 0] / _axis_pitch(voxel_spacing, 0)
+        det_y = d_detector_positions[iview, iu, iv, 1] / _axis_pitch(voxel_spacing, 1)
+        det_z = d_detector_positions[iview, iu, iv, 2] / _axis_pitch(voxel_spacing, 2)
 
     # Match forward setup while retaining native endpoint composition.
     src_x, src_y, src_z = np.float64(src_x), np.float64(src_y), np.float64(src_z)
@@ -348,16 +371,25 @@ def _cone_3d_backward_kernel(
     # === 3D RAY DIRECTION CALCULATION ===
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
+    if parallel:
+        dir_x = np.float64(d_src_pos[iview, 0]) / _axis_pitch(voxel_spacing, 0)
+        dir_y = np.float64(d_src_pos[iview, 1]) / _axis_pitch(voxel_spacing, 1)
+        dir_z = np.float64(d_src_pos[iview, 2]) / _axis_pitch(voxel_spacing, 2)
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length < _EPSILON: return  # Skip degenerate rays
+    if length < _EPSILON and not parallel: return  # Skip degenerate finite segments
     inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len  # Normalized 3D ray direction vector
+    if isinstance(voxel_spacing, tuple):
+        g = d_sino[iview, iu, iv] * _ray_scale(voxel_spacing, dir_x, dir_y, dir_z)
 
     # === 3D RAY-VOLUME INTERSECTION CALCULATION ===
     # Measure the ray parameter from the endpoint nearer the volume centre, so a
     # distant source does not make the parameters coarse. Only the
     # source-to-detector segment is integrated.
-    if src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
+    if parallel:
+        org_x, org_y, org_z = det_x, det_y, det_z
+        t_min, t_max = -_BIG, _BIG
+    elif src_x * src_x + src_y * src_y + src_z * src_z <= det_x * det_x + det_y * det_y + det_z * det_z:
         org_x = src_x
         org_y = src_y
         org_z = src_z
@@ -512,8 +544,16 @@ def _cone_3d_fdk_backproject_kernel(
     y_v = np.float32(iy) + _HALF - cy
     z_v = np.float32(iz) + _HALF - cz
 
-    du_v = du / voxel_spacing
-    dv_v = dv / voxel_spacing
+    if isinstance(voxel_spacing, tuple):
+        x_v *= voxel_spacing[2]
+        y_v *= voxel_spacing[1]
+        z_v *= voxel_spacing[0]
+        coordinate_scale = _ONE
+    else:
+        coordinate_scale = voxel_spacing
+
+    du_v = du / coordinate_scale
+    dv_v = dv / coordinate_scale
 
     half_u = (np.float32(n_u) - _ONE) * _HALF
     half_v = (np.float32(n_v) - _ONE) * _HALF
@@ -521,14 +561,14 @@ def _cone_3d_fdk_backproject_kernel(
     accum = _ZERO
     for iview in range(n_views):
         # Source position in voxel units.
-        sx = d_src_pos[iview, 0] / voxel_spacing
-        sy = d_src_pos[iview, 1] / voxel_spacing
-        sz = d_src_pos[iview, 2] / voxel_spacing
+        sx = d_src_pos[iview, 0] / coordinate_scale
+        sy = d_src_pos[iview, 1] / coordinate_scale
+        sz = d_src_pos[iview, 2] / coordinate_scale
 
         # Detector centre in voxel units.
-        dcx = d_det_center[iview, 0] / voxel_spacing
-        dcy = d_det_center[iview, 1] / voxel_spacing
-        dcz = d_det_center[iview, 2] / voxel_spacing
+        dcx = d_det_center[iview, 0] / coordinate_scale
+        dcy = d_det_center[iview, 1] / coordinate_scale
+        dcz = d_det_center[iview, 2] / coordinate_scale
 
         # Detector orientation (unit vectors, ratio-free).
         ux = d_det_u_vec[iview, 0]

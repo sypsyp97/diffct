@@ -10,6 +10,8 @@ import math
 import numpy as np
 from numba import cuda
 
+from .spacing import _axis_pitch, _ray_scale
+
 from ..constants import (
     _FASTMATH_DECORATOR,
     _FDK_ACCURACY_DECORATOR,
@@ -82,24 +84,33 @@ def _parallel_2d_forward_kernel(
     # Read ray direction (parallel for all rays in this view)
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
+    if isinstance(voxel_spacing, tuple):
+        dir_x /= _axis_pitch(voxel_spacing, 0)
+        dir_y /= _axis_pitch(voxel_spacing, 1)
+        inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
+        dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector origin and orientation vector
-        det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
-        det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
+        det_ox = np.float64(d_det_origin[iang, 0]) / _axis_pitch(voxel_spacing, 0)
+        det_oy = np.float64(d_det_origin[iang, 1]) / _axis_pitch(voxel_spacing, 1)
 
         u_vec_x = np.float64(d_det_u_vec[iang, 0])
         u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
         # Calculate detector element offset from origin
-        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
 
         # Ray starting point: detector origin + offset along u-direction
         pnt_x = det_ox + u_offset * u_vec_x
         pnt_y = det_oy + u_offset * u_vec_y
+        if isinstance(voxel_spacing, tuple):
+            offset_y = ((np.float64(idet) + _HALF - np.float64(n_det) * _HALF)
+                        * det_spacing / _axis_pitch(voxel_spacing, 1))
+            pnt_y = det_oy + offset_y * u_vec_y
     else:
-        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / voxel_spacing
-        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / voxel_spacing
+        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / _axis_pitch(voxel_spacing, 0)
+        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / _axis_pitch(voxel_spacing, 1)
 
     # === RAY-VOLUME INTERSECTION CALCULATION ===
     # Compute parametric intersection points with volume boundaries using ray equation r(t) = pnt + t*dir
@@ -187,7 +198,7 @@ def _parallel_2d_forward_kernel(
             ty += dt_y    # Update next y-boundary crossing parameter
     
     # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
-    d_sino[iang, idet] = accum * voxel_spacing
+    d_sino[iang, idet] = accum * _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
 
 
 # ============================================================================
@@ -249,29 +260,41 @@ def _parallel_2d_backward_kernel(
 
     # === 2D BACKPROJECTION VALUE AND GEOMETRY SETUP (ARBITRARY TRAJECTORY) ===
     # Siddon segment lengths are in voxel units; voxel_spacing makes them physical lengths.
-    val = d_sino[iang, idet] * voxel_spacing
+    val = d_sino[iang, idet] * _axis_pitch(voxel_spacing, 0)
 
     # Read ray direction (parallel for all rays in this view)
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
+    if isinstance(voxel_spacing, tuple):
+        dir_x /= _axis_pitch(voxel_spacing, 0)
+        dir_y /= _axis_pitch(voxel_spacing, 1)
+        inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
+        dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector origin and orientation vector
-        det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
-        det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
+        det_ox = np.float64(d_det_origin[iang, 0]) / _axis_pitch(voxel_spacing, 0)
+        det_oy = np.float64(d_det_origin[iang, 1]) / _axis_pitch(voxel_spacing, 1)
 
         u_vec_x = np.float64(d_det_u_vec[iang, 0])
         u_vec_y = np.float64(d_det_u_vec[iang, 1])
 
         # Calculate detector element offset from origin
-        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
 
         # Ray starting point: detector origin + offset along u-direction
         pnt_x = det_ox + u_offset * u_vec_x
         pnt_y = det_oy + u_offset * u_vec_y
+        if isinstance(voxel_spacing, tuple):
+            offset_y = ((np.float64(idet) + _HALF - np.float64(n_det) * _HALF)
+                        * det_spacing / _axis_pitch(voxel_spacing, 1))
+            pnt_y = det_oy + offset_y * u_vec_y
     else:
-        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / voxel_spacing
-        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / voxel_spacing
+        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / _axis_pitch(voxel_spacing, 0)
+        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / _axis_pitch(voxel_spacing, 1)
+
+    if isinstance(voxel_spacing, tuple):
+        val = d_sino[iang, idet] * _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
 
     # === RAY-VOLUME INTERSECTION CALCULATION (identical to forward) ===
     t_min, t_max = -_BIG, _BIG
@@ -370,13 +393,20 @@ def _parallel_2d_fbp_backproject_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    det_spacing_v = det_spacing / voxel_spacing
+    if isinstance(voxel_spacing, tuple):
+        x_v *= voxel_spacing[1]
+        y_v *= voxel_spacing[0]
+        coordinate_scale = _ONE
+    else:
+        coordinate_scale = voxel_spacing
+
+    det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF
 
     accum = _ZERO
     for iview in range(n_views):
-        dox = d_det_origin[iview, 0] / voxel_spacing
-        doy = d_det_origin[iview, 1] / voxel_spacing
+        dox = d_det_origin[iview, 0] / coordinate_scale
+        doy = d_det_origin[iview, 1] / coordinate_scale
 
         ux = d_det_u_vec[iview, 0]
         uy = d_det_u_vec[iview, 1]

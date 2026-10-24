@@ -30,12 +30,19 @@ def _parallel_2d_fbp_transpose_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    det_spacing_v = det_spacing / voxel_spacing
+    if isinstance(voxel_spacing, tuple):
+        x_v *= voxel_spacing[1]
+        y_v *= voxel_spacing[0]
+        coordinate_scale = _ONE
+    else:
+        coordinate_scale = voxel_spacing
+
+    det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF
 
     for iview in range(n_views):
-        dox = d_det_origin[iview, 0] / voxel_spacing
-        doy = d_det_origin[iview, 1] / voxel_spacing
+        dox = d_det_origin[iview, 0] / coordinate_scale
+        doy = d_det_origin[iview, 1] / coordinate_scale
 
         ux = d_det_u_vec[iview, 0]
         uy = d_det_u_vec[iview, 1]
@@ -83,15 +90,22 @@ def _fan_2d_fbp_transpose_kernel(
     x_v = np.float32(ix) + _HALF - cx
     y_v = np.float32(iy) + _HALF - cy
 
-    det_spacing_v = det_spacing / voxel_spacing
+    if isinstance(voxel_spacing, tuple):
+        x_v *= voxel_spacing[1]
+        y_v *= voxel_spacing[0]
+        coordinate_scale = _ONE
+    else:
+        coordinate_scale = voxel_spacing
+
+    det_spacing_v = det_spacing / coordinate_scale
     half_u = (np.float32(n_det) - _ONE) * _HALF
 
     for iview in range(n_views):
-        sx = d_src_pos[iview, 0] / voxel_spacing
-        sy = d_src_pos[iview, 1] / voxel_spacing
+        sx = d_src_pos[iview, 0] / coordinate_scale
+        sy = d_src_pos[iview, 1] / coordinate_scale
 
-        dcx = d_det_center[iview, 0] / voxel_spacing
-        dcy = d_det_center[iview, 1] / voxel_spacing
+        dcx = d_det_center[iview, 0] / coordinate_scale
+        dcy = d_det_center[iview, 1] / coordinate_scale
 
         ux = d_det_u_vec[iview, 0]
         uy = d_det_u_vec[iview, 1]
@@ -173,22 +187,30 @@ def _cone_3d_fdk_transpose_kernel(
     y_v = np.float32(iy) + _HALF - cy
     z_v = np.float32(iz) + _HALF - cz
 
-    du_v = du / voxel_spacing
-    dv_v = dv / voxel_spacing
+    if isinstance(voxel_spacing, tuple):
+        x_v *= voxel_spacing[2]
+        y_v *= voxel_spacing[1]
+        z_v *= voxel_spacing[0]
+        coordinate_scale = _ONE
+    else:
+        coordinate_scale = voxel_spacing
+
+    du_v = du / coordinate_scale
+    dv_v = dv / coordinate_scale
 
     half_u = (np.float32(n_u) - _ONE) * _HALF
     half_v = (np.float32(n_v) - _ONE) * _HALF
 
     for iview in range(n_views):
         # Source position in voxel units.
-        sx = d_src_pos[iview, 0] / voxel_spacing
-        sy = d_src_pos[iview, 1] / voxel_spacing
-        sz = d_src_pos[iview, 2] / voxel_spacing
+        sx = d_src_pos[iview, 0] / coordinate_scale
+        sy = d_src_pos[iview, 1] / coordinate_scale
+        sz = d_src_pos[iview, 2] / coordinate_scale
 
         # Detector centre in voxel units.
-        dcx = d_det_center[iview, 0] / voxel_spacing
-        dcy = d_det_center[iview, 1] / voxel_spacing
-        dcz = d_det_center[iview, 2] / voxel_spacing
+        dcx = d_det_center[iview, 0] / coordinate_scale
+        dcy = d_det_center[iview, 1] / coordinate_scale
+        dcz = d_det_center[iview, 2] / coordinate_scale
 
         # Detector orientation (unit vectors, ratio-free).
         ux = d_det_u_vec[iview, 0]

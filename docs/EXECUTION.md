@@ -6,13 +6,14 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 
 | Setting | Computation | Devices |
 |---|---|---|
-| `backend="auto", precision="fast"` | Native FP32 for scalar spacing and views/space partitions; otherwise PyTorch FP32 | NVIDIA CUDA, or the input's PyTorch device |
-| `backend="numba"` | Native FP32 fast-math traversal, with FP64 ray clipping and entry setup | NVIDIA CUDA; scalar voxel spacing, `precision="fast"`, views/space |
+| `backend="auto", precision="fast"` | Native FP32 for scalar or per-axis spacing and views/space partitions; otherwise PyTorch FP32 | NVIDIA CUDA, or the input's PyTorch device |
+| `backend="numba"` | Native FP32 fast-math traversal, with FP64 ray clipping and entry setup | NVIDIA CUDA; `precision="fast"`, views/space |
 | `backend="torch", precision="float32"` | PyTorch FP32 data and local traversal, with FP64 ray clipping and entry setup | CPU, NVIDIA CUDA, PyTorch ROCm |
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
-`backend="auto"` selects PyTorch for either strict precision mode, per-axis
-spacing, hybrid ownership and `parallel3d` beams. An incompatible explicit Numba
+`backend="auto"` selects PyTorch for either strict precision mode or hybrid
+ownership. Native execution supports all four beam types, including infinite
+`parallel3d` rays. An incompatible explicit Numba
 request raises an error. `Projector.backend`, `.precision` and `.dtype` describe the selected
 execution. Supplying a float64 input to `precision="fast"` still yields FP32.
 Create trajectories and data in float64 for a double-precision baseline;
@@ -96,6 +97,15 @@ Any leading batch/channel dimensions precede the configured volume or ray
 shape. Projection and adjoint preserve them, including empty dimensions.
 `voxel_spacing=(dy, dx)` or `(dz, dy, dx)` follows tensor axis order; trajectory
 coordinates remain `(x, y[, z])`. Spacings are fixed physical settings.
+Both backends support per-axis spacing. Native traversal scales each world
+coordinate by its axis pitch and integrates in physical length units.
+Each native per-axis pitch must be finite and at least `np.finfo(np.float32).tiny`.
+Native fast math flushes smaller divisors to zero.
+
+For 2D parallel rays, scalar spacing preserves the original direction-gradient
+convention. Per-axis spacing differentiates physical ray length. The gradients
+can differ in their radial component. Compare direction perturbations tangent
+to the required unit vector, or parameterize directions with angles.
 
 ```python
 import torch

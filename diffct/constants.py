@@ -14,6 +14,18 @@ import numpy as np
 _DTYPE = np.float32
 """Default data type for numerical computations (numpy.float32)."""
 
+
+def _native_spacing(spacing):
+    """Stage tensor-order pitches while retaining the scalar launch type."""
+    if isinstance(spacing, (tuple, list)):
+        with np.errstate(over="ignore", under="ignore"):
+            pitches = tuple(_DTYPE(value) for value in spacing)
+        # CUDA fast math flushes subnormal divisors to zero.
+        if any(not np.isfinite(value) or value < np.finfo(_DTYPE).tiny for value in pitches):
+            raise ValueError("native voxel_spacing must be finite and at least float32.tiny on every axis")
+        return pitches
+    return _DTYPE(spacing)
+
 _INF = _DTYPE(np.inf)
 """Floating-point infinity in default data type."""
 

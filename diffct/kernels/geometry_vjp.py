@@ -21,11 +21,20 @@ crossings coincide, the kernels return the derivative of one adjacent side.
 Each thread traces one ray with the same setup and traversal as the
 projector kernels and adds ``grad_sino * dp/dgeometry`` to per-view
 gradients with atomic additions.
+
+For per-axis pitches, A and B are divided by their respective xyz pitches.
+With d = D / |D| and q = |diag(s) d|, the physical projection is
+``q * |D| * S``. A world-coordinate face derivative has factor q/s_i.
+The length derivatives are ``-/+ S * s_i * d_i / q``. This includes the
+derivative of q; multiplying the scalar VJP by q alone would omit it.
+Infinite parallel rays also pull back the normalized scaled direction.
 """
 
 import math
 import numpy as np
 from numba import cuda
+
+from .spacing import _axis_pitch, _ray_scale
 
 from ..constants import (
     _FASTMATH_DECORATOR,
@@ -70,20 +79,22 @@ def _fan_2d_geometry_vjp_kernel(
 
     # Ray setup: identical to _fan_2d_forward_kernel, plus the face that sets
     # the entry and the exit (-1 = segment end at the source or detector).
-    src_x = d_src_pos[iang, 0] / voxel_spacing
-    src_y = d_src_pos[iang, 1] / voxel_spacing
+    src_x = d_src_pos[iang, 0] / _axis_pitch(voxel_spacing, 0)
+    src_y = d_src_pos[iang, 1] / _axis_pitch(voxel_spacing, 1)
     if d_detector_positions is None or d_detector_positions.size == 0:
-        det_cx = d_det_center[iang, 0] / voxel_spacing
-        det_cy = d_det_center[iang, 1] / voxel_spacing
+        det_cx = d_det_center[iang, 0] / _axis_pitch(voxel_spacing, 0)
+        det_cy = d_det_center[iang, 1] / _axis_pitch(voxel_spacing, 1)
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
         u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
-        u_offset = u_phys / voxel_spacing
+        u_offset = u_phys / _axis_pitch(voxel_spacing, 0)
         det_x = det_cx + u_offset * u_vec_x
         det_y = det_cy + u_offset * u_vec_y
+        if isinstance(voxel_spacing, tuple):
+            det_y = det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
     else:
-        det_x = d_detector_positions[iang, idet, 0] / voxel_spacing
-        det_y = d_detector_positions[iang, idet, 1] / voxel_spacing
+        det_x = d_detector_positions[iang, idet, 0] / _axis_pitch(voxel_spacing, 0)
+        det_y = d_detector_positions[iang, idet, 1] / _axis_pitch(voxel_spacing, 1)
 
     # Match forward/adjoint setup without changing endpoint composition.
     src_x, src_y = np.float64(src_x), np.float64(src_y)
@@ -208,10 +219,23 @@ def _fan_2d_geometry_vjp_kernel(
 
     # Length term: p = s * |D| * S with S = accum / |D| (voxel units).
     S = accum * inv_length
-    ga_x -= S * ray_x
-    ga_y -= S * ray_y
-    gb_x += S * ray_x
-    gb_y += S * ray_y
+    if isinstance(voxel_spacing, tuple):
+        scale = _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
+        pitch_x = _axis_pitch(voxel_spacing, 0)
+        face_x = scale / pitch_x
+        norm_x = S * (pitch_x / scale) * ray_x
+        ga_x = face_x * ga_x - norm_x
+        gb_x = face_x * gb_x + norm_x
+        pitch_y = _axis_pitch(voxel_spacing, 1)
+        face_y = scale / pitch_y
+        norm_y = S * (pitch_y / scale) * ray_y
+        ga_y = face_y * ga_y - norm_y
+        gb_y = face_y * gb_y + norm_y
+    else:
+        ga_x -= S * ray_x
+        ga_y -= S * ray_y
+        gb_x += S * ray_x
+        gb_y += S * ray_y
 
     cuda.atomic.add(d_grad_src, (iang, 0), g * ga_x)
     cuda.atomic.add(d_grad_src, (iang, 1), g * ga_y)
@@ -232,7 +256,7 @@ def _cone_3d_geometry_vjp_kernel(
     du, dv, d_src_pos, d_det_center, d_det_u_vec, d_det_v_vec,
     cx, cy, cz, voxel_spacing,
     d_grad_src, d_grad_det_center, d_grad_det_u, d_grad_det_v,
-    d_detector_positions=None, d_grad_detector_positions=None,
+    d_detector_positions=None, d_grad_detector_positions=None, parallel=False,
 ):
     """Accumulate cone-beam geometry gradients of ``<grad_sino, A x>`` per view."""
     iv, iu, iview = cuda.grid(3)
@@ -242,13 +266,13 @@ def _cone_3d_geometry_vjp_kernel(
     if g == _ZERO:
         return
 
-    src_x = d_src_pos[iview, 0] / voxel_spacing
-    src_y = d_src_pos[iview, 1] / voxel_spacing
-    src_z = d_src_pos[iview, 2] / voxel_spacing
+    src_x = d_src_pos[iview, 0] / _axis_pitch(voxel_spacing, 0)
+    src_y = d_src_pos[iview, 1] / _axis_pitch(voxel_spacing, 1)
+    src_z = d_src_pos[iview, 2] / _axis_pitch(voxel_spacing, 2)
     if d_detector_positions is None or d_detector_positions.size == 0:
-        det_cx = d_det_center[iview, 0] / voxel_spacing
-        det_cy = d_det_center[iview, 1] / voxel_spacing
-        det_cz = d_det_center[iview, 2] / voxel_spacing
+        det_cx = d_det_center[iview, 0] / _axis_pitch(voxel_spacing, 0)
+        det_cy = d_det_center[iview, 1] / _axis_pitch(voxel_spacing, 1)
+        det_cz = d_det_center[iview, 2] / _axis_pitch(voxel_spacing, 2)
         u_vec_x = d_det_u_vec[iview, 0]
         u_vec_y = d_det_u_vec[iview, 1]
         u_vec_z = d_det_u_vec[iview, 2]
@@ -257,28 +281,41 @@ def _cone_3d_geometry_vjp_kernel(
         v_vec_z = d_det_v_vec[iview, 2]
         u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
         v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
-        u_offset = u_phys / voxel_spacing
-        v_offset = v_phys / voxel_spacing
+        u_offset = u_phys / _axis_pitch(voxel_spacing, 0)
+        v_offset = v_phys / _axis_pitch(voxel_spacing, 0)
         det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
         det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
         det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
+        if isinstance(voxel_spacing, tuple):
+            det_y = (det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
+                     + (v_phys / _axis_pitch(voxel_spacing, 1)) * v_vec_y)
+            det_z = (det_cz + (u_phys / _axis_pitch(voxel_spacing, 2)) * u_vec_z
+                     + (v_phys / _axis_pitch(voxel_spacing, 2)) * v_vec_z)
     else:
-        det_x = d_detector_positions[iview, iu, iv, 0] / voxel_spacing
-        det_y = d_detector_positions[iview, iu, iv, 1] / voxel_spacing
-        det_z = d_detector_positions[iview, iu, iv, 2] / voxel_spacing
+        det_x = d_detector_positions[iview, iu, iv, 0] / _axis_pitch(voxel_spacing, 0)
+        det_y = d_detector_positions[iview, iu, iv, 1] / _axis_pitch(voxel_spacing, 1)
+        det_z = d_detector_positions[iview, iu, iv, 2] / _axis_pitch(voxel_spacing, 2)
 
     # Match forward/adjoint setup without changing endpoint composition.
     src_x, src_y, src_z = np.float64(src_x), np.float64(src_y), np.float64(src_z)
     det_x, det_y, det_z = np.float64(det_x), np.float64(det_y), np.float64(det_z)
 
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
+    if parallel:
+        dir_x = np.float64(d_src_pos[iview, 0]) / _axis_pitch(voxel_spacing, 0)
+        dir_y = np.float64(d_src_pos[iview, 1]) / _axis_pitch(voxel_spacing, 1)
+        dir_z = np.float64(d_src_pos[iview, 2]) / _axis_pitch(voxel_spacing, 2)
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
-    if length < _EPSILON:
+    if length < _EPSILON and not parallel:
         return
     inv_len = _ONE / length
     dir_x, dir_y, dir_z = dir_x * inv_len, dir_y * inv_len, dir_z * inv_len
 
-    if (src_x * src_x + src_y * src_y + src_z * src_z
+    if parallel:
+        org_x, org_y, org_z = det_x, det_y, det_z
+        t_min, t_max = -_BIG, _BIG
+        t_a0, t_b0 = _ZERO, length
+    elif (src_x * src_x + src_y * src_y + src_z * src_z
             <= det_x * det_x + det_y * det_y + det_z * det_z):
         org_x = src_x
         org_y = src_y
@@ -365,6 +402,7 @@ def _cone_3d_geometry_vjp_kernel(
     gb_x = _ZERO
     gb_y = _ZERO
     gb_z = _ZERO
+    point_cx, point_cy, point_cz = _ZERO, _ZERO, _ZERO
     f_prev = _ZERO
     pend_axis = ent_axis
     pend_t = _ZERO
@@ -379,14 +417,20 @@ def _cone_3d_geometry_vjp_kernel(
             c = (-f) if first else (f_prev - f)
             if pend_axis == 0:
                 da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_x)
+                if parallel:
+                    point_cx += c
                 ga_x += da
                 gb_x += db
             elif pend_axis == 1:
                 da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_y)
+                if parallel:
+                    point_cy += c
                 ga_y += da
                 gb_y += db
             else:
                 da, db = _face_terms(c, pend_t, entry_tau, entry_tau_minus_one, inv_length, ray_z)
+                if parallel:
+                    point_cz += c
                 ga_z += da
                 gb_z += db
         first = False
@@ -413,24 +457,63 @@ def _cone_3d_geometry_vjp_kernel(
             tz += dt_z
     if ex_axis == 0:
         da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_x)
+        if parallel:
+            point_cx += f_prev
         ga_x += da
         gb_x += db
     elif ex_axis == 1:
         da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_y)
+        if parallel:
+            point_cy += f_prev
         ga_y += da
         gb_y += db
     elif ex_axis == 2:
         da, db = _face_terms(f_prev, t_end, entry_tau, entry_tau_minus_one, inv_length, ray_z)
+        if parallel:
+            point_cz += f_prev
         ga_z += da
         gb_z += db
 
     S = accum * inv_length
-    ga_x -= S * ray_x
-    ga_y -= S * ray_y
-    ga_z -= S * ray_z
-    gb_x += S * ray_x
-    gb_y += S * ray_y
-    gb_z += S * ray_z
+    if isinstance(voxel_spacing, tuple):
+        scale = _ray_scale(voxel_spacing, dir_x, dir_y, dir_z)
+        pitch_x = _axis_pitch(voxel_spacing, 0)
+        face_x = scale / pitch_x
+        norm_x = S * (pitch_x / scale) * ray_x
+        ga_x = face_x * ga_x - norm_x
+        gb_x = face_x * gb_x + norm_x
+        pitch_y = _axis_pitch(voxel_spacing, 1)
+        face_y = scale / pitch_y
+        norm_y = S * (pitch_y / scale) * ray_y
+        ga_y = face_y * ga_y - norm_y
+        gb_y = face_y * gb_y + norm_y
+        pitch_z = _axis_pitch(voxel_spacing, 2)
+        face_z = scale / pitch_z
+        norm_z = S * (pitch_z / scale) * ray_z
+        ga_z = face_z * ga_z - norm_z
+        gb_z = face_z * gb_z + norm_z
+    else:
+        ga_x -= S * ray_x
+        ga_y -= S * ray_y
+        ga_z -= S * ray_z
+        gb_x += S * ray_x
+        gb_y += S * ray_y
+        gb_z += S * ray_z
+
+    if parallel:
+        # A = detector pixel, B = A + physical ray direction. Sum face
+        # coefficients directly: ga + gb loses small point derivatives
+        # when the detector origin lies far along the infinite line.
+        point_scale = _ray_scale(voxel_spacing, dir_x, dir_y, dir_z)
+        ga_x, gb_x = gb_x, _ZERO
+        ga_y, gb_y = gb_y, _ZERO
+        ga_z, gb_z = gb_z, _ZERO
+        if abs(ray_x) > _TINY:
+            gb_x = -(point_scale / _axis_pitch(voxel_spacing, 0)) * point_cx / ray_x
+        if abs(ray_y) > _TINY:
+            gb_y = -(point_scale / _axis_pitch(voxel_spacing, 1)) * point_cy / ray_y
+        if abs(ray_z) > _TINY:
+            gb_z = -(point_scale / _axis_pitch(voxel_spacing, 2)) * point_cz / ray_z
 
     cuda.atomic.add(d_grad_src, (iview, 0), g * ga_x)
     cuda.atomic.add(d_grad_src, (iview, 1), g * ga_y)
@@ -477,18 +560,29 @@ def _parallel_2d_geometry_vjp_kernel(
     # entry and exit faces.
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
+    scaled_length = np.float64(1.0)
+    if isinstance(voxel_spacing, tuple):
+        dir_x /= _axis_pitch(voxel_spacing, 0)
+        dir_y /= _axis_pitch(voxel_spacing, 1)
+        scaled_length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
+        inv_length = _ONE / scaled_length
+        dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
     u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
     if d_detector_positions is None or d_detector_positions.size == 0:
-        det_ox = np.float64(d_det_origin[iang, 0]) / voxel_spacing
-        det_oy = np.float64(d_det_origin[iang, 1]) / voxel_spacing
+        det_ox = np.float64(d_det_origin[iang, 0]) / _axis_pitch(voxel_spacing, 0)
+        det_oy = np.float64(d_det_origin[iang, 1]) / _axis_pitch(voxel_spacing, 1)
         u_vec_x = np.float64(d_det_u_vec[iang, 0])
         u_vec_y = np.float64(d_det_u_vec[iang, 1])
-        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / voxel_spacing
+        u_offset = (np.float64(idet) + _HALF - np.float64(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
         pnt_x = det_ox + u_offset * u_vec_x
         pnt_y = det_oy + u_offset * u_vec_y
+        if isinstance(voxel_spacing, tuple):
+            offset_y = ((np.float64(idet) + _HALF - np.float64(n_det) * _HALF)
+                        * det_spacing / _axis_pitch(voxel_spacing, 1))
+            pnt_y = det_oy + offset_y * u_vec_y
     else:
-        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / voxel_spacing
-        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / voxel_spacing
+        pnt_x = np.float64(d_detector_positions[iang, idet, 0]) / _axis_pitch(voxel_spacing, 0)
+        pnt_y = np.float64(d_detector_positions[iang, idet, 1]) / _axis_pitch(voxel_spacing, 1)
 
     t_min, t_max = -_BIG, _BIG
     ent_axis = -1
@@ -539,6 +633,7 @@ def _parallel_2d_geometry_vjp_kernel(
 
     # Per axis: C = sum of face coefficients, T = sum of coefficient * t,
     # with t measured from the entry point (t_min is added afterwards).
+    accum = _ZERO
     c_x = _ZERO
     c_y = _ZERO
     ct_x = _ZERO
@@ -551,6 +646,10 @@ def _parallel_2d_geometry_vjp_kernel(
         f = _ZERO
         if 0 <= ix < Nx and 0 <= iy < Ny:
             f = d_image[iy, ix]
+        if isinstance(voxel_spacing, tuple):
+            segment = min(tx, ty, t_end) - t
+            if segment > _ZERO:
+                accum += f * segment
         if pend_axis >= 0:
             c = (-f) if first else (f_prev - f)
             if pend_axis == 0:
@@ -588,10 +687,27 @@ def _parallel_2d_geometry_vjp_kernel(
     gr_y = _ZERO
     if abs(ray_x) > _TINY:
         gp_x = -c_x / ray_x
-        gr_x = np.float32(-voxel_spacing * (t_min * c_x + ct_x) / ray_x)
+        gr_x = np.float32(-_axis_pitch(voxel_spacing, 0) * (t_min * c_x + ct_x) / ray_x)
     if abs(ray_y) > _TINY:
         gp_y = -c_y / ray_y
-        gr_y = np.float32(-voxel_spacing * (t_min * c_y + ct_y) / ray_y)
+        gr_y = np.float32(-_axis_pitch(voxel_spacing, 0) * (t_min * c_y + ct_y) / ray_y)
+
+    if isinstance(voxel_spacing, tuple):
+        scale = _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
+        pitch_x, pitch_y = _axis_pitch(voxel_spacing, 0), _axis_pitch(voxel_spacing, 1)
+        gp_x, gp_y = _ZERO, _ZERO
+        gd_x, gd_y = np.float64(0.0), np.float64(0.0)
+        if abs(ray_x) > _TINY:
+            gp_x = -scale * c_x / (ray_x * pitch_x)
+            gd_x = -scale * (t_min * c_x + ct_x) / ray_x
+        if abs(ray_y) > _TINY:
+            gp_y = -scale * c_y / (ray_y * pitch_y)
+            gd_y = -scale * (t_min * c_y + ct_y) / ray_y
+        gd_x += accum * (pitch_x / scale) * pitch_x * dir_x
+        gd_y += accum * (pitch_y / scale) * pitch_y * dir_y
+        radial = gd_x * dir_x + gd_y * dir_y
+        gr_x = np.float32((gd_x - radial * dir_x) / (scaled_length * pitch_x))
+        gr_y = np.float32((gd_y - radial * dir_y) / (scaled_length * pitch_y))
 
     cuda.atomic.add(d_grad_ray_dir, (iang, 0), g * gr_x)
     cuda.atomic.add(d_grad_ray_dir, (iang, 1), g * gr_y)

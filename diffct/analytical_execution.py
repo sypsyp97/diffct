@@ -16,6 +16,7 @@ from .analytical import (
     fan_weighted_backproject, parallel_weighted_backproject,
 )
 from .backends import _zero_dependency, select_backend, voxel_spacing_tuple
+from .constants import _native_spacing
 from .chunking import _memory_budget, _pixel_tiles
 from .distribution import Partition, preflight
 from .operators import _detector_spacing, _normalize_devices, _positive_int, _shape, _validate_trajectory
@@ -143,6 +144,9 @@ class AnalyticalExecution:
         self.rank = 3 if beam == "cone" else 2
         self.global_volume_shape = _shape(volume_shape, self.rank, "volume_shape")
         self.spacing = voxel_spacing_tuple(voxel_spacing, self.rank)
+        self.voxel_spacing = self.spacing if isinstance(voxel_spacing, (tuple, list)) else self.spacing[0]
+        if self.backend == "numba" and isinstance(self.voxel_spacing, tuple):
+            _native_spacing(self.voxel_spacing)
         self.pitch = _detector_spacing(detector_spacing, beam)
         self.devices = _normalize_devices(devices)
         if not isinstance(source, torch.Tensor):
@@ -336,14 +340,14 @@ class AnalyticalExecution:
                               device=data.device, dtype=self.dtype)
         if self.beam == "parallel":
             geometry = (geometry[0], geometry[1] - centre, geometry[2])
-            return parallel_weighted_backproject(data, *geometry, self.pitch[0], *shape, self.spacing[0])
+            return parallel_weighted_backproject(data, *geometry, self.pitch[0], *shape, self.voxel_spacing)
         geometry = (geometry[0] - centre, geometry[1] - centre, *geometry[2:])
         isocenter = self.isocenter.to(data.device) - centre
         if self.beam == "fan":
             return fan_weighted_backproject(data, *geometry, self.pitch[0], *shape,
-                                            self.spacing[0], isocenter=isocenter)
+                                            self.voxel_spacing, isocenter=isocenter)
         return cone_weighted_backproject(data, *geometry, *shape, *self.pitch,
-                                         self.spacing[0], isocenter=isocenter)
+                                         self.voxel_spacing, isocenter=isocenter)
 
     def _tile(self, spatial):
         shape = tuple(part.stop - part.start for part in spatial)
