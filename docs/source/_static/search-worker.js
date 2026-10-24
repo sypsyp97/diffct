@@ -24,6 +24,17 @@ function onProgress(info) {
 async function load(meta, forceWasm) {
   const tf = await import(runtimeBase + 'transformers.min.js');
   tf.env.allowLocalModels = false;
+  // transformers.js 4.3.1 probes file sizes at `main` without the revision, and loads config.json
+  // twice. Point every Hub request at the pinned revision and fetch config.json once.
+  const hubFetch = tf.env.fetch;
+  const configs = new Map();
+  tf.env.fetch = (url, init) => {
+    if (typeof url !== 'string') return hubFetch(url, init);
+    const pinned = url.replace(`/${meta.model}/resolve/main/`, `/${meta.model}/resolve/${meta.revision}/`);
+    if (!pinned.endsWith('/config.json') || (init && init.headers && init.headers.Range)) return hubFetch(pinned, init);
+    if (!configs.has(pinned)) configs.set(pinned, hubFetch(pinned, init));
+    return configs.get(pinned).then((response) => response.clone());
+  };
   // ONNX Runtime Web ships several WASM builds. WebGPU needs the asyncify build. The CPU
   // backend needs the JSEP build: the asyncify build lacks the GatherBlockQuantized kernel
   // that the quantized checkpoints use.
