@@ -35,6 +35,12 @@ APIs. Start with :doc:`getting_started` if you have not installed diffct yet.
       Several GPUs in one process, or ``torchrun`` across nodes, with view,
       space or hybrid partitions.
 
+   .. grid-item-card:: Performance
+      :link: performance
+      :link-type: doc
+
+      Forward, adjoint and CGLS timings for a 512³ volume on 1, 4 and 8 GPUs.
+
    .. grid-item-card:: Differentiable FBP and FDK
       :link: analytical_learning
       :link-type: doc
@@ -57,5 +63,6 @@ APIs. Start with :doc:`getting_started` if you have not installed diffct yet.
    execution
    chunking
    multi_gpu
+   performance
    analytical_learning
    migration

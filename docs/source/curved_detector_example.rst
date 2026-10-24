@@ -9,9 +9,10 @@ gradients on a circular scan.
    :alt: Projections of a patient volume on a cylindrical detector
    :class: example-figure
 
-   Vendor images of TCIA case L213 (see :ref:`data-sources`) as a volume,
-   projected onto a cylindrical detector centred on the source: 888 columns,
-   radius 949 mm, source 541 mm from the isocentre. Views at 0°, 60° and 120°.
+   Vendor images of TCIA case L213 (see :ref:`data-sources`) as a volume, projected
+   onto a cylindrical detector centred on the source: 888 × 625 pixels, radius
+   949 mm, source 541 mm from the isocentre. Made by the ``volumes`` command of
+   ``docs/assets/gallery/compute.py``; the script below uses a smaller geometry.
 
 Run it
 ------

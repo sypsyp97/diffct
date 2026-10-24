@@ -1,14 +1,6 @@
 Trajectories and Geometry
 =========================
 
-.. figure:: _static/gallery/trajectories.png
-   :alt: Source paths of the circular, helical, saddle and sinusoidal trajectory helpers
-   :class: example-figure
-
-   Source paths of ``circular_trajectory_3d``, ``spiral_trajectory_3d``,
-   ``saddle_trajectory_3d`` and ``sinusoidal_trajectory_3d`` around a spherical
-   object.
-
 Trajectory format
 -----------------
 

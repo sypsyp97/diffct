@@ -41,8 +41,8 @@ CUDA compiler libraries that Numba CUDA needs.
          pip install -e ".[cu13]"    # or ".[cu12]", or "." without CUDA
          python examples/quickstart.py
 
-      The scripts in ``examples/`` need an NVIDIA GPU, except
-      ``plot_trajectory.py``.
+      Most scripts in ``examples/`` need an NVIDIA GPU; ``plot_trajectory.py``
+      and ``benchmark_trajectory_admission.py --backend torch`` run on CPU.
 
 Check the installation:
 

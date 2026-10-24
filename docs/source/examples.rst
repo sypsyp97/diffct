@@ -1,102 +1,30 @@
 Examples
 ========
 
-Each card opens a page with the commands, an explanation and a result figure.
-Figure captions state the data and settings. The scripts are in the ``examples/``
+Each page has the commands, an explanation and one result figure. Figure
+captions state the data and settings. The scripts are in the ``examples/``
 directory of a source checkout; see the "From source" tab in :doc:`installation`.
 
 Analytical reconstruction
 -------------------------
 
-.. grid:: 1 2 2 4
-   :gutter: 3
-   :class-container: gallery-grid
-
-   .. grid-item-card:: Parallel-beam FBP
-      :link: fbp_parallel_example
-      :link-type: doc
-      :img-top: _static/gallery/thumb_fbp_parallel.png
-      :img-alt: Parallel-beam FBP of an abdominal slice
-
-      FBP with a choice of ramp-filter window.
-
-   .. grid-item-card:: Fan-beam FBP
-      :link: fbp_fan_example
-      :link-type: doc
-      :img-top: _static/gallery/thumb_fbp_fan.png
-      :img-alt: Fan-beam FBP of a chest slice
-
-      Fan-beam FBP with cosine weights over a full turn.
-
-   .. grid-item-card:: Cone-beam FDK
-      :link: fdk_cone_example
-      :link-type: doc
-      :img-top: _static/gallery/thumb_fdk_cone.png
-      :img-alt: Coronal FDK slice of a 3D phantom
-
-      FDK on a circular orbit, with its cone-beam artifacts.
-
-   .. grid-item-card:: Learnable FBP
-      :link: analytical_learning
-      :link-type: doc
-      :img-top: _static/gallery/thumb_learning.png
-      :img-alt: FBP with a learned filter
-
-      Learn the FBP filter through autograd.
+- :doc:`Parallel-beam FBP <fbp_parallel_example>`: FBP with a choice of ramp-filter window.
+- :doc:`Fan-beam FBP <fbp_fan_example>`: fan-beam FBP with cosine weights over a full turn.
+- :doc:`Cone-beam FDK <fdk_cone_example>`: FDK on a circular orbit, with its cone-beam artifacts.
+- :doc:`Learnable FBP <analytical_learning>`: learn the FBP filter through autograd.
 
 Iterative reconstruction
 ------------------------
 
-.. grid:: 1 2 3 3
-   :gutter: 3
-   :class-container: gallery-grid
-
-   .. grid-item-card:: Gradient-based reconstruction
-      :link: gradient_reconstruction
-      :link-type: doc
-      :img-top: _static/gallery/thumb_gradient.png
-      :img-alt: Walnut reconstructed with Adam
-
-      The volume as parameters: forward project, compare, optimize.
-
-   .. grid-item-card:: CGLS, SIRT and TV
-      :link: iterative_reco_cone_example
-      :link-type: doc
-      :img-top: _static/gallery/thumb_iterative_cone.png
-      :img-alt: TV reconstruction of a simulated helical scan
-
-      Solvers on circular, helical, saddle or sinusoidal 3D scans.
-
-   .. grid-item-card:: Measured walnut
-      :link: walnut_example
-      :link-type: doc
-      :img-top: _static/gallery/thumb_walnut.png
-      :img-alt: TV reconstruction of a measured walnut
-
-      FDK, SIRT, CGLS and TV on 240 measured cone-beam views.
+- :doc:`Gradient-based reconstruction <gradient_reconstruction>`: the volume is a parameter; project it, compare with the measurement, optimize.
+- :doc:`CGLS, SIRT and TV <iterative_reco_cone_example>`: solvers on circular, helical, saddle or sinusoidal 3D scans.
+- :doc:`Measured walnut <walnut_example>`: FDK, SIRT, CGLS and TV on 240 measured cone-beam views.
 
 Clinical data and detectors
 ---------------------------
 
-.. grid:: 1 2 3 3
-   :gutter: 3
-   :class-container: gallery-grid
-
-   .. grid-item-card:: Clinical helical CT
-      :link: clinical_helical_example
-      :link-type: doc
-      :img-top: _static/gallery/thumb_helical.png
-      :img-alt: Axial slice of a measured abdominal helical scan
-
-      Measured patient projections, flying focal spot, curved detector, 8 GPUs.
-
-   .. grid-item-card:: Curved detector
-      :link: curved_detector_example
-      :link-type: doc
-      :img-top: _static/gallery/thumb_curved_detector.png
-      :img-alt: Projection of a patient volume on a cylindrical detector
-
-      Native cylindrical detector: projection, matched adjoint and gradients.
+- :doc:`Clinical helical CT <clinical_helical_example>`: measured patient projections, flying focal spot, curved detector, 8 GPUs.
+- :doc:`Curved detector <curved_detector_example>`: projection, matched adjoint and gradients on a native cylindrical detector.
 
 All scripts
 -----------
@@ -146,9 +74,13 @@ Data sources
 
 - **Patient data:** cases L213 (abdomen) and C002 (chest) of McCollough et al.,
   *Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*, Version 7,
-  The Cancer Imaging Archive, 2020, https://doi.org/10.7937/9npb-2637. Chest and
-  Liver subsets: `CC BY 4.0 <https://creativecommons.org/licenses/by/4.0/>`_.
-  The figures show reconstructions and simulations computed with diffct.
+  The Cancer Imaging Archive, 2020, https://doi.org/10.7937/9npb-2637; dataset
+  paper: Moen et al., Medical Physics, 2020, https://doi.org/10.1002/mp.14594.
+  Chest and Liver subsets: `CC BY 4.0 <https://creativecommons.org/licenses/by/4.0/>`_.
+  The data were acquired under grants EB017095 and EB017185 (Cynthia McCollough, PI)
+  from the National Institute of Biomedical Imaging and Bioengineering. "Ground
+  truth" panels show the vendor images, converted from HU to water units; all
+  other panels are reconstructions or simulations computed with diffct.
 - **Walnut:** Meaney 2022, Zenodo 6986012, CC BY 4.0; see ``examples/data/NOTICE``.
 - **Shepp-Logan phantom:** computed by ``examples/_common.py``.
 

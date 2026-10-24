@@ -29,9 +29,10 @@ to zero or more.
    :alt: Ground truth, Adam steps and data loss for parallel and fan beams
    :class: example-figure
 
-   The loop below at 512², with 720 views and the abdominal slice of TCIA case
-   L213 as ground truth (see :ref:`data-sources`). The code below uses a 128²
-   square so that it runs in seconds.
+   The loop below at 512², with 720 views, Adam learning rate 0.1, 1000 steps and
+   the abdominal slice of TCIA case L213 as ground truth (see :ref:`data-sources`). PSNR uses the
+   peak of the ground truth. The code below uses a 128² square so that it runs in
+   seconds.
 
 .. tab-set::
 
@@ -51,8 +52,8 @@ to zero or more.
          measured = A.project(truth).detach()
 
          image = torch.zeros((n, n), device="cuda", requires_grad=True)
-         optimizer = torch.optim.Adam([image], lr=1e-2)
-         for step in range(200):
+         optimizer = torch.optim.Adam([image], lr=0.1)
+         for step in range(500):
              optimizer.zero_grad()
              loss = 0.5 * (A.project(image) - measured).square().sum()
              loss.backward()
@@ -77,8 +78,8 @@ to zero or more.
          measured = A.project(truth).detach()
 
          image = torch.zeros((n, n), device="cuda", requires_grad=True)
-         optimizer = torch.optim.Adam([image], lr=1e-2)
-         for step in range(200):
+         optimizer = torch.optim.Adam([image], lr=0.1)
+         for step in range(500):
              optimizer.zero_grad()
              loss = 0.5 * (A.project(image) - measured).square().sum()
              loss.backward()

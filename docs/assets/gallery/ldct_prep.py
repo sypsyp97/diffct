@@ -1,6 +1,6 @@
 """Read one DICOM-CT-PD projection series (and its image series) into npy/npz.
 
-    python prep_case.py <projection dir> <image dir> <out dir>
+    python docs/assets/gallery/ldct_prep.py <projection dir> <image dir> <out dir>
 
 out/proj.npy  (views, channels, rows) float32 line integrals, views sorted by InstanceNumber
 out/meta.npz  per-view geometry: phi z rho sdd ce_col ce_row du dv dphi dz drho, plus ffs mode

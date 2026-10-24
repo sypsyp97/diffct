@@ -4,9 +4,10 @@ Every array comes from a diffct run. The commands write compressed ``.npz``
 files of display slices (float16) to ``--out``:
 
     python docs/assets/gallery/compute.py phantoms2d --ldct DIR --out OUT
+    python docs/assets/gallery/compute.py adam --ldct DIR --lr 0.1 --out OUT
     python docs/assets/gallery/compute.py volumes --ldct DIR --out OUT
     python docs/assets/gallery/compute.py gradient --walnut examples/data/walnut_cone.npz --out OUT
-    torchrun --nproc-per-node=4 docs/assets/gallery/compute.py helical \\
+    torchrun --nproc-per-node=8 docs/assets/gallery/compute.py helical \\
         --case DIR/L213 --center 442.2 --out OUT
 
 ``--ldct`` holds one directory per case written by ldct_prep.py. The patient
@@ -82,7 +83,7 @@ def analytical_2d(truth, views, device):
     return result
 
 
-def adam_loop(truth, beam, views, device, steps=200, keep=(20, 50, 200)):
+def adam_loop(truth, beam, views, device, steps=200, keep=(20, 50, 200), lr=1e-2):
     """The least-squares loop of the iterative example pages."""
     n = truth.shape[-1]
     if beam == "parallel":
@@ -93,7 +94,7 @@ def adam_loop(truth, beam, views, device, steps=200, keep=(20, 50, 200)):
         operator = Projector(trajectory, (n, n), 3 * n, beam="fan", detector_spacing=0.8)
     measured = operator.project(truth).detach()
     image = torch.zeros((n, n), device=device, requires_grad=True)
-    optimizer = torch.optim.Adam([image], lr=1e-2)
+    optimizer = torch.optim.Adam([image], lr=lr)
     losses, snapshots = [], {}
     for step in range(1, steps + 1):
         optimizer.zero_grad()
@@ -151,23 +152,33 @@ def phantoms2d(args):
         "abdomen": (torch.from_numpy(ref_slice(Path(args.ldct) / "L213", -364.0)[0]), "TCIA L213, abdomen"),
         "chest": (torch.from_numpy(ref_slice(Path(args.ldct) / "C002")[0]), "TCIA C002, chest"),
     }
+    pairs = {"parallel": ("shepp", "abdomen"), "fan": ("shepp", "chest")}
     for key, (truth, label) in truths.items():
         truth = truth.to(device)
         for beam, (sinogram, image) in analytical_2d(truth, 720, device).items():
-            save(out, f"fbp_{beam}_{key}", truth=half(truth), sinogram=half(sinogram[::2, ::2]),
-                 image=half(image), psnr=psnr(image, truth), label=label, views=720)
+            if key in pairs[beam]:
+                save(out, f"fbp_{beam}_{key}", truth=half(truth), sinogram=half(sinogram[::2, ::2]),
+                     image=half(image), psnr=psnr(image, truth), label=label, views=720)
     truth = truths["abdomen"][0].to(device)
-    for beam in ("parallel", "fan"):
-        start = time.time()
-        snapshots, losses = adam_loop(truth, beam, 720, device)
-        save(out, f"iterative_{beam}", truth=half(truth), losses=losses, steps=np.array(list(snapshots)),
-             images=np.stack([half(v) for v in snapshots.values()]),
-             psnr=np.array([psnr(v, truth) for v in snapshots.values()]), seconds=time.time() - start)
     small = torch.nn.functional.avg_pool2d(truth[None, None], 2)[0, 0]
     before, after, ramp, learned = learn_filter(small, 360, device)
     save(out, "learning", truth=half(small), before=half(before), after=half(after), ramp=half(ramp),
          learned=half(learned), psnr=np.array([psnr(before, small), psnr(after, small)]), steps=200,
          noise=0.02, views=360)
+
+
+def adam(args):
+    """The Adam loop of the gradient-based page on the 512² abdominal slice, for one learning rate."""
+    device = torch.device("cuda")
+    truth = torch.from_numpy(ref_slice(Path(args.ldct) / "L213", -364.0)[0]).to(device)
+    keep = tuple(sorted(set(args.keep) | {args.steps}))
+    for beam in ("parallel", "fan"):
+        start = time.time()
+        snapshots, losses = adam_loop(truth, beam, 720, device, steps=args.steps, keep=keep, lr=args.lr)
+        save(Path(args.out), f"iterative_{beam}_lr{args.lr:g}", truth=half(truth), losses=losses,
+             steps=np.array(list(snapshots)), images=np.stack([half(v) for v in snapshots.values()]),
+             psnr=np.array([psnr(v, truth) for v in snapshots.values()]), lr=args.lr, views=720,
+             seconds=time.time() - start)
 
 
 def volumes(args):
@@ -178,20 +189,21 @@ def volumes(args):
     curved_patient(device, out, Path(args.ldct))
 
 
-def cone_phantom(device, out):
+def cone_phantom(device, out, views=720):
     n = 256
     phantom = torch.from_numpy(shepp_logan_3d(n)).to(device)
-    scan = Scan(n, 360)
+    scan = Scan(n, views)
     trajectory = scan.trajectory("circular")
     sinogram = Projector(trajectory, (n, n, n), scan.detector, detector_spacing=scan.pitch).project(phantom)
     angles = torch.linspace(0.0, 2 * math.pi, scan.views + 1, device=device)[:-1]
     volume = fdk(sinogram, trajectory, (n, n, n), angles, detector_spacing=scan.pitch, window=WINDOW,
                  isocenter=(0, 0, 0)).clamp_min(0)
+    off = n // 2 + n // 8  # z = 0.25 of the half height, through the three small ellipsoids
     save(out, "fdk_cone", projection=half(sinogram[0].T), axial=half(volume[n // 2]),
-         coronal=half(volume[:, n // 2]), off_axial=half(volume[n // 2 + n // 5]),
-         phantom_coronal=half(phantom[:, n // 2]), phantom_off_axial=half(phantom[n // 2 + n // 5]),
-         psnr=psnr(volume, phantom), views=360, size=n)
-
+         off_axial=half(volume[off]), coronal=half(volume[:, n // 2]),
+         phantom_axial=half(phantom[n // 2]), phantom_off_axial=half(phantom[off]),
+         phantom_coronal=half(phantom[:, n // 2]), psnr=psnr(volume, phantom), views=views, size=n,
+         off_index=off)
 
 
 def curved_patient(device, out, ldct):
@@ -330,6 +342,12 @@ def main():
         p.add_argument("--out", required=True)
         if name == "volumes":
             p.add_argument("--curved-only", action="store_true", help="skip the Shepp-Logan FDK volume")
+    p = sub.add_parser("adam")
+    p.add_argument("--ldct", required=True)
+    p.add_argument("--lr", type=float, required=True)
+    p.add_argument("--steps", type=int, default=1000)
+    p.add_argument("--keep", type=int, nargs="+", default=[50, 200])
+    p.add_argument("--out", required=True)
     p = sub.add_parser("gradient")
     p.add_argument("--walnut", required=True, help="examples/data/walnut_cone.npz")
     p.add_argument("--lr", type=float, default=0.01)
@@ -343,7 +361,7 @@ def main():
     p.add_argument("--out", required=True)
     args = parser.parse_args()
     Path(args.out).mkdir(parents=True, exist_ok=True)
-    {"phantoms2d": phantoms2d, "volumes": volumes, "gradient": gradient, "helical": helical}[args.command](args)
+    {"phantoms2d": phantoms2d, "adam": adam, "volumes": volumes, "gradient": gradient, "helical": helical}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -44,5 +44,5 @@ a simulated helical scan:
    python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory helical \
        --noise 0.01 --phantom walnut256.npy --figure helical.png
 
-.. image:: ../assets/walnut_helical.png
+.. image:: _static/gallery/iterative_cone.png
    :alt: Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions
