@@ -826,9 +826,10 @@ class ReferenceProjector:
                 values = self._reduce(torch.index_select(flat, -1, ids), owner.view_group,
                                       owner.view_world_size, stats)
                 reduced = reduced.scatter_add(-1, ids.expand(*leading, -1), values)
-        # Split leading dimensions as _tensor_apply does when even the smallest
-        # chunks exceed the automatic payload; every rank uses the same pieces.
-        pieces = [(slice(None),) * len(leading)]
+        # Split leading dimensions recursively, as _tensor_apply does, when even
+        # the smallest chunks exceed the automatic payload. Every rank uses the
+        # same pieces in the same order.
+        batch_limit = None
         if any(hint is None for hint in (owner.volume_chunk_shape, owner.view_chunk_size,
                                          owner.detector_chunk_shape)):
             planes = (sum(plan[0]) + len(input_shape) + 2) * max(4, len(input_shape))
@@ -836,12 +837,20 @@ class ReferenceProjector:
             batch_limit = max(1, _REFERENCE_WORK_BYTES // (per_batch * _GEOMETRY_WORK_FACTOR * torch.empty(
                 (), dtype=owner.dtype,
             ).element_size()))
-            if batch_elements > batch_limit:
-                axis = max(range(len(leading)), key=leading.__getitem__)
-                step = max(1, batch_limit // (batch_elements // leading[axis]))
-                pieces = [tuple(slice(first, first + step) if index == axis else slice(None)
-                                for index in range(len(leading)))
-                          for first in range(0, leading[axis], step)]
+
+        def split(piece):
+            sizes = [part.stop - part.start for part in piece]
+            count = math.prod(sizes)
+            if batch_limit is None or count <= batch_limit:
+                yield piece
+                return
+            axis = max(range(len(sizes)), key=sizes.__getitem__)
+            step = max(1, batch_limit // (count // sizes[axis]))
+            for first in range(piece[axis].start, piece[axis].stop, step):
+                yield from split((*piece[:axis], slice(first, min(first + step, piece[axis].stop)),
+                                  *piece[axis + 1:]))
+
+        pieces = split(tuple(slice(0, size) for size in leading))
         # Recompute one ray batch and tile at a time in the forward traversal
         # order, so input SUMs keep their collective order and only one pair's
         # graph is alive. The loss is <reduced cotangent, A_local(geometry) input>.
