@@ -318,7 +318,11 @@ def test_cpu_automatic_work_arrays_keep_8_mib_ceiling(precision, operation):
 
 def _documented_cuda_fraction():
     """Largest fraction stated next to free CUDA memory for the portable path."""
-    text = (REPOSITORY / "docs" / "EXECUTION.md").read_text(encoding="utf-8")
+    path = REPOSITORY / "docs" / "EXECUTION.md"
+    if not path.is_file():
+        assert not (REPOSITORY / ".git").exists(), f"source checkout missing required documentation {path}"
+        pytest.skip("docs/EXECUTION.md is not copied into installed-wheel test layouts")
+    text = path.read_text(encoding="utf-8")
     words = {"half": .5, "quarter": .25, "third": 1 / 3}
     # Wording for "free memory" varies; accept common synonyms.
     free = re.compile(r"\bfree\b|\bavailable\b|\busable\b|\bunused\b|can still use")
