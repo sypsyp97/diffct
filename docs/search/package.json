@@ -1,0 +1,9 @@
+{
+  "name": "diffct-docs-search",
+  "private": true,
+  "type": "module",
+  "description": "Build-time embedding of the diffct documentation for in-browser semantic search.",
+  "dependencies": {
+    "@huggingface/transformers": "4.3.1"
+  }
+}

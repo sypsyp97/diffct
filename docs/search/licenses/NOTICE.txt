@@ -1,0 +1,19 @@
+Third-party components of the diffct documentation search
+=========================================================
+
+The search page loads this software in the visitor's browser. The documentation build copies it
+to _static/search/. The license texts below ship in the same folder.
+
+@huggingface/transformers 4.3.1    Apache-2.0    transformers-LICENSE
+  Copyright Hugging Face. Published as the bundled file transformers.min.js. The bundle also
+  contains @huggingface/tokenizers and @huggingface/jinja (Apache-2.0 and MIT, see their
+  packages) and onnxruntime-web (below).
+
+onnxruntime-web 1.31.0-dev.20260914-8d85527a0    MIT    ort-LICENSE, ort-ThirdPartyNotices.txt
+  Copyright (c) Microsoft Corporation. Published as the files ort-wasm-simd-threaded.*.mjs and
+  ort-wasm-simd-threaded.*.wasm. Microsoft lists the third-party components of the runtime in
+  ort-ThirdPartyNotices.txt.
+
+EmbeddingGemma 2 (onnx-community/embeddinggemma-2-ONNX, revision in search-meta.json)    Apache-2.0
+  Copyright Google. The browser downloads the model files from the Hugging Face Hub when the
+  visitor turns on semantic search. This site does not redistribute them.

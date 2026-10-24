@@ -59,6 +59,7 @@
 使用原生路径时，先安装 NVIDIA CUDA 版 PyTorch，再按同一 CUDA 大版本安装 diffct：
 
 ```bash
+python -c "import torch; print(torch.version.cuda)"    # 12.x 或 13.x
 pip install "diffct[cu12]"    # PyTorch 为 CUDA 12 构建
 pip install "diffct[cu13]"    # PyTorch 为 CUDA 13 构建
 ```

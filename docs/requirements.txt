@@ -1,6 +1,9 @@
 # Documentation build tools. The CUDA stack is mocked in conf.py.
 sphinx
-furo
+pydata-sphinx-theme
+sphinx-design
 myst-parser
 sphinx-copybutton
 numpy<2.5
+sphinx-llms-txt==0.7.1
+beautifulsoup4

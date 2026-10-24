@@ -1,0 +1,29 @@
+Third-party data used by the documentation figures
+==================================================
+
+Patient data
+------------
+The arrays in docs/assets/gallery/data/ and the figures and thumbnails in
+docs/source/_static/gallery/ that show patients use projections or images of
+cases L213 and C002 from:
+
+    McCollough, C., Chen, B., Holmes III, D., Duan, X., Yu, Z., Yu, L., Leng, S.,
+    Fletcher, J. (2020). Low Dose CT Image and Projection Data
+    (LDCT-and-Projection-data) (Version 7) [dataset]. The Cancer Imaging Archive.
+    https://doi.org/10.7937/9npb-2637
+
+    Moen, T. R., et al. (2020). Low dose CT image and projection dataset.
+    Medical Physics. https://doi.org/10.1002/mp.14594
+
+The Chest and Liver subsets are licensed under the Creative Commons Attribution
+4.0 International License (https://creativecommons.org/licenses/by/4.0/).
+The data were acquired under grants EB017095 and EB017185 (Cynthia McCollough,
+PI) from the National Institute of Biomedical Imaging and Bioengineering.
+"Ground truth" panels show the vendor images, converted from HU to water units
+(x = 1 + HU / 1000). All other panels are reconstructions or simulations computed
+with diffct. The Head subset is not used.
+
+Walnut data
+-----------
+walnut.png, iterative_cone.png and gradient_walnut.png use the measured walnut
+scan described in examples/data/NOTICE (Meaney 2022, Zenodo 6986012, CC BY 4.0).

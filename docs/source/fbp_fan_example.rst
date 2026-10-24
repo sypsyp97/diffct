@@ -4,8 +4,20 @@ Fan Beam Filtered Backprojection (FBP)
 This page describes the fan-beam part of ``examples/analytical_reconstruction.py``.
 For filter options and helper signatures, see :doc:`api`.
 
+.. figure:: _static/gallery/fbp_fan.png
+   :alt: Fan-beam FBP of the Shepp-Logan phantom and of a patient slice
+   :class: example-figure
+
+   Ground truth: Shepp-Logan, and a chest slice of TCIA case C002 (see
+   :ref:`data-sources`), lung window. 512², 720 views over 360°, magnification 1.6,
+   Shepp-Logan window. PSNR in the lower corner.
+
 Run it
 ------
+
+Run the commands from the root of a source checkout; ``pip install diffct`` does not
+install the ``examples/`` directory. See the "From source" tab in
+:doc:`installation`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
 
 .. code-block:: bash
 

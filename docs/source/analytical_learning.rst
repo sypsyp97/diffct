@@ -7,6 +7,14 @@ different, voxel-driven interpolation operator. Its backward pass scatters the
 same interpolation coefficients, including distance weights and normalization.
 It does not substitute the Siddon projector for the analytical transpose.
 
+.. figure:: _static/gallery/learning.png
+   :alt: FBP with the Ram-Lak filter and with a learned filter
+   :class: example-figure
+
+   Abdominal slice of TCIA case L213 at 256² (see :ref:`data-sources`), parallel
+   beam, 360 views, 2% noise, 200 Adam steps on the filter only. These settings
+   differ from ``examples/learnable_reconstruction.py`` below.
+
 The reconstruction APIs return signed images in the selected precision on the
 input device. Clamping is a caller decision. In the default native fast mode,
 low-precision measurements are promoted to float32 before geometry,

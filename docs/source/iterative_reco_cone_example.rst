@@ -5,8 +5,19 @@ Cone Beam Iterative Reconstruction
 ``diffct.Projector``. It runs on any supported trajectory, on one GPU, on several
 GPUs in one process, or on several processes and nodes.
 
+.. figure:: _static/gallery/iterative_cone.png
+   :alt: Axial and coronal slices of a simulated helical scan
+   :class: example-figure
+
+   Simulated helical walnut scan from :doc:`walnut_example`: 720 views, 256³,
+   1% noise.
+
 Run it
 ------
+
+Run the commands from the root of a source checkout; ``pip install diffct`` does not
+install the ``examples/`` directory. See the "From source" tab in
+:doc:`installation`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
 
 .. code-block:: bash
 

@@ -254,7 +254,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Version 2.0.0 replaces the circular-orbit API of 1.x with arbitrary
 per-view trajectories. It breaks the 1.x interface; see
-[docs/MIGRATION.md](docs/MIGRATION.md).
+[docs/MIGRATION.md](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
 
 ### Breaking
 

@@ -16,3 +16,5 @@ https://creativecommons.org/licenses/by/4.0/). The walnut images in
 docs/assets/ (walnut_measured.png, walnut_helical.png, diffct_intro.gif,
 diffct_intro.mp4) are reconstructions from these data. Credit the dataset as
 above when you reuse them. examples/data/NOTICE describes the preprocessing.
+
+The documentation figures use third-party CT data; see docs/assets/gallery/NOTICE.

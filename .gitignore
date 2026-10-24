@@ -193,3 +193,7 @@ projectBrief.md
 docs/video/media/
 docs/video/scenes.txt
 docs/video/palette.png
+
+# Sphinx autosummary stubs
+docs/source/generated/
+docs/search/node_modules/

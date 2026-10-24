@@ -59,6 +59,7 @@ Capabilities, limits and isocenter rules: [docs/REFERENCE.md](https://github.com
 For the native path, install NVIDIA CUDA PyTorch first, then diffct with the matching CUDA major extra:
 
 ```bash
+python -c "import torch; print(torch.version.cuda)"    # 12.x or 13.x
 pip install "diffct[cu12]"    # PyTorch built for CUDA 12
 pip install "diffct[cu13]"    # PyTorch built for CUDA 13
 ```

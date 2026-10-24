@@ -10,6 +10,10 @@ trajectory.
 Run it
 ------
 
+Run the commands from the root of a source checkout; ``pip install diffct`` does not
+install the ``examples/`` directory. See the "From source" tab in
+:doc:`installation`. ``--figure`` needs Matplotlib: ``pip install matplotlib``.
+
 .. code-block:: bash
 
    python examples/walnut_reconstruction.py --figure walnut.png
@@ -25,7 +29,7 @@ The figure shows axial and coronal centre slices. The reconstructions are:
 Use ``--algorithms`` with no values to run FDK only. Use ``--window`` to change the
 FDK filter.
 
-.. image:: ../assets/walnut_measured.png
+.. image:: _static/gallery/walnut.png
    :alt: Measured walnut: FDK, SIRT, CGLS and TV reconstructions
 
 Simulated helical scan
@@ -40,5 +44,5 @@ a simulated helical scan:
    python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory helical \
        --noise 0.01 --phantom walnut256.npy --figure helical.png
 
-.. image:: ../assets/walnut_helical.png
+.. image:: _static/gallery/iterative_cone.png
    :alt: Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions
