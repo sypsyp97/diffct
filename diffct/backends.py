@@ -858,8 +858,10 @@ class ReferenceProjector:
         gradients = [torch.zeros_like(value) for value in leaves]
 
         def accumulate(loss, inputs, totals):
-            # The zero dependency keeps unused inputs connected.
-            loss = loss + sum(_zero_dependency(value) for value in inputs)
+            # The zero dependency keeps unused inputs connected. With several
+            # devices, a pair's loss and the geometry leaves can be on different
+            # CUDA devices, so each zero moves to the loss's device.
+            loss = loss + sum(_zero_dependency(value).to(loss.device) for value in inputs)
             for total, part in zip(totals, torch.autograd.grad(loss, inputs)):
                 total.add_(part)
 
