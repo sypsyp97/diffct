@@ -1524,6 +1524,17 @@ class Projector:
                         value = selected_offsets[..., original].expand(offset_views, *pixel_shape)
                         _pipeline._copy(target, value, pipe.stats)
                         pipe.retain(pipe.event(pipe.upload), value, packed_offsets)
+                elif offset_views * rank * capacity * 8 > _pipeline._GEOMETRY_WORK_BYTES:
+                    # Bound host packing while retaining batched device composition.
+                    for column, original in enumerate(columns):
+                        value = selected_offsets[..., original].expand(offset_views, *pixel_shape)
+                        for local in range(offset_views):
+                            target = packed[local, column, :pixel_count].view(pixel_shape)
+                            for fragment in _pipeline._fragments(
+                                    pixel_shape, _pipeline._GEOMETRY_WORK_BYTES // 8):
+                                host = value[local][fragment].to(dtype=torch.float64).contiguous()
+                                _pipeline._copy(target[fragment], host, pipe.stats)
+                                pipe.retain(pipe.event(pipe.upload), host, packed_offsets)
                 else:
                     host = torch.empty((offset_views, rank, capacity), dtype=torch.float64)
                     for column, original in enumerate(columns):
