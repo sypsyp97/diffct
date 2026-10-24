@@ -22,7 +22,7 @@ from torch.utils._pytree import tree_flatten
 from diffct import Projector
 from tests._multiprocessing import spawn
 from tests._native_per_axis_spacing import (
-    BEAMS, GEOMETRY_ATOL, GEOMETRY_RTOL, REAL_CUDA_REQUIRED,
+    GEOMETRY_ATOL, GEOMETRY_RTOL, NATIVE_BEAMS, REAL_CUDA_REQUIRED,
     case, close, data, native_only, operator, surface,
 )
 
@@ -38,7 +38,7 @@ NCCL = pytest.mark.skipif(
 
 
 @TWO_GPUS
-@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("beam", NATIVE_BEAMS)
 @pytest.mark.parametrize("kind", ["flat", "parameterized"])
 def test_n2_multi_device_values_data_and_geometry_gradients(beam, kind):
     scan = case(beam, learnable=True)
@@ -106,7 +106,7 @@ def _nccl_worker(rank, rendezvous, beam, kind, partition):
 
 @TWO_GPUS
 @NCCL
-@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("beam", NATIVE_BEAMS)
 @pytest.mark.parametrize("kind", ["flat", "parameterized"])
 @pytest.mark.parametrize("partition", ["views", "space"])
 def test_n2_nccl_views_and_space_values_and_autograd(tmp_path, beam, kind, partition):

@@ -23,7 +23,7 @@ from diffct import Projector, TensorStore
 from diffct.utils import TorchCUDABridge
 from tests._native_per_axis_spacing import (
     ANALYTICAL_ATOL, ANALYTICAL_RTOL, BEAMS, CHORD_ATOL, CHORD_RTOL,
-    FLAT_ATOL, FLAT_RTOL, GEOMETRY_ATOL, GEOMETRY_RTOL, NATIVE_REQUIRED,
+    FLAT_ATOL, FLAT_RTOL, GEOMETRY_ATOL, GEOMETRY_RTOL, NATIVE_BEAMS, NATIVE_REQUIRED,
     PORTABLE_ATOL, PORTABLE_RTOL, REFERENCE, SCALAR_BEAMS, SURFACES,
     case, chunks, close, cuda_device, data, native_device, native_only,
     operator, scalar_outputs, signatures, surface,
@@ -74,7 +74,7 @@ def test_unchanged_auto_without_nvidia_is_portable(available, hip, monkeypatch):
 
 
 @NATIVE_REQUIRED
-@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("beam", NATIVE_BEAMS)
 @pytest.mark.parametrize("kind", SURFACES)
 @pytest.mark.parametrize("operation", ["project", "backproject"])
 @pytest.mark.parametrize("leading", [(), (2,)], ids=["unbatched", "batched"])
@@ -102,7 +102,7 @@ def test_n2_n3_values_and_data_autograd_match_portable(native_device, beam, kind
 
 
 @NATIVE_REQUIRED
-@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("beam", NATIVE_BEAMS)
 @pytest.mark.parametrize("kind", ["flat", "parameterized"])
 def test_n3_anisotropic_exact_transpose(native_device, beam, kind):
     scan = case(beam)
@@ -151,7 +151,7 @@ def test_n2_public_lowlevel_functions_and_autograd(native_device, beam, operatio
 
 
 @NATIVE_REQUIRED
-@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("beam", NATIVE_BEAMS)
 def test_n3_axis_chords_and_voxel_weights_have_physical_tensor_axis_units(native_device, beam):
     scan = case(beam)
     rank = len(scan.shape)
@@ -188,7 +188,7 @@ def _forward_objective(scan, kind, image, rays, parameters=(3.7, .037)):
 
 
 @NATIVE_REQUIRED
-@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("beam", NATIVE_BEAMS)
 @pytest.mark.parametrize("kind", ["flat", "parameterized"])
 @pytest.mark.parametrize("operation", ["project", "backproject"])
 @pytest.mark.parametrize("tiled", [False, True], ids=["full", "chunked"])
@@ -250,7 +250,7 @@ def _check_forward_finite_differences(scan, kind, image, rays, gradients):
 
 
 @NATIVE_REQUIRED
-@pytest.mark.parametrize("beam", BEAMS)
+@pytest.mark.parametrize("beam", NATIVE_BEAMS)
 @pytest.mark.parametrize("kind", ["flat", "parameterized"])
 @pytest.mark.parametrize("execution", ["chunked", "host-store"])
 def test_n2_chunked_and_host_resident_streaming(native_device, beam, kind, execution):
