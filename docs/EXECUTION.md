@@ -182,13 +182,15 @@ inside surface callbacks or samplers are excluded.
 Geometry backward recomputes each ray batch and tile with the CUDA limit
 divided by two. One recomputed pair, including its autograd graph and
 `torch.autograd.grad`, measured at most 1.3 times the work-array model of its
-plan, so a pair stays within the same quarter. Geometry backward may keep at
-most one extra buffer as large as the incoming cotangent, outside that quarter.
+plan, so a pair stays within the same quarter. Geometry backward may keep one
+extra buffer as large as the incoming cotangent, outside that quarter.
 This buffer makes a strided cotangent contiguous or holds its distributed sum.
-Distributed sums replace batches or tiles in that same buffer, without a
-second full copy. The geometry gradients need their own memory. Large leading
-batches are split into pieces that every rank chooses alike, and each piece of
-a forward call is copied into the returned array, so at most one piece is extra.
+Known limit: distributed geometry backward with replicated outputs may hold up
+to three cotangent-sized buffers during the cotangent reduction. These buffers
+are outside the quarter-memory bound. The geometry gradients need their own
+memory. Large leading batches are split into pieces that every rank chooses
+alike, and each piece of a forward call is copied into the returned array, so
+at most one piece is extra.
 
 Explicit chunk hints take priority over these limits. For large mapped batches,
 also use `torch.vmap(..., chunk_size=...)` to control the transform's workspace.

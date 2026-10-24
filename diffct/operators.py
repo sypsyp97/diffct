@@ -609,15 +609,15 @@ class Projector:
         metadata = (self.partition, self.partition_grid, self.backend, self.precision, self.schedule,
                     self.global_volume_shape, self.beam, self.voxel_spacing,
                     self.detector_spacing, self._n_views, self.detector_shape, kind, parameters,
-                    self.native_volume_layout)
+                    self.native_volume_layout, tuple(str(value.dtype) for value in self._trajectory))
         if self.backend == "torch":
             # Portable collectives follow the tile and ray-batch order, so
             # every rank must derive the same chunks.
             metadata += (self.volume_chunk_shape, self.view_chunk_size, self.detector_chunk_shape)
         self._partition.preflight(
             metadata=metadata, cache_key="geometry layout", revision=self._agreement_revision(),
-            mismatch="distributed ranks must agree on geometry, surface layout, native volume layout "
-                     "and portable chunk hints",
+            mismatch="distributed ranks must agree on geometry, trajectory dtypes, surface layout, "
+                     "native volume layout and portable chunk hints",
         )
 
     def _participation(self):
@@ -2666,8 +2666,10 @@ class Projector:
         # the numerical operation runs inside a data transform.
         with torch._C._DisableFuncTorch():
             self._partition.preflight(
-                error, (override, owner._geometry_trainable, surface_metadata),
+                error, (override, owner._geometry_trainable, surface_metadata,
+                        tuple(str(value.dtype) for value in owner._trajectory)),
                 cache_key="operator request", revision=owner._agreement_revision(),
+                mismatch="distributed ranks must agree on operator request metadata, including trajectory dtypes",
             )
         if isinstance(owner.detector_surface, ParameterizedSurface):
             # Backward may replay the sampler after the caller replaces it.
