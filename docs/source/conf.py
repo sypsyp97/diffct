@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.abspath('../..'))
+sys.path.insert(0, os.path.abspath('_ext'))
 
 # The docs build has no GPU. Mock the CUDA stack so that autodoc can import diffct.
 autodoc_mock_imports = ['numba', 'torch']
@@ -27,7 +28,15 @@ extensions = [
     'myst_parser',
     'sphinx_copybutton',
     'sphinx_design',
+    'sphinx_llms_txt',
+    'search_chunks',
 ]
+
+llms_txt_title = 'diffct'
+llms_txt_summary = (
+    'Differentiable CUDA projectors and matched adjoints for computed tomography in PyTorch. '
+    'Parallel, fan, cone and helical geometries, arbitrary trajectories, curved detectors, multi-GPU.'
+)
 
 templates_path = ['_templates']
 exclude_patterns = []
@@ -38,6 +47,7 @@ copybutton_prompt_is_regexp = True
 
 html_theme = 'pydata_sphinx_theme'
 html_title = f'diffct {release}'
+html_baseurl = 'https://sypsyp97.github.io/diffct/'
 html_static_path = ['_static']
 html_css_files = ['custom.css']
 html_favicon = '_static/favicon.svg'
@@ -62,7 +72,7 @@ html_theme_options = {
     'secondary_sidebar_items': {'*': ['page-toc', 'edit-this-page'], 'generated/*': ['page-toc']},
     'use_edit_page_button': True,
     'show_toc_level': 2,
-    'footer_start': ['copyright'],
+    'footer_start': ['copyright', 'llms-links'],
     'footer_end': ['sphinx-version', 'theme-version'],
 }
 html_sidebars = {
@@ -80,3 +90,9 @@ def setup(app):
             atexit.unregister(sys.modules['diffct.utils']._keep_cuda_modules_at_exit)
 
     app.connect('build-finished', release_mocked_cuda_cleanup)
+
+    def add_semantic_search(app, pagename, templatename, context, doctree):
+        if pagename == 'search':
+            app.add_js_file('semantic-search.js', loading_method='defer')
+
+    app.connect('html-page-context', add_semantic_search)

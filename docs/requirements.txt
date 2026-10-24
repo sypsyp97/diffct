@@ -5,3 +5,5 @@ sphinx-design
 myst-parser
 sphinx-copybutton
 numpy<2.5
+sphinx-llms-txt==0.7.1
+beautifulsoup4

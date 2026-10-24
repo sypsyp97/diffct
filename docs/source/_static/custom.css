@@ -54,3 +54,16 @@ figure.example-figure figcaption { font-size: 0.85rem; color: var(--pst-color-te
 
 .performance-table { width: 100%; }
 .performance-table td:not(:first-child), .performance-table th:not(:first-child) { text-align: right; }
+
+/* Search page: hybrid keyword and semantic results */
+#semantic-results { margin: 1rem 0 2rem; }
+#semantic-results .sem-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+#semantic-results .sem-head h2 { margin: 0; }
+#semantic-results .sem-toggle { font-size: 0.85rem; color: var(--pst-color-text-muted); cursor: pointer; }
+#semantic-results .sem-status { margin: 0.4rem 0; font-size: 0.85rem; color: var(--pst-color-text-muted); }
+#semantic-results .sem-progress { width: 100%; height: 0.5rem; accent-color: var(--pst-color-primary); }
+#semantic-results .sem-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+#semantic-results .sem-list li { padding: 0.6rem 0; border-top: 1px solid var(--pst-color-border); }
+#semantic-results .sem-list a { font-weight: 600; }
+#semantic-results .sem-list p { margin: 0.2rem 0 0; font-size: 0.9rem; color: var(--pst-color-text-muted); overflow-wrap: anywhere; }
+#semantic-results mark { background: color-mix(in srgb, var(--pst-color-secondary) 30%, transparent); color: inherit; padding: 0 0.1em; }
