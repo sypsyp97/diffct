@@ -219,7 +219,7 @@ also use `torch.vmap(..., chunk_size=...)` to control the transform's workspace.
 
 With `backend="auto"`, a `Projector` that falls back to the portable backend on
 an NVIDIA CUDA machine emits one `UserWarning` at construction. The warning
-names the reasons: per-axis `voxel_spacing`, a `precision` other than
+names the reasons: per-axis `voxel_spacing` outside the native practical range, a `precision` other than
 `"fast"`, `partition="hybrid"` or `beam="parallel3d"`. Pass `backend="torch"`
 to select the portable backend explicitly and silence the warning.
 Analytical tile order can reread and refilter the source for another volume
