@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Native per-axis voxel spacing for projection, matched backprojection, geometry gradients and analytical FBP/FDK. Tensor axis order and physical length units match the PyTorch backend. Scalar native arithmetic is unchanged.
+- Native per-axis voxel spacing for projection, matched backprojection, geometry gradients and analytical FBP/FDK. Tensor axis order and physical length units match the PyTorch backend. Native pitches must be in `[1e-6, 1e6]`, with a maximum/minimum ratio of at most `1e4`. Outside these bounds, `numba` raises and `auto` selects PyTorch. On NVIDIA CUDA, the fallback warning names the reason. Scalar native arithmetic and admission are unchanged.
 
 ### Fixed
 

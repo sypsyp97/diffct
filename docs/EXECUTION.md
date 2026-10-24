@@ -98,20 +98,15 @@ shape. Projection and adjoint preserve them, including empty dimensions.
 coordinates remain `(x, y[, z])`. Spacings are fixed physical settings.
 Both backends support per-axis spacing. Native traversal scales each world
 coordinate by its axis pitch and integrates in physical length units.
-After FP32 conversion, each native per-axis pitch must lie in the closed range
-`[np.finfo(np.float32).tiny, sqrt(np.finfo(np.float32).max)]`.
-The upper bound is conservative: squared physical metric coefficients must
-fit in FP32, so `pitch[i]**2 <= float32.max` (a pitch limit of approximately
-`1.8447e19`). This also excludes huge pitches that erase finite segments in
-voxel-space FP32 normalization and traversal.
-The largest pitch divided by the smallest must not exceed `2**126`
-(approximately `8.507e37`). Native fast math flushes subnormal values to zero.
-To derive this bound, let `q = norm(pitch * direction)` for a unit voxel-space
-direction. Then `min(pitch) <= q <= max(pitch)`. Both `q / pitch[i]` and its
-reciprocal lie between `1 / ratio` and `ratio`. Requiring these factors to stay
-normal gives `ratio <= min(float32.max, 1 / float32.tiny) = 2**126`.
-`backend="numba"` raises outside these bounds; `backend="auto"` selects PyTorch.
-Pitch ratios up to 100 remain native when the pitches satisfy the magnitude bounds.
+Each native per-axis pitch must lie in the closed practical range `[1e-6, 1e6]`.
+The largest pitch divided by the smallest must not exceed `1e4`.
+These bounds are checked before FP32 conversion. FP32 representability alone
+does not prevent extreme pitches from erasing ray segments or overflowing
+geometry gradients. The conservative range limits these scaling effects;
+existing FP32 geometry range checks still apply.
+`backend="numba"` raises outside these bounds. `backend="auto"` selects PyTorch;
+on NVIDIA CUDA, its fallback warning names the violated bound.
+Scalar spacing retains its existing admission checks.
 
 Per-axis finite rays are degenerate only when their endpoints coincide.
 Detector offsets multiply their axis components before division by the pitch.
