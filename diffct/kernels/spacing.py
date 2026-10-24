@@ -12,7 +12,7 @@ def _is_per_axis(spacing):
     return isinstance(spacing, tuple)
 
 
-@overload(_is_per_axis, target="cuda", inline="always")
+@overload(_is_per_axis, target="cuda")
 def _is_per_axis_overload(spacing):
     per_axis = isinstance(spacing, types.BaseTuple)
 
@@ -29,7 +29,7 @@ def _axis_pitch(spacing, axis):
     return spacing
 
 
-@overload(_axis_pitch, target="cuda", inline="always")
+@overload(_axis_pitch, target="cuda")
 def _axis_pitch_overload(spacing, axis):
     if isinstance(spacing, types.BaseTuple):
         rank = len(spacing)
@@ -68,7 +68,7 @@ def _ray_scale(spacing, dx, dy, dz):
     return spacing
 
 
-@overload(_ray_scale, target="cuda", inline="always")
+@overload(_ray_scale, target="cuda")
 def _ray_scale_overload(spacing, dx, dy, dz):
     if isinstance(spacing, types.BaseTuple):
         return _ray_scale_3d if len(spacing) == 3 else _ray_scale_2d

@@ -113,7 +113,7 @@ def _parallel_geometry_terms(voxel_spacing, c_x, c_y, ct_x, ct_y, t_min,
                 ray_x, ray_y, dir_x, dir_y, scaled_length, accum)
 
 
-@overload(_parallel_geometry_terms, target="cuda", inline="always")
+@overload(_parallel_geometry_terms, target="cuda")
 def _parallel_geometry_terms_overload(voxel_spacing, c_x, c_y, ct_x, ct_y, t_min,
                                       ray_x, ray_y, dir_x, dir_y, scaled_length, accum):
     return _parallel_per_axis_terms if isinstance(voxel_spacing, types.BaseTuple) else _parallel_scalar_terms
