@@ -197,3 +197,4 @@ docs/video/palette.png
 # Sphinx autosummary stubs
 docs/source/generated/
 docs/search/node_modules/
+docs/search/tests/test-results/

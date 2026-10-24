@@ -280,6 +280,7 @@ function attach({ input, host, mode, maxGroups }) {
   }
 
   function renderEmpty() {
+    setActive(null);
     list.replaceChildren();
     foot.replaceChildren();
     message.replaceChildren();
@@ -452,6 +453,16 @@ function attach({ input, host, mode, maxGroups }) {
       onInput();
     }
   });
+
+  if (mode === 'dialog') {
+    // Sphinx handlers on `document` cancel Escape when focus is outside an input, which stops
+    // the native close. Close the dialog from here when focus is on a result.
+    host.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      host.closest('dialog').close();
+    });
+  }
 
   let nativeQuery = '';
   function runNative(q) {

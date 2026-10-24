@@ -1,0 +1,6 @@
+{
+ "tokenizer_class": "PreTrainedTokenizer",
+ "model_max_length": 512,
+ "pad_token": "[PAD]",
+ "unk_token": "[UNK]"
+}

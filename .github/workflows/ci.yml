@@ -270,7 +270,7 @@ jobs:
   docs:
     name: Documentation warnings
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       HF_CACHE_DIR: ${{ github.workspace }}/.cache/embeddinggemma
     steps:
@@ -300,6 +300,17 @@ jobs:
           key: embeddinggemma2-onnx-q8-daa72c51
       # Embed the section chunks for the in-browser semantic search.
       - run: node docs/search/build_index.mjs docs/build/html
+      # Browser tests of the search front end, against the HTML that was just built.
+      - run: npx --prefix docs/search playwright install --with-deps chromium
+      - run: npm run test:browser --prefix docs/search -- --fully-parallel
+        env:
+          DOCS_HTML: ${{ github.workspace }}/docs/build/html
+          PW_WORKERS: "2"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: search-browser-test-results
+          path: docs/search/tests/test-results
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:

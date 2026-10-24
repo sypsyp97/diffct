@@ -1,0 +1,15 @@
+{
+ "model_type": "bert",
+ "architectures": [
+  "BertModel"
+ ],
+ "hidden_size": 512,
+ "num_attention_heads": 1,
+ "num_hidden_layers": 1,
+ "vocab_size": 96,
+ "transformers.js_config": {
+  "use_external_data_format": {
+   "model_quantized.onnx": 1
+  }
+ }
+}
