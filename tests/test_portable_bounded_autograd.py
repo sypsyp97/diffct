@@ -136,13 +136,31 @@ def _assert_relative(actual, expected, tolerance, label=""):
 # Memory observers
 # ---------------------------------------------------------------------------
 
+def _physical(tensor):
+    """Strip functorch wrappers so storage sizes are physical bytes."""
+    functorch = torch._C._functorch
+    while functorch.is_batchedtensor(tensor) or functorch.is_gradtrackingtensor(tensor):
+        tensor = functorch.get_unwrapped(tensor)
+    return tensor
+
+
+def _storage(tensor):
+    """Physical (data pointer, bytes); (0, 0) for tensors that own no memory."""
+    tensor = _physical(tensor)
+    if tensor._is_zerotensor():  # forward-mode zero tangents
+        return 0, 0
+    storage = tensor.untyped_storage()
+    return storage.data_ptr(), storage.nbytes()
+
+
 def _saved_bytes(function):
     """Run ``function`` and sum distinct storages packed by autograd."""
     storages = {}
 
     def pack(tensor):
-        storage = tensor.untyped_storage()
-        storages[storage.data_ptr()] = storage.nbytes()
+        pointer, size = _storage(tensor)
+        if pointer:
+            storages[pointer] = size
         return tensor
 
     with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
@@ -170,10 +188,9 @@ def _live_bytes(references, excluded):
         tensor = reference()
         if tensor is None:
             continue
-        storage = tensor.untyped_storage()
-        pointer = storage.data_ptr()
+        pointer, size = _storage(tensor)
         if pointer and pointer not in excluded:
-            storages[pointer] = storage.nbytes()
+            storages[pointer] = size
     return sum(storages.values())
 
 
@@ -181,10 +198,11 @@ def _graph_bytes(function, caller):
     """Bytes created in forward and kept alive only by the returned graph."""
     observer = _CreatedTensors()
     with observer:
-        output = function()
-    excluded = {value.untyped_storage().data_ptr() for value in (*caller, output)}
+        outputs = function()
+    outputs = (outputs,) if isinstance(outputs, torch.Tensor) else tuple(outputs)
+    excluded = {_storage(value)[0] for value in (*caller, *outputs)}
     with_graph = _live_bytes(observer.references, excluded)
-    output = output.detach()
+    outputs = tuple(value.detach() for value in outputs)
     without_graph = _live_bytes(observer.references, excluded)
     return with_graph - without_graph
 
@@ -693,3 +711,201 @@ def test_forward_mode_with_respect_to_trajectory_raises(beam, operation, transfo
             torch.func.jvp(function, (source,), (torch.ones_like(source),))
         else:
             torch.func.jacfwd(function)(source)
+
+
+# ---------------------------------------------------------------------------
+# All differentiable call forms: vmap and differentiable jvp (A1 measurement)
+# ---------------------------------------------------------------------------
+
+def _transform_memory(beam, operation, transform, setting):
+    shape, _, _, _, _ = _SIZES[beam]
+    operator = _operator(beam, setting)
+    function = getattr(operator, operation)
+    input_shape = shape if operation == "project" else operator.projection_shape
+    adjoint = operator.backproject if operation == "project" else operator.project
+    if transform == "vmap":
+        data = _random((3, *input_shape), seed=51).requires_grad_()
+        inputs = (data,)
+
+        def forward():
+            return torch.vmap(function)(data)
+    else:
+        data = _random(input_shape, seed=51).requires_grad_()
+        tangent = (_random(input_shape, seed=52) - 0.6).requires_grad_()
+        inputs = (data, tangent)
+
+        def forward():
+            return torch.func.jvp(function, (data,), (tangent,))
+
+    saved, outputs = _saved_bytes(forward)
+    graph = _graph_bytes(forward, inputs)
+    outputs = (outputs,) if isinstance(outputs, torch.Tensor) else tuple(outputs)
+    # The bounded graph must still give matched-adjoint gradients.
+    weights = [_random(value.shape, seed=53 + index) for index, value in enumerate(outputs)]
+    loss = sum((value * weight).sum() for value, weight in zip(outputs, weights))
+    gradients = torch.autograd.grad(loss, inputs)
+    if transform == "vmap":
+        _assert_relative(gradients[0], torch.stack([adjoint(w) for w in weights[0]]), 1e-10,
+                         "vmap gradient")
+    else:
+        _assert_relative(gradients[0], adjoint(weights[0]), 1e-10, "jvp primal gradient")
+        _assert_relative(gradients[1], adjoint(weights[1]), 1e-10, "jvp tangent gradient")
+    io_elements = sum(v.numel() for v in inputs) + sum(v.numel() for v in outputs)
+    geometry_bytes = _tensor_bytes(_trajectory(beam, _trajectory_parameters(beam, _SIZES[beam][2])))
+    allowance = 4 * io_elements * 8 + 16 * geometry_bytes + 4096
+    return saved, graph, allowance, geometry_bytes
+
+
+@pytest.mark.parametrize("transform", ["vmap", "jvp"])
+@pytest.mark.parametrize("operation", ["project", "backproject"])
+@pytest.mark.parametrize("beam", ["fan", "cone"])
+def test_transform_saved_state_is_bounded_and_batch_independent(beam, operation, transform):
+    results = {setting: _transform_memory(beam, operation, transform, setting)
+               for setting in ("few", "many")}
+    for setting, (saved, graph, allowance, _) in results.items():
+        assert saved <= allowance, (
+            f"{setting}: autograd saved {saved} bytes; bound is {allowance} bytes")
+        assert graph <= allowance, (
+            f"{setting}: graph keeps {graph} bytes alive; bound is {allowance} bytes")
+    slack = results["few"][3] + 4096
+    assert abs(results["many"][0] - results["few"][0]) <= slack, results
+    assert abs(results["many"][1] - results["few"][1]) <= slack, results
+
+
+# ---------------------------------------------------------------------------
+# Geometry VJP working memory for a large leading batch
+# ---------------------------------------------------------------------------
+
+# docs/EXECUTION.md: automatically sized portable intermediates use an 8 MiB
+# ceiling, excluding caller data and returned arrays.
+WORK_BYTES = 8 * 1024 * 1024
+
+
+class _AllocationTimeline(TorchDispatchMode):
+    """Record each created storage and when its last observed tensor dies."""
+
+    def __init__(self):
+        super().__init__()
+        self.events = []
+        self._tensors = {}
+
+    def _released(self, pointer):
+        self._tensors[pointer] -= 1
+        if self._tensors[pointer] == 0:
+            del self._tensors[pointer]
+            self.events.append(("free", pointer, 0))
+
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        result = func(*args, **(kwargs or {}))
+        for value in tree_leaves(result):
+            if not isinstance(value, torch.Tensor):
+                continue
+            pointer, size = _storage(value)
+            if not pointer:
+                continue
+            if pointer not in self._tensors:
+                self._tensors[pointer] = 0
+                self.events.append(("alloc", pointer, size))
+            self._tensors[pointer] += 1
+            weakref.finalize(value, self._released, pointer)
+        return result
+
+    def usage(self, excluded):
+        largest = live = peak = 0
+        sizes = {}
+        for kind, pointer, size in self.events:
+            if pointer in excluded:
+                continue
+            if kind == "alloc":
+                sizes[pointer] = size
+                largest = max(largest, size)
+                live += size
+                peak = max(peak, live)
+            elif pointer in sizes:
+                live -= sizes.pop(pointer)
+        return largest, peak
+
+
+def _large_batch_case(geometry, batch=192):
+    beam = "fan"
+    shape, detector, views, spacing, pitch = _SIZES[beam]
+    parameters = tuple(value.clone().requires_grad_(geometry == "trajectory")
+                       for value in _trajectory_parameters(beam, views))
+    trajectory = _trajectory(beam, parameters)
+    surface, surface_parameters = (_surface(views) if geometry == "surface" else (None, ()))
+    operator = Projector(tuple(t.detach() for t in trajectory), shape, detector, beam=beam,
+                         detector_spacing=pitch, voxel_spacing=spacing, backend="torch",
+                         precision="float64", detector_surface=surface)
+    kwargs = {"trajectory": trajectory} if geometry == "trajectory" else {}
+    leaves = parameters if geometry == "trajectory" else surface_parameters
+    return operator, kwargs, leaves, (*trajectory, *surface_parameters), batch
+
+
+@pytest.mark.parametrize("operation", ["project", "backproject"])
+@pytest.mark.parametrize("geometry", ["trajectory", "surface"])
+def test_geometry_backward_with_large_batch_stays_within_work_bound(geometry, operation):
+    operator, kwargs, leaves, geometry_tensors, batch = _large_batch_case(geometry)
+    input_shape = (operator.volume_shape if operation == "project"
+                   else operator.projection_shape)
+    data = _random((batch, *input_shape), seed=61)
+    output = getattr(operator, operation)(data, **kwargs)
+    weight = _random(output.shape, seed=62)
+    # Caller arrays stay below the ceiling, so any larger allocation is
+    # workspace that scales with the batch instead of the automatic bound.
+    assert data.numel() * 8 < WORK_BYTES and output.numel() * 8 < WORK_BYTES
+    loss = (output * weight).sum()
+    timeline = _AllocationTimeline()
+    with timeline:
+        gradients = torch.autograd.grad(loss, leaves)
+    excluded = {value.untyped_storage().data_ptr()
+                for value in (data, output, weight, *geometry_tensors, *gradients)}
+    largest, peak = timeline.usage(excluded)
+    assert all(torch.isfinite(g).all() and g.abs().sum() > 0 for g in gradients)
+    assert largest <= WORK_BYTES, (
+        f"geometry backward allocated {largest} bytes at once; ceiling is {WORK_BYTES}")
+    assert peak <= 4 * WORK_BYTES, (
+        f"geometry backward peak live workspace {peak} bytes; bound is {4 * WORK_BYTES}")
+
+
+# ---------------------------------------------------------------------------
+# Empty leading shapes with trainable geometry
+# ---------------------------------------------------------------------------
+
+def _closure_surface(radius):
+    def cylinder(u, v):
+        return torch.stack((radius * torch.sin(u / radius), v,
+                            radius * (torch.cos(u / radius) - 1)), dim=-1)
+    return cylinder
+
+
+@pytest.mark.parametrize("leading", [(0,), (2, 0)], ids=["0", "2x0"])
+@pytest.mark.parametrize("operation", ["project", "backproject"])
+@pytest.mark.parametrize("geometry", ["trajectory", "surface", "closure"])
+@pytest.mark.parametrize("beam", ["fan", "cone"])
+def test_empty_leading_shape_with_trainable_geometry(beam, geometry, operation, leading):
+    shape, detector, views, spacing, pitch = _SMALL_SIZES[beam]
+    parameters = tuple(value.clone().requires_grad_(geometry == "trajectory")
+                       for value in _trajectory_parameters(beam, views))
+    trajectory = _trajectory(beam, parameters)
+    surface, leaves = None, parameters
+    if geometry == "surface":
+        surface, leaves = _surface(views)
+    elif geometry == "closure":
+        radius = torch.tensor(8.0, dtype=torch.float64, requires_grad=True)
+        surface, leaves = _closure_surface(radius), (radius,)
+    operator = Projector(tuple(t.detach() for t in trajectory), shape, detector, beam=beam,
+                         detector_spacing=pitch, voxel_spacing=spacing, backend="torch",
+                         precision="float64", detector_surface=surface)
+    kwargs = {"trajectory": trajectory} if geometry == "trajectory" else {}
+    input_shape = shape if operation == "project" else operator.projection_shape
+    output_shape = operator.projection_shape if operation == "project" else shape
+    data = torch.empty((*leading, *input_shape), dtype=torch.float64, requires_grad=True)
+
+    output = getattr(operator, operation)(data, **kwargs)
+    assert output.shape == (*leading, *output_shape) and output.numel() == 0
+    output.sum().backward()
+    assert data.grad is not None and data.grad.shape == data.shape
+    for leaf in leaves:
+        assert leaf.grad is not None, "trainable geometry received no gradient"
+        assert leaf.grad.shape == leaf.shape
+        assert torch.count_nonzero(leaf.grad) == 0
