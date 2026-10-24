@@ -109,21 +109,21 @@ def _cone_3d_forward_kernel(
         v_vec_y = d_det_v_vec[iview, 1]
         v_vec_z = d_det_v_vec[iview, 2]
 
-        # Calculate detector element offset from center
-        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
-        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
-
-        # Calculate 3D detector element position using center + u*u_vec + v*v_vec
-        det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
-        det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
-        det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
         if isinstance(voxel_spacing, tuple):
             u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
             v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
-            det_y = (det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
-                     + (v_phys / _axis_pitch(voxel_spacing, 1)) * v_vec_y)
-            det_z = (det_cz + (u_phys / _axis_pitch(voxel_spacing, 2)) * u_vec_z
-                     + (v_phys / _axis_pitch(voxel_spacing, 2)) * v_vec_z)
+            det_x = (det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+                     + (v_phys * v_vec_x) / _axis_pitch(voxel_spacing, 0))
+            det_y = (det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+                     + (v_phys * v_vec_y) / _axis_pitch(voxel_spacing, 1))
+            det_z = (det_cz + (u_phys * u_vec_z) / _axis_pitch(voxel_spacing, 2)
+                     + (v_phys * v_vec_z) / _axis_pitch(voxel_spacing, 2))
+        else:
+            u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
+            v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+            det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+            det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
     else:
         det_x = d_detector_positions[iview, iu, iv, 0] / _axis_pitch(voxel_spacing, 0)
         det_y = d_detector_positions[iview, iu, iv, 1] / _axis_pitch(voxel_spacing, 1)
@@ -138,7 +138,7 @@ def _cone_3d_forward_kernel(
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length < _EPSILON:  # Degenerate finite segment
+    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
         d_sino[iview, iu, iv] = _ZERO; return
     
     # Normalize 3D ray direction vector for parametric traversal
@@ -337,21 +337,21 @@ def _cone_3d_backward_kernel(
         v_vec_y = d_det_v_vec[iview, 1]
         v_vec_z = d_det_v_vec[iview, 2]
 
-        # Calculate detector element offset from center
-        u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
-        v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
-
-        # Calculate 3D detector element position using center + u*u_vec + v*v_vec
-        det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
-        det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
-        det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
         if isinstance(voxel_spacing, tuple):
             u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
             v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
-            det_y = (det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
-                     + (v_phys / _axis_pitch(voxel_spacing, 1)) * v_vec_y)
-            det_z = (det_cz + (u_phys / _axis_pitch(voxel_spacing, 2)) * u_vec_z
-                     + (v_phys / _axis_pitch(voxel_spacing, 2)) * v_vec_z)
+            det_x = (det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+                     + (v_phys * v_vec_x) / _axis_pitch(voxel_spacing, 0))
+            det_y = (det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+                     + (v_phys * v_vec_y) / _axis_pitch(voxel_spacing, 1))
+            det_z = (det_cz + (u_phys * u_vec_z) / _axis_pitch(voxel_spacing, 2)
+                     + (v_phys * v_vec_z) / _axis_pitch(voxel_spacing, 2))
+        else:
+            u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)
+            v_offset = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+            det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+            det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
     else:
         det_x = d_detector_positions[iview, iu, iv, 0] / _axis_pitch(voxel_spacing, 0)
         det_y = d_detector_positions[iview, iu, iv, 1] / _axis_pitch(voxel_spacing, 1)
@@ -365,7 +365,8 @@ def _cone_3d_backward_kernel(
     # Ray direction vector from source to detector element in 3D space
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)  # 3D ray length
-    if length < _EPSILON: return  # Skip degenerate finite segments
+    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
+        return
     inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y, dir_z = dir_x*inv_len, dir_y*inv_len, dir_z*inv_len  # Normalized 3D ray direction vector
     if isinstance(voxel_spacing, tuple):

@@ -98,8 +98,26 @@ shape. Projection and adjoint preserve them, including empty dimensions.
 coordinates remain `(x, y[, z])`. Spacings are fixed physical settings.
 Both backends support per-axis spacing. Native traversal scales each world
 coordinate by its axis pitch and integrates in physical length units.
-Each native per-axis pitch must be finite and at least `np.finfo(np.float32).tiny`.
-Native fast math flushes smaller divisors to zero.
+After FP32 conversion, each native per-axis pitch must lie in the closed range
+`[np.finfo(np.float32).tiny, sqrt(np.finfo(np.float32).max)]`.
+The upper bound is conservative: squared physical metric coefficients must
+fit in FP32, so `pitch[i]**2 <= float32.max` (a pitch limit of approximately
+`1.8447e19`). This also excludes huge pitches that erase finite segments in
+voxel-space FP32 normalization and traversal.
+The largest pitch divided by the smallest must not exceed `2**126`
+(approximately `8.507e37`). Native fast math flushes subnormal values to zero.
+To derive this bound, let `q = norm(pitch * direction)` for a unit voxel-space
+direction. Then `min(pitch) <= q <= max(pitch)`. Both `q / pitch[i]` and its
+reciprocal lie between `1 / ratio` and `ratio`. Requiring these factors to stay
+normal gives `ratio <= min(float32.max, 1 / float32.tiny) = 2**126`.
+`backend="numba"` raises outside these bounds; `backend="auto"` selects PyTorch.
+Pitch ratios up to 100 remain native when the pitches satisfy the magnitude bounds.
+
+Per-axis finite rays are degenerate only when their endpoints coincide.
+Detector offsets multiply their axis components before division by the pitch.
+Endpoint metric derivatives use FP64 intermediates before the final FP32 cast.
+Scalar spacing retains its existing arithmetic and degeneracy threshold.
+Helical reconstruction accepts `(dz, dy, dx)` and uses `dz` for slice positions.
 
 For 2D parallel rays, scalar spacing preserves the original direction-gradient
 convention. Per-axis spacing differentiates physical ray length. The gradients

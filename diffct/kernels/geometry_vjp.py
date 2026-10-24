@@ -60,6 +60,14 @@ def _face_terms(c, local_t, entry_tau, entry_tau_minus_one, inv_length, d):
     return c * tau_minus_one / d, -c * tau / d
 
 
+@cuda.jit(device=True, inline=True)
+def _physical_endpoint_terms(ga, gb, fraction, pitch, scale, direction):
+    """Apply the metric before rounding the endpoint derivatives to FP32."""
+    face = np.float64(scale) / pitch
+    length_term = np.float64(fraction) * (np.float64(pitch) * direction / scale)
+    return np.float32(face * ga - length_term), np.float32(face * gb + length_term)
+
+
 @_FASTMATH_DECORATOR
 def _fan_2d_geometry_vjp_kernel(
     d_image, Nx, Ny,
@@ -87,11 +95,13 @@ def _fan_2d_geometry_vjp_kernel(
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
         u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
-        u_offset = u_phys / _axis_pitch(voxel_spacing, 0)
-        det_x = det_cx + u_offset * u_vec_x
-        det_y = det_cy + u_offset * u_vec_y
         if isinstance(voxel_spacing, tuple):
-            det_y = det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
+            det_x = det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+            det_y = det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+        else:
+            u_offset = u_phys / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x
+            det_y = det_cy + u_offset * u_vec_y
     else:
         det_x = d_detector_positions[iang, idet, 0] / _axis_pitch(voxel_spacing, 0)
         det_y = d_detector_positions[iang, idet, 1] / _axis_pitch(voxel_spacing, 1)
@@ -102,7 +112,7 @@ def _fan_2d_geometry_vjp_kernel(
 
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
-    if length < _EPSILON:
+    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
         return
     inv_len = _ONE / length
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len
@@ -221,16 +231,8 @@ def _fan_2d_geometry_vjp_kernel(
     S = accum * inv_length
     if isinstance(voxel_spacing, tuple):
         scale = _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
-        pitch_x = _axis_pitch(voxel_spacing, 0)
-        face_x = scale / pitch_x
-        norm_x = S * (pitch_x / scale) * ray_x
-        ga_x = face_x * ga_x - norm_x
-        gb_x = face_x * gb_x + norm_x
-        pitch_y = _axis_pitch(voxel_spacing, 1)
-        face_y = scale / pitch_y
-        norm_y = S * (pitch_y / scale) * ray_y
-        ga_y = face_y * ga_y - norm_y
-        gb_y = face_y * gb_y + norm_y
+        ga_x, gb_x = _physical_endpoint_terms(ga_x, gb_x, S, _axis_pitch(voxel_spacing, 0), scale, dir_x)
+        ga_y, gb_y = _physical_endpoint_terms(ga_y, gb_y, S, _axis_pitch(voxel_spacing, 1), scale, dir_y)
     else:
         ga_x -= S * ray_x
         ga_y -= S * ray_y
@@ -281,16 +283,19 @@ def _cone_3d_geometry_vjp_kernel(
         v_vec_z = d_det_v_vec[iview, 2]
         u_phys = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du
         v_phys = (np.float32(iv) + _HALF - np.float32(n_v) * _HALF) * dv
-        u_offset = u_phys / _axis_pitch(voxel_spacing, 0)
-        v_offset = v_phys / _axis_pitch(voxel_spacing, 0)
-        det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
-        det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
-        det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
         if isinstance(voxel_spacing, tuple):
-            det_y = (det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
-                     + (v_phys / _axis_pitch(voxel_spacing, 1)) * v_vec_y)
-            det_z = (det_cz + (u_phys / _axis_pitch(voxel_spacing, 2)) * u_vec_z
-                     + (v_phys / _axis_pitch(voxel_spacing, 2)) * v_vec_z)
+            det_x = (det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+                     + (v_phys * v_vec_x) / _axis_pitch(voxel_spacing, 0))
+            det_y = (det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+                     + (v_phys * v_vec_y) / _axis_pitch(voxel_spacing, 1))
+            det_z = (det_cz + (u_phys * u_vec_z) / _axis_pitch(voxel_spacing, 2)
+                     + (v_phys * v_vec_z) / _axis_pitch(voxel_spacing, 2))
+        else:
+            u_offset = u_phys / _axis_pitch(voxel_spacing, 0)
+            v_offset = v_phys / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x + v_offset * v_vec_x
+            det_y = det_cy + u_offset * u_vec_y + v_offset * v_vec_y
+            det_z = det_cz + u_offset * u_vec_z + v_offset * v_vec_z
     else:
         det_x = d_detector_positions[iview, iu, iv, 0] / _axis_pitch(voxel_spacing, 0)
         det_y = d_detector_positions[iview, iu, iv, 1] / _axis_pitch(voxel_spacing, 1)
@@ -302,7 +307,7 @@ def _cone_3d_geometry_vjp_kernel(
 
     dir_x, dir_y, dir_z = det_x - src_x, det_y - src_y, det_z - src_z
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
-    if length < _EPSILON:
+    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
         return
     inv_len = _ONE / length
     dir_x, dir_y, dir_z = dir_x * inv_len, dir_y * inv_len, dir_z * inv_len
@@ -456,21 +461,9 @@ def _cone_3d_geometry_vjp_kernel(
     S = accum * inv_length
     if isinstance(voxel_spacing, tuple):
         scale = _ray_scale(voxel_spacing, dir_x, dir_y, dir_z)
-        pitch_x = _axis_pitch(voxel_spacing, 0)
-        face_x = scale / pitch_x
-        norm_x = S * (pitch_x / scale) * ray_x
-        ga_x = face_x * ga_x - norm_x
-        gb_x = face_x * gb_x + norm_x
-        pitch_y = _axis_pitch(voxel_spacing, 1)
-        face_y = scale / pitch_y
-        norm_y = S * (pitch_y / scale) * ray_y
-        ga_y = face_y * ga_y - norm_y
-        gb_y = face_y * gb_y + norm_y
-        pitch_z = _axis_pitch(voxel_spacing, 2)
-        face_z = scale / pitch_z
-        norm_z = S * (pitch_z / scale) * ray_z
-        ga_z = face_z * ga_z - norm_z
-        gb_z = face_z * gb_z + norm_z
+        ga_x, gb_x = _physical_endpoint_terms(ga_x, gb_x, S, _axis_pitch(voxel_spacing, 0), scale, dir_x)
+        ga_y, gb_y = _physical_endpoint_terms(ga_y, gb_y, S, _axis_pitch(voxel_spacing, 1), scale, dir_y)
+        ga_z, gb_z = _physical_endpoint_terms(ga_z, gb_z, S, _axis_pitch(voxel_spacing, 2), scale, dir_z)
     else:
         ga_x -= S * ray_x
         ga_y -= S * ray_y
@@ -657,15 +650,16 @@ def _parallel_2d_geometry_vjp_kernel(
         gr_y = np.float32(-_axis_pitch(voxel_spacing, 0) * (t_min * c_y + ct_y) / ray_y)
 
     if isinstance(voxel_spacing, tuple):
-        scale = _ray_scale(voxel_spacing, dir_x, dir_y, _ZERO)
-        pitch_x, pitch_y = _axis_pitch(voxel_spacing, 0), _axis_pitch(voxel_spacing, 1)
+        scale = np.float64(_ray_scale(voxel_spacing, dir_x, dir_y, _ZERO))
+        pitch_x = np.float64(_axis_pitch(voxel_spacing, 0))
+        pitch_y = np.float64(_axis_pitch(voxel_spacing, 1))
         gp_x, gp_y = _ZERO, _ZERO
         gd_x, gd_y = np.float64(0.0), np.float64(0.0)
         if abs(ray_x) > _TINY:
-            gp_x = -scale * c_x / (ray_x * pitch_x)
+            gp_x = -scale * c_x / (np.float64(ray_x) * pitch_x)
             gd_x = -scale * (t_min * c_x + ct_x) / ray_x
         if abs(ray_y) > _TINY:
-            gp_y = -scale * c_y / (ray_y * pitch_y)
+            gp_y = -scale * c_y / (np.float64(ray_y) * pitch_y)
             gd_y = -scale * (t_min * c_y + ct_y) / ray_y
         gd_x += accum * (pitch_x / scale) * pitch_x * dir_x
         gd_y += accum * (pitch_y / scale) * pitch_y * dir_y

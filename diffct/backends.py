@@ -14,6 +14,7 @@ from torch.autograd import forward_ad
 from .chunking import _memory_lower_bounds
 from .distribution import control_status
 from .surfaces import ParameterizedSurface
+from .constants import _native_spacing
 
 
 # Maximum automatic ray/plane work array payload for host memory; caller
@@ -98,6 +99,13 @@ def select_backend(backend, precision, spacing, partition="views"):
     if not isinstance(precision, str) or precision not in ("fast", "float32", "float64"):
         raise ValueError("precision must be 'fast', 'float32', or 'float64'")
     compatible = precision == "fast" and partition != "hybrid"
+    if compatible and backend != "torch" and isinstance(spacing, (tuple, list)):
+        try:
+            _native_spacing(spacing)
+        except ValueError:
+            if backend == "numba":
+                raise
+            compatible = False
     available = torch.cuda.is_available() and torch.version.hip is None
     if backend == "numba":
         if not compatible:

@@ -92,15 +92,14 @@ def _fan_2d_forward_kernel(
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
 
-        # Calculate detector element offset from center
-        u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
-
-        # Calculate 2D detector element position using center + u*u_vec
-        det_x = det_cx + u_offset * u_vec_x
-        det_y = det_cy + u_offset * u_vec_y
         if isinstance(voxel_spacing, tuple):
             u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
-            det_y = det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
+            det_x = det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+            det_y = det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+        else:
+            u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x
+            det_y = det_cy + u_offset * u_vec_y
     else:
         det_x = d_detector_positions[iang, idet, 0] / _axis_pitch(voxel_spacing, 0)
         det_y = d_detector_positions[iang, idet, 1] / _axis_pitch(voxel_spacing, 1)
@@ -114,7 +113,7 @@ def _fan_2d_forward_kernel(
     # Ray direction vector from source to detector element
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
-    if length < _EPSILON:  # Degenerate ray case
+    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
         d_sino[iang, idet] = _ZERO; return
     
     # Normalize ray direction vector for parametric traversal
@@ -269,15 +268,14 @@ def _fan_2d_backward_kernel(
         u_vec_x = d_det_u_vec[iang, 0]
         u_vec_y = d_det_u_vec[iang, 1]
 
-        # Calculate detector element offset from center
-        u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
-
-        # Calculate 2D detector element position using center + u*u_vec
-        det_x = det_cx + u_offset * u_vec_x
-        det_y = det_cy + u_offset * u_vec_y
         if isinstance(voxel_spacing, tuple):
             u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
-            det_y = det_cy + (u_phys / _axis_pitch(voxel_spacing, 1)) * u_vec_y
+            det_x = det_cx + (u_phys * u_vec_x) / _axis_pitch(voxel_spacing, 0)
+            det_y = det_cy + (u_phys * u_vec_y) / _axis_pitch(voxel_spacing, 1)
+        else:
+            u_offset = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing / _axis_pitch(voxel_spacing, 0)
+            det_x = det_cx + u_offset * u_vec_x
+            det_y = det_cy + u_offset * u_vec_y
     else:
         det_x = d_detector_positions[iang, idet, 0] / _axis_pitch(voxel_spacing, 0)
         det_y = d_detector_positions[iang, idet, 1] / _axis_pitch(voxel_spacing, 1)
@@ -290,7 +288,8 @@ def _fan_2d_backward_kernel(
     # Ray direction vector from source to detector element
     dir_x, dir_y = det_x - src_x, det_y - src_y
     length = math.sqrt(dir_x * dir_x + dir_y * dir_y)  # Ray length
-    if length < _EPSILON: return  # Skip degenerate rays
+    if length == 0 or (not isinstance(voxel_spacing, tuple) and length < _EPSILON):
+        return
     inv_len = _ONE / length        # Normalization factor for ray direction
     dir_x, dir_y = dir_x * inv_len, dir_y * inv_len  # Normalized ray direction vector
     if isinstance(voxel_spacing, tuple):

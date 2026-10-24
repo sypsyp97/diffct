@@ -23,6 +23,12 @@ def _native_spacing(spacing):
         # CUDA fast math flushes subnormal divisors to zero.
         if any(not np.isfinite(value) or value < np.finfo(_DTYPE).tiny for value in pitches):
             raise ValueError("native voxel_spacing must be finite and at least float32.tiny on every axis")
+        # Both a metric ratio and its reciprocal must stay normal under fast math.
+        if float(max(pitches)) / float(min(pitches)) > 1.0 / float(np.finfo(_DTYPE).tiny):
+            raise ValueError("native voxel_spacing pitch ratio must not exceed 2**126 (float32 normal range)")
+        # Keep squared physical metric coefficients within the FP32 range.
+        if float(max(pitches)) ** 2 > float(np.finfo(_DTYPE).max):
+            raise ValueError("native voxel_spacing must not exceed sqrt(float32.max) on any axis")
         return pitches
     return _DTYPE(spacing)
 
