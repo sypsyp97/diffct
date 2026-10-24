@@ -269,7 +269,7 @@ detector center coincides with the source.
    from diffct import transform_trajectory
 
    shift = torch.zeros(3, device=volume.device, requires_grad=True)
-   current = transform_trajectory(current, translation=shift)
+   current = transform_trajectory(tuple(t.detach() for t in current), translation=shift)
    shifted = A.project(volume, trajectory=current)
 
 Limits:
