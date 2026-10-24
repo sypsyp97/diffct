@@ -388,6 +388,18 @@ def test_hessian_vector_product_matches_finite_difference_of_gradient(beam):
     _assert_relative(hvp, finite.detach(), 1e-10, "HVP vs finite difference")
 
 
+# Transient CUDA work of one portable call may use this fraction of the device
+# memory that is usable when the call starts (work-budget contract C1, stated
+# in docs/EXECUTION.md). Caller inputs and returned outputs are excluded.
+CUDA_WORK_FRACTION = 0.25
+
+
+def _usable_cuda_bytes(device):
+    free, _ = torch.cuda.mem_get_info(device)
+    cached = torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
+    return free + cached
+
+
 @pytest.mark.cuda
 @CUDA_REQUIRED
 def test_cuda_shepp_logan_256_cone_forward_backward_has_bounded_memory():
@@ -401,26 +413,48 @@ def test_cuda_shepp_logan_256_cone_forward_backward_has_bounded_memory():
                          detector_spacing=1.0, voxel_spacing=(1.0, 1.0, 1.0),
                          backend="torch", precision="float32")
     assert operator.backend == "torch"
+    input_bytes = volume.numel() * volume.element_size()
+    geometry_bytes = _tensor_bytes(trajectory)
+
+    # Forward: the transient peak stays within the documented work budget and
+    # the memory kept after the call is the output plus bounded saved state.
     torch.cuda.synchronize(device)
     baseline = torch.cuda.memory_allocated(device)
+    usable = _usable_cuda_bytes(device)
     torch.cuda.reset_peak_memory_stats(device)
-
     projection = operator.project(volume)
     torch.cuda.synchronize(device)
-    output_bytes = projection.numel() * projection.element_size()
-    retained = torch.cuda.memory_allocated(device) - baseline
-    peak = torch.cuda.max_memory_allocated(device) - baseline
     assert projection.shape == (64, 768, 512)
-    assert retained < 4 * output_bytes, (
-        f"after forward {retained} bytes are allocated; output is {output_bytes} bytes")
-    assert peak < 4 * output_bytes, (
-        f"forward peak {peak} bytes above the input; output is {output_bytes} bytes")
+    output_bytes = projection.numel() * projection.element_size()
+    saved_state = torch.cuda.memory_allocated(device) - baseline - output_bytes
+    peak_work = torch.cuda.max_memory_allocated(device) - baseline - output_bytes
+    saved_bound = 4 * (input_bytes + output_bytes) + 16 * geometry_bytes + 4096
+    work_bound = CUDA_WORK_FRACTION * usable
+    assert saved_state <= saved_bound, (
+        f"after forward {saved_state} bytes besides the output stay allocated; "
+        f"bound is {saved_bound} bytes (input {input_bytes}, output {output_bytes})")
+    assert peak_work <= work_bound, (
+        f"forward transient peak {peak_work} bytes; work budget is {work_bound:.0f} bytes "
+        f"({CUDA_WORK_FRACTION} of {usable} usable bytes)")
 
-    projection.sum().backward()
+    # Backward: one adjoint call with the same work budget. Its returned arrays
+    # are the volume gradient and, at most, a materialized upstream gradient.
+    loss = projection.sum()
     torch.cuda.synchronize(device)
+    before_backward = torch.cuda.memory_allocated(device)
+    usable = _usable_cuda_bytes(device)
+    torch.cuda.reset_peak_memory_stats(device)
+    loss.backward()
+    torch.cuda.synchronize(device)
+    backward_work = (torch.cuda.max_memory_allocated(device) - before_backward
+                     - input_bytes - output_bytes)
+    work_bound = CUDA_WORK_FRACTION * usable
+    assert backward_work <= work_bound, (
+        f"backward transient peak {backward_work} bytes; work budget is {work_bound:.0f} "
+        f"bytes ({CUDA_WORK_FRACTION} of {usable} usable bytes)")
     assert volume.grad is not None and volume.grad.shape == volume.shape
     assert torch.isfinite(volume.grad).all()
-    del projection
+    del projection, loss
     with torch.no_grad():
         adjoint = operator.backproject(torch.ones((64, 768, 512), device=device))
     _assert_relative(volume.grad, adjoint, 1e-5, "Shepp-Logan 256 gradient")
