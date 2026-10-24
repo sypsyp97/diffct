@@ -12,7 +12,7 @@ import torch
 import diffct
 from tests._native_per_axis_spacing import (
     ANALYTICAL_ATOL, ANALYTICAL_RTOL, NATIVE_REQUIRED,
-    close, cuda_device, data, native_device, native_only,
+    close, cuda_device, data, native_device as native_device, native_only,
 )
 
 

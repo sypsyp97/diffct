@@ -25,7 +25,7 @@ from tests._native_per_axis_spacing import (
     ANALYTICAL_ATOL, ANALYTICAL_RTOL, BEAMS, CHORD_ATOL, CHORD_RTOL,
     FLAT_ATOL, FLAT_RTOL, GEOMETRY_ATOL, GEOMETRY_RTOL, NATIVE_BEAMS, NATIVE_REQUIRED,
     PORTABLE_ATOL, PORTABLE_RTOL, REFERENCE, SCALAR_BEAMS, SURFACES,
-    case, chunks, close, cuda_device, data, native_device, native_only,
+    case, chunks, close, cuda_device, data, native_device as native_device, native_only,
     operator, scalar_outputs, signatures, surface,
 )
 
