@@ -88,8 +88,6 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
         if len(geom) == 2:
             d_positions = d_geom[1]
             d_geom = [d_geom[0]] * (4 if beam == "cone" else 3)
-        elif beam == "cone" and isinstance(voxel_spacing, (tuple, list)):
-            d_positions = None
         else:
             empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_volume = TorchCUDABridge.tensor_to_cuda_array(native_volume)
@@ -99,6 +97,10 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
             W, H, D = native_volume.shape
             n_views, n_u, n_v = sinogram.shape
             du, dv = detector_spacing
+            native_spacing = _native_spacing(voxel_spacing)
+            if len(geom) == 4 and isinstance(native_spacing, tuple):
+                # Flat per-axis rays retain FP64 traversal parameters.
+                native_spacing = tuple(np.float64(value) for value in native_spacing)
             if backproject:
                 # A warp covers up to 32 adjacent detector rows of one column and view, so its
                 # rays share an xy path and the backprojection atomics coalesce.
@@ -118,7 +120,7 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(du), _DTYPE(dv), *d_geom,
                 _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
-                _native_spacing(voxel_spacing), d_positions,
+                native_spacing, d_positions,
             )
         else:
             H, W = native_volume.shape

@@ -28,23 +28,20 @@ from ..constants import (
 # 3D Cone Beam Forward Projection Kernel
 # ============================================================================
 
-def _cone_parameter(value, spacing, positions):
+def _cone_parameter(value, spacing):
     """Keep flat per-axis traversal parameters precise across spatial slabs."""
-    if isinstance(spacing, tuple) and positions is None:
+    if isinstance(spacing, tuple) and isinstance(spacing[0], (float, np.float64)):
         return np.float64(value)
     return np.float32(value)
 
 
 @overload(_cone_parameter, target="cuda")
-def _cone_parameter_overload(value, spacing, positions):
-    flat = isinstance(positions, types.NoneType) or (
-        isinstance(positions, types.Omitted) and positions.value is None
-    )
-    if isinstance(spacing, types.BaseTuple) and flat:
-        def impl(value, spacing, positions):
+def _cone_parameter_overload(value, spacing):
+    if isinstance(spacing, types.UniTuple) and spacing.dtype == types.float64:
+        def impl(value, spacing):
             return np.float64(value)
     else:
-        def impl(value, spacing, positions):
+        def impl(value, spacing):
             return np.float32(value)
     return impl
 
@@ -211,13 +208,13 @@ def _cone_3d_forward_kernel(
         d_sino[iview, iu, iv] = _ZERO; return
 
     # Flat per-axis rays retain FP64 parameters; existing paths retain FP32.
-    ent_x = _cone_parameter(org_x + t_min * dir_x, voxel_spacing, d_detector_positions)
-    ent_y = _cone_parameter(org_y + t_min * dir_y, voxel_spacing, d_detector_positions)
-    ent_z = _cone_parameter(org_z + t_min * dir_z, voxel_spacing, d_detector_positions)
-    ray_x = _cone_parameter(dir_x, voxel_spacing, d_detector_positions)
-    ray_y = _cone_parameter(dir_y, voxel_spacing, d_detector_positions)
-    ray_z = _cone_parameter(dir_z, voxel_spacing, d_detector_positions)
-    t_end = _cone_parameter(t_max - t_min, voxel_spacing, d_detector_positions)
+    ent_x = _cone_parameter(org_x + t_min * dir_x, voxel_spacing)
+    ent_y = _cone_parameter(org_y + t_min * dir_y, voxel_spacing)
+    ent_z = _cone_parameter(org_z + t_min * dir_z, voxel_spacing)
+    ray_x = _cone_parameter(dir_x, voxel_spacing)
+    ray_y = _cone_parameter(dir_y, voxel_spacing)
+    ray_z = _cone_parameter(dir_z, voxel_spacing)
+    t_end = _cone_parameter(t_max - t_min, voxel_spacing)
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     accum = _ZERO  # Accumulated projection value
@@ -438,13 +435,13 @@ def _cone_3d_backward_kernel(
     if t_min >= t_max: return
 
     # Match the forward kernel's compile-time traversal precision.
-    ent_x = _cone_parameter(org_x + t_min * dir_x, voxel_spacing, d_detector_positions)
-    ent_y = _cone_parameter(org_y + t_min * dir_y, voxel_spacing, d_detector_positions)
-    ent_z = _cone_parameter(org_z + t_min * dir_z, voxel_spacing, d_detector_positions)
-    ray_x = _cone_parameter(dir_x, voxel_spacing, d_detector_positions)
-    ray_y = _cone_parameter(dir_y, voxel_spacing, d_detector_positions)
-    ray_z = _cone_parameter(dir_z, voxel_spacing, d_detector_positions)
-    t_end = _cone_parameter(t_max - t_min, voxel_spacing, d_detector_positions)
+    ent_x = _cone_parameter(org_x + t_min * dir_x, voxel_spacing)
+    ent_y = _cone_parameter(org_y + t_min * dir_y, voxel_spacing)
+    ent_z = _cone_parameter(org_z + t_min * dir_z, voxel_spacing)
+    ray_x = _cone_parameter(dir_x, voxel_spacing)
+    ray_y = _cone_parameter(dir_y, voxel_spacing)
+    ray_z = _cone_parameter(dir_z, voxel_spacing)
+    t_end = _cone_parameter(t_max - t_min, voxel_spacing)
 
     # === 3D SIDDON METHOD TRAVERSAL INITIALIZATION ===
     t = _ZERO
