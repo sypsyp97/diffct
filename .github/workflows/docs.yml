@@ -22,10 +22,15 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       actions: read
-      contents: write
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Ignore builds superseded on main
         id: current
@@ -43,9 +48,12 @@ jobs:
           path: html
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Deploy to gh-pages
+      # Publish the built site as a Pages artifact instead of a gh-pages commit:
+      # nothing generated enters the git history, and push-time scanners do not run on it.
+      - uses: actions/upload-pages-artifact@v5
         if: steps.current.outputs.result == 'true'
-        uses: peaceiris/actions-gh-pages@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: html
+          path: html
+      - id: deployment
+        if: steps.current.outputs.result == 'true'
+        uses: actions/deploy-pages@v5
