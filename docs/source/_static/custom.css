@@ -58,7 +58,9 @@ figure.example-figure figcaption { font-size: 0.85rem; color: var(--pst-color-te
 /* Search: results panel shared by the landing box, the Ctrl+K dialog and the search page */
 .srch-host { margin-top: 0.5rem; }
 .srch-bar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 1rem;
-  min-height: 1.4rem; font-size: 0.85rem; color: var(--pst-color-text-muted); }
+  font-size: 0.85rem; color: var(--pst-color-text-muted); }
+.srch-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.srch-landing .search-button-field { display: none; }
 .srch-actions { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; }
 .srch-button { background: none; border: 1px solid var(--pst-color-border); border-radius: 0.3rem; padding: 0.1rem 0.55rem;
   font: inherit; color: var(--pst-color-link); cursor: pointer; }

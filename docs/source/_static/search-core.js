@@ -167,13 +167,47 @@ export function semanticSearch(index, q) {
   };
 }
 
+function withinOneEdit(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  const rest = (x, y) => x.slice(i + 1) === y.slice(i + 1) || x.slice(i) === y.slice(i + 1) || x.slice(i + 1) === y.slice(i);
+  return a === b || rest(a, b);
+}
+
+/**
+ * Reference pages whose name the query contains. Names ignore case and underscores. A word
+ * matches a name when it is equal, one typo away (6 characters or more), or an identifier with
+ * an underscore that starts with the name (`fbp_into` for `fbp`) or whose part of 4 characters
+ * or more starts the name (`project_into` for `Projector`).
+ */
+function namedReferences(index, query) {
+  const words = query.toLowerCase().match(/[a-z0-9_]+/g) || [];
+  const found = new Set();
+  index.chunks.forEach((c) => {
+    if (!c.u.startsWith('generated/') || found.has(pageOf(c))) return;
+    const name = c.p.toLowerCase().replace(/_/g, '');
+    const hit = words.some((raw) => {
+      const w = raw.replace(/_/g, '');
+      if (w === name || (w.length >= 6 && name.length >= 6 && withinOneEdit(w, name))) return true;
+      if (!raw.includes('_')) return false;
+      return (name.length >= 3 && w.startsWith(name))
+        || raw.split('_').some((part) => part.length >= 4 && name.startsWith(part));
+    });
+    if (hit) found.add(pageOf(c));
+  });
+  return found;
+}
+
 /**
  * Merge keyword ids and a semantic result (or null) into groups of results by page.
  * Each group has up to `perPage` visible items and up to `extra` more behind a toggle.
  */
 export function combine(index, keywordIds, semantic, {
-  maxGroups, perPage = 2, extra = 3, pageWeight = 1, codeOnlyWeight = 0.85, referenceWeight = 0.8,
+  maxGroups, query = '', perPage = 2, extra = 3, pageWeight = 1, codeOnlyWeight = 0.85,
+  referenceWeight = 0.5, namedWeight = 1.5,
 }) {
+  const named = namedReferences(index, query);
   const score = new Map();
   const add = (id, value) => score.set(id, (score.get(id) || 0) + value);
   const kwRank = new Map(keywordIds.map((id, r) => [id, r]));
@@ -190,7 +224,9 @@ export function combine(index, keywordIds, semantic, {
   for (const id of score.keys()) {
     const chunk = index.chunks[id];
     if (chunk.t.length < 80) score.set(id, score.get(id) * codeOnlyWeight);
-    if (chunk.u.startsWith('generated/')) score.set(id, score.get(id) * referenceWeight);
+    if (chunk.u.startsWith('generated/')) {
+      score.set(id, score.get(id) * (named.has(pageOf(chunk)) ? namedWeight : referenceWeight));
+    }
   }
   const ranked = [...score.entries()].sort((x, y) => y[1] - x[1]);
   const groups = new Map();

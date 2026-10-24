@@ -178,7 +178,9 @@ function attach({ input, host, mode, maxGroups }) {
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   const actions = el('span', 'srch-actions');
-  bar.append(status, actions);
+  const count = el('span', 'srch-sr');
+  count.setAttribute('role', 'status');
+  bar.append(status, actions, count);
   const progress = el('progress', 'srch-progress');
   progress.max = 100;
   progress.hidden = true;
@@ -230,30 +232,30 @@ function attach({ input, host, mode, maxGroups }) {
     actions.replaceChildren();
     progress.hidden = engine.model !== 'loading';
     const mb = (bytes) => Math.round(bytes / 1e6);
-    const count = groups.reduce((n, g) => n + g.items.length + g.more.length, 0);
+    const total = groups.reduce((n, g) => n + g.items.length + g.more.length, 0);
+    // The status line shows only what the visitor needs to act on or wait for.
     let text = '';
     if (engine.indexError) {
       text = 'The search index is not available. Use the page search below.';
     } else if (engine.model === 'loading') {
-      text = engine.total
-        ? `Loading semantic search model (≈${MODEL_MB} MB, one time): ${mb(engine.loaded)} of ${mb(engine.total)} MB`
-        : `Loading semantic search model (≈${MODEL_MB} MB, one time)`;
+      text = engine.fromCache
+        ? 'Loading semantic search model from the browser cache'
+        : `Loading semantic search model (\u2248${MODEL_MB} MB, one time)`;
+      if (engine.total) text += `: ${mb(engine.loaded)} of ${mb(engine.total)} MB`;
       progress.value = engine.total ? (100 * engine.loaded) / engine.total : 0;
       actions.append(button('Keyword only', stopModel));
     } else if (engine.model === 'consent') {
-      text = `Semantic search matches meaning, also across languages. It needs a one-time download of ≈${MODEL_MB} MB.`;
+      text = `Semantic search matches meaning, also across languages. It needs a one-time download of \u2248${MODEL_MB} MB.`;
       actions.append(button('Download', enableModel), button('Keyword only', stopModel));
-    } else if (engine.model === 'ready') {
-      text = semanticPending ? 'Searching by meaning...' : `Keyword + semantic · ${engine.backend}`;
-      if (query && !semanticPending) text += ` · ${count} result${count === 1 ? '' : 's'}`;
     } else if (engine.model === 'off') {
-      text = query ? 'Keyword matches only.' : 'Semantic search is off.';
-      actions.append(button(`Enable semantic search (≈${MODEL_MB} MB)`, enableModel));
+      text = 'Keyword search only.';
+      actions.append(button(`Turn on semantic search (\u2248${MODEL_MB} MB download)`, enableModel));
     } else if (engine.model === 'error') {
-      text = 'Semantic search is unavailable in this browser. Keyword matches only.';
-    } else if (query) {
-      text = 'Keyword matches.';
+      text = 'Semantic search does not work in this browser. These are keyword matches.';
     }
+    // Screen readers still hear the result count.
+    count.textContent = query && !semanticPending ? `${total} result${total === 1 ? '' : 's'}` : '';
+    host.dataset.state = semanticPending ? 'pending' : engine.model;
     status.textContent = text;
   }
 
@@ -298,7 +300,7 @@ function attach({ input, host, mode, maxGroups }) {
     message.className = 'srch-message';
     list.replaceChildren();
     groups = engine.index
-      ? core.combine(engine.index, keywordIds, semantic, { maxGroups })
+      ? core.combine(engine.index, keywordIds, semantic, { maxGroups, query })
       : [];
     for (const g of groups) {
       const li = el('li', 'srch-group');
@@ -457,6 +459,16 @@ function attach({ input, host, mode, maxGroups }) {
 function init() {
   const landing = document.querySelector('.landing-search input');
   if (landing) {
+    // The landing box replaces the navbar search button and the Ctrl+K dialog on this page.
+    document.documentElement.classList.add('srch-landing');
+    window.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && /^k$/i.test(event.key)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        landing.focus();
+        landing.select();
+      }
+    }, true);
     attach({ input: landing, host: document.querySelector('.landing-search .srch-mount'), mode: 'landing', maxGroups: 6 });
   }
   const dialogInput = document.querySelector('#pst-search-dialog input[name="q"]');
