@@ -15,9 +15,11 @@ The checks follow the public contract only:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 import hashlib
+import math
 from pathlib import Path
 import platform
 import re
@@ -29,6 +31,7 @@ import torch
 import torch.distributed as dist
 from torch.utils._python_dispatch import TorchDispatchMode
 
+from diffct import backends
 from diffct import (
     ParameterizedSurface, Projector, circular_trajectory_2d_fan, circular_trajectory_3d,
 )
@@ -347,6 +350,57 @@ def _large_cone():
     return _Case("cone", (64, 256, 256), (384, 256), 16, (0.5, 0.3, 0.3), "float32")
 
 
+def _bound_fraction():
+    documented = _documented_cuda_fraction()
+    return 1.0 if documented is None else documented
+
+
+def _usable_cuda_bytes(device):
+    """Memory the PyTorch allocator can still use on ``device`` (after emptying its cache)."""
+    torch.cuda.synchronize(device)
+    torch.cuda.empty_cache()
+    free, total = torch.cuda.mem_get_info(device)
+    allocated = torch.cuda.memory_allocated(device)
+    reusable = max(0, torch.cuda.memory_reserved(device) - allocated)
+    getter = getattr(torch.cuda, "get_per_process_memory_fraction", None)
+    cap = getter(device) if getter is not None else 1.0
+    return max(0, min(free + reusable, int(total * cap) - allocated))
+
+
+@contextmanager
+def _allocator_room(device, room):
+    """Cap this process so that its allocator can use about ``room`` more bytes.
+
+    A small room makes caller-sized transients (for example a second full
+    output) visible next to the work arrays, without multi-GiB test arrays.
+    """
+    getter = getattr(torch.cuda, "get_per_process_memory_fraction", None)
+    if getter is None:
+        pytest.skip("needs torch.cuda.get_per_process_memory_fraction")
+    previous = getter(device)
+    torch.cuda.synchronize(device)
+    torch.cuda.empty_cache()
+    free, total = torch.cuda.mem_get_info(device)
+    if free < 2 * room:
+        pytest.skip(f"needs {2 * room} free bytes on {device}")
+    torch.cuda.set_per_process_memory_fraction(
+        min(1.0, (torch.cuda.memory_reserved(device) + room) / total), device,
+    )
+    try:
+        yield
+    finally:
+        torch.cuda.set_per_process_memory_fraction(previous, device)
+        torch.cuda.empty_cache()
+
+
+def _assert_within_bound(extra, usable, label):
+    fraction = _bound_fraction()
+    assert extra <= fraction * usable, (
+        f"{label}: the call allocated {extra} transient CUDA bytes; the documented bound is "
+        f"{fraction:g} x {usable} usable bytes at call start"
+    )
+
+
 @pytest.mark.cuda
 @requires_cuda
 @pytest.mark.parametrize("operation", OPERATIONS)
@@ -356,36 +410,86 @@ def test_cuda_automatic_work_memory_is_bounded_by_free_memory(operation):
     operator = _projector(case, geometry_device=device)
     volume, sinogram = _data(case, device)
     source = volume if operation == "project" else sinogram
-    torch.cuda.synchronize(device)
-    torch.cuda.empty_cache()
+    usable = _usable_cuda_bytes(device)
     baseline = torch.cuda.memory_allocated(device)
-    free, _ = torch.cuda.mem_get_info(device)
     torch.cuda.reset_peak_memory_stats(device)
     with torch.no_grad():
         output = getattr(operator, operation)(source)
     torch.cuda.synchronize(device)
     extra = (torch.cuda.max_memory_allocated(device) - baseline
              - output.numel() * output.element_size())
-    documented = _documented_cuda_fraction()
-    fraction = 1.0 if documented is None else documented
-    assert extra <= fraction * free, (
-        f"portable CUDA {operation} work arrays used {extra} bytes; bound is "
-        f"{fraction:g} x {free} free bytes at call start"
-    )
+    _assert_within_bound(extra, usable, f"CUDA {operation}")
     # The budget follows device memory, not the fixed 8 MiB CPU ceiling. This
     # problem needs several GiB of traversal tables when unchunked.
-    if fraction * free >= 1 << 30:
+    if _bound_fraction() * usable >= 1 << 30:
         assert extra > 4 * CPU_WORK_BYTES, (
             f"portable CUDA {operation} peak work memory is {extra} bytes with "
-            f"{free} bytes free; the automatic budget still looks fixed at 8 MiB"
+            f"{usable} bytes usable; the automatic budget still looks fixed at 8 MiB"
         )
 
 
 @pytest.mark.cuda
-@pytest.mark.benchmark
 @requires_cuda
-def test_large_curved_anisotropic_cuda_projection_finishes_in_seconds():
-    # Contract example: per-axis spacing, cylindrical surface, 24 views.
+@pytest.mark.parametrize("operation", OPERATIONS)
+def test_cpu_data_with_cuda_compute_uses_a_device_sized_plan(operation):
+    # CPU caller arrays, CUDA compute device: CUDA work arrays get the device
+    # budget. All CUDA allocations are transients of the call.
+    case = _large_cone()
+    device = torch.device("cuda", 0)
+    operator = _projector(case, devices=[0])
+    volume, sinogram = _data(case, "cpu")
+    source = volume if operation == "project" else sinogram
+    usable = _usable_cuda_bytes(device)
+    baseline = torch.cuda.memory_allocated(device)
+    torch.cuda.reset_peak_memory_stats(device)
+    with torch.no_grad():
+        output = getattr(operator, operation)(source)
+    torch.cuda.synchronize(device)
+    assert output.device.type == "cpu"
+    extra = torch.cuda.max_memory_allocated(device) - baseline
+    _assert_within_bound(extra, usable, f"CPU data, CUDA {operation}")
+    if _bound_fraction() * usable >= 1 << 30:
+        assert extra > 4 * CPU_WORK_BYTES, (
+            f"CPU data with devices=[0]: peak CUDA work memory of {operation} is {extra} bytes "
+            f"with {usable} bytes usable; the plan still looks fixed at 8 MiB"
+        )
+
+
+# Outputs are large relative to the allowed room, so a second full output or
+# a saved autograd graph outside the budget breaks the bound.
+_TRANSIENT_CASES = {
+    False: _Case("cone", (96, 384, 384), (384, 256), 16, (0.5, 0.3, 0.3), "float32"),
+    True: _Case("cone", (33, 96, 96), (64, 64), 8, (0.5, 0.3, 0.3), "float32"),
+}
+
+
+@pytest.mark.cuda
+@requires_cuda
+@pytest.mark.parametrize("autograd", [False, True], ids=["no-grad", "autograd"])
+@pytest.mark.parametrize("operation", OPERATIONS)
+def test_cuda_bound_covers_output_copies_and_the_recorded_graph(operation, autograd):
+    case = _TRANSIENT_CASES[autograd]
+    device = torch.device("cuda", torch.cuda.current_device())
+    operator = _projector(case, geometry_device=device)
+    volume, sinogram = _data(case, device)
+    source = (volume if operation == "project" else sinogram).requires_grad_(autograd)
+    with _allocator_room(device, 1 << 30):
+        usable = _usable_cuda_bytes(device)
+        baseline = torch.cuda.memory_allocated(device)
+        torch.cuda.reset_peak_memory_stats(device)
+        with torch.set_grad_enabled(autograd):
+            output = getattr(operator, operation)(source)
+        torch.cuda.synchronize(device)
+        # The returned array is the caller's; everything else counts, including
+        # the graph that stays saved for backward.
+        extra = (torch.cuda.max_memory_allocated(device) - baseline
+                 - output.numel() * output.element_size())
+    assert output.requires_grad == autograd
+    _assert_within_bound(extra, usable, f"{operation} ({'autograd' if autograd else 'no grad'})")
+
+
+def _contract_example():
+    """Volume (81, 512, 512), per-axis spacing, cylindrical surface, 888x625 detector, 24 views."""
     shape, detector, views = (81, 512, 512), (888, 625), 24
     sid, sdd = 600.0, 1000.0
     trajectory = circular_trajectory_3d(views, sid, sdd, start_angle=0.1,
@@ -404,16 +508,49 @@ def test_large_curved_anisotropic_cuda_projection_finishes_in_seconds():
     with torch.no_grad():
         warm.project(torch.ones(4, 8, 8, device="cuda"))
     volume = torch.rand(shape, device="cuda", generator=torch.Generator("cuda").manual_seed(5))
+    return operator, volume
+
+
+def _timed_project(operator, volume):
     torch.cuda.synchronize()
     start = time.perf_counter()
     with torch.no_grad():
         sinogram = operator.project(volume)
     torch.cuda.synchronize()
-    elapsed = time.perf_counter() - start
-    assert sinogram.shape == (views, *detector)
+    return sinogram, time.perf_counter() - start
+
+
+@pytest.mark.cuda
+@pytest.mark.benchmark
+@requires_cuda
+def test_large_curved_anisotropic_cuda_projection_finishes_in_seconds():
+    operator, volume = _contract_example()
+    sinogram, elapsed = _timed_project(operator, volume)
+    assert sinogram.shape == (24, 888, 625)
     assert torch.isfinite(sinogram).all() and sinogram.abs().max() > 0
-    assert elapsed < 60.0, (
-        f"one portable CUDA projection of {shape} -> {(views, *detector)} took {elapsed:.1f} s"
+    assert elapsed < 60.0, f"one portable CUDA projection of the contract example took {elapsed:.1f} s"
+
+
+@pytest.mark.cuda
+@pytest.mark.benchmark
+@requires_cuda
+def test_contract_example_is_20x_faster_than_the_fixed_8_mib_plan(monkeypatch):
+    # The old behaviour is the fixed 8 MiB plan. The portable backend selects
+    # it when its device budget hook returns None (the host/CPU branch).
+    if not hasattr(backends.ReferenceProjector, "_work_budget"):
+        pytest.skip("this tree has no device-sized portable budget to compare")
+    operator, volume = _contract_example()
+    _timed_project(operator, volume)
+    automatic, elapsed = _timed_project(operator, volume)
+    with monkeypatch.context() as patch:
+        patch.setattr(backends.ReferenceProjector, "_work_budget",
+                      lambda self, *args, **kwargs: None)
+        fixed, fixed_elapsed = _timed_project(operator, volume)
+    _assert_max_relative({"output": automatic.cpu()}, {"output": fixed.cpu()},
+                         FLOAT32_TILE_GRID_TOLERANCE, "automatic vs fixed 8 MiB plan")
+    assert fixed_elapsed >= 20 * elapsed, (
+        f"automatic plan {elapsed:.2f} s vs fixed 8 MiB plan {fixed_elapsed:.2f} s: "
+        f"speedup {fixed_elapsed / elapsed:.1f}x < 20x"
     )
 
 
@@ -484,20 +621,23 @@ def _distributed_worker(rank, transport, partition, rendezvous, case):
         dist.destroy_process_group()
 
 
-def _run_two_ranks(transport, partition, case, tmp_path, seconds):
-    rendezvous = (tmp_path / f"{transport}-{partition}-rendezvous").resolve().as_uri()
-    context = spawn(_distributed_worker, args=(transport, partition, rendezvous, case),
-                    nprocs=2, join=False)
+def _spawn_two(worker, args, seconds, label):
+    context = spawn(worker, args=args, nprocs=2, join=False)
     deadline = time.monotonic() + seconds
     try:
         while not context.join(timeout=1):
             if time.monotonic() >= deadline:
-                raise AssertionError(f"two-rank {transport} check exceeded {seconds} seconds")
+                raise AssertionError(f"two-rank {label} check exceeded {seconds} seconds")
     finally:
         for process in context.processes:
             if process.is_alive():
                 process.terminate()
             process.join(timeout=5)
+
+
+def _run_two_ranks(transport, partition, case, tmp_path, seconds):
+    rendezvous = (tmp_path / f"{transport}-{partition}-rendezvous").resolve().as_uri()
+    _spawn_two(_distributed_worker, (transport, partition, rendezvous, case), seconds, transport)
 
 
 @pytest.mark.skipif(not dist.is_available() or not dist.is_gloo_available(),
@@ -513,6 +653,47 @@ def test_two_rank_gloo_cpu_matches_single_process(partition, tmp_path):
 @pytest.mark.parametrize("partition", ["views", "space"])
 def test_two_rank_nccl_each_rank_uses_its_gpu_and_matches_single_process(partition, tmp_path):
     _run_two_ranks("nccl", partition, DISTRIBUTED_CUDA_CASE, tmp_path, seconds=180)
+
+
+def _backward_memory_worker(rank, rendezvous):
+    torch.cuda.set_device(rank)
+    device = torch.device("cuda", rank)
+    dist.init_process_group("nccl", init_method=rendezvous, rank=rank, world_size=2,
+                            timeout=timedelta(seconds=120))
+    try:
+        # Views partition: backproject returns a replicated volume, so its
+        # backward reduces the volume cotangent across the two ranks.
+        case = _Case("cone", (128, 512, 512), (384, 256), 16, (0.5, 0.25, 0.25), "float32")
+        operator = _projector(case, geometry_device=device, devices=[rank],
+                              distributed=True, partition="views")
+        generator = torch.Generator(device).manual_seed(11 + rank)
+        sinogram = torch.rand(operator.projection_shape, device=device, generator=generator)
+        sinogram.requires_grad_()
+        cotangent = torch.rand(operator.volume_shape, device=device, generator=generator)
+        cotangent /= operator.view_world_size
+        with _allocator_room(device, 1 << 30):
+            adjoint = operator.backproject(sinogram)
+            usable = _usable_cuda_bytes(device)
+            baseline = torch.cuda.memory_allocated(device)
+            torch.cuda.reset_peak_memory_stats(device)
+            adjoint.backward(cotangent)
+            torch.cuda.synchronize(device)
+            extra = (torch.cuda.max_memory_allocated(device) - baseline
+                     - sinogram.grad.numel() * sinogram.grad.element_size())
+        volume_bytes = cotangent.numel() * cotangent.element_size()
+        _assert_within_bound(extra, usable, f"rank {rank} backproject backward "
+                                            f"(volume {volume_bytes} bytes)")
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(torch.cuda.device_count() < 2 or not dist.is_available()
+                    or not dist.is_nccl_available(), reason="two GPUs and NCCL are required")
+def test_two_rank_nccl_backproject_backward_stays_within_the_bound(tmp_path):
+    # Backward may keep one reduced tile at a time, not a whole extra volume.
+    rendezvous = (tmp_path / "backward-memory-rendezvous").resolve().as_uri()
+    _spawn_two(_backward_memory_worker, (rendezvous,), 300, "nccl backward memory")
 
 
 # --------------------------------------------------------------------------
@@ -564,6 +745,44 @@ def test_cpu_project_with_the_automatic_plan_as_explicit_hints_is_bitwise_identi
     explicit, _ = _project_once(case, "cpu", **plan)
     assert torch.equal(automatic, explicit), (
         f"{name}: explicit hints equal to the automatic plan {plan} changed the bits"
+    )
+
+
+RAY_SETUP_CASES = {
+    "cone-anisotropic-float32": _Case("cone", (7, 9, 10), (11, 8), 5, (1.1, 0.9, 0.8), "float32"),
+    "cone-float64": _Case("cone", (7, 9, 10), (11, 8), 5, (1.0, 1.0, 1.0), "float64"),
+    "fan-anisotropic-float32": _Case("fan", (13, 15), (17,), 5, (0.9, 0.7), "float32"),
+}
+
+
+@pytest.mark.parametrize("name", list(RAY_SETUP_CASES))
+def test_project_sets_up_each_ray_batch_once_for_all_tiles(name, monkeypatch):
+    # Spy on the portable ray-setup step. A flat detector in one process has
+    # no separate validation pass, so every call belongs to the numerical pass.
+    case = RAY_SETUP_CASES[name]
+    chunks = case.small_chunks()
+    operator = _projector(case, **chunks)
+    volume, _ = _data(case, "cpu")
+    calls = []
+    original = backends.ReferenceProjector._rays
+
+    def spy(self, views, pixels, *args, **kwargs):
+        calls.append((views.start, views.stop, tuple((part.start, part.stop) for part in pixels)))
+        return original(self, views, pixels, *args, **kwargs)
+
+    monkeypatch.setattr(backends.ReferenceProjector, "_rays", spy)
+    with torch.no_grad():
+        operator.project(volume)
+    tiles = math.prod(math.ceil(size / chunk) for size, chunk
+                      in zip(case.shape, chunks["volume_chunk_shape"]))
+    batches = math.ceil(case.views / chunks["view_chunk_size"]) * math.prod(
+        math.ceil(size / chunk) for size, chunk in zip(case.detector, chunks["detector_chunk_shape"])
+    )
+    assert tiles > 1 and batches > 1
+    assert operator.last_execution_stats["ray_tile_pairs"] == tiles * batches
+    assert len(calls) == batches and len(set(calls)) == batches, (
+        f"{len(calls)} ray setups for {batches} ray batches x {tiles} tiles; "
+        f"expected one setup per ray batch"
     )
 
 
