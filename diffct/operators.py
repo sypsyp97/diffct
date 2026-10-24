@@ -555,11 +555,15 @@ class Projector:
             self._reference = ReferenceProjector(self)
             if requested_backend == "auto" and torch.cuda.is_available() and torch.version.hip is None:
                 reasons = [reason for applies, reason in (
-                    (isinstance(voxel_spacing, (tuple, list)), "per-axis voxel_spacing"),
                     (precision != "fast", f"precision={precision!r}"),
                     (partition == "hybrid", "partition='hybrid'"),
                     (beam == "parallel3d", "beam='parallel3d'"),
                 ) if applies]
+                if isinstance(self.voxel_spacing, tuple):
+                    try:
+                        _native_spacing(self.voxel_spacing)
+                    except ValueError as error:
+                        reasons.append(str(error))
                 warnings.warn(
                     "backend='auto' selected the portable PyTorch backend, not the native CUDA backend, "
                     f"because of {', '.join(reasons)}. The portable backend can be much slower for large "
