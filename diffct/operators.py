@@ -17,7 +17,8 @@ from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
 from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geometry_errors
-from .backends import ReferenceProjector, _flat_admission_batches, select_backend, voxel_spacing_tuple
+from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
+                       select_backend, voxel_spacing_tuple)
 from .distribution import Partition
 from .projectors import (
     _backproject_into,
@@ -69,6 +70,14 @@ def _detector_spacing(value, beam):
         return tuple(_positive_float(item, "detector_spacing") for item in value)
     pitch = _positive_float(value, "detector_spacing")
     return (pitch, pitch)
+
+
+def _reject_trajectory_tangents(trajectory):
+    # Projector stores detached frames, which would drop forward-mode tangents.
+    if isinstance(trajectory, (tuple, list)) and any(
+            isinstance(value, torch.Tensor) and _forward_tangent(value) is not None
+            for value in trajectory):
+        raise RuntimeError(_GEOMETRY_FORWARD_DERIVATIVE)
 
 
 def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True):
@@ -473,6 +482,7 @@ class Projector:
         if detector_surface is not None and not callable(detector_surface):
             raise TypeError("detector_surface must be callable or None")
         self.detector_surface = detector_surface
+        _reject_trajectory_tangents(trajectory)
         self._trajectory, n_views = _validate_trajectory(
             trajectory, beam, detector_surface=detector_surface is not None
         )
@@ -2554,6 +2564,7 @@ class Projector:
             trajectory = self._learnable
         if trajectory is not None:
             try:
+                _reject_trajectory_tangents(trajectory)
                 frames, views = _validate_trajectory(
                     trajectory, self.beam, detector_surface=self.detector_surface is not None,
                     clone=override,

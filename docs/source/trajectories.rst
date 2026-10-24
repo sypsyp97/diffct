@@ -275,6 +275,8 @@ detector center coincides with the source.
 Limits:
 
 - Second derivatives with respect to geometry raise an error.
+- Forward-mode derivatives (``torch.func.jvp``, ``jacfwd``) with respect to trajectory
+  tensors raise an error. Use reverse mode for geometry gradients.
 - Second derivatives with respect to the volume or sinogram are available,
   including when trajectory or surface parameters require gradients.
 - Detector and voxel spacing are fixed physical settings, not differentiable parameters.

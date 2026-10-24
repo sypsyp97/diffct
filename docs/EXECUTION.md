@@ -113,10 +113,12 @@ batched = torch.vmap(A.project)(x)          # same leading dimensions
 ```
 
 Data gradients, JVP, `vmap`, `jacrev`, `jacfwd` and second data derivatives use
-the differentiable PyTorch traversal when a function transform is active.
+the portable PyTorch traversal when a function transform is active.
 Ordinary native calls retain Numba execution. Native batches dispatch their
-samples separately. Geometry and surface derivatives are first-order;
-function transforms of geometry and `torch.compile` are not promised.
+samples separately. Geometry and surface derivatives are first-order.
+Forward-mode derivatives (`torch.func.jvp`, `jacfwd`) with respect to trajectory
+tensors raise an error. Other function transforms of geometry and
+`torch.compile` are not promised.
 
 Distributed data `grad`, JVP, `vmap` and Hessian-vector products require every
 rank to call the same transforms in the same order, with matching leading batch
@@ -143,14 +145,21 @@ for data, explicit weights and filter responses. Analytical geometry remains
 fixed and flat; FDK remains an approximate inverse.
 
 Explicit chunks bound working tiles and view batches; autograd still needs its
-complete returned arrays and saved graph. Projector's portable path uses an
+complete returned arrays. Portable autograd does not record the ray traversal.
+This also applies inside `torch.vmap` and `torch.func.jvp` when an input or
+tangent requires gradients. It keeps the geometry snapshot, and the input only
+when geometry gradients are needed. Backward applies the matched adjoint for
+data gradients. For geometry gradients, it recomputes one ray batch and tile at
+a time, so that memory does not grow with the number of batches. Each geometry
+batch keeps a small autograd graph, so automatic geometry batches are half as
+large and large leading batches are split, as in the forward call. Geometry
+gradients cost one extra traversal. Projector's portable path uses an
 8 MiB ceiling for automatically sized intermediate arrays in ordinary tensor calls, excluding caller
 data, returned arrays and allocations inside legacy surface callbacks. Explicit
 chunk hints take priority. The portable reference path can be slower, so start
 with explicit spatial/view/pixel limits for large scans. For large mapped
 batches, also use `torch.vmap(..., chunk_size=...)` to control the transform's
-workspace. Returned arrays and the complete saved autograd graph still require
-their own memory.
+workspace. Returned arrays and gradients still require their own memory.
 Analytical tile order can reread and refilter the source for another volume
 tile. The native path admits tiles against available CUDA memory. The separate
 `helical_fdk` approximation and low-level CUDA helpers retain their original
