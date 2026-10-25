@@ -244,3 +244,16 @@ def test_tangent_parallel3d_frame_rejected_in_float64():
     with pytest.raises(ValueError, match="tangent"):
         Projector((direction, direction, axis, vertical), volume_shape=(4, 4, 4),
                   detector_shape=(4, 4), beam="parallel3d", backend="torch")
+
+
+@mps
+def test_mps_helical_view_weights_match_cpu():
+    from diffct import helical_view_weights
+    angles = torch.linspace(0, 4 * torch.pi, 41)[:-1]
+    source_z = torch.linspace(-25.0, 25.0, 40)
+    slice_z = torch.linspace(-10.0, 10.0, 20)
+    cpu = helical_view_weights(angles.clone(), source_z.clone(), slice_z.clone())
+    device = helical_view_weights(angles.to("mps"), source_z.to("mps"), slice_z.to("mps"))
+    assert device.device.type == "mps"
+    torch.testing.assert_close(cpu, device.cpu(), rtol=0.0, atol=0.0)
+    torch.testing.assert_close(device.sum().cpu(), torch.tensor(torch.pi * 20.0), rtol=1e-5, atol=1e-4)
