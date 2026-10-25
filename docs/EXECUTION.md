@@ -8,7 +8,7 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 |---|---|---|
 | `backend="auto", precision="fast"` | Native FP32 for scalar or per-axis spacing and views/space partitions; otherwise PyTorch FP32 | NVIDIA CUDA, or the input's PyTorch device |
 | `backend="numba"` | Native FP32 fast-math traversal, with FP64 ray clipping and entry setup | NVIDIA CUDA; `precision="fast"`, views/space |
-| `backend="torch", precision="float32"` | PyTorch FP32 data and local traversal, with FP64 ray clipping and entry setup | CPU, NVIDIA CUDA, PyTorch ROCm, Apple MPS |
+| `backend="torch", precision="float32"` | PyTorch FP32 data and local traversal, with FP64 ray clipping and entry setup (FP32 on Apple MPS) | CPU, NVIDIA CUDA, PyTorch ROCm, Apple MPS |
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
 `backend="auto"` selects PyTorch for strict precision modes, hybrid
@@ -38,8 +38,12 @@ the PyTorch backend. Importing the library and using this backend do not load
 Numba CUDA or require a CUDA runtime; native execution initializes them on
 first use. The CUDA compiler extras are needed for native Numba execution.
 On Apple Silicon (MPS) the working precision of ray clipping and entry setup
-falls back to FP32, since MPS provides no FP64; measured against CPU on an
-M4 Pro this stays within float32 noise for 2D parallel and 3D cone workloads.
+falls back to FP32, since MPS provides no FP64. The error of that FP32
+clipping grows with the source distance: measured against CPU on a 64³ cone
+scan with 16 views, the maximum relative sinogram error is ~3e-5 at
+sid = 1e3 voxels, ~9e-3 at 1e5 and ~4e-2 at 1e6. Normal CT geometries sit
+at the low end of that range; keep large-scale simulations on CUDA or CPU
+when FP64-grade clipping accuracy matters.
 
 ROCm uses PyTorch's `"cuda"` device namespace, as described in the
 [PyTorch HIP notes](https://docs.pytorch.org/docs/stable/notes/hip.html).
