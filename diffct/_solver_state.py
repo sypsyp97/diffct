@@ -9,11 +9,10 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 
-from .utils import _work_dtype
-
 from .pipeline import _fragments
 from .storage import NpyStore, TensorStore
 from .distribution import control_status, preflight
+from .utils import _work_dtype
 
 
 def count(value, name, positive=False):

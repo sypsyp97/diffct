@@ -15,7 +15,6 @@ import weakref
 import numpy as np
 import torch
 
-
 from .constants import _DTYPE, _TPB_2D, _TPB_3D, _INF, _EPSILON
 
 
@@ -25,6 +24,7 @@ def _work_dtype(device):
     The MPS backend has no float64, so those paths fall back to float32 there.
     """
     return torch.float32 if torch.device(device).type == "mps" else torch.float64
+
 
 def _cast_work(value, device):
     """Cast value to the working dtype on device.
