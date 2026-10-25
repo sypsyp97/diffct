@@ -319,7 +319,26 @@ def test_mps_precision_guard_fires_before_the_reference_path():
                                         device="cpu", dtype=torch.float64)
     projector = Projector(trajectory, volume_shape=(8, 8, 8), detector_shape=(12, 12),
                           backend="torch", precision="float64")
-    for call in (lambda: projector.project(torch.rand(8, 8, 8, device="mps")),
-                 lambda: projector.backproject(torch.rand(4, 12, 12, device="mps"))):
-        with pytest.raises(ValueError, match="fast' or 'float32'"):
-            call()
+    with pytest.raises(ValueError, match="fast' or 'float32'"):
+        projector.project(torch.rand(8, 8, 8, device="mps"))
+    with pytest.raises(ValueError, match="fast' or 'float32'"):
+        projector.backproject(torch.rand(6, 12, 12, device="mps"))
+
+
+@mps
+def test_mps_torch_func_jvp_matches_cpu():
+    # new_tensor has no kernel behind a functorch dual on MPS, so every jvp
+    # through the reference projector used to die with "DispatchKey Undefined".
+    torch.manual_seed(9)
+    volume = torch.rand(8, 8, 8)
+
+    def run(device):
+        trajectory = circular_trajectory_3d(4, sid=800.0, sdd=1200.0,
+                                            device=device, dtype=torch.float32)
+        projector = Projector(trajectory, volume_shape=(8, 8, 8), detector_shape=(8, 8),
+                              backend="torch")
+        leaf = volume.to(device)
+        return torch.func.jvp(lambda x: projector(x).sum(), (leaf,),
+                              (torch.ones_like(leaf),))[1].cpu()
+
+    torch.testing.assert_close(run("cpu"), run("mps"), rtol=1e-4, atol=1e-3)

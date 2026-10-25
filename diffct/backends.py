@@ -77,6 +77,16 @@ def _zero_dependency(value):
     return value.unsqueeze(0)[:0].sum()
 
 
+def _constant_like(reference, values):
+    """Build a constant tensor on ``reference``'s device and dtype.
+
+    ``new_tensor`` has no kernel behind a functorch dual on MPS and raises
+    "DispatchKey Undefined doesn't correspond to a device"; an explicit
+    constructor keeps the same constant on every device and transform.
+    """
+    return torch.tensor(values, dtype=reference.dtype, device=reference.device)
+
+
 def voxel_spacing_tuple(spacing, rank):
     """Return positive physical pitches in tensor axis order."""
     values = spacing if isinstance(spacing, (tuple, list)) else (spacing,) * rank
@@ -674,7 +684,7 @@ class ReferenceProjector:
             if check_range and not native_surface:
                 # Certify ordinary batches without expanding raw FP64 world points.
                 # L1 norms bound Euclidean distances without squaring tiny bases.
-                pitches = local.new_tensor(self.spacing[::-1])
+                pitches = _constant_like(local, self.spacing[::-1])
                 maximum = local.abs().amax(dim=tuple(range(1, local.ndim - 1)))
                 axis_u = selected[2]
                 if owner.beam == "cone":
@@ -706,7 +716,7 @@ class ReferenceProjector:
             if check_range:
                 # Raw FP64 coordinates preserve the exact admission boundaries.
                 sources = frame(selected[0]).expand_as(points)
-                pitches = points.new_tensor(self.spacing[::-1])
+                pitches = _constant_like(points, self.spacing[::-1])
                 source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
                 pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
                 if torch.any(torch.minimum(source_distance, pixel_distance) > 1e6).item():
@@ -733,7 +743,7 @@ class ReferenceProjector:
                 origins, directions = points, frame(selected[0]).expand_as(points)
             else:
                 sources = frame(selected[0]).expand_as(points)
-                pitches = points.new_tensor(self.spacing[::-1])
+                pitches = _constant_like(points, self.spacing[::-1])
                 source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
                 pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
                 if validate:
@@ -776,10 +786,10 @@ class ReferenceProjector:
         directions = directions.to(dtype=_work_dtype(directions.device))
         ray_length = torch.linalg.vector_norm(directions, dim=-1)
         directions = directions / ray_length[:, None]
-        lower = origins.new_tensor([(part.start - size / 2) * pitch
-                                    for part, size, pitch in zip(world_tile, shape, spacing)])
-        upper = origins.new_tensor([(part.stop - size / 2) * pitch
-                                    for part, size, pitch in zip(world_tile, shape, spacing)])
+        lower = _constant_like(origins, [(part.start - size / 2) * pitch
+                                        for part, size, pitch in zip(world_tile, shape, spacing)])
+        upper = _constant_like(origins, [(part.stop - size / 2) * pitch
+                                        for part, size, pitch in zip(world_tile, shape, spacing)])
         constant = directions == 0
         safe_direction = torch.where(constant, torch.ones_like(directions), directions)
         first, last = (lower - origins) / safe_direction, (upper - origins) / safe_direction
