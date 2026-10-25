@@ -48,7 +48,7 @@ To our knowledge, diffct is the only open-source GPU CT library that combines ar
 - **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
 - **Large volumes.** Automatic spatial, view and pixel blocks with bounded transfer buffers control working memory. `project_into`/`backproject_into` accept caller-owned tensor or disk stores; tensor autograd keeps complete data on its input device. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
 - **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or torchrun and NCCL across ranks. Views, space and hybrid partitions control replication of volumes and projections. Speedup depends on workload and communication costs.
-- **Precision and training.** Explicit native/PyTorch backends, FP32/FP64 modes, per-axis voxel spacing, leading batch/channel dimensions and data `torch.func` transforms. The portable path supports CPU and PyTorch CUDA/ROCm devices; see [execution contracts](docs/EXECUTION.md).
+- **Precision and training.** Explicit native/PyTorch backends, FP32/FP64 modes, per-axis voxel spacing, leading batch/channel dimensions and data `torch.func` transforms. The portable path supports CPU, PyTorch CUDA/ROCm devices and Apple Silicon GPUs (MPS, `backend="torch"`); see [execution contracts](docs/EXECUTION.md).
 - **Solver API.** `cgls`, `sirt` and `tv_reconstruction` report residual history, tolerances and callbacks, with scan/data fingerprints and complete checkpoint state. `cgls_into` keeps state in bounded mapped blocks.
 - **Differentiable FBP and FDK.** `fbp`, `fdk` and approximate `helical_fdk` compose the public filters, weights and analytical backprojectors. Their backward kernels transpose the actual interpolation stencil; custom filters and weights can be learned. See the [analytical guide](docs/source/analytical_learning.rst).
 
@@ -64,7 +64,7 @@ pip install "diffct[cu12]"    # PyTorch built for CUDA 12
 pip install "diffct[cu13]"    # PyTorch built for CUDA 13
 ```
 
-The extra installs the CUDA compiler libraries Numba needs. For CPU or PyTorch ROCm execution, install the appropriate PyTorch build and plain `pip install diffct`, then select `backend="torch"`. Importing diffct and using this backend require no CUDA runtime; Numba CUDA initializes when native execution is used. Plain installation also works for native execution when a compatible CUDA Toolkit is already present.
+The extra installs the CUDA compiler libraries Numba needs. For CPU, PyTorch ROCm or Apple Silicon (MPS) execution, install the appropriate PyTorch build and plain `pip install diffct`, then select `backend="torch"`. Importing diffct and using this backend require no CUDA runtime; Numba CUDA initializes when native execution is used. Plain installation also works for native execution when a compatible CUDA Toolkit is already present.
 
 From source, with the examples:
 
