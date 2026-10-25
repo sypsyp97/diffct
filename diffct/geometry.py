@@ -76,6 +76,7 @@ def circular_trajectory_3d_parallel(n_views, detector_distance=0.0, start_angle=
 
 
 def _circular_angles(n_views, start_angle, end_angle, device, dtype):
+    _check_n_views(n_views)
     if isinstance(n_views, torch.Tensor):
         if not torch.is_floating_point(n_views):
             raise TypeError("angles must have floating-point dtype")
@@ -89,14 +90,31 @@ def _circular_angles(n_views, start_angle, end_angle, device, dtype):
     return angles, n_views, device, dtype
 
 
-def _check_source_positions(src_pos):
+def _check_source_positions(src_pos, what="source_path_fn"):
     """Reject non-finite sources and sources at the isocenter, which have no viewing direction."""
     if not torch.isfinite(src_pos).all():
-        raise ValueError("source_path_fn returned non-finite source positions")
+        raise ValueError(f"{what} returned non-finite source positions")
     if (torch.linalg.vector_norm(src_pos.detach(), dim=1) == 0).any():
         raise ValueError(
-            "source_path_fn returned a source at the isocenter; every source needs a "
+            f"{what} returned a source at the isocenter; every source needs a "
             "nonzero distance from the origin"
+        )
+
+
+def _check_n_views(n_views):
+    """Reject nonpositive integer view counts, which build empty or broken trajectories."""
+    if not isinstance(n_views, torch.Tensor) and n_views < 1:
+        raise ValueError(f"n_views must be a positive integer, got {n_views!r}")
+
+
+def _check_ray_directions(ray_dir):
+    """Reject non-finite and zero ray directions, which normalize to NaN."""
+    if not torch.isfinite(ray_dir).all():
+        raise ValueError("ray_dir_fn returned non-finite ray directions")
+    if (torch.linalg.vector_norm(ray_dir.detach(), dim=1) == 0).any():
+        raise ValueError(
+            "ray_dir_fn returned a zero ray direction; every view needs a "
+            "nonzero direction vector"
         )
 
 
@@ -286,6 +304,8 @@ def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
     det_u_vec = det_u_vec / torch.norm(det_u_vec, dim=1, keepdim=True)
     det_v_vec = det_v_vec / torch.norm(det_v_vec, dim=1, keepdim=True)
 
+    _check_source_positions(src_pos, "random_trajectory_3d")
+
     return src_pos, det_center, det_u_vec, det_v_vec
 
 
@@ -334,6 +354,7 @@ def spiral_trajectory_3d(n_views, sid, sdd, z_range=100.0, n_turns=2.0,
     """
     # Generate angles for spiral motion
     end_angle = start_angle + 2 * math.pi * n_turns
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -419,6 +440,7 @@ def sinusoidal_trajectory_3d(n_views, sid, sdd, amplitude=50.0, frequency=2.0,
     """
     # Generate angles
     end_angle = start_angle + 2 * math.pi
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -505,6 +527,7 @@ def saddle_trajectory_3d(n_views, sid, sdd, z_amplitude=50.0, radial_amplitude=3
     """
     # Generate angles
     end_angle = start_angle + 2 * math.pi
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -601,6 +624,7 @@ def custom_trajectory_3d(n_views, sid, sdd,
     """
     # Generate angles
     end_angle = start_angle + 2 * math.pi
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -746,6 +770,7 @@ def sinusoidal_trajectory_2d_fan(n_views, sid, sdd, amplitude=50.0, frequency=2.
     """
     # Generate angles
     end_angle = start_angle + 2 * math.pi
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -829,6 +854,7 @@ def custom_trajectory_2d_fan(n_views, sid, sdd,
     """
     # Generate angles
     end_angle = start_angle + 2 * math.pi
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -973,6 +999,7 @@ def sinusoidal_trajectory_2d_parallel(n_views, amplitude=50.0, frequency=2.0,
     """
     # Generate angles
     end_angle = start_angle + math.pi
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -1055,6 +1082,7 @@ def custom_trajectory_2d_parallel(n_views,
     """
     # Generate angles
     end_angle = start_angle + math.pi
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
 
@@ -1068,6 +1096,9 @@ def custom_trajectory_2d_parallel(n_views,
     if det_origin.shape != (n_views, 2):
         raise ValueError(f"det_origin_fn must return tensor of shape ({n_views}, 2), "
                         f"got {det_origin.shape}")
+
+    # Reject degenerate directions before normalization turns them into NaN
+    _check_ray_directions(ray_dir)
 
     # Normalize ray directions
     ray_dir = ray_dir / torch.norm(ray_dir, dim=1, keepdim=True)
