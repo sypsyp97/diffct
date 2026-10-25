@@ -135,12 +135,16 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
         # Bad entries already have a finite-value error above; keep the rank
         # solver well-defined until the combined error flags reach the host.
         frame = torch.where(torch.isfinite(frame), frame, 0.)
-        # |det| via the triple product: matrix_rank has no MPS kernel, and a
-        # vanishing determinant flags the same tangent frames at roundoff.
-        determinant = torch.sum(frame[..., 0] * torch.linalg.cross(frame[..., 1], frame[..., 2], dim=-1), dim=-1)
-        scale = torch.linalg.vector_norm(frame, dim=-2).prod(dim=-1)
-        checks.append((torch.any(determinant.abs() <= torch.finfo(determinant.dtype).eps * scale),
-                       "parallel3d rays must not be tangent to the detector plane"))
+        if frame.dtype == torch.float64:
+            checks.append((torch.any(torch.linalg.matrix_rank(frame) < 3),
+                           "parallel3d rays must not be tangent to the detector plane"))
+        else:
+            # |det| via the triple product: matrix_rank has no MPS kernel, and
+            # a vanishing determinant flags the same tangent frames at roundoff.
+            determinant = torch.sum(frame[..., 0] * torch.linalg.cross(frame[..., 1], frame[..., 2], dim=-1), dim=-1)
+            scale = torch.linalg.vector_norm(frame, dim=-2).prod(dim=-1)
+            checks.append((torch.any(determinant.abs() <= torch.finfo(determinant.dtype).eps * scale),
+                           "parallel3d rays must not be tangent to the detector plane"))
     if beam in ("fan", "cone") and not detector_surface:
         # float64 avoids overflow of half-precision input and dtype mismatches in cross().
         source = geometry[0].to(device=device, dtype=work)
@@ -447,6 +451,10 @@ class Projector:
         self.native_volume_layout = bool(native_volume_layout)
         self.precision = precision
         self.dtype = torch.float64 if precision == "float64" else torch.float32
+        if self.dtype == torch.float64 and any(
+                getattr(component, "device", torch.device("cpu")).type == "mps"
+                for component in trajectory):
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self._reference = None
         self.partition = partition
         if not isinstance(partition, str) or partition not in ("views", "space", "hybrid"):

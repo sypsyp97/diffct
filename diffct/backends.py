@@ -564,7 +564,14 @@ class ReferenceProjector:
             with torch.no_grad():
                 # Reuse frame transfers across detector chunks. Offset batches
                 # remain bounded and move only when a ray batch needs them.
-                staged = {device: (*tuple(value.to(device=device) for value in geometry[:frame_count]),
+                def _stage(value, target_device):
+                    # FP64 frames must not follow FP64-less compute devices.
+                    target_dtype = _work_dtype(target_device)
+                    if value.dtype.itemsize > target_dtype.itemsize:
+                        return value.to(device=target_device, dtype=target_dtype)
+                    return value.to(device=target_device)
+
+                staged = {device: (*tuple(_stage(value, device) for value in geometry[:frame_count]),
                                     *parameters) for device in set(devices)}
                 batches = (self._admission_batches(staged[devices[0]], plan) if admission
                            else self._batches(*plan[1:]))
@@ -1094,7 +1101,14 @@ class ReferenceProjector:
             # The zero dependency keeps unused inputs connected. With several
             # devices, a pair's loss and the geometry leaves can be on different
             # CUDA devices, so each zero moves to the loss's device.
-            loss = loss + sum(_zero_dependency(value).to(loss.device) for value in inputs)
+            def _zero_to(value, device):
+                zero = _zero_dependency(value)
+                target_dtype = _work_dtype(device)
+                if zero.dtype.itemsize > target_dtype.itemsize:
+                    return zero.to(device=device, dtype=target_dtype)
+                return zero.to(device=device)
+
+            loss = loss + sum(_zero_to(value, loss.device) for value in inputs)
             for total, part in zip(totals, torch.autograd.grad(loss, inputs)):
                 total.add_(part)
 

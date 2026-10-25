@@ -23,7 +23,7 @@ CUDA compiler libraries that Numba CUDA needs.
 
          pip install "diffct[cu12]"
 
-   .. tab-item:: None (CPU or ROCm)
+   .. tab-item:: None (CPU, ROCm or MPS)
 
       .. code-block:: bash
 

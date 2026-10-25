@@ -191,3 +191,56 @@ def test_mps_solver_norm_scaling_extremes():
     truth, tiny = solve(1.0, spacing=1e-8)
     assert tiny.iterations == 5 and "breakdown" not in tiny.reason.lower()
     assert tiny.residual_history[0] > tiny.residual_history[-1] > 0.0
+
+
+@mps
+def test_mps_cpu_fp64_surface_forward_and_backward():
+    from diffct.surfaces import ParameterizedSurface
+    torch.manual_seed(6)
+    volume = torch.rand(8, 8, 8)
+    surface = ParameterizedSurface(
+        lambda u, v, ids: torch.stack((u, v, torch.zeros_like(u)), -1))
+    def run(device):
+        trajectory = circular_trajectory_3d(4, sid=800.0, sdd=1200.0,
+                                            device="cpu", dtype=torch.float64)
+        projector = Projector(trajectory, volume_shape=(8, 8, 8), detector_shape=(12, 12),
+                              backend="torch", detector_surface=surface)
+        leaf = volume.to(device).clone().requires_grad_()
+        sinogram = projector(leaf)
+        sinogram.sum().backward()
+        return sinogram.detach().cpu(), leaf.grad.detach().cpu()
+    cpu_sino, cpu_grad = run("cpu")
+    mps_sino, mps_grad = run("mps")
+    torch.testing.assert_close(cpu_sino, mps_sino, rtol=2e-3, atol=2e-2)
+    torch.testing.assert_close(cpu_grad, mps_grad, rtol=2e-3, atol=2e-2)
+
+
+@mps
+def test_mps_norms_survive_a_float64_default_dtype():
+    from diffct._solver_state import squared_norm
+    class Solo:
+        world_size = 1
+    data = torch.full((100,), 2.0, device="mps", dtype=torch.float32)
+    torch.set_default_dtype(torch.float64)
+    try:
+        assert abs(float(squared_norm(Solo(), data, "rays")) - 400.0) < 1e-2
+    finally:
+        torch.set_default_dtype(torch.float32)
+
+
+def test_mps_float64_precision_rejected_with_guidance():
+    if not torch.backends.mps.is_available():
+        pytest.skip("MPS device required")
+    trajectory = circular_trajectory_3d_parallel(4, device="mps", dtype=torch.float32)
+    with pytest.raises(ValueError, match="fast' or 'float32'"):
+        Projector(trajectory, volume_shape=(8, 8, 8), detector_shape=(12, 12),
+                  beam="parallel3d", backend="torch", precision="float64")
+
+
+def test_tangent_parallel3d_frame_rejected_in_float64():
+    direction = torch.tensor([[1.0, 0.0, 5e-16]])
+    axis = torch.tensor([[1.0, 0.0, 0.0]])
+    vertical = torch.tensor([[0.0, 1.0, 0.0]])
+    with pytest.raises(ValueError, match="tangent"):
+        Projector((direction, direction, axis, vertical), volume_shape=(4, 4, 4),
+                  detector_shape=(4, 4), beam="parallel3d", backend="torch")

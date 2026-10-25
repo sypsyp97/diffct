@@ -2,8 +2,8 @@ Installation
 ============
 
 Native execution uses an NVIDIA CUDA GPU. The portable PyTorch backend also
-supports CPU and PyTorch ROCm devices; see :doc:`execution` for precision and
-hardware-validation limits.
+supports CPU, PyTorch ROCm and Apple Silicon (MPS) devices; see
+:doc:`execution` for precision and hardware-validation limits.
 
 .. include:: install_steps.inc
 

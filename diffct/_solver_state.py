@@ -7,9 +7,9 @@ import numbers
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
 
 from .utils import _work_dtype
-import torch.distributed as dist
 
 from .pipeline import _fragments
 from .storage import NpyStore, TensorStore
@@ -73,9 +73,9 @@ def scalar_sum(operator, value, kind, *, return_tensor=False):
 
 def squared_norm(operator, value, kind, elements=1048576, *, return_tensor=False):
     store = TensorStore(value) if isinstance(value, torch.Tensor) else value
-    # Scale every block by its own peak before squaring, and collect the
-    # per-block contributions in host float64: FP32 accumulation would
-    # overflow for large measurements and underflow for tiny geometries.
+    # Scale every block by its own peak before squaring and track the
+    # running maximum on the device: unscaled FP32 squares overflow for
+    # large measurements and underflow for tiny geometries.
     device = getattr(store, "device", torch.device("cpu"))
     if _work_dtype(device) == torch.float64:
         total = torch.zeros((), dtype=torch.float64, device=device)
@@ -91,8 +91,8 @@ def squared_norm(operator, value, kind, elements=1048576, *, return_tensor=False
     # running sum follows the largest peak seen. All block math stays on the
     # device; the two closing scalar reads fit the per-iteration reduction
     # budget, and their product leaves FP32 before it can overflow.
-    peak = torch.zeros((), device=device)
-    total = torch.zeros((), device=device)
+    peak = torch.zeros((), device=device, dtype=torch.float32)
+    total = torch.zeros((), device=device, dtype=torch.float32)
     if owns_values(operator, kind):
         for selected in _fragments(tuple(store.shape), elements):
             block = store.read(selected)
