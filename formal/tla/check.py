@@ -65,7 +65,7 @@ def tlc(java, jar, module, config, out, name, expected=None):
 
 def models(java, jar, out, large):
     results = []
-    modules = ["BudgetAgreement", "Distributed", "MemoryEnvelope", "PipelineLifecycle", "AutogradRouting",
+    modules = ["BudgetAgreement", "NativeAdmission", "Distributed", "MemoryEnvelope", "PipelineLifecycle", "AutogradRouting",
                "RecomputeOrder", "ThreadSafety"]
     for module in modules:
         results.append(tlc(java, jar, HERE / f"{module}.tla", HERE / f"{module}.small.cfg",
@@ -75,13 +75,23 @@ def models(java, jar, out, large):
                            out, "Distributed.large"))
     mutations = {
         "BudgetAgreement": [("device", "Invariant DeviceAgreement is violated"),
-                            ("host", "Invariant HostAgreement is violated")],
+                            ("host", "Invariant HostAgreement is violated"),
+                            ("deviceMax", "Invariant DeviceMinimum is violated"),
+                            ("hostMax", "Invariant HostMinimum is violated"),
+                            ("localLeading", "Invariant LeadingAgreement is violated")],
+        "NativeAdmission": [("range", "Invariant NativeRange is violated"),
+                            ("selection", "Invariant SelectionAgreement is violated"),
+                            ("spacing", "Invariant SpacingAgreement is violated"),
+                            ("dtype", "Invariant TrajectoryAgreement is violated"),
+                            ("warning", "Invariant FallbackWarning is violated")],
         "Distributed": [("localBudget", "Invariant BudgetAgreement is violated"),
-                        ("skipEmpty", "Deadlock reached"), ("localError", "Deadlock reached")],
+                        ("skipEmpty", "Deadlock reached"), ("skipUntrained", "Deadlock reached"),
+                        ("localError", "Deadlock reached")],
         "MemoryEnvelope": [(field, "Invariant DeviceBound is violated")
                            for field in ("work", "copy", "graph", "reduction")]
                           + [("host", "Invariant HostBound is violated"),
                              ("twoTiles", "Invariant OneReducedTile is violated"),
+                             ("cotangent", "Invariant CotangentException is violated"),
                              ("leak", "Invariant NoLeaks is violated")],
         "PipelineLifecycle": [("reuseHost", "Invariant NoEarlyReuse is violated"),
                               ("unfinishedUpload", "Invariant NoUnfinishedRead is violated"),
@@ -90,6 +100,7 @@ def models(java, jar, out, large):
                               ("leak", "Invariant NoLeaks is violated"),
                               ("growPool", "Invariant PoolBound is violated")],
         "AutogradRouting": [("shallow", "Invariant BoundedRecording is violated"),
+                            ("empty", "Invariant BoundedRecording is violated"),
                             ("forceFunction", "Invariant PureForwardJvp is violated"),
                             ("geometryJvp", "Invariant GeometryForwardRejected is violated")],
         "RecomputeOrder": [("rankOrder", "Invariant ForwardOrder is violated")],
@@ -140,7 +151,7 @@ def symbolic(java, archive, cache, out):
         cmd = [java, "-Xmx1024m", "-XX:+UseParallelGC", "-jar", str(jar),
                f"--out-dir={out / ('apalache-' + mutation)}", "check",
                f"--config={config}", "--length=8",
-               "--inv=DeviceBound,HostBound,OneReducedTile,NoLeaks", str(HERE / "MemoryEnvelope.tla")]
+               "--inv=DeviceBound,HostBound,OneReducedTile,CotangentException,NoLeaks", str(HERE / "MemoryEnvelope.tla")]
         code, text, seconds = command(cmd, log, 120)
         passed = ((code == 0 and "The outcome is: NoError" in text) if expected is None
                   else code == 12 and "state invariant 0 violated" in text)

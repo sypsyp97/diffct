@@ -1,7 +1,7 @@
 --------------------------- MODULE RecomputeTrace ---------------------------
 EXTENDS RecomputeOrder
-CONSTANTS Actual, Project
-TraceInit == Init /\ project = Project
+CONSTANTS Actual, Project, Replicated, ReduceInput
+TraceInit == Init /\ project = Project /\ replicated = Replicated /\ reduceInput = ReduceInput
 TraceStep(r) == /\ index[r] < Len(Actual)
                 /\ Step(r)
                 /\ history'[r] = Append(history[r], Actual[index[r] + 1])

@@ -23,7 +23,8 @@ Agree == /\ \A r \in Ranks : pc[r] = "budget"
          /\ pc' = [r \in Ranks |-> "compute"]
          /\ UNCHANGED <<localBudget, localTiles, trainable, host, history, round, failed>>
 Enter(r) == /\ pc[r] = "compute"
-            /\ IF Mutation = "skipEmpty" /\ localTiles[r] = 0
+            /\ IF (Mutation = "skipEmpty" /\ localTiles[r] = 0)
+                  \/ (Mutation = "skipUntrained" /\ ~trainable[r])
                   THEN /\ pc' = [pc EXCEPT ![r] = "done"] /\ UNCHANGED history
                   ELSE /\ pc' = [pc EXCEPT ![r] = "wait"]
                        /\ history' = [history EXCEPT ![r] = Append(@, <<round + 1, plan[r]>>)]
