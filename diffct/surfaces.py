@@ -139,13 +139,14 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
             endpoints = points.reshape(view_count, -1, source.shape[-1])
             checks.append((torch.any(torch.all(sources.float() == endpoints.float(), dim=-1)),
                            "source and detector surface pixels must differ"))
+            work = _work_dtype(sources.device)
             if isinstance(voxel_spacing, (tuple, list)):
-                pitches = sources.new_tensor(voxel_spacing[::-1], dtype=_work_dtype(sources.device))
-                source_distance = torch.linalg.vector_norm(sources.double() / pitches, dim=-1)
-                pixel_distance = torch.linalg.vector_norm(endpoints.double() / pitches, dim=-1)
+                pitches = sources.new_tensor(voxel_spacing[::-1], dtype=work)
+                source_distance = torch.linalg.vector_norm(sources.to(dtype=work) / pitches, dim=-1)
+                pixel_distance = torch.linalg.vector_norm(endpoints.to(dtype=work) / pitches, dim=-1)
             else:
-                source_distance = torch.linalg.vector_norm(sources.double(), dim=-1) / voxel_spacing
-                pixel_distance = torch.linalg.vector_norm(endpoints.double(), dim=-1) / voxel_spacing
+                source_distance = torch.linalg.vector_norm(sources.to(dtype=work), dim=-1) / voxel_spacing
+                pixel_distance = torch.linalg.vector_norm(endpoints.to(dtype=work), dim=-1) / voxel_spacing
             checks.append((torch.any(torch.minimum(source_distance, pixel_distance) > 1e6),
                            "surface source or pixel must lie within 1e6 voxels"))
             checks.append((torch.any(source_distance > 1e15) | torch.any(pixel_distance > 1e15),

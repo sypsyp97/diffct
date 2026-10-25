@@ -86,3 +86,32 @@ def test_mps_solvers_run():
         result = solver(projector, sinogram, iterations=2)
         image = result.volume if isinstance(result, SolverResult) else result
         assert torch.isfinite(image).all()
+
+
+@mps
+def test_mps_detector_surface():
+    from diffct.surfaces import ParameterizedSurface
+    trajectory = circular_trajectory_3d(16, sid=800.0, sdd=1200.0,
+                                        device="mps", dtype=torch.float32)
+    gain = torch.ones(1, device="mps")
+    surface = ParameterizedSurface(
+        lambda u, v, ids, g: torch.stack((u, v, g.expand_as(u) * u), -1), (gain,))
+    projector = Projector(trajectory, volume_shape=(32, 32, 32), detector_shape=(48, 48),
+                          backend="torch", detector_surface=surface)
+    sinogram = projector(torch.rand(32, 32, 32, device="mps"))
+    assert torch.isfinite(sinogram).all()
+
+
+@mps
+def test_mps_streaming_stores():
+    from diffct import TensorStore
+    trajectory = circular_trajectory_2d_parallel(24, device="mps", dtype=torch.float32)
+    projector = Projector(trajectory, volume_shape=(48, 48), detector_shape=(64,),
+                          beam="parallel", backend="torch")
+    volume = torch.rand(48, 48, device="mps")
+    sinogram = torch.empty(24, 64, device="mps", dtype=torch.float32)
+    projector.project_into(TensorStore(volume), TensorStore(sinogram))
+    assert torch.isfinite(sinogram).all()
+    image = torch.empty(48, 48, device="mps", dtype=torch.float32)
+    projector.backproject_into(TensorStore(sinogram), TensorStore(image))
+    assert torch.isfinite(image).all()
