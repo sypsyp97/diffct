@@ -478,10 +478,9 @@ def helical_fdk(sinogram, trajectory, volume_shape, angles, *, isocenter,
     if not torch.allclose(torch.cos(phase - phase[0]), torch.ones_like(phase), rtol=0, atol=1e-5):
         raise ValueError("angles must describe the source's actual unwrapped rotation")
     if view_weights is None:
-        z = (torch.arange(shape[0], device="cpu", dtype=torch.float64)
+        z = (torch.arange(shape[0], device=sinogram.device, dtype=torch.float64)
              + 0.5 - shape[0] / 2) * (spacing[0] if isinstance(spacing, tuple) else spacing)
-        view_weights = helical_view_weights(angles.cpu(), geometry[0][:, 2].cpu(), z)
-        view_weights = view_weights.to(device=sinogram.device)
+        view_weights = helical_view_weights(angles, geometry[0][:, 2], z)
     else:
         # Still validate the acquired order when a caller replaces the windows.
         difference = angles[1:] - angles[:-1]

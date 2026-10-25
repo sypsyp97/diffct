@@ -216,6 +216,43 @@ def test_mps_cpu_fp64_surface_forward_and_backward():
 
 
 @mps
+def test_mps_learnable_cpu_fp64_trajectory_stays_consistent():
+    # A learnable FP64 trajectory on the host projecting an MPS volume keeps
+    # working end to end; its forward matches the learnable FP32 trajectory
+    # on the same device (both clamp to the MPS working dtype), and the
+    # geometry gradients stay finite and non-zero.
+    def forward(leaves):
+        torch.manual_seed(7)
+        projector = Projector(leaves, volume_shape=(8, 8, 8), detector_shape=(12, 12),
+                              backend="torch", precision="fast")
+        sinogram = projector(torch.rand(8, 8, 8, device="mps"))
+        sinogram.sum().backward()
+        return sinogram.detach().cpu(), [leaf.grad.cpu() for leaf in leaves]
+
+    trajectory = circular_trajectory_3d(6, sid=800.0, sdd=1200.0,
+                                        device="cpu", dtype=torch.float64)
+    leaves64 = tuple(c.clone().requires_grad_() for c in trajectory)
+    leaves32 = tuple(c.float().clone().requires_grad_() for c in trajectory)
+    sinogram64, grads64 = forward(leaves64)
+    sinogram32, _ = forward(leaves32)
+    assert (sinogram64 - sinogram32).norm() / sinogram32.norm() < 1e-4
+    for gradient in grads64:
+        assert torch.isfinite(gradient).all() and gradient.abs().max() > 0
+
+
+@mps
+def test_mps_norm_result_keeps_the_float64_range():
+    from diffct._solver_state import squared_norm
+    class Solo:
+        world_size = 1
+    value = torch.full((100,), 2.0, device="mps", dtype=torch.float32)
+    result = squared_norm(Solo(), value, "rays", return_tensor=True)
+    assert isinstance(result, torch.Tensor) and result.device.type == "cpu"
+    assert result.dtype == torch.float64 and result.ndim == 0
+    assert abs(result.item() - 400.0) < 1e-2
+
+
+@mps
 def test_mps_norms_survive_a_float64_default_dtype():
     from diffct._solver_state import squared_norm
     class Solo:

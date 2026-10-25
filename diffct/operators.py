@@ -138,9 +138,9 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
             checks.append((torch.any(torch.linalg.matrix_rank(frame) < 3),
                            "parallel3d rays must not be tangent to the detector plane"))
         else:
-            # |det| via the triple product: matrix_rank has no MPS kernel. The
-            # float32 criterion is looser than the FP64 rank check, but still
-            # rejects near-tangent frames at practical geometry scales.
+            # |det| via the triple product: matrix_rank has no MPS kernel. Its
+            # float32 threshold sits far above the FP64 rank tolerance, so it
+            # rejects a wider band of near-tangent frames than the FP64 check.
             determinant = torch.sum(frame[..., 0] * torch.linalg.cross(frame[..., 1], frame[..., 2], dim=-1), dim=-1)
             scale = torch.linalg.vector_norm(frame, dim=-2).prod(dim=-1)
             checks.append((torch.any(determinant.abs() <= torch.finfo(determinant.dtype).eps * scale),

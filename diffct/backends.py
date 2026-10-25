@@ -1105,7 +1105,10 @@ class ReferenceProjector:
                 zero = _zero_dependency(value)
                 target_dtype = _work_dtype(device)
                 if zero.dtype.itemsize > target_dtype.itemsize:
-                    return zero.to(device=device, dtype=target_dtype)
+                    # Cast on the source device first: a fused device and dtype
+                    # copy routes the float64 gradient back through the
+                    # FP64-less device on the way out.
+                    return zero.to(dtype=target_dtype).to(device=device)
                 return zero.to(device=device)
 
             loss = loss + sum(_zero_to(value, loss.device) for value in inputs)

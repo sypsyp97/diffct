@@ -35,7 +35,7 @@
 </p>
 
 > **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
-> For Apple Silicon, use the [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX).
+> Apple Silicon runs through the built-in MPS support (`backend="torch"`); a community [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX) also exists.
 
 This README describes the source checkout. Features listed under [Unreleased](CHANGELOG.md#unreleased) require installation from source.
 
