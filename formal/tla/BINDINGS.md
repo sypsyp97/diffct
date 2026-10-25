@@ -38,6 +38,8 @@ The distributed abort action and external thread serialization describe required
 
 Every invariant in `ObservedProtocol` and `TraceValidation` has a named malformed execution in `guard_mutations`.
 Successful traces must also contain the observation kinds required for their scenario; an empty manifest cannot pass.
+Required fields must be present. Defaults apply only to fields that the event does not use.
+Every geometry call is parsed. A prior TLC result is reused only for identical domain constants and the complete mapped event sequence.
 `RecomputeTrace.ObservedLength` has a truncation mutation. Pair/reduction reordering blocks `TraceStep` and must produce a TLC deadlock.
 The collector preserves failed collective entries, actual worker exit codes and parent-observed watchdog termination.
 

@@ -16,6 +16,17 @@ INVARIANTS = ["NoMixedOutcomes", "PlanAgreement", "CollectiveAgreement", "Comple
 KINDS = {"call_begin", "call_end", "plan_agreement", "collective_enter", "collective_exit", "group_create", "runtime_timeout", "call_error",
          "route", "host_read", "host_reuse", "pool_close", "budget_observation", "process_end", "budget_result",
          "selection_observation", "fallback_warning", "request_rejection"}
+REQUIRED_FIELDS = {
+    "call_begin": {"name"}, "call_end": {"name"}, "call_error": {"name", "allowed"},
+    "plan_agreement": {"signature"},
+    "collective_enter": {"group", "members", "signature"},
+    "collective_exit": {"group", "members", "signature"}, "group_create": {"group", "members"},
+    "route": {"required", "bounded", "require_rejection"},
+    "host_read": {"ready"}, "host_reuse": {"ready"}, "pool_close": {"remaining"},
+    "budget_observation": {"admitted", "bound"}, "budget_result": {"correct"},
+    "selection_observation": {"correct"}, "fallback_warning": {"required_warning", "warned"},
+    "request_rejection": {"rejected"}, "runtime_timeout": set(), "process_end": set(),
+}
 
 
 def literal(value):
@@ -33,7 +44,12 @@ def literal(value):
 
 
 def event_record(row):
-    # Fixed record shape makes missing observations visible to SANY/TLC.
+    required = REQUIRED_FIELDS[row["kind"]]
+    if row["kind"] == "route" and "require_rejection" in row:
+        required = required | ({"rejected"} if row["require_rejection"] else {"pure"})
+    if required - row.keys():
+        raise RuntimeError(f"missing {row['kind']} observations: {sorted(required - row.keys())}")
+    # Unused fields have defaults only after this event's fields are checked.
     fields = dict(kind=row["kind"], rank=row["rank"], name="none", group="none", signature="none", allowed=False,
                   required=False, bounded=False, pure=False, require_rejection=False, rejected=False,
                   ready=True, remaining=0, admitted=0, bound=0, correct=True, required_warning=False, warned=False)
@@ -142,10 +158,10 @@ def guard_mutations(out, prefix, java, jar, tlc):
         "CompletionCounts": [dict(kind="collective_exit", rank=0, **group)],
         "CollectivesFinished": [dict(kind="collective_enter", rank=0, **group)],
         "NoRuntimeTimeout": [dict(kind="runtime_timeout", rank=0)],
-        "NoUnexpectedCrash": [dict(kind="call_error", rank=0, allowed=False)],
-        "BoundedRoute": [dict(kind="route", rank=0, required=True, bounded=False)],
-        "PureForwardRoute": [dict(kind="route", rank=0, pure=True, bounded=True)],
-        "GeometryRejected": [dict(kind="route", rank=0, require_rejection=True, rejected=False)],
+        "NoUnexpectedCrash": [dict(kind="call_error", rank=0, name="call", allowed=False)],
+        "BoundedRoute": [dict(kind="route", rank=0, required=True, bounded=False, require_rejection=False, pure=False)],
+        "PureForwardRoute": [dict(kind="route", rank=0, required=False, pure=True, bounded=True, require_rejection=False)],
+        "GeometryRejected": [dict(kind="route", rank=0, required=False, bounded=False, require_rejection=True, rejected=False)],
         "NoUnfinishedRead": [dict(kind="host_read", rank=0, ready=False)],
         "NoLeaks": [dict(kind="pool_close", rank=0, remaining=1)],
         "BudgetBound": [dict(kind="budget_observation", rank=0, admitted=2, bound=1)],
@@ -184,19 +200,13 @@ def recompute(rows, out, prefix, java, jar, tlc):
     for start, row in enumerate(rows):
         if row["kind"] != "geometry_begin":
             continue
-        identity = (row["rank"], row["project"], row["reduce_input"], row["replicated"],
-                    tuple(row["leading"]), row["parameter_blocks"])
-        if identity in seen:
-            continue
-        seen.add(identity)
         end = next(i for i in range(start + 1, len(rows))
                    if rows[i]["kind"] == "geometry_end" and rows[i]["rank"] == row["rank"])
         segment = [item for item in rows[start + 1:end] if item["rank"] == row["rank"]]
         plans = [item["plan"] for item in segment if item["kind"] == "chunk_plan"
                  and item["phase"] == "geometry"]
-        if not plans:
-            raise RuntimeError("geometry replay has no observed plan")
-        chunks, view_step, detector_step = plans[0]
+        plan, = plans
+        chunks, view_step, detector_step = plan
         tiles = list(itertools.product(*(list((first, min(first + step, size))
                                               for first in range(0, size, step))
                                          for size, step in zip(row["volume_shape"], chunks))))
@@ -227,6 +237,13 @@ def recompute(rows, out, prefix, java, jar, tlc):
                     if stage == "pair" or (stage == "input" and not row["project"])
                     or (stage == "output" and row["project"]) else 0)
             actual.append([stage, piece, tile, rays])
+        # Reuse only an identical TLC constraint. Parse every call first, so
+        # a changed plan or corrupted later execution cannot hide in the cache.
+        identity = (row["project"], row["reduce_input"], row["replicated"], len(tiles), len(batches),
+                    len(pieces), row["parameter_blocks"], literal(actual))
+        if identity in seen:
+            continue
+        seen.add(identity)
         name = prefix + f".recompute-{len(results)}"
         directory = out / name
         directory.mkdir(exist_ok=True)
