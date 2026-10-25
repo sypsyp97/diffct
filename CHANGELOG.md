@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Trajectory constructors reject degenerate inputs instead of building NaN or empty geometry: zero or non-finite `ray_dir_fn` directions in `custom_trajectory_2d_parallel`, `random_trajectory_3d` sources at the isocenter, and view counts that are not positive integers (`TypeError` for floats and booleans, `ValueError` for counts below 1). Explicit angle tensors are still accepted. Thanks to @cslht11 ([#56](https://github.com/sypsyp97/diffct/pull/56)).
+
 ## [2.4.4] - 2026-10-25
 
 ### Added

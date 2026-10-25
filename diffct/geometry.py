@@ -5,6 +5,7 @@ and custom trajectories for parallel, fan and cone beams, plus rigid transforms.
 """
 
 import math
+import operator
 import torch
 from typing import Callable, Tuple
 
@@ -76,7 +77,6 @@ def circular_trajectory_3d_parallel(n_views, detector_distance=0.0, start_angle=
 
 
 def _circular_angles(n_views, start_angle, end_angle, device, dtype):
-    _check_n_views(n_views)
     if isinstance(n_views, torch.Tensor):
         if not torch.is_floating_point(n_views):
             raise TypeError("angles must have floating-point dtype")
@@ -85,6 +85,7 @@ def _circular_angles(n_views, start_angle, end_angle, device, dtype):
         if not torch.isfinite(n_views).all().item():
             raise ValueError("angles must be finite")
         return n_views, n_views.numel(), n_views.device, n_views.dtype
+    _check_n_views(n_views)
     step = (end_angle - start_angle) / n_views
     angles = start_angle + torch.arange(n_views, device=device, dtype=dtype) * step
     return angles, n_views, device, dtype
@@ -102,8 +103,18 @@ def _check_source_positions(src_pos, what="source_path_fn"):
 
 
 def _check_n_views(n_views):
-    """Reject nonpositive integer view counts, which build empty or broken trajectories."""
-    if not isinstance(n_views, torch.Tensor) and n_views < 1:
+    """Reject view counts that are not positive integers.
+
+    A float count would space ``arange(ceil(n))`` views by ``span / n``, and a
+    nonpositive count builds an empty trajectory or divides by zero.
+    """
+    try:
+        count = operator.index(n_views)
+    except TypeError:
+        count = None
+    if count is None or isinstance(n_views, bool):
+        raise TypeError(f"n_views must be a positive integer, got {n_views!r}")
+    if count < 1:
         raise ValueError(f"n_views must be a positive integer, got {n_views!r}")
 
 
