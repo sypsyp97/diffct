@@ -122,7 +122,6 @@ def test_mps_streaming_stores():
 def test_mps_parallel3d_matches_cpu():
     torch.manual_seed(3)
     volume = torch.rand(24, 24, 24)
-    angles = torch.linspace(0, torch.pi, 13)[:-1]
     def run(device):
         trajectory = circular_trajectory_3d_parallel(12, detector_distance=800.0,
                                                      device=device, dtype=torch.float32)
