@@ -7,8 +7,6 @@ and custom trajectories for parallel, fan and cone beams, plus rigid transforms.
 import math
 import operator
 import torch
-
-from .utils import _work_dtype
 from typing import Callable, Tuple
 
 
@@ -43,7 +41,10 @@ def transform_trajectory(trajectory, rotation=None, translation=None, *, beam='c
     if rotation is not None:
         if tuple(rotation.shape) not in ((dimensions, dimensions), (views, dimensions, dimensions)):
             raise ValueError("rotation must have shape (d, d) or (views, d, d)")
-        matrix = rotation.detach().to(dtype=_work_dtype(rotation.device))
+        # MPS provides no float64; the formal harness also loads this module
+        # standalone, so the cast stays inline instead of importing helpers.
+        matrix = rotation.detach().to(dtype=torch.float32 if rotation.device.type == "mps"
+                                      else torch.float64)
         identity = torch.eye(dimensions, device=matrix.device, dtype=matrix.dtype).expand_as(matrix)
         # Small explicit determinants: linalg.det routes through LU kernels
         # that MPS does not provide.
