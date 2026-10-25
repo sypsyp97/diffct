@@ -15,8 +15,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The models and property tests do not read the documentation. A pull request that
+      # changes only files under docs/ skips them. Every other event runs them.
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo code=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Renames list both paths. Paths with non-ASCII bytes stay unquoted.
+          git -c core.quotePath=false diff --no-renames --name-only "$BASE...$HEAD" > changed.txt
+          cat changed.txt
+          if grep -qv '^docs/' changed.txt; then code=true; else code=false; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   tla:
     name: MODEL CHECK / TRACE VALIDATION
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -60,6 +91,8 @@ jobs:
           if-no-files-found: error
   formal:
     name: PROOF models / BOUNDED simulator / PROPERTY TEST
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
