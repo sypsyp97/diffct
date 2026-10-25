@@ -73,15 +73,40 @@ def scalar_sum(operator, value, kind, *, return_tensor=False):
 
 def squared_norm(operator, value, kind, elements=1048576, *, return_tensor=False):
     store = TensorStore(value) if isinstance(value, torch.Tensor) else value
-    work = _work_dtype(getattr(store, "device", "cpu"))
-    total = torch.zeros((), dtype=work, device=getattr(store, "device", "cpu"))
+    # Scale every block by its own peak before squaring, and collect the
+    # per-block contributions in host float64: FP32 accumulation would
+    # overflow for large measurements and underflow for tiny geometries.
+    device = getattr(store, "device", torch.device("cpu"))
+    if _work_dtype(device) == torch.float64:
+        total = torch.zeros((), dtype=torch.float64, device=device)
+        if owns_values(operator, kind):
+            for selected in _fragments(tuple(store.shape), elements):
+                # Clone even an FP64 view: norms must never alter caller measurements.
+                block = store.read(selected).to(dtype=torch.float64).clone()
+                # Preserve the block reductions and their sequential FP64 order.
+                total.add_(block.square_().sum().to(device=total.device))
+        return scalar_sum(operator, total, kind, return_tensor=return_tensor)
+    # FP32 devices (MPS): squares of large measurements overflow and tiny
+    # geometries underflow, so every block is rescaled by its peak and the
+    # running sum follows the largest peak seen. All block math stays on the
+    # device; the two closing scalar reads fit the per-iteration reduction
+    # budget, and their product leaves FP32 before it can overflow.
+    peak = torch.zeros((), device=device)
+    total = torch.zeros((), device=device)
     if owns_values(operator, kind):
         for selected in _fragments(tuple(store.shape), elements):
-            # Clone even an FP64 view: norms must never alter caller measurements.
-            block = store.read(selected).to(dtype=work).clone()
-            # Preserve the block reductions and their sequential FP64 order.
-            total.add_(block.square_().sum().to(device=total.device))
-    return scalar_sum(operator, total, kind, return_tensor=return_tensor)
+            block = store.read(selected)
+            if not block.numel():
+                continue
+            block_peak = block.detach().abs().amax()
+            safe = torch.where(block_peak > 0, block_peak, torch.ones_like(block_peak))
+            combined = torch.maximum(peak, block_peak)
+            guard = torch.where(combined > 0, combined, torch.ones_like(combined))
+            total = (total * (peak / guard).square()
+                     + (block.detach() / safe).square().sum() * (block_peak / guard).square())
+            peak = combined
+    return scalar_sum(operator, peak.item() ** 2 * total.item(), kind,
+                      return_tensor=return_tensor)
 
 
 def copy_blocks(source, target, elements):

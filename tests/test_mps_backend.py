@@ -4,7 +4,8 @@ import pytest
 import torch
 
 from diffct import Projector, SolverResult, fbp
-from diffct.geometry import circular_trajectory_2d_parallel, circular_trajectory_3d
+from diffct.geometry import (circular_trajectory_2d_parallel, circular_trajectory_3d,
+                             circular_trajectory_3d_parallel)
 
 mps = pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS device required")
 
@@ -115,3 +116,79 @@ def test_mps_streaming_stores():
     image = torch.empty(48, 48, device="mps", dtype=torch.float32)
     projector.backproject_into(TensorStore(sinogram), TensorStore(image))
     assert torch.isfinite(image).all()
+
+
+@mps
+def test_mps_parallel3d_matches_cpu():
+    torch.manual_seed(3)
+    volume = torch.rand(24, 24, 24)
+    angles = torch.linspace(0, torch.pi, 13)[:-1]
+    def run(device):
+        trajectory = circular_trajectory_3d_parallel(12, detector_distance=800.0,
+                                                     device=device, dtype=torch.float32)
+        projector = Projector(trajectory, volume_shape=(24, 24, 24), detector_shape=(32, 32),
+                              beam="parallel3d", backend="torch")
+        return projector(volume.to(device)).detach().cpu()
+    torch.testing.assert_close(run("cpu"), run("mps"), rtol=1e-4, atol=1e-4)
+
+
+@mps
+def test_mps_transform_trajectory_rotation_matches_cpu():
+    from diffct import transform_trajectory
+    def run(device):
+        trajectory = circular_trajectory_3d(8, sid=800.0, sdd=1200.0,
+                                            device=device, dtype=torch.float32)
+        angle = torch.tensor(0.3, device=device)
+        c, s = torch.cos(angle), torch.sin(angle)
+        z, o = torch.zeros_like(angle), torch.ones_like(angle)
+        rotation = torch.stack((c, -s, z, s, c, z, z, z, o)).reshape(3, 3)
+        return tuple(value.detach().cpu() for value in
+                     transform_trajectory(trajectory, rotation=rotation))
+    cpu, transformed = run("cpu"), run("mps")
+    for expected, actual in zip(cpu, transformed):
+        torch.testing.assert_close(expected, actual, rtol=1e-4, atol=1e-4)
+    # A reflection must still be rejected by the proper-rotation check.
+    reflection = torch.diag(torch.tensor([-1.0, 1.0, 1.0, ], device="mps"))
+    with pytest.raises(ValueError, match="orthogonal"):
+        transform_trajectory(circular_trajectory_3d(8, sid=800.0, sdd=1200.0,
+                                                    device="mps", dtype=torch.float32),
+                             rotation=reflection)
+
+
+@mps
+def test_mps_surface_with_cpu_trajectory_matches_cpu():
+    from diffct.surfaces import ParameterizedSurface
+    torch.manual_seed(4)
+    volume = torch.rand(24, 24, 24)
+    gain = torch.ones(1, device="cpu")
+    surface = ParameterizedSurface(
+        lambda u, v, ids, g: torch.stack((u, v, g.expand_as(u) * u), -1), (gain,))
+    def run(device):
+        trajectory = circular_trajectory_3d(8, sid=800.0, sdd=1200.0,
+                                            device="cpu", dtype=torch.float32)
+        projector = Projector(trajectory, volume_shape=(24, 24, 24), detector_shape=(32, 32),
+                              backend="torch", detector_surface=surface)
+        return projector(volume.to(device)).detach().cpu()
+    torch.testing.assert_close(run("cpu"), run("mps"), rtol=1e-4, atol=1e-4)
+
+
+@mps
+def test_mps_solver_norm_scaling_extremes():
+    from diffct import cgls
+    torch.manual_seed(5)
+    def solve(scale, spacing=1.0):
+        trajectory = circular_trajectory_2d_parallel(16, device="mps", dtype=torch.float32)
+        projector = Projector(trajectory, volume_shape=(32, 32), detector_shape=(48,),
+                              beam="parallel", backend="torch",
+                              voxel_spacing=spacing, detector_spacing=spacing)
+        truth = (torch.rand(32, 32) > 0.7).float().to("mps")
+        sinogram = projector(truth) * scale
+        result = cgls(projector, sinogram, iterations=5)
+        return truth, result
+
+    truth, large = solve(1e19)
+    assert large.iterations == 5 and not large.converged
+    assert large.residual_history[0] > large.residual_history[-1] > 0.0
+    truth, tiny = solve(1.0, spacing=1e-8)
+    assert tiny.iterations == 5 and "breakdown" not in tiny.reason.lower()
+    assert tiny.residual_history[0] > tiny.residual_history[-1] > 0.0

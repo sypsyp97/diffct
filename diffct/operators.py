@@ -9,6 +9,7 @@ import warnings
 
 import torch
 
+from .constants import _native_spacing
 from .chunking import (_ChunkPlan, _allocation_bytes, _host_geometry_bytes, _largest_buffer_bytes, _memory_budget,
                        _memory_lower_bounds, _pipeline_buffers, _pipeline_bytes, _pixel_tiles,
                        _reservation_budget, _reservation_bytes, _tiles, _working_set_bytes)
@@ -21,7 +22,6 @@ from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geome
 from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
                        select_backend, voxel_spacing_tuple)
 from .distribution import Partition
-from .constants import _native_spacing
 from .projectors import (
     _backproject_into,
     _geometry_vjp,
@@ -135,7 +135,11 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
         # Bad entries already have a finite-value error above; keep the rank
         # solver well-defined until the combined error flags reach the host.
         frame = torch.where(torch.isfinite(frame), frame, 0.)
-        checks.append((torch.any(torch.linalg.matrix_rank(frame) < 3),
+        # |det| via the triple product: matrix_rank has no MPS kernel, and a
+        # vanishing determinant flags the same tangent frames at roundoff.
+        determinant = torch.sum(frame[..., 0] * torch.linalg.cross(frame[..., 1], frame[..., 2], dim=-1), dim=-1)
+        scale = torch.linalg.vector_norm(frame, dim=-2).prod(dim=-1)
+        checks.append((torch.any(determinant.abs() <= torch.finfo(determinant.dtype).eps * scale),
                        "parallel3d rays must not be tangent to the detector plane"))
     if beam in ("fan", "cone") and not detector_surface:
         # float64 avoids overflow of half-precision input and dtype mismatches in cross().

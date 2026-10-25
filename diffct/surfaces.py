@@ -96,6 +96,9 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
         dtype = torch.float32
         for component in (*frames, offsets):
             dtype = torch.promote_types(dtype, component.dtype)
+    if dtype.itemsize > _work_dtype(device).itemsize:
+        # CPU-side FP64 geometry must not follow FP64-less compute devices.
+        dtype = _work_dtype(device)
     elif dtype not in (torch.float32, torch.float64):
         raise ValueError("surface geometry dtype must be float32 or float64")
     offset_dtype = offsets.dtype if native_legacy else dtype

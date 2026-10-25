@@ -6,6 +6,8 @@ and custom trajectories for parallel, fan and cone beams, plus rigid transforms.
 
 import math
 import torch
+
+from .utils import _work_dtype
 from typing import Callable, Tuple
 
 
@@ -40,10 +42,17 @@ def transform_trajectory(trajectory, rotation=None, translation=None, *, beam='c
     if rotation is not None:
         if tuple(rotation.shape) not in ((dimensions, dimensions), (views, dimensions, dimensions)):
             raise ValueError("rotation must have shape (d, d) or (views, d, d)")
-        matrix = rotation.detach().double()
+        matrix = rotation.detach().to(dtype=_work_dtype(rotation.device))
         identity = torch.eye(dimensions, device=matrix.device, dtype=matrix.dtype).expand_as(matrix)
+        # Small explicit determinants: linalg.det routes through LU kernels
+        # that MPS does not provide.
+        if dimensions == 2:
+            determinant = (matrix[..., 0, 0] * matrix[..., 1, 1]
+                           - matrix[..., 0, 1] * matrix[..., 1, 0])
+        else:
+            determinant = (matrix[..., 0] * torch.linalg.cross(matrix[..., 1], matrix[..., 2], dim=-1)).sum(-1)
         if (not torch.allclose(matrix.transpose(-1, -2) @ matrix, identity, rtol=1e-4, atol=1e-4)
-                or not torch.allclose(torch.linalg.det(matrix), matrix.new_ones(matrix.shape[:-2]),
+                or not torch.allclose(determinant, matrix.new_ones(matrix.shape[:-2]),
                                       rtol=1e-4, atol=1e-4)):
             raise ValueError("rotation must be orthogonal and proper (determinant +1)")
     if translation is not None and tuple(translation.shape) not in ((dimensions,), (views, dimensions)):

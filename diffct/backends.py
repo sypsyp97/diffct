@@ -8,12 +8,11 @@ import time
 from contextlib import nullcontext
 
 import torch
-
-from .utils import _work_dtype
 import torch.distributed as dist
 from torch.autograd import forward_ad
 
 from .chunking import _memory_lower_bounds
+from .utils import _work_dtype
 from .distribution import control_status
 from .surfaces import ParameterizedSurface
 from .constants import _native_spacing
@@ -632,7 +631,7 @@ class ReferenceProjector:
         def compose(validate, stats):
             check_range = (validate and owner.beam not in ("parallel", "parallel3d")
                            and owner.dtype == torch.float32 and surface is not None)
-            dtype = _work_dtype(owner._trajectory[0].device) if check_range else owner.dtype
+            dtype = _work_dtype(device) if check_range else owner.dtype
             frames = (owner._learnable or owner._trajectory) if geometry is None else geometry[:frame_count]
             native_surface = owner.backend == "numba" and surface is not None
             native_legacy = native_surface and not isinstance(surface, ParameterizedSurface)
