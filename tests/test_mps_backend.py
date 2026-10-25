@@ -342,3 +342,19 @@ def test_mps_torch_func_jvp_matches_cpu():
                               (torch.ones_like(leaf),))[1].cpu()
 
     torch.testing.assert_close(run("cpu"), run("mps"), rtol=1e-4, atol=1e-3)
+
+
+@mps
+def test_mps_into_variants_reject_float64_precision():
+    from diffct import TensorStore
+    trajectory = circular_trajectory_3d(4, sid=800.0, sdd=1200.0,
+                                        device="cpu", dtype=torch.float64)
+    projector = Projector(trajectory, volume_shape=(8, 8, 8), detector_shape=(12, 12),
+                          backend="torch", precision="float64")
+    volume_store = TensorStore(torch.rand(8, 8, 8, device="mps"))
+    sinogram_store = TensorStore(torch.rand(4, 12, 12, device="mps"))
+    volume_out = TensorStore(torch.empty(8, 8, 8, device="mps"))
+    for call in (lambda: projector.project_into(volume_store, sinogram_store),
+                 lambda: projector.backproject_into(sinogram_store, volume_out)):
+        with pytest.raises(ValueError, match="fast' or 'float32'"):
+            call()

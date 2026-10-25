@@ -2732,6 +2732,10 @@ class Projector:
         return result
 
     def _execute_into(self, value, output, is_project):
+        if self.dtype == torch.float64 and any(
+                getattr(tensor, "device", torch.device("cpu")).type == "mps"
+                for tensor in (value, output)):
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         if self._reference is not None and self.world_size > 1:
