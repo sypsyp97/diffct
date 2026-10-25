@@ -1,0 +1,15 @@
+{# The whole documentation tree, so that every page shows the same sidebar. The branch of the current page is open. #}
+<nav class="bd-docs-nav bd-links site-nav" aria-label="{{ _('Site Navigation') }}">
+  <div class="bd-toc-item navbar-nav">
+    {{- generate_toctree_html(
+      "sidebar",
+      startdepth=0,
+      show_nav_level=1,
+      maxdepth=3,
+      collapse=False,
+      includehidden=True,
+      titles_only=True
+      )
+    -}}
+  </div>
+</nav>
