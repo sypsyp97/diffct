@@ -1,0 +1,776 @@
+#!/usr/bin/env python3
+"""Observe real diffct calls. Instrumentation is confined to this process."""
+
+import argparse
+from copy import copy
+from datetime import timedelta
+import functools
+import hashlib
+import inspect
+import json
+import math
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
+import traceback
+import uuid
+import warnings
+
+
+class Recorder:
+    def __init__(self, path, rank):
+        self.output = path.open("w", buffering=1)
+        self.rank = rank
+        self.lock = threading.Lock()
+        self.local = threading.local()
+        self.bounded = 0
+        self.phase = "forward"
+        self.device = "cpu"
+        self.torch = None
+
+    def emit(self, kind, **fields):
+        with self.lock:
+            self.output.write(json.dumps(dict(kind=kind, rank=self.rank, ns=time.monotonic_ns(),
+                                              thread=threading.current_thread().name,
+                                              call=getattr(self.local, "call", "none"), **fields)) + "\n")
+
+
+def instrument(rec, backends, distribution, pipeline, torch):
+    dist = torch.distributed
+    for name in ("all_reduce", "all_gather", "broadcast"):
+        original = getattr(dist, name)
+
+        def wrap(original, name):
+            @functools.wraps(original)
+            def observed(*args, **kwargs):
+                group = kwargs["group"] if "group" in kwargs else None
+                members = dist.get_process_group_ranks(group or dist.group.WORLD)
+                tensor = args[1] if name == "all_gather" else args[0]
+                operation = str(kwargs["op"]) if "op" in kwargs else "default"
+                fields = dict(group=",".join(map(str, members)), members=members,
+                              signature=f"{name}:{operation}:{tuple(tensor.shape)}:{tensor.dtype}")
+                rec.emit("collective_enter", **fields)
+                try:
+                    result = original(*args, **kwargs)
+                except BaseException as error:
+                    rec.emit("collective_error", message=str(error), **fields)
+                    raise
+                rec.emit("collective_exit", **fields)
+                return result
+            return observed
+        setattr(dist, name, wrap(original, name))
+    original_group = dist.new_group
+
+    @functools.wraps(original_group)
+    def new_group(*args, **kwargs):
+        result = original_group(*args, **kwargs)
+        members = args[0] if args else kwargs["ranks"]
+        rec.emit("group_create", group=",".join(map(str, members)), members=members)
+        return result
+    dist.new_group = new_group
+
+    function = backends._PortableApply
+    original = function.forward
+
+    @functools.wraps(original)
+    def forward(*args, **kwargs):
+        rec.bounded += 1
+        rec.emit("bounded_function", function="_PortableApply")
+        return original(*args, **kwargs)
+    function.forward = staticmethod(forward)
+    reference = backends.ReferenceProjector
+    original_rays, original_intervals = reference._rays, reference._intervals
+
+    @functools.wraps(original_rays)
+    def rays(self, views, pixels, *args, **kwargs):
+        rec.local.rays = [views.start, views.stop, *[(p.start, p.stop) for p in pixels]]
+        return original_rays(self, views, pixels, *args, **kwargs)
+
+    @functools.wraps(original_intervals)
+    def intervals(self, origins, directions, tile):
+        fields = dict(phase=rec.phase, tile=[(p.start, p.stop) for p in tile],
+                      rays=rec.local.rays, piece=getattr(rec.local, "piece", []))
+        rec.emit("pair_begin", **fields)
+        result = original_intervals(self, origins, directions, tile)
+        rec.emit("pair_end", **fields)
+        return result
+    reference._rays, reference._intervals = rays, intervals
+
+    original_geometry = reference._geometry_grad
+    original_chunks = reference._work_chunks
+    original_tiles, original_batches = reference._tiles, reference._batches
+    original_pieces, original_reduce = reference._leading_pieces, reference._reduce
+
+    def tiles(self, *args, **kwargs):
+        for tile, world in original_tiles(self, *args, **kwargs):
+            rec.local.tile = [(part.start, part.stop) for part in world]
+            yield tile, world
+
+    def batches(self, *args, **kwargs):
+        for views, pixels in original_batches(self, *args, **kwargs):
+            rec.local.rays = [views.start, views.stop, *[(p.start, p.stop) for p in pixels]]
+            yield views, pixels
+
+    def pieces(leading, batch_limit):
+        if rec.phase == "geometry":
+            rec.emit("leading_plan", leading=leading, limit=batch_limit)
+            rec.emit("plan_agreement", signature=json.dumps(["leading", leading, batch_limit]))
+        for piece in original_pieces(leading, batch_limit):
+            rec.local.piece = [(part.start, part.stop) for part in piece]
+            rec.local.geometry_stage = "input"
+            yield piece
+        rec.local.geometry_stage = "parameter"
+
+    def reduce(self, value, group, count, stats):
+        if rec.phase == "geometry":
+            rec.emit("geometry_reduce", stage=rec.local.geometry_stage,
+                     tile=getattr(rec.local, "tile", []), rays=getattr(rec.local, "rays", []),
+                     piece=getattr(rec.local, "piece", []), elements=value.numel(), participants=count)
+        return original_reduce(self, value, group, count, stats)
+    reference._tiles, reference._batches = tiles, batches
+    reference._leading_pieces, reference._reduce = staticmethod(pieces), reduce
+
+    def chunks(self, *args, **kwargs):
+        result = original_chunks(self, *args, **kwargs)
+        rec.emit("chunk_plan", phase=rec.phase, plan=result,
+                 batch_elements=args[0] if args else 1)
+        return result
+
+    def geometry(self, tensor, cotangent, is_project, reduce_cotangent, geometry):
+        previous = rec.phase
+        rec.phase = "geometry"
+        rec.local.geometry_stage, rec.local.piece = "output", []
+        rec.emit("geometry_begin", project=is_project, volume_shape=self.owner.volume_shape,
+                 volume_slice=[(p.start, p.stop) for p in self.owner.volume_slice],
+                 detector_shape=self.owner.detector_shape,
+                 view_slice=(self.owner.view_slice.start, self.owner.view_slice.stop),
+                 leading=list(tensor.shape[:-len(self.owner.volume_shape if is_project
+                                                 else self.owner.projection_shape)]),
+                 reduce_input=reduce_cotangent,
+                 replicated=(self.owner.space_world_size if is_project else self.owner.view_world_size) > 1,
+                 parameter_blocks=sum(math.ceil(value.numel() / max(1, backends._REFERENCE_WORK_BYTES
+                                       // value.element_size())) for value in geometry))
+        try:
+            return original_geometry(self, tensor, cotangent, is_project, reduce_cotangent, geometry)
+        finally:
+            rec.emit("geometry_end")
+            rec.phase = previous
+    reference._geometry_grad, reference._work_chunks = geometry, chunks
+
+    original_apply = reference._tensor_apply
+
+    @functools.wraps(original_apply)
+    def apply(self, tensor, is_project, *args, **kwargs):
+        rec.local.leading = list(tensor.shape[:-len(self.owner.volume_shape if is_project
+                                                   else self.owner.projection_shape)])
+        result = original_apply(self, tensor, is_project, *args, **kwargs)
+        rec.emit("plan", stats=self.owner.last_execution_stats)
+        return result
+    reference._tensor_apply = apply
+
+    original_slot = pipeline._DevicePipeline.slot
+
+    def slot(self):
+        result = original_slot(self)
+        rec.emit("host_reuse", ready=result.event is None)
+        return result
+    pipeline._DevicePipeline.slot = slot
+    original_finish = pipeline._HostSlot.finish
+
+    def finish(self):
+        drain, event = self.drain, self.event
+        if drain is not None:
+            def observed_drain():
+                rec.emit("host_read", ready=event is None or event.query())
+                return drain()
+            self.drain = observed_drain
+        return original_finish(self)
+    pipeline._HostSlot.finish = finish
+    original_close = pipeline._DevicePipeline.close
+
+    def close(self):
+        try:
+            return original_close(self)
+        finally:
+            rec.emit("pool_close", remaining=len(self.host) + len(self.pending) + len(self.outputs)
+                     + len(self.output_streams))
+    pipeline._DevicePipeline.close = close
+    original_event = pipeline._DevicePipeline.event
+
+    def event(stream):
+        result = original_event(stream)
+        rec.emit("event_record", event=id(result), stream=int(stream.cuda_stream))
+        return result
+    pipeline._DevicePipeline.event = staticmethod(event)
+    original_copy = pipeline._copy
+
+    def copy(target, source, stats):
+        rec.emit("copy_begin", source=str(source.device), target=str(target.device),
+                 bytes=target.numel() * target.element_size())
+        return original_copy(target, source, stats)
+    pipeline._copy = copy
+
+
+def projector(torch, diffct, device, distributed=False, partition="views", surface=False,
+              trajectory_grad=False, explicit=True, native=False, spacing=None):
+    frames = (torch.tensor([[-4., 0.]] * 3, dtype=torch.float64),
+              torch.tensor([[4., 0.]] * 3, dtype=torch.float64),
+              torch.tensor([[0., 1.]] * 3, dtype=torch.float64))
+    if trajectory_grad:
+        frames = tuple(value.requires_grad_() for value in frames)
+    options = dict(beam="fan", volume_shape=(2, 3), detector_shape=(3,), trajectory=frames,
+                   detector_spacing=1., voxel_spacing=1. if native else (1., 1.),
+                   precision="fast" if native else "float64", backend="numba" if native else "torch",
+                   distributed=distributed, partition=partition)
+    if spacing is not None:
+        options["voxel_spacing"] = spacing
+    if explicit:
+        options.update(volume_chunk_shape=(1, 2), view_chunk_size=1, detector_chunk_shape=(2,))
+    if surface:
+        parameter = torch.tensor(.02, dtype=torch.float64, requires_grad=True)
+
+        def sampler(u, v, ids, offset):
+            return torch.stack((u + offset, torch.zeros_like(u), torch.zeros_like(u)), dim=-1)
+        options["detector_surface"] = diffct.ParameterizedSurface(sampler, (parameter,))
+    return diffct.Projector(**options)
+
+
+def call(rec, name, function, *, required=False, allowed_error=False, require_rejection=False,
+         expected_error=None):
+    rec.local.call = name
+    rec.emit("call_begin", name=name)
+    if rec.device.startswith("cuda"):
+        rec.torch.cuda.synchronize()
+        rec.torch.cuda.reset_peak_memory_stats()
+        rec.emit("memory_begin", allocated=rec.torch.cuda.memory_allocated())
+    start, before = time.monotonic(), rec.bounded
+    try:
+        result = function()
+    except BaseException as error:
+        message = str(error)
+        if expected_error is not None and not (isinstance(error, expected_error[0])
+                                               and expected_error[1] in message):
+            raise RuntimeError(f"{name} raised an unrelated error") from error
+        kind = "runtime_timeout" if "timed out" in message.lower() or "timeout" in message.lower() else "call_error"
+        expected = allowed_error and not name.startswith("thread-")
+        rec.emit(kind, name=name, message=message, type=type(error).__name__,
+                 allowed=expected, traceback=traceback.format_exc(), seconds=time.monotonic() - start)
+        if require_rejection:
+            if "forward-mode" not in message or "geometry" not in message:
+                raise RuntimeError("geometry derivative raised an unrelated error") from error
+            rec.emit("route", name=name, required=False, bounded=rec.bounded > before,
+                     rejected=True, require_rejection=True)
+        if not allowed_error:
+            raise
+        if expected_error is not None:
+            rec.emit("request_rejection", rejected=True, name=name)
+        return None
+    if expected_error is not None:
+        rec.emit("request_rejection", rejected=False, name=name)
+    rec.emit("route", name=name, required=required, bounded=rec.bounded > before,
+             pure=name in ("jvp-project", "jvp-backproject"),
+             rejected=False, require_rejection=require_rejection)
+    rec.emit("call_end", name=name, seconds=time.monotonic() - start)
+    if rec.device.startswith("cuda"):
+        rec.torch.cuda.synchronize()
+        rec.emit("memory_end", allocated=rec.torch.cuda.memory_allocated(),
+                 peak=rec.torch.cuda.max_memory_allocated())
+    return result
+
+
+def serial(rec, torch, diffct, device, native):
+    p = projector(torch, diffct, device, native=native)
+    dtype = torch.float32 if native else torch.float64
+    data = torch.ones(p.volume_shape, device=device, dtype=dtype)
+    for index in range(2):
+        y = call(rec, f"forward-{index}", lambda: p.project(data))
+        call(rec, f"adjoint-{index}", lambda: p.backproject(y))
+    if device.startswith("cuda"):
+        # Real stores exercise native host slots and CUDA events.
+        host = torch.ones(p.volume_shape, dtype=dtype)
+        for spacing in ((1.,), (.7, 1.9)) if native else ((1., 1.),):
+            q = projector(torch, diffct, device, native=native,
+                          spacing=spacing[0] if len(spacing) == 1 else spacing)
+            for index in range(2):
+                output = torch.empty(q.projection_shape, dtype=dtype)
+                call(rec, f"host-store-{spacing}-{index}", lambda: q.project_into(diffct.TensorStore(host),
+                                                                                 diffct.TensorStore(output)))
+                target = torch.empty(q.volume_shape, dtype=dtype)
+                call(rec, f"host-adjoint-{spacing}-{index}", lambda: q.backproject_into(diffct.TensorStore(output),
+                                                                                     diffct.TensorStore(target)))
+        if native:
+            class FailingStore(diffct.TensorStore):
+                def write(self, *args, **kwargs):
+                    super().write(*args, **kwargs)
+                    raise RuntimeError("formal injected store failure")
+            call(rec, "host-store-failure", lambda: p.project_into(diffct.TensorStore(host),
+                    FailingStore(torch.empty(p.projection_shape, dtype=dtype))), allowed_error=True,
+                    expected_error=(RuntimeError, "formal injected store failure"))
+    return p
+
+
+def routing(rec, torch, diffct, device, backends):
+    bounded_contract = hasattr(backends, "_PortableApply")
+    for empty in (False, True):
+        for geometry_kind in ("fixed", "trajectory", "surface"):
+            p = projector(torch, diffct, device, trajectory_grad=geometry_kind == "trajectory",
+                          surface=geometry_kind == "surface")
+            for operation in ("project", "backproject"):
+                shape = p.volume_shape if operation == "project" else p.projection_shape
+                function = getattr(p, operation)
+                for needs_grad in (False, True):
+                    data = torch.ones((0, *shape) if empty else shape, device=device,
+                                      dtype=torch.float64, requires_grad=needs_grad)
+                    name = f"{geometry_kind}-{operation}-grad{int(needs_grad)}-empty{int(empty)}"
+                    result = call(rec, name, lambda: function(data),
+                                  required=bounded_contract and (needs_grad or geometry_kind != "fixed"))
+                    if result.requires_grad:
+                        rec.phase = "backward"
+                        call(rec, name + "-backward", lambda: result.sum().backward())
+                        rec.phase = "forward"
+                if not empty and geometry_kind == "fixed":
+                    data = torch.ones(shape, device=device, dtype=torch.float64)
+                    with torch.no_grad():
+                        call(rec, f"no-grad-{operation}", lambda: function(data.requires_grad_()), required=False)
+                    call(rec, f"jvp-{operation}", lambda: torch.func.jvp(function, (data.detach(),),
+                                                                         (torch.ones_like(data),)))
+                    tangent = torch.ones_like(data, requires_grad=True)
+                    call(rec, f"jvp-grad-tangent-{operation}", lambda: torch.func.jvp(
+                        function, (data.detach(),), (tangent,)), required=bounded_contract)
+                    batched = torch.ones((2, *shape), device=device, dtype=torch.float64, requires_grad=True)
+                    call(rec, f"vmap-grad-{operation}", lambda: torch.vmap(function)(batched),
+                         required=bounded_contract)
+    # Geometry forward derivatives must raise on PR2.
+    if bounded_contract:
+        p = projector(torch, diffct, device)
+        data = torch.ones(p.volume_shape, dtype=torch.float64, device=device)
+        frames = p._trajectory
+        call(rec, "geometry-jvp", lambda: torch.func.jvp(
+            lambda *args: p.project(data, trajectory=args), frames,
+            tuple(torch.ones_like(frame) for frame in frames)), allowed_error=True, require_rejection=True)
+
+
+def memory_budget(rec, torch, diffct, device, backends):
+    p = projector(torch, diffct, device, explicit=False)
+    original = backends._memory_lower_bounds
+    # Exercise the real scalar planner at a specified allocator state.
+    # This observes planner arithmetic, not a CUDA allocation measurement.
+    usable = 1024 ** 2
+    backends._memory_lower_bounds = lambda device: (usable * 3 // 4,) * 3
+    try:
+        rec.local.call = "planner-no-floor"
+        budget = p._reference._work_budget((torch.device("cuda:0"),))
+        value = budget[0]
+        owner = copy(p)
+        owner.global_volume_shape = owner.volume_shape = (128, 128)
+        owner.volume_slice = (slice(0, 128), slice(0, 128))
+        owner.projection_shape = (3, 512)
+        owner.detector_shape = (512,)
+        reference = copy(p._reference)
+        reference.owner = owner
+        plan = reference._work_chunks(1, budget)
+        geometry = reference._snapshot_geometry()
+        views, pixels = next(reference._batches(*plan[1:]))
+        origins, directions, unused = reference._rays(views, pixels, torch.device("cpu"), geometry=geometry)
+        unused, world = next(reference._tiles(plan[0]))
+        indices, lengths = reference._intervals(origins, directions, world)
+        payload = max(tensor.numel() * tensor.element_size() for tensor in (indices, lengths))
+        rec.emit("budget_observation", available=usable, bound=usable // 4, admitted=value,
+                 minimum_array_bytes=payload, plan=plan, simulated_allocator=True, probe_device="cpu")
+        rec.local.call = "planner-no-retained-graph"
+        data = torch.ones(owner.volume_shape, dtype=owner.dtype, requires_grad=True)
+        kept = {}
+
+        def pack(tensor):
+            storage = tensor.untyped_storage()
+            if tensor.numel() > data.numel() and storage._cdata != data.untyped_storage()._cdata:
+                kept[storage._cdata] = storage.nbytes()
+            return tensor
+
+        with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
+            result = reference._tensor_apply(data, True, geometry=geometry, _plan=(plan, budget))
+        rec.emit("budget_observation", available=usable, bound=0,
+                 admitted=sum(kept.values()), work_budget=budget[0],
+                 saved_arrays=len(kept), simulated_allocator=True, probe_device="cpu")
+        del result
+    finally:
+        backends._memory_lower_bounds = original
+
+
+def selection(rec, torch, diffct, device, distributed=False):
+    """Observe actual selection, boundary admission, warnings and metadata guards."""
+    frames = (torch.tensor([[1., 0.]] * 3, dtype=torch.float64),
+              torch.zeros((3, 2), dtype=torch.float64),
+              torch.tensor([[0., 1.]] * 3, dtype=torch.float64))
+    nvidia = torch.cuda.is_available() and torch.version.hip is None
+    cases = [("anisotropic", (.7, 1.9), True, ""),
+             ("lower", (1e-6, 1e-6), True, ""),
+             ("upper", (1e6, 1e6), True, ""),
+             ("ratio", (1e-3, 10.), True, ""),
+             ("below", (.5e-6, 1e-6), False, "practical range"),
+             ("above", (1e6, 2e6), False, "practical range"),
+             ("excess-ratio", (1e-3, 10.001), False, "pitch ratio")]
+    for label, spacing, eligible, reason in cases:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            p = call(rec, "auto-" + label, lambda: diffct.Projector(
+                frames, (2, 3), 3, beam="parallel", voxel_spacing=spacing,
+                backend="auto", distributed=distributed))
+        expected = "numba" if nvidia and eligible else "torch"
+        rec.emit("selection_observation", correct=p.backend == expected, selected=p.backend,
+                 expected=expected, spacing=spacing, nvidia=nvidia)
+        messages = [str(item.message) for item in caught]
+        rec.emit("fallback_warning", required_warning=nvidia and not eligible,
+                 warned=any("backend='auto'" in message and reason in message for message in messages),
+                 messages=messages)
+    if not distributed:
+        for label, spacing, eligible, reason in cases:
+            if not eligible:
+                call(rec, "native-reject-" + label, lambda: diffct.Projector(
+                    frames, (2, 3), 3, beam="parallel", voxel_spacing=spacing, backend="numba"),
+                    allowed_error=True, expected_error=(ValueError, reason))
+        return
+    # All local constructors below are valid. Layout disagreement must reject
+    # on every rank before numerical dispatch, including a warmed owner.
+    for label in ("spacing", "dtype", "auto-selection"):
+        spacing = ((.7, 1.9) if rec.rank == 0 or label != "spacing" else (.8, 1.9))
+        if label == "auto-selection" and rec.rank == 1:
+            spacing = (1e-3, 10.001)
+        selected = tuple(value.to(dtype=torch.float32) for value in frames) if label == "dtype" and rec.rank else frames
+        call(rec, "layout-reject-" + label, lambda: diffct.Projector(
+            selected, (2, 3), 3, beam="parallel", voxel_spacing=spacing,
+            backend="auto", distributed=True), allowed_error=True,
+            expected_error=(ValueError, "must agree"))
+    if nvidia:
+        call(rec, "layout-reject-backend", lambda: diffct.Projector(
+            frames, (2, 3), 3, beam="parallel", voxel_spacing=(.7, 1.9),
+            backend="numba" if rec.rank == 0 else "torch", distributed=True), allowed_error=True,
+            expected_error=(ValueError, "must agree"))
+    p = projector(torch, diffct, device, distributed=True)
+    data = torch.ones(p.volume_shape, device=device, dtype=torch.float64)
+    call(rec, "warm-layout", lambda: p.project(data))
+    override = tuple(value.to(dtype=torch.float32 if rec.rank else torch.float64) for value in p._trajectory)
+    call(rec, "request-dtype-reject", lambda: p.project(data, trajectory=override),
+         allowed_error=True, expected_error=(ValueError, "trajectory dtypes"))
+
+
+def planner(rec, torch, diffct, device, backends):
+    p = projector(torch, diffct, device, distributed=True, explicit=False)
+    original_memory, original_host = backends._memory_lower_bounds, backends._host_free_bytes
+    backends._memory_lower_bounds = lambda unused: ((96 if rec.rank == 0 else 192) * 1024 ** 2,) * 3
+    backends._host_free_bytes = lambda: (256 if rec.rank == 0 else 512) * 1024 ** 2
+    try:
+        for mode in ("cuda", "host", "cpu-fallback", "explicit"):
+            if mode == "explicit":
+                p.volume_chunk_shape, p.view_chunk_size, p.detector_chunk_shape = (1, 2), 1, (2,)
+            compute = torch.device("cpu" if mode == "cpu-fallback" and rec.rank == 0 else "cuda:0")
+            data = torch.device("cpu" if mode == "host" and rec.rank == 0 else "cuda:0")
+            local = p._reference._work_budget((compute,), (data,))
+            budget = p._reference._work_budget((compute,), (data,), agree=True)
+            limit = p._reference._agreed_limit(1 if rec.rank == 0 else 3)
+            expected = None if mode in ("cpu-fallback", "explicit") else (
+                32 * 1024 ** 2, 32 * 1024 ** 2 if mode == "host" else None)
+            plan = p._reference._work_chunks(1, budget)
+            rec.emit("budget_result", correct=budget == expected and limit == 1,
+                     local=local, agreed=budget, expected=expected, leading_limit=limit,
+                     mode=mode, simulated_allocator=True)
+            rec.emit("plan_agreement", signature=json.dumps([budget, plan, limit]),
+                     group=",".join(map(str, range(p.world_size))), members=list(range(p.world_size)))
+    finally:
+        backends._memory_lower_bounds, backends._host_free_bytes = original_memory, original_host
+
+
+def replay_geometry(rec, torch, diffct, device, backends, partition):
+    p = projector(torch, diffct, device, distributed=True, partition=partition,
+                  trajectory_grad=True, explicit=False)
+    reference = p._reference
+    original_limit, original_bytes = reference._leading_limit, backends._REFERENCE_WORK_BYTES
+    # Exercise the real split/agreement path with a small harness-only cap.
+    # Allocator observations and this cap are not physical memory bounds.
+    reference._leading_limit = lambda *args, **kwargs: min(2 + rec.rank, original_limit(*args, **kwargs))
+    if device == "cpu":
+        backends._REFERENCE_WORK_BYTES = 512
+    rec.emit("replay_cap", cpu_ceiling=backends._REFERENCE_WORK_BYTES, local_leading_cap=2 + rec.rank)
+    try:
+        for is_project in (True, False):
+            shape = p.volume_shape if is_project else p.projection_shape
+            output_shape = p.projection_shape if is_project else p.volume_shape
+            tensor = torch.ones((3, 2, *shape), dtype=torch.float64, device=device)
+            cotangent = torch.ones((3, 2, *output_shape), dtype=torch.float64, device=device)
+            for reduce_input in (False, True):
+                call(rec, f"replay-{is_project}-{reduce_input}", lambda: reference._geometry_grad(
+                    tensor, cotangent, is_project, reduce_input, reference._snapshot_geometry()))
+    finally:
+        reference._leading_limit, backends._REFERENCE_WORK_BYTES = original_limit, original_bytes
+
+
+def thread_race(rec, torch, diffct, device, backends):
+    p = projector(torch, diffct, device, explicit=False)
+    reference = p._reference
+    original_apply, original_preflight = reference._tensor_apply, p._partition.preflight
+    original_budget = backends._REFERENCE_WORK_BYTES
+    child_finished, other_reset, release_other = threading.Event(), threading.Event(), threading.Event()
+    state = threading.local()
+    failures = []
+    backends._REFERENCE_WORK_BYTES = 256
+
+    def apply(*args, **kwargs):
+        depth = getattr(state, "depth", 0)
+        state.depth = depth + 1
+        try:
+            result = original_apply(*args, **kwargs)
+            if threading.current_thread().name == "A" and depth == 1 and not child_finished.is_set():
+                rec.emit("stats_child_published")
+                child_finished.set()
+                if not other_reset.wait(5):
+                    raise RuntimeError("thread schedule did not reach the reset")
+            return result
+        finally:
+            state.depth = depth
+
+    def preflight(*args, **kwargs):
+        if threading.current_thread().name == "B":
+            rec.emit("stats_other_reset", is_none=p.last_execution_stats is None)
+            other_reset.set()
+            if not release_other.wait(5):
+                raise RuntimeError("thread schedule did not release B")
+        return original_preflight(*args, **kwargs)
+
+    def run_a():
+        try:
+            call(rec, "thread-A", lambda: p.project(torch.ones((8, *p.volume_shape), dtype=torch.float64)),
+                 allowed_error=True)
+        finally:
+            release_other.set()
+
+    def run_b():
+        if not child_finished.wait(5):
+            failures.append("A did not split")
+            release_other.set()
+            return
+        call(rec, "thread-B", lambda: p.project(torch.ones(p.volume_shape, dtype=torch.float64)),
+             allowed_error=True)
+    reference._tensor_apply = apply
+    p._partition.preflight = preflight
+    try:
+        threads = [threading.Thread(target=run_a, name="A"), threading.Thread(target=run_b, name="B")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(12)
+        if failures or any(thread.is_alive() for thread in threads):
+            raise RuntimeError(str(failures or "thread watchdog expired"))
+        rec.output.flush()
+        recorded = [json.loads(line) for line in Path(rec.output.name).read_text().splitlines()]
+        errors = [(row["name"], row["type"], row["message"]) for row in recorded
+                  if row["kind"] in ("call_error", "runtime_timeout") and row["name"].startswith("thread-")]
+        if errors != [("thread-A", "TypeError", "'NoneType' object is not subscriptable")]:
+            raise RuntimeError(f"statistics race witness changed: {errors}")
+    finally:
+        reference._tensor_apply, p._partition.preflight = original_apply, original_preflight
+        backends._REFERENCE_WORK_BYTES = original_budget
+
+
+def worker(args):
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(args.source))
+    import torch
+    torch.set_num_threads(1)
+    import diffct
+    from diffct import backends, distribution, pipeline
+    rank = args.rank
+    rec = Recorder(args.out / f"rank-{rank}.ndjson", rank)
+    root = Path(diffct.__file__).resolve().parent
+    rec.emit("source", path=str(root), torch=torch.__version__, schema=2,
+             revision=(args.source / "COMMIT").read_text().strip() if (args.source / "COMMIT").is_file() else "worktree",
+             library_sha256={str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+                             for path in sorted(root.rglob("*.py"))},
+             has_budget=hasattr(backends.ReferenceProjector, "_work_budget"),
+             has_bounded=hasattr(backends, "_PortableApply"),
+             backends_sha256=hashlib.sha256(Path(backends.__file__).read_bytes()).hexdigest())
+    instrument(rec, backends, distribution, pipeline, torch)
+    device = f"cuda:{rank}" if args.device == "cuda" else "cpu"
+    rec.device, rec.torch = device, torch
+    if args.device == "cuda":
+        torch.cuda.set_device(rank)
+        history = dict(max_entries=100000)
+        pinned = "record_pinned_host_memory" in inspect.signature(torch.cuda.memory._record_memory_history_impl).parameters
+        if pinned:
+            history["record_pinned_host_memory"] = True
+        torch.cuda.memory._record_memory_history(**history)
+        rec.emit("memory_history", cuda=True, pinned_host=pinned)
+    if args.scenario in ("distributed", "planner", "selection"):
+        timeout = 10 if args.device == "cuda" else 3
+        torch.distributed.init_process_group(args.backend, init_method=args.init, rank=rank,
+                                             world_size=args.world, timeout=timedelta(seconds=timeout))
+        if args.scenario == "planner":
+            planner(rec, torch, diffct, device, backends)
+        elif args.scenario == "selection":
+            selection(rec, torch, diffct, device, distributed=True)
+        else:
+            distributed(rec, torch, diffct, device, backends, args, timeout)
+        runtime = torch._C._distributed_c10d
+        if hasattr(runtime, "_dump_fr_trace"):
+            dump, api = runtime._dump_fr_trace(), "_dump_fr_trace"
+        elif args.backend == "nccl":
+            dump, api = runtime._dump_nccl_trace(), "_dump_nccl_trace"
+        else:
+            raise RuntimeError("CPU traces require PyTorch's unified flight recorder")
+        (args.out / f"flight-{rank}.pickle").write_bytes(dump)
+        rec.emit("flight_recorder", api=api, bytes=len(dump))
+        torch.distributed.destroy_process_group()
+    else:
+        serial(rec, torch, diffct, device, args.native)
+        selection(rec, torch, diffct, device)
+        if not args.native:
+            routing(rec, torch, diffct, device, backends)
+            memory_budget(rec, torch, diffct, device, backends)
+            thread_race(rec, torch, diffct, device, backends)
+    if args.device == "cuda":
+        torch.cuda.synchronize()
+        torch.cuda.memory._dump_snapshot(str(args.out / f"memory-{rank}.pickle"))
+        rec.emit("cuda_memory", peak=torch.cuda.max_memory_allocated())
+        torch.cuda.memory._record_memory_history(enabled=None)
+    rec.emit("process_end")
+    rec.output.close()
+    # Gloo destructor failures must not hide successfully collected traces.
+    os._exit(0)
+
+
+def distributed(rec, torch, diffct, device, backends, args, timeout):
+    p = projector(torch, diffct, device, distributed=True, partition=args.partition,
+                  trajectory_grad=True)
+    for index in range(2 if args.fault == "none" else 1):
+        data = torch.ones(p.volume_shape, dtype=torch.float64, device=device,
+                          requires_grad=rec.rank == 0)
+        if args.fault == "admission" and rec.rank == 0:
+            data = torch.ones((7,), dtype=torch.float64, device=device)
+        if args.fault == "numerical" and rec.rank == 0:
+            def fail(*unused, **kw):
+                raise torch.OutOfMemoryError("formal injected OOM after admission")
+            backends.ReferenceProjector._intervals = fail
+        result = call(rec, f"distributed-{index}", lambda: p.project(data), allowed_error=args.fault != "none",
+                      expected_error=(ValueError, "input trailing shape") if args.fault == "admission" else None)
+        if result is not None:
+            rec.phase = "backward"
+            call(rec, f"backward-{index}", lambda: result.sum().backward(),
+                 allowed_error=args.fault != "none")
+            rec.phase = "forward"
+    if args.fault == "numerical" and rec.rank == 0:
+        # Keep the failed participant alive to separate peer timeouts from exit detection.
+        threading.Event().wait(timeout + 3)
+    if args.fault == "none":
+        # A second owner must reuse the process groups from the first owner.
+        projector(torch, diffct, device, distributed=True, partition=args.partition)
+        replay_geometry(rec, torch, diffct, device, backends, args.partition)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--backend", choices=("gloo", "nccl"), default="gloo")
+    parser.add_argument("--native", action="store_true")
+    parser.add_argument("--hybrid", action="store_true")
+    parser.add_argument("--cases", nargs="+", choices=("serial", "views", "space", "admission", "numerical",
+                                                      "hybrid", "empty-views", "empty-space", "planner", "selection"))
+    parser.add_argument("--worker", action="store_true")
+    parser.add_argument("--scenario", default="serial")
+    parser.add_argument("--rank", type=int, default=0)
+    parser.add_argument("--world", type=int, default=1)
+    parser.add_argument("--init", default="")
+    parser.add_argument("--partition", default="views")
+    parser.add_argument("--fault", default="none")
+    args = parser.parse_args()
+    args.source, args.out = args.source.resolve(), args.out.resolve()
+    args.out.mkdir(parents=True, exist_ok=True)
+    if args.worker:
+        worker(args)
+        return
+    manifest = []
+    cases = [("serial", 1, "none", "views"), ("views", 2, "none", "views"),
+             ("space", 2, "none", "space"), ("admission", 2, "admission", "views"),
+             ("numerical", 2, "numerical", "views")]
+    if args.hybrid:
+        cases.extend([("hybrid", 4, "none", "hybrid"), ("empty-views", 4, "none", "views"),
+                      ("empty-space", 4, "none", "space")])
+    cases.extend([("planner", 2, "none", "views"), ("selection", 2, "none", "views")])
+    if args.cases:
+        if set(args.cases) - {case[0] for case in cases}:
+            parser.error("four-rank cases require --hybrid")
+        cases = [case for case in cases if case[0] in args.cases]
+    for name, world, fault, partition in cases:
+        out = args.out / name
+        out.mkdir(exist_ok=True)
+        processes = []
+        logs = []
+        rendezvous = out / ("rendezvous-" + uuid.uuid4().hex)
+        for rank in range(world):
+            log = (out / f"rank-{rank}.log").open("w")
+            logs.append(log)
+            cmd = [sys.executable, str(Path(__file__).resolve()), "--worker", "--source", str(args.source),
+                   "--out", str(out), "--scenario", (name if name in ("planner", "selection") else
+                                                     "serial" if world == 1 else "distributed"),
+                   "--rank", str(rank), "--world", str(world), "--partition", partition,
+                   "--fault", fault, "--init", f"file://{rendezvous}",
+                   "--device", args.device, "--backend", args.backend]
+            if args.native:
+                cmd.append("--native")
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", OMP_NUM_THREADS="1",
+                       TORCH_NCCL_TRACE_BUFFER_SIZE="100000", TORCH_FR_BUFFER_SIZE="100000",
+                       TORCH_NCCL_DUMP_ON_TIMEOUT="1",
+                       TORCH_DISTRIBUTED_DEBUG="DETAIL")
+            processes.append(subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env))
+        deadline = time.monotonic() + (180 if args.device == "cuda" else 60)
+        try:
+            for process in processes:
+                process.wait(timeout=max(.1, deadline - time.monotonic()))
+        finally:
+            # These handles refer only to workers created by this invocation.
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+            for log in logs:
+                log.close()
+        codes = [process.returncode for process in processes]
+        watchdog_exit = any(codes) and args.backend == "nccl" and fault == "numerical"
+        if watchdog_exit:
+            # NCCL's watchdog can abort the process before Python catches an
+            # exception. Record the observed exit, without inventing call exits.
+            for rank, code in enumerate(codes):
+                if code == 0:
+                    continue
+                message = (out / f"rank-{rank}.log").read_text()
+                if "timeout" not in message.lower() and "timed out" not in message.lower():
+                    raise RuntimeError(f"unexpected NCCL worker exit {code}: {out}")
+                with (out / f"rank-{rank}.ndjson").open("a") as target:
+                    target.write(json.dumps(dict(kind="runtime_timeout", rank=rank, ns=time.monotonic_ns(),
+                                                 observer="parent", exitcode=code, message=message)) + "\n")
+                    target.write(json.dumps(dict(kind="process_end", rank=rank, ns=time.monotonic_ns(),
+                                                 observer="parent", exitcode=code)) + "\n")
+        if any(codes) and not watchdog_exit:
+            raise RuntimeError(f"collector {name} failed: {codes}; see {out}")
+        expected = []
+        if name == "serial" and not args.native:
+            expected.append("NoUnexpectedCrash")
+        if name == "numerical":
+            expected.append("NoRuntimeTimeout")
+        manifest.append(dict(name=name, files=[str((out / f"rank-{rank}.ndjson").relative_to(args.out))
+                                              for rank in range(world)], world=world, fault=fault,
+                             expected=expected, native=args.native, device=args.device, backend=args.backend,
+                             worker_returncodes=codes, watchdog_exit=bool(watchdog_exit)))
+        print(json.dumps(dict(case=name, workers=world, returncodes=codes)), flush=True)
+    (args.out / "traces.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()

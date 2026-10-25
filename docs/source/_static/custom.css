@@ -10,6 +10,25 @@ html[data-theme="dark"] {
   --pst-color-link-hover: #f2a541;
 }
 
+/* Every page keeps the same three columns, so the content does not move when the top navigation
+   switches pages. The two sidebars have the same width. */
+@media (min-width: 960px) {
+  html .bd-sidebar-primary { --pst-sidebar-primary-width: var(--pst-sidebar-secondary); }
+}
+
+/* Site navigation: sections in the text color, pages below them muted, the current page in the primary color. */
+.site-nav .toctree-l1 { margin-bottom: 0.15rem; }
+.site-nav .toctree-l1 > a { font-weight: 600; color: var(--pst-color-text-base); }
+.site-nav .toctree-l2 > a, .site-nav .toctree-l3 > a { color: var(--pst-color-text-muted); }
+.site-nav li > a:hover { color: var(--pst-color-link-hover); }
+.site-nav li.current > a, .site-nav li > a.current { color: var(--pst-color-primary); }
+/* The search page has no secondary sidebar and no article element. Keep its column empty and
+   give it the article padding on wide screens. */
+@media (min-width: 1200px) {
+  .bd-content:not(:has(> .bd-sidebar-secondary)) > .bd-article-container { margin-right: var(--pst-sidebar-secondary); }
+  .bd-main .bd-content .bd-article-container .bd-search-container { padding-left: 2rem; padding-top: 1.5rem; }
+}
+
 /* Landing page search box */
 .landing-search { margin: 0.5rem 0 1.75rem; }
 .landing-search input {

@@ -14,8 +14,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # A pull request that changes only files under docs/ skips the package and test jobs.
+      # Pushes to main and release tags run every job.
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo code=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Renames list both paths. Paths with non-ASCII bytes stay unquoted.
+          git -c core.quotePath=false diff --no-renames --name-only "$BASE...$HEAD" > changed.txt
+          cat changed.txt
+          if grep -qv '^docs/' changed.txt; then code=true; else code=false; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   lint:
     name: Python error checks
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -33,6 +64,8 @@ jobs:
 
   package:
     name: Release metadata and distributions
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -321,7 +354,7 @@ jobs:
   required:
     name: CI passed
     if: always()
-    needs: [lint, package, cpu, clean-cpu, docs]
+    needs: [changes, lint, package, cpu, clean-cpu, docs]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -333,6 +366,10 @@ jobs:
           import json
           import os
           results = json.loads(os.environ['RESULTS'])
-          failed = {name: job['result'] for name, job in results.items() if job['result'] != 'success'}
+          # A documentation-only pull request skips these jobs on purpose.
+          docs_only = results['changes']['outputs'].get('code') == 'false'
+          skippable = {'lint', 'package', 'cpu', 'clean-cpu'} if docs_only else set()
+          failed = {name: job['result'] for name, job in results.items()
+                    if job['result'] != 'success' and not (name in skippable and job['result'] == 'skipped')}
           assert not failed, failed
           PY

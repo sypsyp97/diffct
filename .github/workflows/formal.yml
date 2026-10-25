@@ -15,8 +15,84 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The models and property tests do not read the documentation. A pull request that
+      # changes only files under docs/ skips them. Every other event runs them.
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo code=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Renames list both paths. Paths with non-ASCII bytes stay unquoted.
+          git -c core.quotePath=false diff --no-renames --name-only "$BASE...$HEAD" > changed.txt
+          cat changed.txt
+          if grep -qv '^docs/' changed.txt; then code=true; else code=false; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+  tla:
+    name: MODEL CHECK / TRACE VALIDATION
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      NUMBA_ENABLE_CUDASIM: "1"
+      OMP_NUM_THREADS: "1"
+      TORCH_NCCL_TRACE_BUFFER_SIZE: "100000"
+      TORCH_FR_BUFFER_SIZE: "100000"
+      TORCH_DISTRIBUTED_DEBUG: DETAIL
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: formal/requirements.txt
+      - name: Install CPU trace dependencies
+        run: |
+          python -m pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r formal/requirements.txt
+      - name: Collect real CPU and Gloo executions
+        run: python formal/tla/collect_trace.py --out .validation/formal-tla/traces --hybrid
+      - name: Check protocols, mutations, and observed executions
+        run: >-
+          python formal/tla/check.py --large
+          --cache .cache/formal-tla --out .validation/formal-tla/checks
+          --trace-dir .validation/formal-tla/traces
+      - name: Retain model and trace evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: formal-tla
+          path: |
+            .validation/formal-tla
+            !.validation/formal-tla/**/*.states/**
+          include-hidden-files: true
+          if-no-files-found: error
   formal:
     name: PROOF models / BOUNDED simulator / PROPERTY TEST
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

@@ -75,12 +75,8 @@ html_theme_options = {
     'footer_start': ['copyright', 'llms-links'],
     'footer_end': ['sphinx-version', 'theme-version'],
 }
-html_sidebars = {
-    'index': [],
-    'examples': [],
-    'getting_started': [],
-    'changelog': [],
-}
+# Every page shows the whole documentation tree, so the layout does not change between sections.
+html_sidebars = {'**': ['sidebar-site-nav.html']}
 
 
 def setup(app):
