@@ -35,7 +35,7 @@
 </p>
 
 > **2.0 版**用逐视角轨迹取代了 1.x 的圆轨迹接口。为 1.x 写的代码需要修改，见[迁移说明](docs/MIGRATION.md)。
-> Apple Silicon 请使用 [Linda-Sophie Schneider 的 MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
+> Apple Silicon 可直接使用内置的 MPS 支持（`backend="torch"`）；社区另有 [MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。
 
 本 README 对应源码版本。[Unreleased](CHANGELOG.md#unreleased) 中列出的功能需要从源码安装。
 
@@ -48,7 +48,7 @@
 - **匹配的算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对；两者都支持 PyTorch 自动微分，包括体数据与正弦图的梯度和 Hessian 向量积。
 - **大体积。** 按空间、视角和像素自动分块，传输缓冲有容量上限。`project_into`/`backproject_into` 可写入调用方的张量或磁盘存储；张量 autograd 接口仍保留完整输入、输出和梯度。见[分块执行](docs/REFERENCE.md#chunked-execution)（英文）。
 - **多卡与多节点。** 单进程使用 `devices=[0, 1, 2, 3]`，或用 torchrun 与 NCCL。视角、空间和混合分区控制体数据与投影的复制。加速比取决于工作负载和通信开销。
-- **精度与训练。** 显式选择原生/PyTorch 后端及 FP32/FP64 模式，支持各轴体素间距、batch/channel 和数据 `torch.func` 变换。可移植路径使用 CPU 或 PyTorch CUDA/ROCm；执行规则见[执行指南](docs/EXECUTION.md)（英文）。
+- **精度与训练。** 显式选择原生/PyTorch 后端及 FP32/FP64 模式，支持各轴体素间距、batch/channel 和数据 `torch.func` 变换。可移植路径使用 CPU、PyTorch CUDA/ROCm 或 Apple Silicon（MPS）；执行规则见[执行指南](docs/EXECUTION.md)（英文）。
 - **求解器。** 库级 `cgls`、`sirt`、`tv_reconstruction` 支持残差历史、收敛阈值、回调，以及扫描和数据指纹绑定的完整 checkpoint；`cgls_into` 使用有界磁盘状态。
 - **可微 FBP 和 FDK。** `fbp`、`fdk` 和近似螺旋重建 `helical_fdk` 组合公开的滤波器、权重和解析反投影。反向 kernel 转置实际的插值算子，可学习自定义 filter 和 weight。见[解析重建指南](docs/source/analytical_learning.rst)（英文）。
 

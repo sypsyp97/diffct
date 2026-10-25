@@ -18,7 +18,7 @@ from .storage import TensorStore
 from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
-from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geometry_errors, _work_dtype
+from .utils import TorchCUDABridge, _cast_work, _get_numba_external_stream_for, _raise_geometry_errors, _work_dtype
 from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
                        select_backend, voxel_spacing_tuple)
 from .distribution import Partition
@@ -121,15 +121,14 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
         norms = torch.linalg.vector_norm(axis, dim=1)
         checks.append((~torch.isclose(norms, torch.ones_like(norms), rtol=1e-4, atol=1e-4).all(),
                        "trajectory direction axes must be unit vectors"))
-    work = _work_dtype(geometry[0].device)
     if beam in ("parallel", "cone", "parallel3d"):
         first, second = (geometry[0], geometry[2]) if beam == "parallel" else (geometry[2], geometry[3])
         dots = torch.sum(first.to(device) * second.to(device), dim=1)
         checks.append((torch.any(torch.abs(dots) > 1e-4), "trajectory direction axes must be orthogonal"))
     if beam == "parallel3d":
-        direction = geometry[0].to(device=device, dtype=work)
-        frame = torch.stack((direction, geometry[2].to(direction.device, work),
-                             geometry[3].to(direction.device, work)), dim=-1)
+        direction = _cast_work(geometry[0], device)
+        frame = torch.stack((direction, _cast_work(geometry[2], direction.device),
+                             _cast_work(geometry[3], direction.device)), dim=-1)
         # Numerical rank rejects a tangent frame at machine roundoff without
         # imposing an application-level minimum angle of incidence.
         # Bad entries already have a finite-value error above; keep the rank
@@ -139,24 +138,24 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
             checks.append((torch.any(torch.linalg.matrix_rank(frame) < 3),
                            "parallel3d rays must not be tangent to the detector plane"))
         else:
-            # |det| via the triple product: matrix_rank has no MPS kernel, and
-            # a vanishing determinant flags the same tangent frames at roundoff.
+            # |det| via the triple product: matrix_rank has no MPS kernel. The
+            # float32 criterion is looser than the FP64 rank check, but still
+            # rejects near-tangent frames at practical geometry scales.
             determinant = torch.sum(frame[..., 0] * torch.linalg.cross(frame[..., 1], frame[..., 2], dim=-1), dim=-1)
             scale = torch.linalg.vector_norm(frame, dim=-2).prod(dim=-1)
             checks.append((torch.any(determinant.abs() <= torch.finfo(determinant.dtype).eps * scale),
                            "parallel3d rays must not be tangent to the detector plane"))
     if beam in ("fan", "cone") and not detector_surface:
-        # float64 avoids overflow of half-precision input and dtype mismatches in cross().
-        source = geometry[0].to(device=device, dtype=work)
-        principal = geometry[1].to(source.device, work) - source
+        source = _cast_work(geometry[0], device)
+        principal = _cast_work(geometry[1], source.device) - source
         lengths = torch.linalg.vector_norm(principal, dim=1)
         checks.append((torch.any(lengths == 0), "source and detector center must differ in every view"))
         principal = principal / lengths[:, None]
-        det_u = geometry[2].to(source.device, work)
+        det_u = _cast_work(geometry[2], source.device)
         if beam == "fan":
             facing = principal[:, 0] * det_u[:, 1] - principal[:, 1] * det_u[:, 0]
         else:
-            normal = torch.linalg.cross(det_u, geometry[3].to(source.device, work), dim=1)
+            normal = torch.linalg.cross(det_u, _cast_work(geometry[3], source.device), dim=1)
             facing = torch.sum(principal * normal, dim=1)
         checks.append((torch.any(torch.abs(facing) < 1e-4),
                        "the detector must not be edge-on to the source in any view"))
@@ -2549,6 +2548,8 @@ class Projector:
             return ReferenceProjector(self, validate=False).project(volume)
         if isinstance(volume, torch.Tensor) and volume.ndim > len(self.volume_shape):
             return self._native_batch(volume, True)
+        if self.dtype == torch.float64 and isinstance(volume, torch.Tensor) and volume.device.type == "mps":
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         plan, geometry_spec, geometry = self._prepare_execution(volume, True)
@@ -2572,6 +2573,8 @@ class Projector:
             return ReferenceProjector(self, validate=False).backproject(sinogram)
         if isinstance(sinogram, torch.Tensor) and sinogram.ndim > len(self.projection_shape):
             return self._native_batch(sinogram, False)
+        if self.dtype == torch.float64 and isinstance(sinogram, torch.Tensor) and sinogram.device.type == "mps":
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         plan, geometry_spec, geometry = self._prepare_execution(sinogram, False)

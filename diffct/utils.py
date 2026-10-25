@@ -26,6 +26,17 @@ def _work_dtype(device):
     """
     return torch.float32 if torch.device(device).type == "mps" else torch.float64
 
+def _cast_work(value, device):
+    """Cast value to the working dtype on device.
+
+    torch 2.14 MPS returns zeros for a fused MPS->CPU float64 cast, so those
+    conversions go through the source device first. Autograd stays connected.
+    """
+    dtype = _work_dtype(device)
+    if value.device.type == "mps" and dtype == torch.float64 and value.device != torch.device(device):
+        return value.cpu().to(dtype=dtype).to(device=device)
+    return value.to(device=device, dtype=dtype)
+
 
 def _raise_geometry_errors(checks):
     """Read one validity scalar; fetch individual error flags only on failure."""
