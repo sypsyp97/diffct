@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from diffct import Projector, SolverResult, fbp
+from diffct import Projector, SolverResult, fbp, helical_view_weights
 from diffct.geometry import (circular_trajectory_2d_parallel, circular_trajectory_3d,
                              circular_trajectory_3d_parallel)
 
@@ -294,3 +294,32 @@ def test_mps_helical_view_weights_match_cpu():
     assert device.device.type == "mps"
     torch.testing.assert_close(cpu, device.cpu(), rtol=0.0, atol=0.0)
     torch.testing.assert_close(device.sum().cpu(), torch.tensor(torch.pi * 20.0), rtol=1e-5, atol=1e-4)
+
+
+def test_helical_weights_list_and_tensor_agree():
+    # Large source heights lose precision when a list is converted through
+    # the default dtype. Both input forms must select the same views and
+    # produce identical weights; the check is device-agnostic and runs on
+    # every CI runner.
+    angles = torch.linspace(0, 4 * torch.pi, 42)[:-1]
+    source_z_tensor = 1e8 + torch.arange(41, dtype=torch.float64)
+    source_z_list = [1e8 + i for i in range(41)]
+    slice_z = [100000020.0]
+    from_tensor = helical_view_weights(angles.clone(), source_z_tensor.clone(), slice_z)
+    from_list = helical_view_weights(angles.clone(), list(source_z_list), slice_z)
+    selected = (from_tensor.sum(dim=0) > 0).nonzero().flatten()
+    assert selected.min() == 10 and selected.max() == 30
+    torch.testing.assert_close(from_tensor, from_list, rtol=0.0, atol=0.0)
+
+
+def test_mps_precision_guard_fires_before_the_reference_path():
+    if not torch.backends.mps.is_available():
+        pytest.skip("MPS device required")
+    trajectory = circular_trajectory_3d(4, sid=800.0, sdd=1200.0,
+                                        device="cpu", dtype=torch.float64)
+    projector = Projector(trajectory, volume_shape=(8, 8, 8), detector_shape=(12, 12),
+                          backend="torch", precision="float64")
+    for call in (lambda: projector.project(torch.rand(8, 8, 8, device="mps")),
+                 lambda: projector.backproject(torch.rand(4, 12, 12, device="mps"))):
+        with pytest.raises(ValueError, match="fast' or 'float32'"):
+            call()

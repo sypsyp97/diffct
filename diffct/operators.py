@@ -2542,14 +2542,14 @@ class Projector:
         return self._call_with_geometry(trajectory, "_project", volume)
 
     def _project(self, volume):
+        if self.dtype == torch.float64 and isinstance(volume, torch.Tensor) and volume.device.type == "mps":
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         if self._reference is not None:
             return self._reference.project(volume)
         if torch._C._are_functorch_transforms_active():
             return ReferenceProjector(self, validate=False).project(volume)
         if isinstance(volume, torch.Tensor) and volume.ndim > len(self.volume_shape):
             return self._native_batch(volume, True)
-        if self.dtype == torch.float64 and isinstance(volume, torch.Tensor) and volume.device.type == "mps":
-            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         plan, geometry_spec, geometry = self._prepare_execution(volume, True)
@@ -2567,14 +2567,14 @@ class Projector:
         return self._call_with_geometry(trajectory, "_backproject", sinogram)
 
     def _backproject(self, sinogram):
+        if self.dtype == torch.float64 and isinstance(sinogram, torch.Tensor) and sinogram.device.type == "mps":
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         if self._reference is not None:
             return self._reference.backproject(sinogram)
         if torch._C._are_functorch_transforms_active():
             return ReferenceProjector(self, validate=False).backproject(sinogram)
         if isinstance(sinogram, torch.Tensor) and sinogram.ndim > len(self.projection_shape):
             return self._native_batch(sinogram, False)
-        if self.dtype == torch.float64 and isinstance(sinogram, torch.Tensor) and sinogram.device.type == "mps":
-            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         plan, geometry_spec, geometry = self._prepare_execution(sinogram, False)
