@@ -7,6 +7,8 @@ import numbers
 from pathlib import Path
 
 import torch
+
+from .utils import _work_dtype
 import torch.distributed as dist
 
 from .pipeline import _fragments
@@ -65,17 +67,18 @@ def scalar_sum(operator, value, kind, *, return_tensor=False):
         dist.all_reduce(accumulator, group=group)
         return accumulator if return_tensor else accumulator.item()
     if return_tensor:
-        return torch.as_tensor(value, dtype=torch.float64, device=result_device)
+        return torch.as_tensor(value, dtype=_work_dtype(result_device), device=result_device)
     return float(value)
 
 
 def squared_norm(operator, value, kind, elements=1048576, *, return_tensor=False):
     store = TensorStore(value) if isinstance(value, torch.Tensor) else value
-    total = torch.zeros((), dtype=torch.float64, device=getattr(store, "device", "cpu"))
+    work = _work_dtype(getattr(store, "device", "cpu"))
+    total = torch.zeros((), dtype=work, device=getattr(store, "device", "cpu"))
     if owns_values(operator, kind):
         for selected in _fragments(tuple(store.shape), elements):
             # Clone even an FP64 view: norms must never alter caller measurements.
-            block = store.read(selected).to(dtype=torch.float64).clone()
+            block = store.read(selected).to(dtype=work).clone()
             # Preserve the block reductions and their sequential FP64 order.
             total.add_(block.square_().sum().to(device=total.device))
     return scalar_sum(operator, total, kind, return_tensor=return_tensor)

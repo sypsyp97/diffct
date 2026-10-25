@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from diffct import Projector, fbp
+from diffct import Projector, SolverResult, fbp
 from diffct.geometry import circular_trajectory_2d_parallel, circular_trajectory_3d
 
 mps = pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS device required")
@@ -72,3 +72,17 @@ def test_mps_fbp_matches_cpu():
         return fbp(sinogram, trajectory, (64, 64), angles.to(device)).float().cpu()
     cpu, mps_rec = run("cpu"), run("mps")
     assert torch.allclose(cpu, mps_rec, rtol=1e-3, atol=1e-4)
+
+
+@mps
+def test_mps_solvers_run():
+    from diffct import cgls, sirt, tv_reconstruction
+    trajectory = circular_trajectory_2d_parallel(24, device="mps", dtype=torch.float32)
+    projector = Projector(trajectory, volume_shape=(32, 32), detector_shape=(48,),
+                          beam="parallel", backend="torch")
+    volume = torch.rand(32, 32, device="mps")
+    sinogram = projector(volume)
+    for solver in (cgls, sirt, tv_reconstruction):
+        result = solver(projector, sinogram, iterations=2)
+        image = result.volume if isinstance(result, SolverResult) else result
+        assert torch.isfinite(image).all()
