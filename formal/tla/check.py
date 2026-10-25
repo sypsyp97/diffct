@@ -2,6 +2,7 @@
 """Run pinned model checkers, mutation witnesses, and observed trace checks."""
 
 import argparse
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -37,7 +38,7 @@ def command(args, log, timeout):
     return result.returncode, log.read_text(), round(time.monotonic() - start, 3)
 
 
-def tlc(java, jar, module, config, out, name, expected=None):
+def tlc(java, jar, module, config, out, name, expected=None, timeout=120):
     # Stable TLC resolves external configs relative to the root module.
     if module.parent != config.parent:
         staged = out / (name + ".sources")
@@ -49,7 +50,7 @@ def tlc(java, jar, module, config, out, name, expected=None):
     cmd = [java, "-Xmx768m", "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC",
            "-workers", "1", "-seed", "1", "-metadir", str(out / f"{name}.states"),
            "-config", str(config), str(module)]
-    code, text, elapsed = command(cmd, log, 120)
+    code, text, elapsed = command(cmd, log, timeout)
     if expected is None:
         passed = code == 0 and "Model checking completed. No error has been found." in text
     else:
@@ -189,7 +190,10 @@ def main():
         from validate_trace import validate_directory
         if args.trace_dir is None:
             parser.error("--trace-dir is required for trace validation")
-        results.extend(validate_directory(args.trace_dir.resolve(), args.out, args.java, jar, tlc))
+        # Replay TLC runs over real distributed traces vary in state count with
+        # the observed schedules; give them a larger budget than the models.
+        tlc_traces = functools.partial(tlc, timeout=300)
+        results.extend(validate_directory(args.trace_dir.resolve(), args.out, args.java, jar, tlc_traces))
     (args.out / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
     return 0 if results and all(row["passed"] for row in results) else 1
 
