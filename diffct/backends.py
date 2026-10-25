@@ -8,6 +8,8 @@ import time
 from contextlib import nullcontext
 
 import torch
+
+from .utils import _work_dtype
 import torch.distributed as dist
 from torch.autograd import forward_ad
 
@@ -630,7 +632,7 @@ class ReferenceProjector:
         def compose(validate, stats):
             check_range = (validate and owner.beam not in ("parallel", "parallel3d")
                            and owner.dtype == torch.float32 and surface is not None)
-            dtype = torch.float64 if check_range else owner.dtype
+            dtype = _work_dtype(owner._trajectory[0].device) if check_range else owner.dtype
             frames = (owner._learnable or owner._trajectory) if geometry is None else geometry[:frame_count]
             native_surface = owner.backend == "numba" and surface is not None
             native_legacy = native_surface and not isinstance(surface, ParameterizedSurface)
@@ -764,8 +766,8 @@ class ReferenceProjector:
         # Global FP32 segment parameters lose voxel widths when both endpoints
         # are distant. Plane tables below use local physical distances and the
         # chosen precision, including for native data-transform dispatch.
-        origins = origins.to(dtype=torch.float64)
-        directions = directions.to(dtype=torch.float64)
+        origins = origins.to(dtype=_work_dtype(origins.device))
+        directions = directions.to(dtype=_work_dtype(directions.device))
         ray_length = torch.linalg.vector_norm(directions, dim=-1)
         directions = directions / ray_length[:, None]
         lower = origins.new_tensor([(part.start - size / 2) * pitch

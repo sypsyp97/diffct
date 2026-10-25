@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import torch
 
-from .utils import _raise_geometry_errors
+from .utils import _raise_geometry_errors, _work_dtype
 
 @dataclass(frozen=True)
 class _GeometrySpec:
@@ -140,7 +140,7 @@ def _sample_geometry(beam, detector_shape, spacing, geometry, spec, views, pixel
             checks.append((torch.any(torch.all(sources.float() == endpoints.float(), dim=-1)),
                            "source and detector surface pixels must differ"))
             if isinstance(voxel_spacing, (tuple, list)):
-                pitches = sources.new_tensor(voxel_spacing[::-1], dtype=torch.float64)
+                pitches = sources.new_tensor(voxel_spacing[::-1], dtype=_work_dtype(sources.device))
                 source_distance = torch.linalg.vector_norm(sources.double() / pitches, dim=-1)
                 pixel_distance = torch.linalg.vector_norm(endpoints.double() / pitches, dim=-1)
             else:

@@ -5,6 +5,15 @@ PyTorch-CUDA bridging, stream caching, trigonometric table generation,
 memory layout validation, and CUDA grid computation.
 """
 
+
+
+def _work_dtype(device):
+    """Interval, validation and composition math runs in float64 where the device supports it.
+
+    The MPS backend has no float64, so those paths fall back to float32 there.
+    """
+    return torch.float32 if torch.device(device).type == "mps" else torch.float64
+
 import atexit
 import contextlib
 import functools

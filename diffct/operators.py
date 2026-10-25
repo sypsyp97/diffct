@@ -17,7 +17,7 @@ from .storage import TensorStore
 from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
-from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geometry_errors
+from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geometry_errors, _work_dtype
 from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
                        select_backend, voxel_spacing_tuple)
 from .distribution import Partition
@@ -121,14 +121,15 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
         norms = torch.linalg.vector_norm(axis, dim=1)
         checks.append((~torch.isclose(norms, torch.ones_like(norms), rtol=1e-4, atol=1e-4).all(),
                        "trajectory direction axes must be unit vectors"))
+    work = _work_dtype(geometry[0].device)
     if beam in ("parallel", "cone", "parallel3d"):
         first, second = (geometry[0], geometry[2]) if beam == "parallel" else (geometry[2], geometry[3])
         dots = torch.sum(first.to(device) * second.to(device), dim=1)
         checks.append((torch.any(torch.abs(dots) > 1e-4), "trajectory direction axes must be orthogonal"))
     if beam == "parallel3d":
-        direction = geometry[0].to(device=device, dtype=torch.float64)
-        frame = torch.stack((direction, geometry[2].to(direction.device, torch.float64),
-                             geometry[3].to(direction.device, torch.float64)), dim=-1)
+        direction = geometry[0].to(device=device, dtype=work)
+        frame = torch.stack((direction, geometry[2].to(direction.device, work),
+                             geometry[3].to(direction.device, work)), dim=-1)
         # Numerical rank rejects a tangent frame at machine roundoff without
         # imposing an application-level minimum angle of incidence.
         # Bad entries already have a finite-value error above; keep the rank
@@ -138,16 +139,16 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
                        "parallel3d rays must not be tangent to the detector plane"))
     if beam in ("fan", "cone") and not detector_surface:
         # float64 avoids overflow of half-precision input and dtype mismatches in cross().
-        source = geometry[0].to(device=device, dtype=torch.float64)
-        principal = geometry[1].to(source.device, torch.float64) - source
+        source = geometry[0].to(device=device, dtype=work)
+        principal = geometry[1].to(source.device, work) - source
         lengths = torch.linalg.vector_norm(principal, dim=1)
         checks.append((torch.any(lengths == 0), "source and detector center must differ in every view"))
         principal = principal / lengths[:, None]
-        det_u = geometry[2].to(source.device, torch.float64)
+        det_u = geometry[2].to(source.device, work)
         if beam == "fan":
             facing = principal[:, 0] * det_u[:, 1] - principal[:, 1] * det_u[:, 0]
         else:
-            normal = torch.linalg.cross(det_u, geometry[3].to(source.device, torch.float64), dim=1)
+            normal = torch.linalg.cross(det_u, geometry[3].to(source.device, work), dim=1)
             facing = torch.sum(principal * normal, dim=1)
         checks.append((torch.any(torch.abs(facing) < 1e-4),
                        "the detector must not be edge-on to the source in any view"))
@@ -578,10 +579,11 @@ class Projector:
             spacing = voxel_spacing_tuple(self.voxel_spacing, len(self.global_volume_shape))
             device = next((value.device for value in self._trajectory[:2] if value.is_cuda),
                           self._trajectory[0].device)
-            pitches = torch.tensor(spacing[::-1], device=device, dtype=torch.float64)
+            work = _work_dtype(device)
+            pitches = torch.tensor(spacing[::-1], device=device, dtype=work)
             distances = torch.stack([
                 torch.linalg.vector_norm(
-                    component.to(device=device, dtype=torch.float64) / pitches,
+                    component.to(device=device, dtype=work) / pitches,
                     dim=1,
                 )
                 for component in self._trajectory[:2]
