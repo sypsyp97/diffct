@@ -5,16 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.5.0] - 2026-10-26
 
 ### Added
 
 - Apple Silicon GPU (MPS) support for the portable PyTorch backend, including
-  the solvers, detector surfaces and streamed stores.
+  the solvers, detector surfaces and streamed stores. MPS has no FP64, so ray
+  clipping and entry setup run in FP32 there; `precision="float64"` raises a
+  `ValueError` for MPS data, outputs or trajectories. See `docs/EXECUTION.md`
+  for the FP32 error bound. Thanks to @cslht11
+  ([#57](https://github.com/sypsyp97/diffct/pull/57)).
+- TLA+ protocol models with TLC/Apalache checks and execution trace validation
+  for memory budgets, native admission and distributed collectives, run in a
+  separate CI workflow. They live in `formal/` and do not change library
+  behavior ([#55](https://github.com/sypsyp97/diffct/pull/55)).
 
 ### Fixed
 
 - Trajectory constructors reject degenerate inputs instead of building NaN or empty geometry: zero or non-finite `ray_dir_fn` directions in `custom_trajectory_2d_parallel`, `random_trajectory_3d` sources at the isocenter, and view counts that are not positive integers (`TypeError` for floats and booleans, `ValueError` for counts below 1). Explicit angle tensors are still accepted. Thanks to @cslht11 ([#56](https://github.com/sypsyp97/diffct/pull/56)).
+
+### Documentation
+
+- README, documentation landing page, `llms.txt` summary, `CITATION.cff` and package keywords name the native CUDA kernels and the portable backend on CPU, ROCm and Apple Silicon. The landing quickstart has an Apple Silicon (MPS) tab ([#60](https://github.com/sypsyp97/diffct/pull/60)).
+- Every documentation page uses the same three-column layout with the site navigation on the left ([#58](https://github.com/sypsyp97/diffct/pull/58)).
+
+### Changed
+
+- Continuous integration: pull requests that change only `docs/` skip the package, test and formal jobs; the documentation build still runs. Pushes to `main` and release tags run every job ([#59](https://github.com/sypsyp97/diffct/pull/59)).
 
 ## [2.4.4] - 2026-10-25
 
