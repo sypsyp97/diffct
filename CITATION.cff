@@ -2,8 +2,9 @@ cff-version: 1.2.0
 message: "If you use this software, please cite both the software (below) and the technical report listed under preferred-citation."
 title: "diffct: Differentiable Computed Tomography Reconstruction with CUDA"
 abstract: >-
-  Differentiable CUDA projectors for computed tomography (CT) with PyTorch
-  autograd. Each view has its own source and detector geometry, so circular,
+  Differentiable projectors for computed tomography (CT) with PyTorch
+  autograd: native NVIDIA CUDA kernels and a portable PyTorch backend for
+  CPU, ROCm and Apple Silicon (MPS). Each view has its own source and detector geometry, so circular,
   helical, saddle and calibrated scans use the same matched Siddon operator.
   Projections run on one GPU, several GPUs in one process, or across nodes,
   and trajectory tensors receive geometry gradients for calibration.

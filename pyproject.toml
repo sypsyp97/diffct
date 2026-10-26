@@ -13,7 +13,7 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-keywords = ["computed tomography", "CT reconstruction", "differentiable programming", "CUDA", "ROCm", "PyTorch"]
+keywords = ["computed tomography", "CT reconstruction", "differentiable programming", "CUDA", "ROCm", "Apple Silicon", "MPS", "PyTorch"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",

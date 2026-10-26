@@ -10,12 +10,15 @@ diffct
      <div class="srch-mount"></div>
    </div>
 
-diffct provides differentiable CUDA projectors and matched adjoints for computed
+diffct provides differentiable projectors and matched adjoints for computed
 tomography (CT) in PyTorch. It supports 2D parallel and fan beams and 3D cone
 and parallel beams. Each view can follow any trajectory, and autograd gives
 gradients for the volume and for trajectory tensors. Detector pixels can follow
 parameterized surfaces, with first-order gradients for their parameters. Views
 can be split across several GPUs.
+
+Native kernels run on NVIDIA CUDA GPUs. The portable PyTorch backend runs on
+CPU, PyTorch ROCm and Apple Silicon (MPS) devices.
 
 Code written for diffct 1.x must be updated; see :doc:`migration`.
 
@@ -66,6 +69,26 @@ Create the acquisition once. Then call ``project()`` and ``backproject()``.
                        detector_spacing=0.8, backend="torch")
 
          volume = torch.rand(A.volume_shape)
+         sinogram = A.project(volume)        # (60, 144, 96) line integrals
+         adjoint = A.backproject(sinogram)   # matched adjoint A^T
+
+         x = torch.zeros_like(volume, requires_grad=True)
+         loss = 0.5 * (A.project(x) - sinogram).square().sum()
+         loss.backward()                     # x.grad = A^T (A x - y)
+
+   .. tab-item:: Apple Silicon (MPS)
+
+      .. code-block:: python
+
+         import torch
+         from diffct import Projector, spiral_trajectory_3d
+
+         trajectory = spiral_trajectory_3d(60, sid=120.0, sdd=192.0, z_range=15.0, n_turns=1.0,
+                                           device="cpu")
+         A = Projector(trajectory, volume_shape=(48, 48, 48), detector_shape=(144, 96),
+                       detector_spacing=0.8, backend="torch")
+
+         volume = torch.rand(A.volume_shape, device="mps")
          sinogram = A.project(volume)        # (60, 144, 96) line integrals
          adjoint = A.backproject(sinogram)   # matched adjoint A^T
 

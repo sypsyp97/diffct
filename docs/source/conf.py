@@ -34,7 +34,8 @@ extensions = [
 
 llms_txt_title = 'diffct'
 llms_txt_summary = (
-    'Differentiable CUDA projectors and matched adjoints for computed tomography in PyTorch. '
+    'Differentiable projectors and matched adjoints for computed tomography in PyTorch: '
+    'native NVIDIA CUDA kernels and a portable backend for CPU, ROCm and Apple Silicon (MPS). '
     'Parallel, fan, cone and helical geometries, arbitrary trajectories, curved detectors, multi-GPU.'
 )
 

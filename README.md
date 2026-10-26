@@ -3,7 +3,8 @@
 <p align="center">English · <a href="https://github.com/sypsyp97/diffct/blob/main/README.zh.md">简体中文</a></p>
 
 <p align="center">
-  Differentiable CUDA projectors for CT: arbitrary trajectories, multi-GPU, multi-node, geometry gradients.
+  Differentiable CT projectors: arbitrary trajectories, multi-GPU, multi-node, geometry gradients.<br>
+  Native NVIDIA CUDA kernels, plus a portable PyTorch backend for CPU, ROCm and Apple Silicon (MPS).
 </p>
 
 <p align="center">
