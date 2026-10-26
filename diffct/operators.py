@@ -450,10 +450,7 @@ class Projector:
         self.native_volume_layout = bool(native_volume_layout)
         self.precision = precision
         self.dtype = torch.float64 if precision == "float64" else torch.float32
-        if self.dtype == torch.float64 and any(
-                getattr(component, "device", torch.device("cpu")).type == "mps"
-                for component in trajectory):
-            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
+        self._validate_precision(trajectory)
         self._reference = None
         self.partition = partition
         if not isinstance(partition, str) or partition not in ("views", "space", "hybrid"):
@@ -582,6 +579,12 @@ class Projector:
                     "problems. Pass backend='torch' to select it explicitly and silence this warning.",
                     UserWarning, stacklevel=2,
                 )
+
+    def _validate_precision(self, values):
+        if self.dtype == torch.float64 and any(
+                torch.device(getattr(value, "device", "cpu")).type == "mps"
+                for value in values):
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
 
     def _validate_geometry_range(self):
         if self.dtype == torch.float32 and self.beam in ("fan", "cone") and self.detector_surface is None:
@@ -2542,8 +2545,6 @@ class Projector:
         return self._call_with_geometry(trajectory, "_project", volume)
 
     def _project(self, volume):
-        if self.dtype == torch.float64 and isinstance(volume, torch.Tensor) and volume.device.type == "mps":
-            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         if self._reference is not None:
             return self._reference.project(volume)
         if torch._C._are_functorch_transforms_active():
@@ -2567,8 +2568,6 @@ class Projector:
         return self._call_with_geometry(trajectory, "_backproject", sinogram)
 
     def _backproject(self, sinogram):
-        if self.dtype == torch.float64 and isinstance(sinogram, torch.Tensor) and sinogram.device.type == "mps":
-            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         if self._reference is not None:
             return self._reference.backproject(sinogram)
         if torch._C._are_functorch_transforms_active():
@@ -2619,8 +2618,10 @@ class Projector:
         override = trajectory is not None
         if trajectory is None and self._learnable:
             trajectory = self._learnable
-        if trajectory is not None:
-            try:
+        try:
+            self._validate_precision(args)
+            if trajectory is not None:
+                self._validate_precision(trajectory)
                 _reject_trajectory_tangents(trajectory)
                 frames, views = _validate_trajectory(
                     trajectory, self.beam, detector_surface=self.detector_surface is not None,
@@ -2703,8 +2704,8 @@ class Projector:
                                 (coincident, "source and detector surface pixels must differ"),
                             ])
                             del staged
-            except (TypeError, ValueError, RuntimeError) as failure:
-                error = failure
+        except (TypeError, ValueError, RuntimeError) as failure:
+            error = failure
         # None must participate too: mixed override/default calls or gradient
         # layouts cannot skip a collective on only one rank.
         # Metadata transport needs ordinary storage-backed tensors, even when
@@ -2732,10 +2733,6 @@ class Projector:
         return result
 
     def _execute_into(self, value, output, is_project):
-        if self.dtype == torch.float64 and any(
-                getattr(tensor, "device", torch.device("cpu")).type == "mps"
-                for tensor in (value, output)):
-            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self.last_execution_stats = None
         self._snapshot_d2h_bytes = 0
         if self._reference is not None and self.world_size > 1:
