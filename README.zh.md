@@ -3,7 +3,8 @@
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
 <p align="center">
-  面向 CT 的可微 CUDA 投影算子：任意轨迹、多卡、多节点、几何梯度。
+  面向 CT 的可微投影算子：任意轨迹、多卡、多节点、几何梯度。<br>
+  原生 NVIDIA CUDA 内核；可移植 PyTorch 后端支持 CPU、ROCm 与 Apple Silicon（MPS）。
 </p>
 
 <p align="center">
