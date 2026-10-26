@@ -350,8 +350,20 @@ def helical_view_weights(angles, source_z, slice_z):
     if not torch.is_floating_point(angles) or angles.ndim != 1 or len(angles) < 2:
         raise ValueError("angles must be a real vector with at least two views")
     output_dtype = angles.dtype
-    source_z = torch.as_tensor(source_z, device=angles.device, dtype=torch.float64)
-    slice_z = torch.as_tensor(slice_z, device=angles.device, dtype=torch.float64)
+    output_device = angles.device
+    if output_device.type == "mps":
+        # MPS has no float64: the scheduling math runs on the host. List
+        # inputs are created directly as float64 — converting through the
+        # default dtype loses precision for large coordinates, and a fused
+        # MPS->CPU float64 cast returns zeros on torch 2.14.
+        angles = angles.to(device="cpu").to(dtype=torch.float64)
+        source_z = (source_z.to(device="cpu") if isinstance(source_z, torch.Tensor)
+                    else torch.as_tensor(source_z, dtype=torch.float64, device="cpu")).to(dtype=torch.float64)
+        slice_z = (slice_z.to(device="cpu") if isinstance(slice_z, torch.Tensor)
+                   else torch.as_tensor(slice_z, dtype=torch.float64, device="cpu")).to(dtype=torch.float64)
+    else:
+        source_z = torch.as_tensor(source_z, device=output_device, dtype=torch.float64)
+        slice_z = torch.as_tensor(slice_z, device=output_device, dtype=torch.float64)
     if (source_z.shape != angles.shape or slice_z.ndim != 1 or len(slice_z) == 0
             or not all(torch.isfinite(t).all() for t in (angles, source_z, slice_z))):
         raise ValueError("angles/source_z must match and slice_z must be a finite vector")
@@ -385,7 +397,7 @@ def helical_view_weights(angles, source_z, slice_z):
                - torch.maximum(edges[:-1][None, :], lower[:, None])).clamp_min(0) * 0.5
     weights = torch.empty_like(overlap)
     weights[:, order] = overlap
-    return weights.to(output_dtype)
+    return weights.to(device=output_device, dtype=output_dtype)
 
 
 def _axial_helix(geometry, isocenter):

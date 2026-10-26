@@ -12,6 +12,7 @@ import torch.distributed as dist
 from torch.autograd import forward_ad
 
 from .chunking import _memory_lower_bounds
+from .utils import _work_dtype
 from .distribution import control_status
 from .surfaces import ParameterizedSurface
 from .constants import _native_spacing
@@ -74,6 +75,16 @@ def _records_autograd(value):
 def _zero_dependency(value):
     """Connect a zero scalar without reading values or copying strided data."""
     return value.unsqueeze(0)[:0].sum()
+
+
+def _constant_like(reference, values):
+    """Build a constant tensor on ``reference``'s device and dtype.
+
+    ``new_tensor`` has no kernel behind a functorch dual on MPS and raises
+    "DispatchKey Undefined doesn't correspond to a device"; an explicit
+    constructor keeps the same constant on every device and transform.
+    """
+    return torch.tensor(values, dtype=reference.dtype, device=reference.device)
 
 
 def voxel_spacing_tuple(spacing, rank):
@@ -563,7 +574,14 @@ class ReferenceProjector:
             with torch.no_grad():
                 # Reuse frame transfers across detector chunks. Offset batches
                 # remain bounded and move only when a ray batch needs them.
-                staged = {device: (*tuple(value.to(device=device) for value in geometry[:frame_count]),
+                def _stage(value, target_device):
+                    # FP64 frames must not follow FP64-less compute devices.
+                    target_dtype = _work_dtype(target_device)
+                    if value.dtype.itemsize > target_dtype.itemsize:
+                        return value.to(device=target_device, dtype=target_dtype)
+                    return value.to(device=target_device)
+
+                staged = {device: (*tuple(_stage(value, device) for value in geometry[:frame_count]),
                                     *parameters) for device in set(devices)}
                 batches = (self._admission_batches(staged[devices[0]], plan) if admission
                            else self._batches(*plan[1:]))
@@ -630,7 +648,7 @@ class ReferenceProjector:
         def compose(validate, stats):
             check_range = (validate and owner.beam not in ("parallel", "parallel3d")
                            and owner.dtype == torch.float32 and surface is not None)
-            dtype = torch.float64 if check_range else owner.dtype
+            dtype = _work_dtype(device) if check_range else owner.dtype
             frames = (owner._learnable or owner._trajectory) if geometry is None else geometry[:frame_count]
             native_surface = owner.backend == "numba" and surface is not None
             native_legacy = native_surface and not isinstance(surface, ParameterizedSurface)
@@ -666,7 +684,7 @@ class ReferenceProjector:
             if check_range and not native_surface:
                 # Certify ordinary batches without expanding raw FP64 world points.
                 # L1 norms bound Euclidean distances without squaring tiny bases.
-                pitches = local.new_tensor(self.spacing[::-1])
+                pitches = _constant_like(local, self.spacing[::-1])
                 maximum = local.abs().amax(dim=tuple(range(1, local.ndim - 1)))
                 axis_u = selected[2]
                 if owner.beam == "cone":
@@ -698,7 +716,7 @@ class ReferenceProjector:
             if check_range:
                 # Raw FP64 coordinates preserve the exact admission boundaries.
                 sources = frame(selected[0]).expand_as(points)
-                pitches = points.new_tensor(self.spacing[::-1])
+                pitches = _constant_like(points, self.spacing[::-1])
                 source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
                 pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
                 if torch.any(torch.minimum(source_distance, pixel_distance) > 1e6).item():
@@ -725,7 +743,7 @@ class ReferenceProjector:
                 origins, directions = points, frame(selected[0]).expand_as(points)
             else:
                 sources = frame(selected[0]).expand_as(points)
-                pitches = points.new_tensor(self.spacing[::-1])
+                pitches = _constant_like(points, self.spacing[::-1])
                 source_distance = torch.linalg.vector_norm(sources / pitches, dim=-1)
                 pixel_distance = torch.linalg.vector_norm(points / pitches, dim=-1)
                 if validate:
@@ -764,14 +782,14 @@ class ReferenceProjector:
         # Global FP32 segment parameters lose voxel widths when both endpoints
         # are distant. Plane tables below use local physical distances and the
         # chosen precision, including for native data-transform dispatch.
-        origins = origins.to(dtype=torch.float64)
-        directions = directions.to(dtype=torch.float64)
+        origins = origins.to(dtype=_work_dtype(origins.device))
+        directions = directions.to(dtype=_work_dtype(directions.device))
         ray_length = torch.linalg.vector_norm(directions, dim=-1)
         directions = directions / ray_length[:, None]
-        lower = origins.new_tensor([(part.start - size / 2) * pitch
-                                    for part, size, pitch in zip(world_tile, shape, spacing)])
-        upper = origins.new_tensor([(part.stop - size / 2) * pitch
-                                    for part, size, pitch in zip(world_tile, shape, spacing)])
+        lower = _constant_like(origins, [(part.start - size / 2) * pitch
+                                        for part, size, pitch in zip(world_tile, shape, spacing)])
+        upper = _constant_like(origins, [(part.stop - size / 2) * pitch
+                                        for part, size, pitch in zip(world_tile, shape, spacing)])
         constant = directions == 0
         safe_direction = torch.where(constant, torch.ones_like(directions), directions)
         first, last = (lower - origins) / safe_direction, (upper - origins) / safe_direction
@@ -1093,7 +1111,17 @@ class ReferenceProjector:
             # The zero dependency keeps unused inputs connected. With several
             # devices, a pair's loss and the geometry leaves can be on different
             # CUDA devices, so each zero moves to the loss's device.
-            loss = loss + sum(_zero_dependency(value).to(loss.device) for value in inputs)
+            def _zero_to(value, device):
+                zero = _zero_dependency(value)
+                target_dtype = _work_dtype(device)
+                if zero.dtype.itemsize > target_dtype.itemsize:
+                    # Cast on the source device first: a fused device and dtype
+                    # copy routes the float64 gradient back through the
+                    # FP64-less device on the way out.
+                    return zero.to(dtype=target_dtype).to(device=device)
+                return zero.to(device=device)
+
+            loss = loss + sum(_zero_to(value, loss.device) for value in inputs)
             for total, part in zip(totals, torch.autograd.grad(loss, inputs)):
                 total.add_(part)
 

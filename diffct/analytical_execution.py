@@ -160,6 +160,8 @@ class AnalyticalExecution:
             raise TypeError("sinogram store must have dtype float32 or float64")
         self.source = source
         self.output_device = torch.device(getattr(source, "device", "cpu"))
+        if self.dtype == torch.float64 and self.output_device.type == "mps":
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
         self.detector_shape = tuple(source.shape[1:])
         for component in trajectory:
             _fixed(component, "trajectory")

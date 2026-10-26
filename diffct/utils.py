@@ -18,6 +18,26 @@ import torch
 from .constants import _DTYPE, _TPB_2D, _TPB_3D, _INF, _EPSILON
 
 
+def _work_dtype(device):
+    """Interval, validation and composition math runs in float64 where the device supports it.
+
+    The MPS backend has no float64, so those paths fall back to float32 there.
+    """
+    return torch.float32 if torch.device(device).type == "mps" else torch.float64
+
+
+def _cast_work(value, device):
+    """Cast value to the working dtype on device.
+
+    torch 2.14 MPS returns zeros for a fused MPS->CPU float64 cast, so those
+    conversions go through the source device first. Autograd stays connected.
+    """
+    dtype = _work_dtype(device)
+    if value.device.type == "mps" and dtype == torch.float64 and value.device != torch.device(device):
+        return value.cpu().to(dtype=dtype).to(device=device)
+    return value.to(device=device, dtype=dtype)
+
+
 def _raise_geometry_errors(checks):
     """Read one validity scalar; fetch individual error flags only on failure."""
     device = next((flag.device for flag, _ in checks if flag.is_cuda), checks[0][0].device)

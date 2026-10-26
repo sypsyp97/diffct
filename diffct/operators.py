@@ -9,6 +9,7 @@ import warnings
 
 import torch
 
+from .constants import _native_spacing
 from .chunking import (_ChunkPlan, _allocation_bytes, _host_geometry_bytes, _largest_buffer_bytes, _memory_budget,
                        _memory_lower_bounds, _pipeline_buffers, _pipeline_bytes, _pixel_tiles,
                        _reservation_budget, _reservation_bytes, _tiles, _working_set_bytes)
@@ -17,11 +18,10 @@ from .storage import TensorStore
 from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
-from .utils import TorchCUDABridge, _get_numba_external_stream_for, _raise_geometry_errors
+from .utils import TorchCUDABridge, _cast_work, _get_numba_external_stream_for, _raise_geometry_errors, _work_dtype
 from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
                        select_backend, voxel_spacing_tuple)
 from .distribution import Partition
-from .constants import _native_spacing
 from .projectors import (
     _backproject_into,
     _geometry_vjp,
@@ -126,28 +126,36 @@ def _validate_trajectory(trajectory, beam, *, detector_surface=False, clone=True
         dots = torch.sum(first.to(device) * second.to(device), dim=1)
         checks.append((torch.any(torch.abs(dots) > 1e-4), "trajectory direction axes must be orthogonal"))
     if beam == "parallel3d":
-        direction = geometry[0].to(device=device, dtype=torch.float64)
-        frame = torch.stack((direction, geometry[2].to(direction.device, torch.float64),
-                             geometry[3].to(direction.device, torch.float64)), dim=-1)
+        direction = _cast_work(geometry[0], device)
+        frame = torch.stack((direction, _cast_work(geometry[2], direction.device),
+                             _cast_work(geometry[3], direction.device)), dim=-1)
         # Numerical rank rejects a tangent frame at machine roundoff without
         # imposing an application-level minimum angle of incidence.
         # Bad entries already have a finite-value error above; keep the rank
         # solver well-defined until the combined error flags reach the host.
         frame = torch.where(torch.isfinite(frame), frame, 0.)
-        checks.append((torch.any(torch.linalg.matrix_rank(frame) < 3),
-                       "parallel3d rays must not be tangent to the detector plane"))
+        if frame.dtype == torch.float64:
+            checks.append((torch.any(torch.linalg.matrix_rank(frame) < 3),
+                           "parallel3d rays must not be tangent to the detector plane"))
+        else:
+            # |det| via the triple product: matrix_rank has no MPS kernel. Its
+            # float32 threshold sits far above the FP64 rank tolerance, so it
+            # rejects a wider band of near-tangent frames than the FP64 check.
+            determinant = torch.sum(frame[..., 0] * torch.linalg.cross(frame[..., 1], frame[..., 2], dim=-1), dim=-1)
+            scale = torch.linalg.vector_norm(frame, dim=-2).prod(dim=-1)
+            checks.append((torch.any(determinant.abs() <= torch.finfo(determinant.dtype).eps * scale),
+                           "parallel3d rays must not be tangent to the detector plane"))
     if beam in ("fan", "cone") and not detector_surface:
-        # float64 avoids overflow of half-precision input and dtype mismatches in cross().
-        source = geometry[0].to(device=device, dtype=torch.float64)
-        principal = geometry[1].to(source.device, torch.float64) - source
+        source = _cast_work(geometry[0], device)
+        principal = _cast_work(geometry[1], source.device) - source
         lengths = torch.linalg.vector_norm(principal, dim=1)
         checks.append((torch.any(lengths == 0), "source and detector center must differ in every view"))
         principal = principal / lengths[:, None]
-        det_u = geometry[2].to(source.device, torch.float64)
+        det_u = _cast_work(geometry[2], source.device)
         if beam == "fan":
             facing = principal[:, 0] * det_u[:, 1] - principal[:, 1] * det_u[:, 0]
         else:
-            normal = torch.linalg.cross(det_u, geometry[3].to(source.device, torch.float64), dim=1)
+            normal = torch.linalg.cross(det_u, _cast_work(geometry[3], source.device), dim=1)
             facing = torch.sum(principal * normal, dim=1)
         checks.append((torch.any(torch.abs(facing) < 1e-4),
                        "the detector must not be edge-on to the source in any view"))
@@ -442,6 +450,7 @@ class Projector:
         self.native_volume_layout = bool(native_volume_layout)
         self.precision = precision
         self.dtype = torch.float64 if precision == "float64" else torch.float32
+        self._validate_precision(trajectory)
         self._reference = None
         self.partition = partition
         if not isinstance(partition, str) or partition not in ("views", "space", "hybrid"):
@@ -571,6 +580,12 @@ class Projector:
                     UserWarning, stacklevel=2,
                 )
 
+    def _validate_precision(self, values):
+        if self.dtype == torch.float64 and any(
+                torch.device(getattr(value, "device", "cpu")).type == "mps"
+                for value in values):
+            raise ValueError("precision must be 'fast' or 'float32' on MPS; MPS provides no float64")
+
     def _validate_geometry_range(self):
         if self.dtype == torch.float32 and self.beam in ("fan", "cone") and self.detector_surface is None:
             # Both FP32 backends set up each segment from the endpoint nearer
@@ -578,10 +593,11 @@ class Projector:
             spacing = voxel_spacing_tuple(self.voxel_spacing, len(self.global_volume_shape))
             device = next((value.device for value in self._trajectory[:2] if value.is_cuda),
                           self._trajectory[0].device)
-            pitches = torch.tensor(spacing[::-1], device=device, dtype=torch.float64)
+            work = _work_dtype(device)
+            pitches = torch.tensor(spacing[::-1], device=device, dtype=work)
             distances = torch.stack([
                 torch.linalg.vector_norm(
-                    component.to(device=device, dtype=torch.float64) / pitches,
+                    component.to(device=device, dtype=work) / pitches,
                     dim=1,
                 )
                 for component in self._trajectory[:2]
@@ -2602,8 +2618,10 @@ class Projector:
         override = trajectory is not None
         if trajectory is None and self._learnable:
             trajectory = self._learnable
-        if trajectory is not None:
-            try:
+        try:
+            self._validate_precision(args)
+            if trajectory is not None:
+                self._validate_precision(trajectory)
                 _reject_trajectory_tangents(trajectory)
                 frames, views = _validate_trajectory(
                     trajectory, self.beam, detector_surface=self.detector_surface is not None,
@@ -2686,8 +2704,8 @@ class Projector:
                                 (coincident, "source and detector surface pixels must differ"),
                             ])
                             del staged
-            except (TypeError, ValueError, RuntimeError) as failure:
-                error = failure
+        except (TypeError, ValueError, RuntimeError) as failure:
+            error = failure
         # None must participate too: mixed override/default calls or gradient
         # layouts cannot skip a collective on only one rank.
         # Metadata transport needs ordinary storage-backed tensors, even when

@@ -96,6 +96,13 @@ def _tensor_internal_overlap(tensor):
 def _tensor_overlap(first, second):
     if first.device != second.device:
         return False
+    if first.device.type == "mps":
+        # MPS tensors are allocator-backed and cannot wrap external memory,
+        # so distinct storages are distinct allocations. Cross-allocation
+        # data_ptr differences are not meaningful on MPS, so only views of
+        # one storage reach the stride solver, where offsets stay valid.
+        if first.untyped_storage() is not second.untyped_storage():
+            return False
     a, b = _tensor_span(first), _tensor_span(second)
     if a is None or b is None or max(a[0], b[0]) >= min(a[1], b[1]):
         return False
