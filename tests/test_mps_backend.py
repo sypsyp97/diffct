@@ -358,3 +358,74 @@ def test_mps_into_variants_reject_float64_precision():
                  lambda: projector.backproject_into(sinogram_store, volume_out)):
         with pytest.raises(ValueError, match="fast' or 'float32'"):
             call()
+
+
+@pytest.mark.parametrize("precision", ["float64", "fast"])
+@pytest.mark.parametrize("method", ["project_into", "backproject_into"])
+def test_cpu_string_device_stores_match_tensors(precision, method):
+    class CPUBlockStore:
+        def __init__(self, data, *, writable=True):
+            self.data = data
+            self.shape, self.dtype = tuple(data.shape), data.dtype
+            self.writable, self.device = writable, "cpu"
+
+        def read(self, slices):
+            return self.data[slices].clone()
+
+        def write(self, slices, value, *, accumulate=False):
+            assert self.writable
+            if accumulate:
+                self.data[slices].add_(value)
+            else:
+                self.data[slices].copy_(value)
+
+        def flush(self):
+            pass
+
+    dtype = torch.float64 if precision == "float64" else torch.float32
+    trajectory = circular_trajectory_2d_parallel(4, device="cpu", dtype=torch.float64)
+    projector = Projector(trajectory, volume_shape=(4, 4), detector_shape=(6,),
+                          beam="parallel", backend="torch", precision=precision)
+    if method == "project_into":
+        data = torch.arange(1, 17, dtype=dtype).reshape(4, 4) / 16.0
+        output_shape = (4, 6)
+    else:
+        data = torch.arange(1, 25, dtype=dtype).reshape(4, 6) / 24.0
+        output_shape = (4, 4)
+    expected = torch.empty(output_shape, dtype=dtype)
+    actual = torch.empty_like(expected)
+    call = getattr(projector, method)
+    call(data.clone(), expected, trajectory=trajectory)
+    call(CPUBlockStore(data.clone(), writable=False), CPUBlockStore(actual),
+         trajectory=trajectory)
+    torch.testing.assert_close(actual, expected)
+
+
+@mps
+@pytest.mark.parametrize("method,mps_argument", [
+    (method, mps_argument)
+    for method in ("project", "backproject", "project_into", "backproject_into")
+    for mps_argument in ("input", "output", "trajectory", "input_and_trajectory")
+    if mps_argument != "output" or method.endswith("_into")
+])
+def test_mps_float64_precision_rejects_per_call_mps_arguments(method, mps_argument):
+    trajectory = circular_trajectory_2d_parallel(4, device="cpu", dtype=torch.float64)
+    projector = Projector(trajectory, volume_shape=(4, 4), detector_shape=(6,),
+                          beam="parallel", backend="torch", precision="float64")
+    if method in ("project", "project_into"):
+        input_shape, output_shape = (4, 4), (4, 6)
+    else:
+        input_shape, output_shape = (4, 6), (4, 4)
+    input_device = "mps" if mps_argument in ("input", "input_and_trajectory") else "cpu"
+    data = torch.ones(input_shape, device=input_device, dtype=torch.float32)
+    call_trajectory = trajectory
+    if mps_argument in ("trajectory", "input_and_trajectory"):
+        call_trajectory = tuple(value.to(device="mps", dtype=torch.float32)
+                                for value in trajectory)
+    args = [data]
+    if method.endswith("_into"):
+        output_device = "mps" if mps_argument == "output" else "cpu"
+        output_dtype = torch.float32 if output_device == "mps" else torch.float64
+        args.append(torch.empty(output_shape, device=output_device, dtype=output_dtype))
+    with pytest.raises(ValueError, match=r"(?i)\bMPS\b"):
+        getattr(projector, method)(*args, trajectory=call_trajectory)
