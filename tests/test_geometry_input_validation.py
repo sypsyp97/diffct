@@ -177,3 +177,35 @@ def test_circular_trajectories_accept_explicit_angle_tensors(
     for component in trajectory:
         assert component.shape[0] == len(angle_values)
         assert component.device.type == "cpu"
+
+
+def test_random_trajectory_seed_leaves_the_global_generator_untouched():
+    torch.manual_seed(1234)
+    expected = torch.randn(4)
+    torch.manual_seed(1234)
+    random_trajectory_3d(32, sid_mean=1000.0, sdd_mean=1500.0, sid_std=10.0,
+                         pos_std=1.0, angle_std=1e-3, device="cpu", seed=7)
+    torch.testing.assert_close(torch.randn(4), expected)
+
+
+def test_random_trajectory_seed_is_reproducible():
+    kwargs = dict(sid_mean=1000.0, sdd_mean=1500.0, sid_std=10.0, pos_std=1.0,
+                  angle_std=1e-3, device="cpu", seed=7)
+    first = random_trajectory_3d(32, **kwargs)
+    second = random_trajectory_3d(32, **kwargs)
+    for a, b in zip(first, second):
+        torch.testing.assert_close(a, b)
+
+
+def test_random_trajectory_seed_still_replays_the_previous_stream():
+    """A private generator must not move any trajectory that a seed pinned down.
+
+    Seeding used to reach the numbers through the process-wide generator, so a
+    caller could replay them. A generator seeded on the same device produces
+    that very stream, which is why switching to a private one is value-free.
+    """
+    torch.manual_seed(2026)
+    expected = [torch.randn(16), torch.randn(16, 3)]
+    generator = torch.Generator(device="cpu").manual_seed(2026)
+    for shape, want in zip([(16,), (16, 3)], expected):
+        torch.testing.assert_close(torch.randn(shape, generator=generator), want)
