@@ -285,3 +285,17 @@ def test_four_rank_atomic_metadata_failure_rejects_collectively_before_more_oper
         assert len(record["calls"]) == record["calls_at_publication"], "rank executed another operator after publication failure"
         assert record["complete_state_observations"] >= 2, "missing all-rank write/flush evidence before step2 publication"
         assert record["elapsed"] < 15, "publication failure waited for the Gloo timeout"
+
+
+def test_reusing_a_checkpoint_directory_replaces_steps(tmp_path):
+    from diffct import Projector, cgls
+    from diffct.geometry import circular_trajectory_2d_parallel
+
+    trajectory = circular_trajectory_2d_parallel(8, device="cpu", dtype=torch.float32)
+    projector = Projector(trajectory, volume_shape=(16, 16), detector_shape=(24,),
+                          beam="parallel", backend="torch")
+    sinogram = projector(torch.rand(16, 16))
+    first = cgls(projector, sinogram, iterations=2, checkpoint_directory=str(tmp_path))
+    second = cgls(projector, sinogram, iterations=2, checkpoint_directory=str(tmp_path))
+    assert [p.name for p in sorted(tmp_path.iterdir())] == ["step-000001", "step-000002"]
+    torch.testing.assert_close(first.volume.float(), second.volume.float())
