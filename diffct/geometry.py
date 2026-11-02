@@ -274,18 +274,24 @@ def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
     """
     import math
 
-    if seed is not None:
-        torch.manual_seed(seed)
-
     # Start with circular trajectory
     src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
         n_views, sid_mean, sdd_mean, device=device, dtype=dtype
     )
 
+    # Angle tensors override the requested device. Keep seeded draws on that
+    # device without changing any process-wide RNG state.
+    generator = None
+    if seed is not None:
+        # No fallback stream: a different generator would change the values.
+        generator = torch.Generator(device=src_pos.device)
+        # Match torch.manual_seed's conversion of bool, NumPy and tensor seeds.
+        generator.manual_seed(int(seed))
+
     # Add random perturbations
     if sid_std > 0.0:
         # Random SID variations
-        sid_perturbations = torch.randn(n_views, device=device, dtype=dtype) * sid_std
+        sid_perturbations = torch.randn(n_views, device=device, dtype=dtype, generator=generator) * sid_std
         sdd_perturbations = sid_perturbations.clone()  # Keep SDD-SID distance approximately constant
 
         # Compute angles from existing positions
@@ -306,12 +312,12 @@ def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
 
     if pos_std > 0.0:
         # Random 3D position offsets
-        src_pos += torch.randn_like(src_pos) * pos_std
-        det_center += torch.randn_like(det_center) * pos_std
+        src_pos += torch.empty_like(src_pos).normal_(generator=generator) * pos_std
+        det_center += torch.empty_like(det_center).normal_(generator=generator) * pos_std
 
     if angle_std > 0.0:
         # Random angular perturbations (rotate detector orientation)
-        angle_perturbations = torch.randn(n_views, device=device, dtype=dtype) * angle_std
+        angle_perturbations = torch.randn(n_views, device=device, dtype=dtype, generator=generator) * angle_std
         cos_perturb = torch.cos(angle_perturbations)
         sin_perturb = torch.sin(angle_perturbations)
 
