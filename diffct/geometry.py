@@ -274,35 +274,28 @@ def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
     """
     import math
 
-    # Seeding the process-wide generator here would also reset every other
-    # random draw the caller relies on, so draw from a private stream instead.
-    # int() keeps the seeds torch.manual_seed accepted: a fresh Generator
-    # rejects the bool, float and 0-dim tensor forms the global one allowed.
-    # A generator on the target device replays the same stream the process-wide
-    # one did, so a seeded trajectory stays bit-identical to before this change.
-    stream_device = torch.device(device)
-    generator = None
-    if seed is not None:
-        try:
-            generator = torch.Generator(device=device).manual_seed(int(seed))
-        except (RuntimeError, TypeError, ValueError):
-            # Builds without a per-device generator: a host generator still
-            # keeps the draw private to this call.
-            generator = torch.Generator().manual_seed(int(seed))
-            stream_device = torch.device("cpu")
-
-    def noise(shape):
-        return torch.randn(shape, generator=generator, dtype=dtype, device=stream_device).to(device)
-
     # Start with circular trajectory
     src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
         n_views, sid_mean, sdd_mean, device=device, dtype=dtype
     )
 
+    # Angle tensors override the requested device. Keep seeded draws on that
+    # device without changing any process-wide RNG state.
+    generator = None
+    if seed is not None:
+        try:
+            generator = torch.Generator(device=src_pos.device)
+        except (RuntimeError, TypeError, ValueError) as error:
+            raise RuntimeError(
+                f"Cannot create a private random generator on {src_pos.device}"
+            ) from error
+        # Match torch.manual_seed's conversion of bool, NumPy and tensor seeds.
+        generator.manual_seed(int(seed))
+
     # Add random perturbations
     if sid_std > 0.0:
         # Random SID variations
-        sid_perturbations = noise((n_views,)) * sid_std
+        sid_perturbations = torch.randn(n_views, device=device, dtype=dtype, generator=generator) * sid_std
         sdd_perturbations = sid_perturbations.clone()  # Keep SDD-SID distance approximately constant
 
         # Compute angles from existing positions
@@ -323,12 +316,12 @@ def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
 
     if pos_std > 0.0:
         # Random 3D position offsets
-        src_pos += noise(tuple(src_pos.shape)) * pos_std
-        det_center += noise(tuple(det_center.shape)) * pos_std
+        src_pos += torch.empty_like(src_pos).normal_(generator=generator) * pos_std
+        det_center += torch.empty_like(det_center).normal_(generator=generator) * pos_std
 
     if angle_std > 0.0:
         # Random angular perturbations (rotate detector orientation)
-        angle_perturbations = noise((n_views,)) * angle_std
+        angle_perturbations = torch.randn(n_views, device=device, dtype=dtype, generator=generator) * angle_std
         cos_perturb = torch.cos(angle_perturbations)
         sin_perturb = torch.sin(angle_perturbations)
 
