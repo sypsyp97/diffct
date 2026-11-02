@@ -288,6 +288,11 @@ def save_checkpoint(operator, directory, states, metadata, iteration, history, m
         step = Path(directory).resolve() / f"step-{iteration:06d}"
         step.mkdir(parents=True, exist_ok=True)
         rank = step / f"rank-{getattr(operator, 'rank', 0):05d}"
+        if rank.exists():
+            # Replacing a published step in place could destroy it on a
+            # failed write, and ranks cannot roll back together.
+            raise ValueError(f"checkpoint {rank} already exists; use a new checkpoint_directory "
+                             "or pass resume= to continue from it")
         rank.mkdir()
         for name, source in states.items():
             source = TensorStore(source.detach()) if isinstance(source, torch.Tensor) else source
