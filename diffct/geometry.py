@@ -283,12 +283,8 @@ def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
     # device without changing any process-wide RNG state.
     generator = None
     if seed is not None:
-        try:
-            generator = torch.Generator(device=src_pos.device)
-        except (RuntimeError, TypeError, ValueError) as error:
-            raise RuntimeError(
-                f"Cannot create a private random generator on {src_pos.device}"
-            ) from error
+        # No fallback stream: a different generator would change the values.
+        generator = torch.Generator(device=src_pos.device)
         # Match torch.manual_seed's conversion of bool, NumPy and tensor seeds.
         generator.manual_seed(int(seed))
 
