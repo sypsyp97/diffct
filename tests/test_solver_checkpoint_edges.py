@@ -287,15 +287,78 @@ def test_four_rank_atomic_metadata_failure_rejects_collectively_before_more_oper
         assert record["elapsed"] < 15, "publication failure waited for the Gloo timeout"
 
 
-def test_reusing_a_checkpoint_directory_replaces_steps(tmp_path):
-    from diffct import Projector, cgls
+@pytest.fixture
+def checkpoint_problem():
     from diffct.geometry import circular_trajectory_2d_parallel
 
     trajectory = circular_trajectory_2d_parallel(8, device="cpu", dtype=torch.float32)
-    projector = Projector(trajectory, volume_shape=(16, 16), detector_shape=(24,),
-                          beam="parallel", backend="torch")
-    sinogram = projector(torch.rand(16, 16))
-    first = cgls(projector, sinogram, iterations=2, checkpoint_directory=str(tmp_path))
-    second = cgls(projector, sinogram, iterations=2, checkpoint_directory=str(tmp_path))
-    assert [p.name for p in sorted(tmp_path.iterdir())] == ["step-000001", "step-000002"]
-    torch.testing.assert_close(first.volume.float(), second.volume.float())
+    projector = diffct.Projector(trajectory, volume_shape=(8, 8), detector_shape=(12,),
+                                beam="parallel", backend="torch")
+    truth = torch.arange(64, dtype=torch.float32).reshape(8, 8) / 64
+    return projector, projector(truth)
+
+
+@pytest.mark.parametrize("solver", [diffct.cgls, diffct.sirt], ids=["cgls", "sirt"])
+@pytest.mark.parametrize("resume_step", [None, 1], ids=["fresh", "resumed"])
+def test_existing_checkpoint_rejects_next_step_and_preserves_resumable_state(
+    solver, resume_step, checkpoint_problem, tmp_path,
+):
+    projector, sinogram = checkpoint_problem
+    directory = tmp_path / "checkpoint"
+    options = dict(rtol=0., atol=0.)
+    expected = solver(projector, sinogram, 4, **options)
+    partial = solver(projector, sinogram, 2, checkpoint_directory=directory, **options)
+    assert partial.iterations == 2
+    before = {path.relative_to(directory): path.read_bytes()
+              for path in directory.rglob("*") if path.is_file()}
+    assert before
+    resume = None if resume_step is None else _checkpoint(directory, resume_step)
+    next_step = 1 if resume_step is None else resume_step + 1
+    existing = _checkpoint(directory, next_step)
+    with pytest.raises(ValueError) as caught:
+        solver(projector, sinogram, 4, checkpoint_directory=directory, resume=resume, **options)
+    message = str(caught.value)
+    assert str(existing) in message
+    assert "new checkpoint_directory" in message
+    assert "resume=" in message
+    after = {path.relative_to(directory): path.read_bytes()
+             for path in directory.rglob("*") if path.is_file()}
+    assert after == before
+    resumed = solver(projector, sinogram, 4, resume=existing, **options)
+    assert resumed.iterations == expected.iterations == 4
+    torch.testing.assert_close(resumed.volume, expected.volume)
+
+
+@pytest.mark.parametrize("solver", [diffct.cgls, diffct.sirt], ids=["cgls", "sirt"])
+def test_empty_checkpoint_directory_publishes_each_step(solver, checkpoint_problem, tmp_path):
+    projector, sinogram = checkpoint_problem
+    options = dict(rtol=0., atol=0.)
+    expected = solver(projector, sinogram, 3, **options)
+    result = solver(projector, sinogram, 3, checkpoint_directory=tmp_path, **options)
+    assert result.iterations == expected.iterations == 3
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "step-000001", "step-000002", "step-000003",
+    ]
+    torch.testing.assert_close(result.volume, expected.volume)
+    for step in range(1, 4):
+        resumed = solver(projector, sinogram, 3, resume=_checkpoint(tmp_path, step), **options)
+        assert resumed.iterations == 3
+        torch.testing.assert_close(resumed.volume, expected.volume)
+
+
+@pytest.mark.parametrize("solver", [diffct.cgls, diffct.sirt], ids=["cgls", "sirt"])
+def test_resume_publishes_remaining_steps_in_new_empty_directory(solver, checkpoint_problem, tmp_path):
+    projector, sinogram = checkpoint_problem
+    original, destination = tmp_path / "original", tmp_path / "new"
+    destination.mkdir()
+    options = dict(rtol=0., atol=0.)
+    expected = solver(projector, sinogram, 4, **options)
+    partial = solver(projector, sinogram, 2, checkpoint_directory=original, **options)
+    assert partial.iterations == 2
+    resumed = solver(projector, sinogram, 4, resume=_checkpoint(original, 2),
+                     checkpoint_directory=destination, **options)
+    assert resumed.iterations == expected.iterations == 4
+    assert sorted(path.name for path in destination.iterdir()) == ["step-000003", "step-000004"]
+    torch.testing.assert_close(resumed.volume, expected.volume)
+    reloaded = solver(projector, sinogram, 4, resume=_checkpoint(destination, 4), **options)
+    torch.testing.assert_close(reloaded.volume, expected.volume)
