@@ -288,15 +288,15 @@ def save_checkpoint(operator, directory, states, metadata, iteration, history, m
         step = Path(directory).resolve() / f"step-{iteration:06d}"
         step.mkdir(parents=True, exist_ok=True)
         rank = step / f"rank-{getattr(operator, 'rank', 0):05d}"
-        rank.mkdir(exist_ok=True)
+        if rank.exists():
+            # Replacing a published step in place could destroy it on a
+            # failed write, and ranks cannot roll back together.
+            raise ValueError(f"checkpoint {rank} already exists; use a new checkpoint_directory "
+                             "or pass resume= to continue from it")
+        rank.mkdir()
         for name, source in states.items():
             source = TensorStore(source.detach()) if isinstance(source, torch.Tensor) else source
-            path = rank / f"{name}.npy"
-            if path.exists():
-                # Re-saving replaces only this rank's previous file; other
-                # ranks may be writing the same step concurrently.
-                path.unlink()
-            target = NpyStore.create(path, source.shape, dtype=source.dtype)
+            target = NpyStore.create(rank / f"{name}.npy", source.shape, dtype=source.dtype)
             copy_blocks(source, target, elements)
             target.flush()
             manifest[name] = dict(shape=list(source.shape), dtype=str(source.dtype), fingerprint=fingerprint(target, elements))
