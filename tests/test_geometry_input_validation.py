@@ -1,5 +1,7 @@
 """Trajectory constructors reject degenerate user inputs instead of building NaN geometry."""
 
+from contextlib import contextmanager
+
 import numpy as np
 import pytest
 import torch
@@ -211,20 +213,52 @@ def test_random_trajectory_seed_still_replays_the_previous_stream():
         torch.testing.assert_close(torch.randn(shape, generator=generator), want)
 
 
-@pytest.fixture(scope="module")
-def main_random_trajectory():
-    """Execute the pinned reference independently of the working tree."""
-    import subprocess
-    import types
-    from pathlib import Path
+@contextmanager
+def _reference_random_trajectory(n_views, sid_mean, sdd_mean, sid_std=0.0,
+                                 pos_std=0.0, angle_std=0.0, device="cuda",
+                                 dtype=torch.float32, seed=None):
+    """Replay the random algorithm from 062bddd without leaking RNG state.
 
-    source = subprocess.check_output(
-        ["git", "show", "062bddd:diffct/geometry.py"],
-        cwd=Path(__file__).resolve().parents[1], text=True,
-    )
-    module = types.ModuleType("geometry_reference_062bddd")
-    exec(compile(source, "062bddd:diffct/geometry.py", "exec"), module.__dict__)
-    return module.random_trajectory_3d
+    Keep subsequent stream checks inside this context, before RNG restoration.
+    The deterministic circular constructor is shared with the original algorithm.
+    """
+    with torch.random.fork_rng(), torch.random.fork_rng(
+            devices=[0], device_type="mps", enabled=torch.backends.mps.is_available()):
+        if seed is not None:
+            torch.manual_seed(seed)
+        src_pos, det_center, det_u_vec, det_v_vec = circular_trajectory_3d(
+            n_views, sid_mean, sdd_mean, device=device, dtype=dtype)
+
+        if sid_std > 0.0:
+            sid_perturbations = torch.randn(n_views, device=device, dtype=dtype) * sid_std
+            sdd_perturbations = sid_perturbations.clone()
+            angles = torch.atan2(-src_pos[:, 0], src_pos[:, 1])
+            cos_angles = torch.cos(angles)
+            sin_angles = torch.sin(angles)
+            sid_actual = sid_mean + sid_perturbations
+            src_pos[:, 0] = -sid_actual * sin_angles
+            src_pos[:, 1] = sid_actual * cos_angles
+            sdd_actual = sdd_mean + sdd_perturbations
+            idd = sdd_actual - sid_actual
+            det_center[:, 0] = idd * sin_angles
+            det_center[:, 1] = -idd * cos_angles
+
+        if pos_std > 0.0:
+            src_pos += torch.randn_like(src_pos) * pos_std
+            det_center += torch.randn_like(det_center) * pos_std
+
+        if angle_std > 0.0:
+            angle_perturbations = torch.randn(n_views, device=device, dtype=dtype) * angle_std
+            cos_perturb = torch.cos(angle_perturbations)
+            sin_perturb = torch.sin(angle_perturbations)
+            u_new_x = det_u_vec[:, 0] * cos_perturb - det_u_vec[:, 1] * sin_perturb
+            u_new_y = det_u_vec[:, 0] * sin_perturb + det_u_vec[:, 1] * cos_perturb
+            det_u_vec[:, 0] = u_new_x
+            det_u_vec[:, 1] = u_new_y
+
+        det_u_vec = det_u_vec / torch.norm(det_u_vec, dim=1, keepdim=True)
+        det_v_vec = det_v_vec / torch.norm(det_v_vec, dim=1, keepdim=True)
+        yield src_pos, det_center, det_u_vec, det_v_vec
 
 
 @pytest.fixture
@@ -279,11 +313,12 @@ def assert_trajectory_bits_equal(actual, expected):
     pytest.param(dict(sid_std=7.0, pos_std=0.75, angle_std=0.03), id="all"),
 ])
 def test_random_seeded_matches_main_bits(
-        main_random_trajectory, random_device_dtype, preserved_random_states, seed, noise):
+        random_device_dtype, preserved_random_states, seed, noise):
     device, dtype = random_device_dtype
     kwargs = dict(sid_mean=1000.0, sdd_mean=1500.0, device=device,
                   dtype=dtype, seed=seed, **noise)
-    expected = main_random_trajectory(17, **kwargs)
+    with _reference_random_trajectory(17, **kwargs) as expected:
+        pass
     actual = random_trajectory_3d(17, **kwargs)
     assert_trajectory_bits_equal(actual, expected)
 
@@ -292,7 +327,7 @@ def test_random_seeded_matches_main_bits(
                          ids=["int", "bool", "numpy-int", "scalar-tensor", "global"])
 @pytest.mark.parametrize("pos_std", [0.0, 0.75])
 def test_random_angle_tensor_matches_main_bits(
-        main_random_trajectory, random_device_dtype, preserved_random_states, seed, pos_std):
+        random_device_dtype, preserved_random_states, seed, pos_std):
     device, angle_dtype = random_device_dtype
     angles = torch.tensor([0.1, 0.7, 2.6, 4.9], device=device, dtype=angle_dtype)
     # The reference accepts angle vectors for position noise, but not SID or
@@ -300,7 +335,8 @@ def test_random_angle_tensor_matches_main_bits(
     kwargs = dict(sid_mean=1000.0, sdd_mean=1500.0, pos_std=pos_std,
                   device=device, dtype=torch.float32, seed=seed)
     torch.manual_seed(2026)
-    expected = main_random_trajectory(angles, **kwargs)
+    with _reference_random_trajectory(angles, **kwargs) as expected:
+        pass
     torch.manual_seed(2026)
     actual = random_trajectory_3d(angles, **kwargs)
     assert_trajectory_bits_equal(actual, expected)
@@ -328,13 +364,13 @@ def test_random_seed_preserves_all_global_rng_states(device, preserved_random_st
 
 
 def test_random_unseeded_matches_main_global_stream(
-        main_random_trajectory, random_device_dtype, preserved_random_states):
+        random_device_dtype, preserved_random_states):
     device, dtype = random_device_dtype
     kwargs = dict(sid_mean=1000.0, sdd_mean=1500.0, sid_std=7.0,
                   pos_std=0.75, angle_std=0.03, device=device, dtype=dtype, seed=None)
     torch.manual_seed(2026)
-    expected = main_random_trajectory(17, **kwargs)
-    expected_next = torch.randn(9, device=device, dtype=dtype)
+    with _reference_random_trajectory(17, **kwargs) as expected:
+        expected_next = torch.randn(9, device=device, dtype=dtype)
     torch.manual_seed(2026)
     actual = random_trajectory_3d(17, **kwargs)
     actual_next = torch.randn(9, device=device, dtype=dtype)
