@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-11-07
+
+### Fixed
+
+- Saving a solver checkpoint into a step that already exists raises a clear
+  `ValueError` that names the existing directory, instead of a bare
+  `FileExistsError`. The existing checkpoint is not changed. Use a new
+  `checkpoint_directory`, or pass `resume=` to continue from it. Thanks to
+  @cslht11 ([#63](https://github.com/sypsyp97/diffct/pull/63)).
+- `random_trajectory_3d(seed=...)` draws its noise from a private generator
+  and no longer reseeds the process-wide PyTorch generator. Seeded
+  trajectories are unchanged. Thanks to @cslht11
+  ([#64](https://github.com/sypsyp97/diffct/pull/64)).
+
+### Changed
+
+- CPU tests check the FBP, FDK and short-scan Parker accuracy bounds on the
+  portable backend, so CI covers them without a GPU. Thanks to @cslht11
+  ([#65](https://github.com/sypsyp97/diffct/pull/65)).
+- A `.mailmap` joins the commits of one contributor under one name
+  ([#62](https://github.com/sypsyp97/diffct/pull/62)).
+
+### Documentation
+
+- Semantic search on the documentation site is off by default. The
+  embedding model (about 377 MB) downloads only after the visitor enables it
+  ([#66](https://github.com/sypsyp97/diffct/pull/66)).
+
 ## [2.5.0] - 2026-10-26
 
 ### Added
