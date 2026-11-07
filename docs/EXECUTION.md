@@ -301,6 +301,9 @@ are checked for finite values in bounded blocks before creating the workspace
 or writing the output; every rank agrees on admission before execution.
 
 Checkpoint paths are `step-000002/rank-00000/metadata.json`, for example.
+Saving never replaces a step: when the rank directory of a step already
+exists, the solve raises a `ValueError` and leaves the saved checkpoint
+unchanged. Use a new `checkpoint_directory` for a new solve.
 Resume from the corresponding rank directory using `resume=...`; `iterations`
 is the total target, including saved steps. Complete CGLS/SIRT/Adam state and
 residual history are restored. Fingerprints bind the acquisition, measurements,

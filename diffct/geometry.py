@@ -251,7 +251,8 @@ def random_trajectory_3d(n_views, sid_mean, sdd_mean, sid_std=0.0, pos_std=0.0,
     dtype : torch.dtype, optional
         Data type for tensors (default: torch.float32).
     seed : int, optional
-        Random seed for reproducibility (default: None).
+        Random seed for reproducibility (default: None). The noise comes from
+        a private generator, so the global PyTorch random state is unchanged.
 
     Returns
     -------
