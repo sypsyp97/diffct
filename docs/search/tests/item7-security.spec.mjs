@@ -6,6 +6,8 @@ import {
   test, expect, landingUI, dialogUI, searchPageUI, typeQuery, stableSnapshot, sleep,
 } from './harness.mjs';
 
+test.use({ semanticSearch: true });
+
 const PAYLOADS = [
   '<img src=x onerror=alert(1)>',
   '<img src=x onerror="window.__xss=1">',

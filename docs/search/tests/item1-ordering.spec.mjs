@@ -5,6 +5,8 @@ import {
   test, expect, landingUI, dialogUI, typeQuery, snapshot, stableSnapshot, reference, sleep,
 } from './harness.mjs';
 
+test.use({ semanticSearch: true });
+
 test.describe('item 1: ordering', () => {
   test('slow semantic answer of an older query does not replace the newer query results', async ({ browser, page, site, hub }) => {
     const Q1 = 'cone beam geometry';

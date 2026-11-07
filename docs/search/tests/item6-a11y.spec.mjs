@@ -4,6 +4,8 @@ import {
   test, expect, landingUI, dialogUI, searchPageUI, typeQuery, stableSnapshot, sleep,
 } from './harness.mjs';
 
+test.use({ semanticSearch: true });
+
 async function open(page, where) {
   if (where === 'landing') {
     await page.goto('/index.html');
