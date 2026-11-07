@@ -5,6 +5,8 @@ import {
   test, expect, dialogUI, landingUI, typeQuery, stableSnapshot, trackWorkers, sleep,
 } from './harness.mjs';
 
+test.use({ semanticSearch: true });
+
 const WEIGHTS = 'onnx/model_quantized.onnx';
 const FILES = ['onnx/model_quantized.onnx_data', 'tokenizer.json', 'tokenizer_config.json'];
 
@@ -58,10 +60,16 @@ test.describe('item 2: single model load', () => {
     await site.waitProbe('embed', (p) => p.text.endsWith('fan beam'));
     await stableSnapshot(ui.listbox);
     const before = hub.downloadLog().length;
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('diffct-search')))).toMatchObject({
+      semantic: 'on', loaded: true,
+    });
     const sessionsBefore = site.probes('session').length;
 
     await page.reload();
     const again = landingUI(page);
+    await again.input.focus();
+    await expect.poll(() => site.probes('session').length).toBe(sessionsBefore + 1);
+    await expect(again.input).toHaveValue('');
     await typeQuery(again.input, 'cone beam');
     await site.waitProbe('embed', (p) => p.text.endsWith('cone beam'));
     await stableSnapshot(again.listbox);

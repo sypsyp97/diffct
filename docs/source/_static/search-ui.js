@@ -2,8 +2,9 @@
  * Search interface for the landing page box, the Ctrl+K / Cmd+K dialog and the search page.
  * All three share one engine: one index, one model worker, one set of preferences.
  *
- * Keyword results show while the user types. The model loads on the first query, never on page
- * load, in a Web Worker, and semantic results merge in when the worker answers.
+ * Keyword results show while the user types. Semantic search is off until the visitor enables it,
+ * because the model is a large download. When it is on, the model loads in a Web Worker on the
+ * first query, never on page load, and semantic results merge in when the worker answers.
  */
 import * as core from './search-core.js';
 
@@ -27,8 +28,8 @@ const engine = {
   index: null,
   indexError: false,
   indexPromise: null,
-  // idle | consent | loading | ready | off | error
-  model: readPrefs().semantic === 'off' ? 'off' : 'idle',
+  // idle | loading | ready | off | error
+  model: readPrefs().semantic === 'on' ? 'idle' : 'off',
   loaded: 0,
   total: 0,
   fromCache: false,
@@ -122,24 +123,15 @@ function enableModel() {
   startModel();
 }
 
-/** Start the model on the first query. Large downloads on a metered connection need a click. */
+/** Start the model on the first query, only when the visitor enabled semantic search. */
 function onFirstQuery() {
-  if (engine.model !== 'idle') return;
-  const prefs = readPrefs();
-  const connection = navigator.connection || {};
-  if (!prefs.loaded && (connection.saveData || connection.type === 'cellular')) {
-    engine.model = 'consent';
-    emit();
-  } else {
-    startModel();
-  }
+  if (engine.model === 'idle') startModel();
 }
 
 /** Read the model from the browser cache on focus, only when an earlier visit loaded it. */
 function onFocus() {
   loadIndex();
-  const prefs = readPrefs();
-  if (prefs.loaded && prefs.semantic !== 'off' && engine.model === 'idle') startModel();
+  if (readPrefs().loaded && engine.model === 'idle') startModel();
 }
 
 function embed(text) {
@@ -239,8 +231,7 @@ function attach({ input, host, mode, maxGroups }) {
 
   // Buttons are created once. A progress tick must not rebuild them, or a focused button loses focus.
   const keywordOnly = button('Keyword only', stopModel);
-  const download = button('Download', enableModel);
-  const turnOn = button(`Turn on semantic search (\u2248${MODEL_MB} MB download)`, enableModel);
+  const turnOn = button(`Enable semantic search (about ${MODEL_MB} MB)`, enableModel);
   let actionsKey = '';
   function setActions(key, ...nodes) {
     if (key === actionsKey) return;
@@ -263,16 +254,13 @@ function attach({ input, host, mode, maxGroups }) {
       if (engine.total) text += `: ${mb(engine.loaded)} of ${mb(engine.total)} MB`;
       progress.value = engine.total ? (100 * engine.loaded) / engine.total : 0;
       setActions('loading', keywordOnly);
-    } else if (engine.model === 'consent') {
-      text = `Semantic search matches meaning, also across languages. It needs a one-time download of \u2248${MODEL_MB} MB.`;
-      setActions('consent', download, keywordOnly);
     } else if (engine.model === 'off') {
-      text = 'Keyword search only.';
+      text = 'Keyword search is active. Semantic search matches meaning, also across languages, and runs in your browser after you enable it.';
       setActions('off', turnOn);
     } else if (engine.model === 'error') {
       text = 'Semantic search does not work in this browser. These are keyword matches.';
     }
-    if (!['loading', 'consent', 'off'].includes(engine.model)) setActions('none');
+    if (!['loading', 'off'].includes(engine.model)) setActions('none');
     // Screen readers still hear the result count.
     count.textContent = query && !semanticPending ? `${total} result${total === 1 ? '' : 's'}` : '';
     host.dataset.state = semanticPending ? 'pending' : engine.model;

@@ -6,6 +6,8 @@ import {
   test, expect, dialogUI, typeQuery, clearQuery, stableSnapshot, cdpWithWorkers, trackWorkers, sleep,
 } from './harness.mjs';
 
+test.use({ semanticSearch: true });
+
 // Bounds fixed before the first run. Both measurements are taken in the same UI state
 // (dialog closed, input empty) after forced garbage collection.
 const HEAP_BOUND = 1024 * 1024; // bytes, page and worker each

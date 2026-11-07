@@ -255,6 +255,19 @@ export class FakeHub extends EventEmitter {
 
 // ---- page helpers -------------------------------------------------------------------------
 
+/** Seed consent without overwriting choices made during the test or on reload. */
+export async function seedSemanticPreference(context) {
+  await context.addInitScript(() => {
+    if (localStorage.getItem('diffct-search') === null) {
+      localStorage.setItem('diffct-search', JSON.stringify({ semantic: 'on' }));
+    }
+  });
+}
+
+export function enableSemanticButton(host) {
+  return host.getByRole('button', { name: 'Enable semantic search (about 377 MB)', exact: true });
+}
+
 export function landingUI(page) {
   const input = page.locator('.landing-search input[name="q"]');
   return { input, host: page.locator('.landing-search .srch-host'), listbox: listboxOf(input) };
@@ -418,7 +431,7 @@ export async function routeFakeHub(context, hub) {
 
 /**
  * The results that `query` shows in a fresh browser context, as a reference.
- * mode 'keyword': the model download never finishes, so only keyword results show.
+ * mode 'keyword': a fresh visitor has not enabled semantic search.
  * mode 'semantic': the model loads and the semantic answer for `query` merges in.
  * where: 'landing' (index.html) or 'dialog' (quickstart.html, Ctrl+K dialog).
  */
@@ -426,7 +439,7 @@ export async function reference(browser, server, query, mode, where = 'landing')
   const context = await browser.newContext({ baseURL: server.origin });
   const hub = new FakeHub();
   await routeFakeHub(context, hub);
-  if (mode === 'keyword') hub.hold('onnx/model_quantized.onnx');
+  if (mode === 'semantic') await seedSemanticPreference(context);
   try {
     const page = await context.newPage();
     let ui;
@@ -451,6 +464,11 @@ export async function reference(browser, server, query, mode, where = 'landing')
 // ---- fixtures -----------------------------------------------------------------------------
 
 export const test = base.extend({
+  semanticSearch: [false, { option: true }],
+  page: async ({ page, semanticSearch }, use) => {
+    if (semanticSearch) await seedSemanticPreference(page.context());
+    await use(page);
+  },
   server: [async ({}, use) => {
     const server = await startServer(process.env.DOCS_HTML);
     await use(server);

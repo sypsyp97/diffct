@@ -2,7 +2,10 @@
 // the choice persists across reloads; turning semantic search back on resumes cleanly.
 import {
   test, expect, landingUI, typeQuery, snapshot, stableSnapshot, statusText, trackWorkers, trackConsole, sleep,
+  enableSemanticButton,
 } from './harness.mjs';
+
+test.use({ semanticSearch: true });
 
 const WEIGHTS = 'onnx/model_quantized.onnx';
 
@@ -19,6 +22,7 @@ test.describe('item 3: cancel', () => {
     let requestsAtCancel = 0;
     await test.step('"Keyword only" stops further model requests', async () => {
       await ui.host.getByRole('button', { name: /keyword only/i }).click();
+      expect(await page.evaluate(() => JSON.parse(localStorage.getItem('diffct-search')).semantic)).toBe('off');
       requestsAtCancel = hub.log.length;
       held.release(); // the request in flight may finish; nothing new may start
       await sleep(2000);
@@ -38,13 +42,14 @@ test.describe('item 3: cancel', () => {
       expect(hub.log.slice(requestsAtCancel).map((r) => r.url), 'model requests after reload').toEqual([]);
       expect(workers.length - workersBefore, 'model workers started after reload').toBe(0);
       expect((await stableSnapshot(ui.listbox)).length, 'keyword results').toBeGreaterThan(0);
-      await expect(ui.host.getByRole('button', { name: /semantic/i })).toBeVisible();
+      await expect(enableSemanticButton(ui.host)).toBeVisible();
     });
 
     await test.step('turning semantic search back on resumes cleanly', async () => {
       const errorsBefore = errors.length;
       const downloadsBefore = hub.downloads(WEIGHTS);
-      await ui.host.getByRole('button', { name: /semantic/i }).click();
+      await enableSemanticButton(ui.host).click();
+      await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('diffct-search')).semantic)).toBe('on');
       await site.waitProbe('session', () => true, 30_000);
       await site.waitProbe('embed', (p) => p.text.endsWith('multi GPU'), 30_000);
       await stableSnapshot(ui.listbox);
@@ -78,9 +83,9 @@ test.describe('item 3: cancel', () => {
     await typeQuery(ui.input, 'fan beam');
     await held.seen;
     await ui.host.getByRole('button', { name: /keyword only/i }).click();
-    await expect(ui.host.getByRole('button', { name: /semantic/i })).toBeVisible();
+    await expect(enableSemanticButton(ui.host)).toBeVisible();
     hub.clear(); // later downloads go through at once
-    await ui.host.getByRole('button', { name: /semantic/i }).click();
+    await enableSemanticButton(ui.host).click();
     held.release();
     await site.waitProbe('embed', (p) => p.text.endsWith('fan beam'), 30_000);
     await stableSnapshot(ui.listbox);

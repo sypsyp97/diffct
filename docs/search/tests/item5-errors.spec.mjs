@@ -5,6 +5,8 @@ import {
   trackWorkers, sleep,
 } from './harness.mjs';
 
+test.use({ semanticSearch: true });
+
 const WEIGHTS = 'onnx/model_quantized.onnx';
 const NEXT = 'cone beam geometry';
 

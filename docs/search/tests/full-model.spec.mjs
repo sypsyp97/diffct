@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
-import { test, expect, landingUI, typeQuery, FULL_MODEL } from './harness.mjs';
+import { test, expect, landingUI, typeQuery, enableSemanticButton, FULL_MODEL } from './harness.mjs';
 
 const HUB = /(^|\.)(huggingface\.co|hf\.co)$/;
 
@@ -34,6 +34,7 @@ test('real model: semantic results, then a reload with no second download', asyn
     await page.goto('/index.html');
     let ui = landingUI(page);
     await typeQuery(ui.input, 'how do I use a curved detector');
+    await enableSemanticButton(ui.host).click();
     let lb = await ui.listbox.locator();
     await expect(lb.getByText(/^(Semantic|Both)$/).first()).toBeVisible({ timeout: 25 * 60_000 });
     const first = downloads();
