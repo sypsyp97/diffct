@@ -4,6 +4,7 @@ from datetime import timedelta
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -16,7 +17,7 @@ from diffct import _solver_state
 from diffct.pipeline import _fragments
 from tests.test_block_storage import _numpy_blocks
 from tests.test_detector_surfaces import _case, _projector
-from tests.test_execution_features import GLOO
+from tests.test_execution_features import GLOO, _run_four
 from tests.test_solver_api import _DiskAllocations, _SolverStore, _checkpoint, _fixture
 from tests.test_solver_checkpoint_edges import _numerical_calls, _real_problem
 from tests.test_solver_collective_failures import (
@@ -241,6 +242,43 @@ def test_no_callback_does_not_add_iterate_fingerprinting(api, tmp_path):
     assert result.iterations == 3
 
 
+def test_cgls_observer_on_duck_operator_without_distributed_metadata_keeps_serial_defaults():
+    operator, data, _ = _fixture()
+    baseline = diffct.cgls(operator, data, 2, rtol=0., atol=0.)
+    duck = SimpleNamespace(volume_shape=operator.volume_shape, projection_shape=operator.projection_shape,
+                           project=operator.project, backproject=operator.backproject)
+    seen = []
+    result = diffct.cgls(duck, data, 2, rtol=0., atol=0.,
+                         callback=lambda iteration, residual, volume: seen.append(iteration))
+    assert result.iterations == 2 and seen == [1, 2]
+    torch.testing.assert_close(result.volume, baseline.volume, rtol=0, atol=0)
+    assert result.residual_history == baseline.residual_history
+
+
+def test_cgls_into_observer_accepts_protocol_store_without_optional_device_metadata(tmp_path):
+    operator, data, _ = _fixture()
+    expected = torch.empty(operator.volume_shape)
+    baseline = diffct.cgls_into(operator, data, expected, 3, workspace=tmp_path / "baseline-work",
+                                block_elements=3, rtol=0., atol=0.)
+    values = torch.empty(operator.volume_shape)
+    backing = diffct.TensorStore(values)
+    output = SimpleNamespace(shape=backing.shape, dtype=backing.dtype, read=backing.read,
+                             write=backing.write, flush=backing.flush)
+    assert not hasattr(output, "device")
+    seen = []
+
+    def callback(iteration, residual, volume):
+        assert volume is output
+        assert torch.isfinite(volume.read(ONE)).all()
+        seen.append(iteration)
+
+    result = diffct.cgls_into(operator, data, output, 3, workspace=tmp_path / "observer-work",
+                              block_elements=3, rtol=0., atol=0., callback=callback)
+    assert result.volume is output and result.iterations == 3 and seen == [1, 2, 3]
+    torch.testing.assert_close(values, expected, rtol=0, atol=0)
+    assert result.residual_history == baseline.residual_history
+
+
 def test_disk_observer_guard_preserves_block_bound_for_all_new_work(tmp_path):
     # Import-time caches are outside the solver's bounded working-set contract.
     import torch._dynamo
@@ -294,6 +332,98 @@ def test_native_cuda_cgls_observer_matches_baseline_and_mutation_is_rejected():
 
     with pytest.raises(ValueError, match=READ_ONLY):
         diffct.cgls(operator, data, 1, rtol=0., atol=0., callback=mutate)
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="physical CUDA device migration is required")
+@pytest.mark.parametrize("api", ["cgls", "cgls_into"])
+@pytest.mark.parametrize("stop", [False, True], ids=["continue", "return-False"])
+def test_callback_moving_iterate_to_cuda_with_identical_bytes_rejects_before_more_work(api, stop, tmp_path):
+    operator, data, _ = _fixture()
+    boundary = []
+
+    def callback(iteration, residual, volume):
+        if iteration != 1:
+            return None
+        original = volume.detach().clone()
+        assert volume.device.type == "cpu"
+        boundary.append((iteration, len(operator.calls)))
+        volume.data = volume.to(device="cuda:0")
+        assert volume.device == torch.device("cuda:0")
+        assert torch.equal(volume.cpu(), original), "device-only replacement changed logical values"
+        return False if stop else None
+
+    with pytest.raises(ValueError, match=READ_ONLY):
+        _solve(api, operator, data, tmp_path, callback=callback)
+    assert boundary == [(1, 3)]
+    assert len(operator.calls) == 3, "device mutation crossed a numerical boundary"
+
+
+def _subgroup_worker(rank, rendezvous, directory, api):
+    torch.set_num_threads(1)
+    dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=4,
+                            timeout=timedelta(seconds=GROUP_TIMEOUT))
+    try:
+        groups = [dist.new_group([0, 1]), dist.new_group([2, 3])]
+        group_index = rank // 2
+        group = groups[group_index]
+        root = Path(directory)
+        case = _case("parallel", views=5)
+        case.shape, case.detector = (4, 3), (5,)
+        operator = _projector(case, backend="torch", precision="float64", distributed=True,
+                               process_group=group, partition="views", view_chunk_size=1,
+                               volume_chunk_shape=(1, 1))
+        truth = torch.linspace(-.3, .9, 12, dtype=torch.float64).reshape(case.shape)
+        data = operator.project(truth)
+        observed_iterations = []
+
+        def callback(iteration, residual, volume):
+            observed_iterations.append(iteration)
+            if group_index == 1:
+                _mutate(volume, "zero" if api == "cgls" else "write")
+                return False
+            return False if iteration == 2 else None
+
+        def solve(prefix, iterations, observer):
+            options = dict(rtol=0., atol=0., callback=observer)
+            if api == "cgls":
+                return diffct.cgls(operator, data, iterations, **options)
+            output = diffct.NpyStore.create(root / f"{prefix}-output-{rank}.npy",
+                                            operator.volume_shape, dtype=operator.dtype)
+            return diffct.cgls_into(operator, data, output, iterations,
+                                    workspace=root / f"{prefix}-workspace-{rank}",
+                                    block_elements=5, **options)
+
+        baseline = solve("baseline", 2, None)
+        error, message, result = None, None, None
+        with _numerical_calls(operator) as calls:
+            try:
+                result = solve("observed", 3, callback if operator.rank == 1 else None)
+            except Exception as caught:
+                error, message = type(caught).__name__, str(caught)
+        record = dict(error=error, message=message, callback_iterations=observed_iterations,
+                      iterations=None if result is None else result.iterations, calls=calls,
+                      same_volume=result is not None and torch.equal(_snapshot(result.volume),
+                                                                     _snapshot(baseline.volume)),
+                      same_history=result is not None and result.residual_history == baseline.residual_history)
+        (root / f"subgroup-rank-{rank}.json").write_text(json.dumps(record), encoding="utf-8")
+        dist.barrier()
+    finally:
+        dist.destroy_process_group()
+
+
+@GLOO
+@pytest.mark.parametrize("api", ["cgls", "cgls_into"])
+def test_nondefault_subgroups_keep_mutation_error_and_observer_stop_independent(api, tmp_path):
+    _run_four(_subgroup_worker, ((tmp_path / "rendezvous").resolve().as_uri(), str(tmp_path), api), timeout=45)
+    records = [json.loads((tmp_path / f"subgroup-rank-{rank}.json").read_text()) for rank in range(4)]
+    assert all(record["error"] is None and record["iterations"] == 2 for record in records[:2]), records
+    assert all(record["same_volume"] and record["same_history"] for record in records[:2]), records
+    assert [record["callback_iterations"] for record in records] == [[], [1, 2], [], [1]], records
+    assert all(record["error"] == "ValueError" for record in records[2:]), records
+    assert records[2]["message"] == records[3]["message"], records
+    assert "read-only" in records[2]["message"].lower()
+    assert [len(record["calls"]) for record in records] == [5, 5, 3, 3], records
 
 
 def _observer_worker(rank, rendezvous, directory, api):

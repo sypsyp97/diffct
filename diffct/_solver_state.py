@@ -333,10 +333,10 @@ def callback_stop(operator, callback, iteration, residual, volume, *, readonly=F
     error, stop = None, False
     try:
         if callback is not None:
-            before = fingerprint(volume, block_elements) if readonly else None
+            before = (fingerprint(volume, block_elements), getattr(volume, "device", None)) if readonly else None
             stop = callback(iteration, residual, volume) is False
             if readonly and ((isinstance(volume, torch.Tensor) and not torch.is_floating_point(volume))
-                             or fingerprint(volume, block_elements) != before):
+                             or (fingerprint(volume, block_elements), getattr(volume, "device", None)) != before):
                 raise ValueError("CGLS callback iterate is read-only")
     except Exception as caught:
         error = caught

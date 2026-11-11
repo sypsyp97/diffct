@@ -85,7 +85,7 @@ def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
          callback=None, checkpoint_directory=None, resume=None):
     """CGLS with a total iteration target, including resumed iterations.
 
-    Callbacks observe a read-only iterate. Changed contents raise ValueError
+    Callbacks observe a read-only iterate. Changed contents or device raise ValueError
     before another numerical call or a successful return. Callbacks must also
     leave the operator and measurements unchanged.
     """
@@ -252,7 +252,7 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
     ``workspace`` must be a new directory. Every state update, norm,
     fingerprint and checkpoint copy contains at most ``block_elements`` values.
     The result retains the exact output object supplied by the caller.
-    Callbacks observe read-only output contents; changes raise ValueError.
+    Callbacks observe read-only output contents and device; changes raise ValueError.
     The check uses bounded reads and does not roll back caller storage.
     """
     error, controls = None, None
