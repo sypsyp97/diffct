@@ -134,6 +134,43 @@ def models(java, jar, out, large):
     config.write_text(re.sub(r"^PROPERTIES .*\n?", "", (HERE / "Distributed.small.cfg").read_text(),
                              flags=re.M) + "\nSYMMETRY RankSymmetry\n")
     results.append(tlc(java, jar, HERE / "Distributed.tla", config, out, "Distributed.symmetry"))
+    additional = {
+        "StoreFailure": [("uneven", None), ("empty", None),
+                         ("negative-read", "Invariant NoOrphanedReduction is violated"),
+                         ("negative-agreement", "Invariant ErrorAgreement is violated"),
+                         ("negative-stats", "Invariant NoSuccessfulStatsOnFailure is violated"),
+                         ("negative-recovery", "Temporal properties were violated"),
+                         ("reach-empty", "Invariant NotEmptyParticipant is violated"),
+                         ("reach-flush", "Invariant NotFlushFailure is violated"),
+                         ("reach-later-read", "Invariant NotFailedLaterRead is violated"),
+                         ("reach-recovery", "Invariant NotRecovered is violated")],
+        "AnalyticalAlias": [("small", None),
+                            ("legacy", "Invariant NoCorruptedRead is violated"),
+                            ("stall", "Temporal properties were violated"),
+                            ("interleaved", "Invariant InterleavedCompletionNotReached is violated"),
+                            ("rejected", "Invariant RejectedNotReached is violated"),
+                            ("snapshot", "Invariant SnapshotCompletionNotReached is violated")],
+        "SearchCancel": [("positive", None),
+                         ("legacy", "Invariant CanceledOwnerSettled is violated"),
+                         ("cleanup-negative", "Invariant NoObsoleteCleanup is violated"),
+                         ("publication-negative", "Invariant NoStalePublication is violated"),
+                         ("progress-negative", "Temporal properties were violated"),
+                         ("cross-witness", "Invariant NoCrossCancellation is violated"),
+                         ("late-witness", "Invariant NoLateResponse is violated"),
+                         ("obsolete-witness", "Invariant NoObsoleteHandler is violated"),
+                         ("stop-witness", "Invariant NoStopWaiting is violated")],
+        "CglsCallback": [("positive", None),
+                         ("legacy", "Invariant NoStaleNumerics is violated"),
+                         ("local-gate", "Invariant CollectiveErrorGate is violated"),
+                         ("stop-first", "Invariant MutationErrorPrecedence is violated"),
+                         ("unfair", "Temporal properties were violated"),
+                         ("mutation-stop-witness", "Invariant MutationStopNotReached is violated"),
+                         ("observer-witness", "Invariant ObserverDoneNotReached is violated")],
+    }
+    for module, cases in additional.items():
+        for case, expected in cases:
+            results.append(tlc(java, jar, HERE / f"{module}.tla", HERE / f"{module}.{case}.cfg",
+                               out, f"{module}.{case}", expected))
     return results
 
 

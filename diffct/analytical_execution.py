@@ -21,7 +21,9 @@ from .chunking import _memory_budget, _pixel_tiles
 from .distribution import Partition, preflight
 from .operators import _detector_spacing, _normalize_devices, _positive_int, _shape, _validate_trajectory
 from .reconstruction import _angles, _cosine, _filter, _fixed, _parker_setup
-from .streaming import _as_store, _validate_stores
+from .streaming import (_as_store, _backing_store, _backing_tensor, _store_phase,
+                        _store_rounds, _tensor_overlap, _validate_stores)
+from .storage import NpyStore
 
 
 def _weight(value, shape, name, *, exact=False):
@@ -351,7 +353,7 @@ class AnalyticalExecution:
         return cone_weighted_backproject(data, *geometry, *shape, *self.pitch,
                                          self.voxel_spacing, isocenter=isocenter)
 
-    def _tile(self, spatial):
+    def _tile(self, spatial, *, reduce=True):
         shape = tuple(part.stop - part.start for part in spatial)
         value = torch.zeros(shape, device=self.output_device, dtype=self.dtype)
         if self.input_dependency is not None:
@@ -361,7 +363,7 @@ class AnalyticalExecution:
             partial = (self._native_gather(filtered, geometry, spatial) if self.backend == "numba"
                        else self._portable_gather(filtered, geometry, views, spatial))
             value = value + partial.to(self.output_device)
-        return _sum(value, self.partition.view_group, self.partition.view_world_size)
+        return _sum(value, self.partition.view_group, self.partition.view_world_size) if reduce else value
 
     def _prepare_gradients(self):
         partition = self.partition
@@ -426,17 +428,33 @@ class AnalyticalExecution:
         error, source, sink = None, None, None
         try:
             source, sink = _validate_stores(self, self.source, output, False)
+            output_tensor = _backing_tensor(sink)
+            backing = _backing_store(sink)
+            if isinstance(backing, NpyStore):
+                output_tensor = torch.from_numpy(backing._array)
             for option in (self.projection_weights, self.angular_weights, self.filter_response):
                 if isinstance(option, torch.Tensor) and option.requires_grad:
                     raise ValueError("into methods are numerical; detach autograd weights")
+                if (isinstance(option, torch.Tensor) and isinstance(output_tensor, torch.Tensor)
+                        and _tensor_overlap(option, output_tensor)):
+                    raise ValueError("analytical weights and output stores overlap")
         except (ValueError, TypeError, RuntimeError, OSError) as caught:
             error = caught
         self.partition.preflight(error)
         self.source = source
         with torch.no_grad():
-            for spatial, _ in _pixel_tiles(self.volume_shape, self.chunk_shape):
-                sink.write(spatial, self._tile(spatial))
-            sink.flush()
+            for job in _store_rounds(_pixel_tiles(self.volume_shape, self.chunk_shape), self.partition):
+                with _store_phase(self.partition):
+                    if job is not None:
+                        spatial, _ = job
+                        value = self._tile(spatial, reduce=False)
+                if job is not None:
+                    value = _sum(value, self.partition.view_group, self.partition.view_world_size)
+                with _store_phase(self.partition):
+                    if job is not None:
+                        sink.write(spatial, value)
+            with _store_phase(self.partition):
+                sink.flush()
         return original
 
 

@@ -14,6 +14,7 @@ from torch.autograd import forward_ad
 from .chunking import _memory_lower_bounds
 from .utils import _work_dtype
 from .distribution import control_status
+from .streaming import _store_phase, _store_rounds
 from .surfaces import ParameterizedSurface
 from .constants import _native_spacing
 
@@ -1208,36 +1209,46 @@ class ReferenceProjector:
             stats["store_writes"] += 1
             stats["write_bytes"] += value.numel() * value.element_size()
 
-        if is_project:
-            for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
-                device = self._device(batch, fallback, stats)
-                origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry)
-                values = torch.zeros(len(origins), device=device, dtype=owner.dtype)
-                for tile, world in self._tiles(plan[0]):
-                    block = read(tile, device).reshape(-1)
-                    indices, lengths = self._intervals(origins, directions, world)
-                    values = values + (block[indices] * lengths).sum(-1)
-                    stats["ray_tile_pairs"] += 1
-                values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
-                shape = (views.stop - views.start, *(part.stop - part.start for part in pixels))
-                write(self._pixel_slices(views, pixels), values.reshape(shape))
-        else:
-            for tile, world in self._tiles(plan[0]):
-                tile_shape = tuple(part.stop - part.start for part in tile)
-                values = torch.zeros(math.prod(tile_shape), device=output_device, dtype=owner.dtype)
-                for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
-                    device = self._device(batch, fallback, stats)
-                    block = read(self._pixel_slices(views, pixels), device).reshape(-1)
-                    origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry)
-                    indices, lengths = self._intervals(origins, directions, world)
-                    contribution = block.new_zeros(math.prod(tile_shape)).scatter_add(
-                        0, indices.flatten(), (block[:, None] * lengths).flatten(),
-                    )
-                    values = values + self._to(contribution, output_device, stats)
-                    stats["ray_tile_pairs"] += 1
-                values = self._reduce(values, owner.view_group, owner.view_world_size, stats)
-                write(tile, values.reshape(tile_shape))
-        sink.flush()
+        jobs = self._batches(*plan[1:]) if is_project else self._tiles(plan[0])
+        for batch, job in enumerate(_store_rounds(jobs, owner._partition)):
+            with _store_phase(owner._partition):
+                if job is not None:
+                    if is_project:
+                        views, pixels = job
+                        device = self._device(batch, fallback, stats)
+                        origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry)
+                        values = torch.zeros(len(origins), device=device, dtype=owner.dtype)
+                        for tile, world in self._tiles(plan[0]):
+                            block = read(tile, device).reshape(-1)
+                            indices, lengths = self._intervals(origins, directions, world)
+                            values = values + (block[indices] * lengths).sum(-1)
+                            stats["ray_tile_pairs"] += 1
+                        shape = (views.stop - views.start, *(part.stop - part.start for part in pixels))
+                        selected = self._pixel_slices(views, pixels)
+                    else:
+                        tile, world = job
+                        shape = tuple(part.stop - part.start for part in tile)
+                        values = torch.zeros(math.prod(shape), device=output_device, dtype=owner.dtype)
+                        for ray_batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                            device = self._device(ray_batch, fallback, stats)
+                            block = read(self._pixel_slices(views, pixels), device).reshape(-1)
+                            origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry)
+                            indices, lengths = self._intervals(origins, directions, world)
+                            contribution = block.new_zeros(math.prod(shape)).scatter_add(
+                                0, indices.flatten(), (block[:, None] * lengths).flatten(),
+                            )
+                            values = values + self._to(contribution, output_device, stats)
+                            stats["ray_tile_pairs"] += 1
+                        selected = tile
+            if job is not None:
+                group = owner.space_group if is_project else owner.view_group
+                count = owner.space_world_size if is_project else owner.view_world_size
+                values = self._reduce(values, group, count, stats)
+            with _store_phase(owner._partition):
+                if job is not None:
+                    write(selected, values.reshape(shape))
+        with _store_phase(owner._partition):
+            sink.flush()
         stats["elapsed_seconds"] = time.perf_counter() - start
         owner.last_execution_stats = stats
 

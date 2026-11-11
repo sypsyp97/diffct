@@ -328,10 +328,16 @@ def callbacks_enabled(operator, callback):
                                world_size=getattr(operator, "world_size", 1))[0])
 
 
-def callback_stop(operator, callback, iteration, residual, volume):
+def callback_stop(operator, callback, iteration, residual, volume, *, readonly=False,
+                  block_elements=1048576):
     error, stop = None, False
     try:
-        stop = callback is not None and callback(iteration, residual, volume) is False
+        if callback is not None:
+            before = fingerprint(volume, block_elements) if readonly else None
+            stop = callback(iteration, residual, volume) is False
+            if readonly and ((isinstance(volume, torch.Tensor) and not torch.is_floating_point(volume))
+                             or fingerprint(volume, block_elements) != before):
+                raise ValueError("CGLS callback iterate is read-only")
     except Exception as caught:
         error = caught
     failed, stop = control_status((int(error is not None), int(stop)),

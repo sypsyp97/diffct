@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <title>Search cancellation test fixture</title>
+  <!-- Explicit fixture for the production search-page and dialog init selectors. -->
+  <dialog id="pst-search-dialog" open>
+    <form><label>Dialog query <input name="q" type="search"></label></form>
+  </dialog>
+  <main class="bd-search-container">
+    <form class="bd-search"><label>Page query <input name="q" type="search"></label></form>
+    <div id="search-results"></div>
+  </main>
+  <script type="module" src="/_static/search-ui.js"></script>
+</html>

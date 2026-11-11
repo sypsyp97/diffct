@@ -369,9 +369,8 @@ function attach({ input, host, mode, maxGroups }) {
       semanticPending = false;
       renderResults();
     } catch (e) {
-      if (e.message === 'stale') return; // a newer query is already in flight
-      console.error(e);
       if (myTicket !== ticket) return;
+      if (e.message !== 'stale') console.error(e);
       semanticPending = false;
       renderResults();
     }

@@ -2,9 +2,42 @@
 
 import numpy as np
 import torch
+from contextlib import contextmanager
 from pathlib import Path
 
+from .distribution import control_status
 from .storage import TensorStore, NpyStore
+
+
+def _store_rounds(items, partition):
+    """Keep exhausted parent ranks at the error gates of active subgroups."""
+    if partition.world_size == 1:
+        yield from items
+        return
+    items = iter(items)
+    while True:
+        item = next(items, None)
+        active, = control_status((int(item is not None),),
+                                 process_group=partition.process_group,
+                                 world_size=partition.world_size)
+        if not active:
+            return
+        yield item
+
+
+@contextmanager
+def _store_phase(partition):
+    """Agree local I/O failures before the next subgroup collective or return."""
+    error = None
+    try:
+        yield
+    except Exception as caught:
+        error = caught
+    if partition.world_size == 1:
+        if error is not None:
+            raise error
+    else:
+        partition.preflight(error)
 
 
 def _backing_store(value):
