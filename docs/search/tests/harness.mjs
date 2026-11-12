@@ -49,10 +49,18 @@ export async function pipeline(task, model, options = {}) {
   if ((control.failDevices || []).includes(String(options.device))) {
     throw new Error('simulated ' + options.device + ' initialization failure');
   }
+  if ((control.embedFailDevices || []).includes(String(options.device))) {
+    // The pipeline "loads" without a real session; every embedding call on it throws.
+    await probe('session', { device: String(options.device) });
+    return async (text) => {
+      await probe('embed', { text, device: String(options.device) });
+      throw new Error('simulated ' + options.device + ' embedding failure');
+    };
+  }
   const extractor = await real.pipeline(task, model, options);
   await probe('session', { device: String(options.device) });
   return async (text, opts) => {
-    await probe('embed', { text });
+    await probe('embed', { text, device: String(options.device) });
     return extractor(text, opts);
   };
 }
@@ -191,6 +199,8 @@ export class FakeHub extends EventEmitter {
   }
   fail(file, how) { this.rules.set(file, { ...(this.rules.get(file) || {}), fail: how }); }
   delay(file, ms) { this.rules.set(file, { ...(this.rules.get(file) || {}), delay: ms }); }
+  /** Serve `body` (Buffer or string) for `file` instead of the fixture file. */
+  serve(file, body) { this.rules.set(file, { ...(this.rules.get(file) || {}), body: Buffer.from(body) }); }
   clear() {
     for (const r of this.rules.values()) r.hold?.resolve();
     this.rules.clear();
@@ -226,10 +236,10 @@ export class FakeHub extends EventEmitter {
         return await route.fulfill({ status: rule.fail, headers: CORS, body: 'simulated failure' });
       }
       const local = path.join(TINY_MODEL, file);
-      if (!m || !local.startsWith(TINY_MODEL) || !fs.existsSync(local)) {
+      if (!rule.body && (!m || !local.startsWith(TINY_MODEL) || !fs.existsSync(local))) {
         return await route.fulfill({ status: 404, headers: CORS, body: 'Entry not found' });
       }
-      const body = fs.readFileSync(local);
+      const body = rule.body || fs.readFileSync(local);
       if (entry.range === 'bytes=0-0') {
         return await route.fulfill({
           status: 206,
