@@ -74,11 +74,9 @@ def _tensor_span(tensor):
 
 
 def _tensor_metadata(tensor, base=None, offset=0):
-    if tensor.device.type == "cpu":
-        return tensor.detach().numpy()
-    # These read-only virtual views are only passed to shares_memory, which
-    # examines addresses/strides without dereferencing data. One byte models
-    # CUDA address differences; no tensor data is copied or volume allocated.
+    # These read-only byte views are only passed to shares_memory, which
+    # examines addresses/strides without dereferencing data. They model each
+    # element's bytes regardless of dtype or device; no tensor data is copied.
     if base is None:
         base = np.empty(1, dtype=np.uint8)
     head = np.lib.stride_tricks.as_strided(
