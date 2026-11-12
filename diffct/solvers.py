@@ -83,7 +83,12 @@ def _status(residual, threshold, stopped=False):
 @torch.no_grad()
 def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
          callback=None, checkpoint_directory=None, resume=None):
-    """CGLS with a total iteration target, including resumed iterations."""
+    """CGLS with a total iteration target, including resumed iterations.
+
+    Callbacks observe a read-only iterate. Changed contents or device raise ValueError
+    before another numerical call or a successful return. Callbacks must also
+    leave the operator and measurements unchanged.
+    """
     iterations, rtol, atol, callbacks = _request(operator, measurements, iterations, x0, rtol, atol,
                                      callback, checkpoint_directory, resume, {})
     data = measurements.detach().to(dtype=getattr(operator, "dtype", measurements.dtype))
@@ -130,7 +135,7 @@ def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history,
                             norm, 1048576, gamma=gamma)
         if callbacks:
-            stopped = callback_stop(operator, callback, completed, history[-1], states["x"])
+            stopped = callback_stop(operator, callback, completed, history[-1], states["x"], readonly=True)
         if stopped:
             break
     converged, reason = _status(history[-1], threshold, stopped)
@@ -247,6 +252,8 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
     ``workspace`` must be a new directory. Every state update, norm,
     fingerprint and checkpoint copy contains at most ``block_elements`` values.
     The result retains the exact output object supplied by the caller.
+    Callbacks observe read-only output contents and device; changes raise ValueError.
+    The check uses bounded reads and does not roll back caller storage.
     """
     error, controls = None, None
     try:
@@ -325,7 +332,8 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
             save_checkpoint(operator, checkpoint_directory, states, metadata, completed, history,
                             norm, block_elements, gamma=gamma)
         if callbacks:
-            stopped = callback_stop(operator, callback, completed, history[-1], output)
+            stopped = callback_stop(operator, callback, completed, history[-1], output,
+                                    readonly=True, block_elements=block_elements)
         if stopped:
             break
     for store in states.values():
