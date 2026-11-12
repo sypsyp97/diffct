@@ -101,7 +101,7 @@ async function expectRetryWorks({ ui, site, workers, query, semanticRef }) {
   const attempts = site.probes('pipeline').length;
   const t0 = Date.now();
   await control.first().click();
-  await expect.poll(() => site.probes('embed').filter((p) => p.t >= t0 && p.text.endsWith(query)).length,
+  await expect.poll(() => site.probes('embed').filter((p) => p.t >= t0 && p.params.text.endsWith(query)).length,
     { timeout: 30_000, message: `semantic answer for "${query}" after the retry` }).toBeGreaterThan(0);
   expect(await stableSnapshot(ui.listbox, { quietMs: 1000 }), `results for "${query}"`).toEqual(semanticRef);
   await sleep(2000);
@@ -114,6 +114,8 @@ async function expectRetryWorks({ ui, site, workers, query, semanticRef }) {
 test.describe('C1: a model file fails while the model loads', () => {
   for (const file of MODEL_FILES) {
     for (const how of ['abort', 404, 500]) {
+      // transformers.js treats a missing tokenizer_config.json as optional: the load succeeds.
+      if (file === 'tokenizer_config.json' && how === 404) continue;
       test(`${how} on ${file}`, async ({ browser, page, site, hub }) => {
         const refs = await keywordRefs(browser, site, [FIRST, NEXT]);
         const semanticRef = await reference(browser, site, LAST, 'semantic');
@@ -253,16 +255,23 @@ test.describe('C4: WebGPU fails after the model loaded', () => {
     const errors = trackPageErrors(page);
     site.state.control = { webgpu: 'adapter', failDevices: [], embedFailDevices: ['webgpu'] };
     const workers = trackWorkers(page);
+    const t0 = Date.now(); // probes of the reference run above are older
+    const attempts = () => site.probes('pipeline').filter((p) => p.t >= t0).map((p) => p.params.device);
     await page.goto('/index.html');
     const ui = landingUI(page);
     await typeQuery(ui.input, FIRST);
-    await site.waitProbe('embed', (p) => p.device === 'wasm' && p.text.endsWith(FIRST), 30_000);
+    await expect.poll(() => site.probes('embed')
+      .filter((p) => p.t >= t0 && p.params.device === 'wasm' && p.params.text.endsWith(FIRST)).length,
+    { timeout: 30_000, message: `WASM semantic answer for "${FIRST}"` }).toBeGreaterThan(0);
     expect(await stableSnapshot(ui.listbox, { quietMs: 1000 })).toEqual(semanticRef);
     await sleep(2000);
-    expect(site.probes('pipeline').map((p) => p.params.device), 'load attempts').toEqual(['webgpu', 'wasm']);
+    expect(attempts(), 'load attempts').toEqual(['webgpu', 'wasm']);
     expect(workers.length, 'workers started').toBe(2);
     expect(liveWorkers(workers), 'live workers').toBe(1);
-    expect(await statusText(ui.host), 'the status reports the WASM backend').toMatch(/wasm/i);
+    // A visitor message names the CPU, not the runtime ("WASM" is not plain language).
+    const status = await statusText(ui.host);
+    expect(status, 'the status reports the CPU (WASM) backend').toMatch(/\bCPU\b/i);
+    expectPlainMessage(status);
     expect(errors, 'pageerror events').toEqual([]);
   });
 
@@ -275,6 +284,7 @@ test.describe('C4: WebGPU fails after the model loaded', () => {
       const errors = trackPageErrors(page);
       site.state.control = { webgpu: 'adapter', ...control };
       const workers = trackWorkers(page);
+      const t0 = Date.now();
       await page.goto('/index.html');
       const ui = landingUI(page);
       await typeQuery(ui.input, FIRST);
@@ -282,7 +292,8 @@ test.describe('C4: WebGPU fails after the model loaded', () => {
       await expectProgressHidden(ui);
       await expectKeywordResults(ui, refs, FIRST);
       await expectNoRetryLoop({ ui, site, hub, workers });
-      expect(site.probes('pipeline').map((p) => p.params.device), 'load attempts').toEqual(['webgpu', 'wasm']);
+      expect(site.probes('pipeline').filter((p) => p.t >= t0).map((p) => p.params.device), 'load attempts')
+        .toEqual(['webgpu', 'wasm']);
       expect(workers.length, 'workers started: one WebGPU, one WASM').toBe(2);
       expect(isFailureMessage(await statusText(ui.host)), 'the failure message stays').toBe(true);
       await expect(retryControl(ui), 'a control to retry semantic search').toBeVisible();
