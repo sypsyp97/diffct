@@ -14,6 +14,9 @@ const MODEL_MB = 377;
 const SEMANTIC_DEBOUNCE_MS = 250;
 const EXAMPLES = ['如何迭代重建?', 'how do I use a curved detector', 'multi GPU', 'install CUDA 13'];
 const PREF_KEY = 'diffct-search';
+// A load that makes no download progress for this long, or a query without an answer, fails.
+const LOAD_STALL_MS = 180000;
+const QUERY_TIMEOUT_MS = 120000;
 
 // ---- engine -------------------------------------------------------------------------------
 
@@ -38,6 +41,9 @@ const engine = {
   listeners: new Set(),
   pending: null,
   nextId: 0,
+  watchdog: 0,
+  watching: '', // 'load' or 'query'
+  fellBack: false,
 };
 
 function emit() { engine.listeners.forEach((f) => f()); }
@@ -45,10 +51,15 @@ function emit() { engine.listeners.forEach((f) => f()); }
 function loadIndex() {
   if (!engine.indexPromise) {
     engine.indexPromise = (async () => {
+      // Revalidate on every visit: after a deploy, a cached chunk list must not meet new vectors.
+      const get = (name) => fetch(staticBase + name, { cache: 'no-cache' }).then((r) => {
+        if (!r.ok) throw new Error(`${name} returned HTTP ${r.status}`);
+        return r;
+      });
       const [meta, chunks, vectors] = await Promise.all([
-        fetch(staticBase + 'search-meta.json').then((r) => r.json()),
-        fetch(staticBase + 'search-chunks.json').then((r) => r.json()),
-        fetch(staticBase + 'search-vectors.bin').then((r) => r.arrayBuffer()),
+        get('search-meta.json').then((r) => r.json()),
+        get('search-chunks.json').then((r) => r.json()),
+        get('search-vectors.bin').then((r) => r.arrayBuffer()),
       ]);
       engine.index = core.createIndex(chunks, meta, vectors);
       emit();
@@ -59,38 +70,91 @@ function loadIndex() {
   return engine.indexPromise;
 }
 
+function watch(kind, ms) {
+  clearTimeout(engine.watchdog);
+  engine.watching = kind;
+  engine.watchdog = setTimeout(() => failModel('Semantic search timed out.'), ms);
+}
+
+function unwatch() {
+  clearTimeout(engine.watchdog);
+  engine.watchdog = 0;
+  engine.watching = '';
+}
+
+function dropPending() {
+  if (engine.pending) engine.pending.reject(new Error('stale'));
+  engine.pending = null;
+}
+
+/** The visitor changed the query: the old one no longer counts, nor does its timer. */
+function cancelQuery() {
+  dropPending();
+  if (engine.watching === 'query') unwatch();
+}
+
+/** Stop the model after a failure. Keyword search stays; the visitor can retry. */
+function failModel(reason) {
+  console.error('Semantic search failed:', reason);
+  unwatch();
+  if (engine.worker) engine.worker.terminate();
+  engine.worker = null;
+  dropPending();
+  engine.model = 'error';
+  emit();
+}
+
 function spawnWorker(index, forceWasm) {
   const worker = new Worker(new URL('search-worker.js', import.meta.url), { type: 'module' });
   engine.worker = worker;
+  watch('load', LOAD_STALL_MS);
   worker.onmessage = ({ data }) => {
+    if (engine.worker !== worker) return;
     if (data.type === 'fallback') {
+      if (forceWasm) { failModel('The WASM backend asked for a fallback.'); return; }
       // The worker keeps WebGPU state after a failure: retry the CPU backend in a fresh one.
+      // A query that waited for the old worker runs again when the new one is ready.
       worker.terminate();
+      dropPending();
+      engine.fellBack = true;
+      engine.model = 'loading';
+      engine.loaded = 0;
+      engine.total = 0;
       spawnWorker(index, true);
-      return;
-    }
-    if (data.type === 'progress') {
+    } else if (data.type === 'progress') {
+      if (data.loaded > engine.loaded) watch('load', LOAD_STALL_MS);
       engine.loaded = data.loaded;
       engine.total = data.total;
     } else if (data.type === 'ready') {
+      unwatch();
       engine.model = 'ready';
       engine.backend = data.backend;
       writePrefs({ semantic: 'on', loaded: true });
     } else if (data.type === 'vector') {
-      if (engine.pending && engine.pending.id === data.id) engine.pending.resolve(data.vector);
+      if (engine.pending && engine.pending.id === data.id) {
+        unwatch();
+        engine.pending.resolve(data.vector);
+        engine.pending = null;
+      }
       return;
     } else if (data.type === 'error') {
+      // An error for one query leaves the model usable; an error without an id ends the worker.
+      if (data.id === undefined) { failModel(data.message); return; }
       console.error(data.message);
-      if (data.id === undefined) { engine.model = 'error'; worker.terminate(); engine.worker = null; }
-      if (engine.pending && engine.pending.id === data.id) engine.pending.reject(new Error(data.message));
+      if (engine.pending && engine.pending.id === data.id) {
+        unwatch();
+        engine.pending.reject(new Error(data.message));
+        engine.pending = null;
+      }
     }
     emit();
   };
   worker.onerror = (event) => {
-    console.error(event.message);
-    engine.model = 'error';
-    engine.worker = null;
-    emit();
+    event.preventDefault();
+    if (engine.worker === worker) failModel(event.message || 'The search worker failed.');
+  };
+  worker.onmessageerror = () => {
+    if (engine.worker === worker) failModel('The search worker sent an unreadable message.');
   };
   worker.postMessage({ type: 'load', meta: index.meta, forceWasm });
 }
@@ -108,16 +172,17 @@ function startModel() {
 }
 
 function stopModel() {
+  unwatch();
   if (engine.worker) engine.worker.terminate();
   engine.worker = null;
-  if (engine.pending) engine.pending.reject(new Error('stale'));
-  engine.pending = null;
+  dropPending();
   engine.model = 'off';
   writePrefs({ semantic: 'off' });
   emit();
 }
 
 function enableModel() {
+  engine.fellBack = false;
   writePrefs({ semantic: 'on' });
   engine.model = 'idle';
   startModel();
@@ -135,10 +200,12 @@ function onFocus() {
 }
 
 function embed(text) {
-  if (engine.pending) engine.pending.reject(new Error('stale'));
+  dropPending();
   const id = ++engine.nextId;
   return new Promise((resolve, reject) => {
     engine.pending = { id, resolve, reject };
+    // Only the newest query is waited for: a new query restarts the timer.
+    watch('query', QUERY_TIMEOUT_MS);
     engine.worker.postMessage({ type: 'embed', id, text });
   });
 }
@@ -232,6 +299,7 @@ function attach({ input, host, mode, maxGroups }) {
   // Buttons are created once. A progress tick must not rebuild them, or a focused button loses focus.
   const keywordOnly = button('Keyword only', stopModel);
   const turnOn = button(`Enable semantic search (about ${MODEL_MB} MB)`, enableModel);
+  const retry = button('Retry semantic search', enableModel);
   let actionsKey = '';
   function setActions(key, ...nodes) {
     if (key === actionsKey) return;
@@ -258,9 +326,12 @@ function attach({ input, host, mode, maxGroups }) {
       text = 'Keyword search is active. Semantic search matches meaning, also across languages, and runs in your browser after you enable it.';
       setActions('off', turnOn);
     } else if (engine.model === 'error') {
-      text = 'Semantic search does not work in this browser. These are keyword matches.';
+      text = 'Semantic search stopped. Keyword results are still shown.';
+      setActions('error', retry);
+    } else if (engine.model === 'ready' && engine.fellBack) {
+      text = 'GPU acceleration failed in this browser, so semantic search runs on the CPU and answers more slowly.';
     }
-    if (!['loading', 'off'].includes(engine.model)) setActions('none');
+    if (!['loading', 'off', 'error'].includes(engine.model)) setActions('none');
     // Screen readers still hear the result count.
     count.textContent = query && !semanticPending ? `${total} result${total === 1 ? '' : 's'}` : '';
     host.dataset.state = semanticPending ? 'pending' : engine.model;
@@ -380,6 +451,7 @@ function attach({ input, host, mode, maxGroups }) {
     const myTicket = ++ticket;
     clearTimeout(timer);
     query = input.value.trim();
+    cancelQuery();
     semantic = null;
     semanticPending = false;
     list.style.minHeight = '';
