@@ -127,8 +127,14 @@ function spawnWorker(index, forceWasm) {
       }
       return;
     } else if (data.type === 'error') {
-      failModel(data.message);
-      return;
+      // An error for one query leaves the model usable; an error without an id ends the worker.
+      if (data.id === undefined) { failModel(data.message); return; }
+      console.error(data.message);
+      if (engine.pending && engine.pending.id === data.id) {
+        unwatch();
+        engine.pending.reject(new Error(data.message));
+        engine.pending = null;
+      }
     }
     emit();
   };
