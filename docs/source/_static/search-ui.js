@@ -42,6 +42,8 @@ const engine = {
   pending: null,
   nextId: 0,
   watchdog: 0,
+  watching: '', // 'load' or 'query'
+  fellBack: false,
 };
 
 function emit() { engine.listeners.forEach((f) => f()); }
@@ -68,19 +70,27 @@ function loadIndex() {
   return engine.indexPromise;
 }
 
-function watch(ms) {
+function watch(kind, ms) {
   clearTimeout(engine.watchdog);
+  engine.watching = kind;
   engine.watchdog = setTimeout(() => failModel('Semantic search timed out.'), ms);
 }
 
 function unwatch() {
   clearTimeout(engine.watchdog);
   engine.watchdog = 0;
+  engine.watching = '';
 }
 
 function dropPending() {
   if (engine.pending) engine.pending.reject(new Error('stale'));
   engine.pending = null;
+}
+
+/** The visitor changed the query: the old one no longer counts, nor does its timer. */
+function cancelQuery() {
+  dropPending();
+  if (engine.watching === 'query') unwatch();
 }
 
 /** Stop the model after a failure. Keyword search stays; the visitor can retry. */
@@ -97,7 +107,7 @@ function failModel(reason) {
 function spawnWorker(index, forceWasm) {
   const worker = new Worker(new URL('search-worker.js', import.meta.url), { type: 'module' });
   engine.worker = worker;
-  watch(LOAD_STALL_MS);
+  watch('load', LOAD_STALL_MS);
   worker.onmessage = ({ data }) => {
     if (engine.worker !== worker) return;
     if (data.type === 'fallback') {
@@ -106,12 +116,13 @@ function spawnWorker(index, forceWasm) {
       // A query that waited for the old worker runs again when the new one is ready.
       worker.terminate();
       dropPending();
+      engine.fellBack = true;
       engine.model = 'loading';
       engine.loaded = 0;
       engine.total = 0;
       spawnWorker(index, true);
     } else if (data.type === 'progress') {
-      if (data.loaded > engine.loaded) watch(LOAD_STALL_MS);
+      if (data.loaded > engine.loaded) watch('load', LOAD_STALL_MS);
       engine.loaded = data.loaded;
       engine.total = data.total;
     } else if (data.type === 'ready') {
@@ -171,6 +182,7 @@ function stopModel() {
 }
 
 function enableModel() {
+  engine.fellBack = false;
   writePrefs({ semantic: 'on' });
   engine.model = 'idle';
   startModel();
@@ -193,7 +205,7 @@ function embed(text) {
   return new Promise((resolve, reject) => {
     engine.pending = { id, resolve, reject };
     // Only the newest query is waited for: a new query restarts the timer.
-    watch(QUERY_TIMEOUT_MS);
+    watch('query', QUERY_TIMEOUT_MS);
     engine.worker.postMessage({ type: 'embed', id, text });
   });
 }
@@ -316,6 +328,8 @@ function attach({ input, host, mode, maxGroups }) {
     } else if (engine.model === 'error') {
       text = 'Semantic search stopped. Keyword results are still shown.';
       setActions('error', retry);
+    } else if (engine.model === 'ready' && engine.fellBack) {
+      text = 'GPU acceleration failed in this browser, so semantic search runs on the CPU and answers more slowly.';
     }
     if (!['loading', 'off', 'error'].includes(engine.model)) setActions('none');
     // Screen readers still hear the result count.
@@ -437,6 +451,7 @@ function attach({ input, host, mode, maxGroups }) {
     const myTicket = ++ticket;
     clearTimeout(timer);
     query = input.value.trim();
+    cancelQuery();
     semantic = null;
     semanticPending = false;
     list.style.minHeight = '';
