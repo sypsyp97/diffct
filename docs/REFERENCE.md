@@ -416,8 +416,8 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
   Detector pitch is a separate argument:
   a scalar in 2D, a scalar or `(du, dv)` pair in 3D.
   `detector_shape=(U, V)` and 3D sinograms always follow `(views, U, V)`.
-- `parallel3d` traces infinite lines through detector pixels on the PyTorch
-  backend; `backend="auto"` selects it, and explicit `backend="numba"` rejects.
+- `parallel3d` traces infinite lines through detector pixels on the native
+  and PyTorch backends, with the same backend selection as cone beams.
   `circular_trajectory_3d_parallel` lifts the 2D parallel orbit into XY with
   `det_v=(0,0,1)` and the same default `[0, pi)` range. In both parallel
   generators, `detector_distance` shifts the centre along `det_u`.

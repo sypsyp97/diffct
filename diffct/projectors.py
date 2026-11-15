@@ -7,6 +7,7 @@ for differentiable CT forward projection and backprojection operations.
 import torch
 import numpy as np
 
+from .chunking import _BEAMS_3D
 from .constants import _DTYPE, _native_spacing
 from . import kernels as _kernels
 from .utils import (
@@ -32,6 +33,9 @@ _KERNEL_NAMES = (
     '_parallel_2d_geometry_vjp_kernel',
     '_fan_2d_geometry_vjp_kernel',
     '_cone_3d_geometry_vjp_kernel',
+    '_parallel_3d_forward_kernel',
+    '_parallel_3d_backward_kernel',
+    '_parallel_3d_geometry_vjp_kernel',
 )
 
 
@@ -49,7 +53,7 @@ def __getattr__(name):
 
 def _empty_detector_positions(device, beam):
     """Use a rank-correct empty array because CUDA cannot marshal None."""
-    shape = (0, 0, 0, 3) if beam == "cone" else (0, 0, 2)
+    shape = (0, 0, 0, 3) if beam in _BEAMS_3D else (0, 0, 2)
     tensor = torch.empty(shape, dtype=torch.float32, device=device)
     return tensor, TorchCUDABridge.tensor_to_cuda_array(tensor)
 
@@ -57,11 +61,11 @@ def _empty_detector_positions(device, beam):
 def _prepare_volume(beam, volume):
     """Prepare one contiguous native HW/WHD tile for repeated ray launches.
 
-    A cone volume that is a ``(D, H, W)`` view of a ``(W, H, D)``-contiguous buffer, as returned with
+    A 3D volume that is a ``(D, H, W)`` view of a ``(W, H, D)``-contiguous buffer, as returned with
     ``native_volume_layout=True``, already has the native layout and is used without a copy.
     """
     volume = volume.detach().to(dtype=torch.float32)
-    if beam == "cone":
+    if beam in _BEAMS_3D:
         native = volume.permute(2, 1, 0)
         if native.is_contiguous():
             return native
@@ -87,18 +91,18 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
         d_geom = [TorchCUDABridge.tensor_to_cuda_array(component) for component in geom]
         if len(geom) == 2:
             d_positions = d_geom[1]
-            d_geom = [d_geom[0]] * (4 if beam == "cone" else 3)
+            d_geom = [d_geom[0]] * (4 if beam in _BEAMS_3D else 3)
         else:
             empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_volume = TorchCUDABridge.tensor_to_cuda_array(native_volume)
         d_sino = TorchCUDABridge.tensor_to_cuda_array(sinogram)
         stream = _get_numba_external_stream_for(torch.cuda.current_stream(device))
-        if beam == "cone":
+        if beam in _BEAMS_3D:
             W, H, D = native_volume.shape
             n_views, n_u, n_v = sinogram.shape
             du, dv = detector_spacing
             native_spacing = _native_spacing(voxel_spacing)
-            if len(geom) == 4 and isinstance(native_spacing, tuple):
+            if beam == "cone" and len(geom) == 4 and isinstance(native_spacing, tuple):
                 # Flat per-axis rays retain FP64 traversal parameters.
                 native_spacing = tuple(np.float64(value) for value in native_spacing)
             if backproject:
@@ -116,7 +120,8 @@ def _launch_ray_kernel(beam, native_volume, sinogram, geometry, detector_spacing
                 if backproject else
                 (d_volume, W, H, D, d_sino, n_views, n_u, n_v)
             )
-            kernel = _resolve_kernel('_cone_3d_backward_kernel' if backproject else '_cone_3d_forward_kernel')
+            prefix = '_cone_3d' if beam == "cone" else '_parallel_3d'
+            kernel = _resolve_kernel(prefix + ('_backward_kernel' if backproject else '_forward_kernel'))
             kernel[grid, tpb, stream](
                 *arguments, _DTYPE(du), _DTYPE(dv), *d_geom,
                 _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5),
@@ -169,13 +174,24 @@ def _surface_project(beam, volume, geometry, detector_shape, detector_spacing, v
         return _project_into(beam, prepared, geometry, detector_spacing, voxel_spacing, sino)
 
 
-def _surface_backproject(beam, sinogram, geometry, volume_shape, detector_spacing, voxel_spacing):
-    """Run the matched native adjoint with one detector endpoint per pixel."""
+def _surface_backproject(beam, sinogram, geometry, volume_shape, detector_spacing, voxel_spacing,
+                         native_layout=False):
+    """Run the matched native adjoint with one detector endpoint per pixel or flat frames.
+
+    With ``native_layout`` a 3D result is a ``(D, H, W)`` tensor with the kernel's
+    ``(W, H, D)``-contiguous strides instead of a contiguous copy.
+    """
     with _cuda_context(sinogram.device):
-        native_shape = volume_shape[::-1] if beam == "cone" else volume_shape
+        if native_layout and beam in _BEAMS_3D:
+            D, H, W = volume_shape
+            result = torch.empty_strided((D, H, W), (1, D, D * H), dtype=torch.float32,
+                                         device=sinogram.device).zero_()
+            _backproject_into(beam, sinogram, geometry, detector_spacing, voxel_spacing, result.permute(2, 1, 0))
+            return result
+        native_shape = volume_shape[::-1] if beam in _BEAMS_3D else volume_shape
         volume = torch.zeros(native_shape, dtype=torch.float32, device=sinogram.device)
         _backproject_into(beam, sinogram, geometry, detector_spacing, voxel_spacing, volume)
-        return volume.permute(2, 1, 0).contiguous() if beam == "cone" else volume
+        return volume.permute(2, 1, 0).contiguous() if beam in _BEAMS_3D else volume
 
 
 # ============================================================================
@@ -187,7 +203,7 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
     """Return d<grad_sino, A(geometry) volume>/d(geometry), one tensor per component.
 
     ``detector_spacing`` is a scalar for 2D beams and ``(du, dv)`` for cone
-    beams. Results take the dtype and device of each geometry component.
+    and parallel3d beams. Results take the dtype and device of each geometry component.
     """
     vol = _prepare_volume(beam, volume) if prepared_volume is None else prepared_volume
     device = vol.device
@@ -199,7 +215,7 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
     if len(geom) == 2:
         d_positions, d_grad_positions = d_geom[1], d_grads[1]
         # Native endpoints bypass the flat center/axes and their gradients.
-        n_components = 4 if beam == "cone" else 3
+        n_components = 4 if beam in _BEAMS_3D else 3
         d_geom = [d_geom[0]] * n_components
         # Unused output arguments must not alias the source cotangent.
         unused = torch.empty((0, geom[0].shape[-1]), dtype=torch.float32, device=device)
@@ -209,13 +225,14 @@ def _geometry_vjp(beam, volume, grad_sino, geometry, detector_spacing, voxel_spa
         _empty_positions, d_positions = _empty_detector_positions(device, beam)
         d_grad_positions = d_positions
     numba_stream = _get_numba_external_stream_for(torch.cuda.current_stream(device))
-    if beam == "cone":
+    if beam in _BEAMS_3D:
         W, H, D = vol.shape
         n_views, n_u, n_v = cot.shape
         du, dv = detector_spacing
         d_vol = TorchCUDABridge.tensor_to_cuda_array(vol)
         grid, tpb = _grid_3d(n_v, n_u, n_views)
-        _resolve_kernel('_cone_3d_geometry_vjp_kernel')[grid, tpb, numba_stream](
+        name = '_cone_3d_geometry_vjp_kernel' if beam == "cone" else '_parallel_3d_geometry_vjp_kernel'
+        _resolve_kernel(name)[grid, tpb, numba_stream](
             d_vol, W, H, D, TorchCUDABridge.tensor_to_cuda_array(cot), n_views, n_u, n_v,
             _DTYPE(du), _DTYPE(dv), *d_geom,
             _DTYPE(W * 0.5), _DTYPE(H * 0.5), _DTYPE(D * 0.5), _native_spacing(voxel_spacing),

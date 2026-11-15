@@ -30,7 +30,7 @@ from tests.test_cone_backprojection_transpose import cuda_device
 
 
 BEAMS = ("parallel", "fan", "cone", "parallel3d")
-NATIVE_BEAMS = BEAMS[:3]  # parallel3d remains portable-only.
+NATIVE_BEAMS = BEAMS[:3]  # Native parallel3d: tests/test_parallel3d_native.py.
 SCALAR_BEAMS = NATIVE_BEAMS
 SURFACES = ("flat", "offset", "parameterized")
 REFERENCE = Path(__file__).with_name("fixtures") / "native_scalar_spacing_main.npz"

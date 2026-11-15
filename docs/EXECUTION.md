@@ -11,8 +11,8 @@ backend uses the same cell-constant Siddon model and physical coordinates.
 | `backend="torch", precision="float32"` | PyTorch FP32 data and local traversal, with FP64 ray clipping and entry setup (FP32 on Apple MPS) | CPU, NVIDIA CUDA, PyTorch ROCm, Apple MPS |
 | `precision="float64"` | PyTorch FP64 throughout the data operations, including analytical FFT/filter/gather | CPU, NVIDIA CUDA, PyTorch ROCm |
 
-`backend="auto"` selects PyTorch for strict precision modes, hybrid
-ownership, or `parallel3d` beams. An incompatible explicit Numba
+`backend="auto"` selects PyTorch for strict precision modes or hybrid
+ownership. An incompatible explicit Numba
 request raises an error. `Projector.backend`, `.precision` and `.dtype` describe the selected
 execution. Supplying a float64 input to `precision="fast"` still yields FP32.
 Create trajectories and data in float64 for a double-precision baseline;
@@ -228,7 +228,7 @@ also use `torch.vmap(..., chunk_size=...)` to control the transform's workspace.
 With `backend="auto"`, a `Projector` that falls back to the portable backend on
 an NVIDIA CUDA machine emits one `UserWarning` at construction. The warning
 names the reasons: per-axis `voxel_spacing` outside the native practical range, a `precision` other than
-`"fast"`, `partition="hybrid"` or `beam="parallel3d"`. Pass `backend="torch"`
+`"fast"` or `partition="hybrid"`. Pass `backend="torch"`
 to select the portable backend explicitly and silence the warning.
 Analytical tile order can reread and refilter the source for another volume
 tile. The native path admits tiles against available CUDA memory. The separate

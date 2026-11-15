@@ -124,17 +124,21 @@ def _reservation_budget(device):
     return max(0, min(free + reclaimable, int(total * fraction) - pinned))
 
 
+# Beams with native (W, H, D) volume layouts and four trajectory frames.
+_BEAMS_3D = ("cone", "parallel3d")
+
+
 def _working_set_bytes(beam, shape, views, detector_shape, surface):
     """Conservative native staging/layout, cotangent, geometry and VJP scratch."""
     rank = len(shape)
     voxels = math.prod(shape)
     rays = views * math.prod(detector_shape)
     geometry = (rank * (views + rays) if surface
-                else rank * (4 if beam == "cone" else 3) * views)
-    # A resident native tile, staging and completed cone layout can coexist.
+                else rank * (4 if beam in _BEAMS_3D else 3) * views)
+    # A resident native tile, staging and completed 3D layout can coexist.
     # Two ray buffers cover reusable output/cotangent and transfer scratch; two
     # geometry buffers cover staged values and their first-order VJP/reduction.
-    tile_buffers = 3 if beam == "cone" else 2
+    tile_buffers = 3 if beam in _BEAMS_3D else 2
     return 4 * (tile_buffers * voxels + 2 * rays + 2 * geometry)
 
 
@@ -142,7 +146,7 @@ def _largest_buffer_bytes(beam, shape, views, detector_shape, surface):
     rank = len(shape)
     rays = views * math.prod(detector_shape)
     geometry = (rank * (views + rays) if surface
-                else rank * (4 if beam == "cone" else 3) * views)
+                else rank * (4 if beam in _BEAMS_3D else 3) * views)
     return 4 * max(math.prod(shape), rays, geometry)
 
 
@@ -194,9 +198,9 @@ def _pipeline_buffers(beam, shape, views, pixels, points, *, slots=1, retained=1
     native = _allocation_bytes(math.prod(shape))
     # Two producer epochs permit the preceding native/layout/output storage
     # to stay in flight while the next retained tile window queues work.
-    tiles = slots * (retained + int(beam == "cone")) + int(peers)
+    tiles = slots * (retained + int(beam in _BEAMS_3D)) + int(peers)
     sizes = ((views * rank, rays * rank) if points
-             else (views * rank,) * (4 if beam == "cone" else 3))
+             else (views * rank,) * (4 if beam in _BEAMS_3D else 3))
     geometry = tuple(_allocation_bytes(size) for size in sizes)
     return ((native,) * tiles + (_allocation_bytes(rays),) * (slots + ray_accumulators)
             + geometry * (slots * (1 + int(geometry_grad))))
@@ -207,18 +211,18 @@ def _pipeline_bytes(beam, shape, views, pixels, points, *, slots=1, retained=1,
     """Live typed bytes; segment reservation is admitted separately."""
     rank, rays = len(shape), views * math.prod(pixels)
     native = _allocation_bytes(math.prod(shape))
-    tile = native * (slots * (retained + int(beam == "cone")) + int(peers))
+    tile = native * (slots * (retained + int(beam in _BEAMS_3D)) + int(peers))
     sizes = ((views * rank, rays * rank) if points
-             else (views * rank,) * (4 if beam == "cone" else 3))
+             else (views * rank,) * (4 if beam in _BEAMS_3D else 3))
     geometry = sum(_allocation_bytes(size) for size in sizes)
     return (tile + slots * (_allocation_bytes(rays) + geometry)
             + ray_accumulators * _allocation_bytes(rays) + (slots * geometry if geometry_grad else 0))
 
 
 def _host_geometry_bytes(beam, views, pixels, points):
-    rank = 3 if beam == "cone" else 2
+    rank = 3 if beam in _BEAMS_3D else 2
     if not points:
-        return 8 * 2 * rank * views * (4 if beam == "cone" else 3)
+        return 8 * 2 * rank * views * (4 if beam in _BEAMS_3D else 3)
     # Grids/offsets, world expressions and first-order cotangent/graph work.
     # Arbitrary sampler internals and explicit parameter snapshots are separate.
     return 8 * rank * (math.prod(pixels) * (1 + 6 * views) + 4 * views)
