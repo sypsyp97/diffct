@@ -11,6 +11,7 @@ import functools
 import inspect
 import math
 import sys
+import threading
 import weakref
 import numpy as np
 import torch
@@ -46,6 +47,48 @@ def _raise_geometry_errors(checks):
         for invalid, (_, message) in zip(failed.tolist(), checks):
             if invalid:
                 raise ValueError(message)
+
+
+# Each thread sees the statistics of the last call it ran on an operator, so
+# concurrent calls on one operator never read or replace each other's report.
+_STATS = threading.local()
+
+
+def _stats_view():
+    """The current thread's map from operator to its last call statistics.
+
+    Inside ``_publish_stats_into`` this is the captured view of the thread
+    that recorded the forward call: autograd can run backward on a device
+    thread, and its statistics belong to the thread that called backward.
+    """
+    view = getattr(_STATS, "redirect", None)
+    if view is None:
+        view = getattr(_STATS, "view", None)
+        if view is None:
+            view = _STATS.view = weakref.WeakKeyDictionary()
+    return view
+
+
+@contextlib.contextmanager
+def _publish_stats_into(view):
+    previous = getattr(_STATS, "redirect", None)
+    _STATS.redirect = view
+    try:
+        yield
+    finally:
+        _STATS.redirect = previous
+
+
+class _ExecutionStats:
+    """``last_execution_stats`` descriptor backed by the per-thread view."""
+
+    def __get__(self, owner, kind=None):
+        if owner is None:
+            return self
+        return _stats_view().get(owner)
+
+    def __set__(self, owner, value):
+        _stats_view()[owner] = value
 
 
 # ============================================================================
@@ -153,6 +196,8 @@ class TorchCUDABridge:
 
 _cached_stream_ptr = None
 _cached_numba_stream = None
+# One thread at a time reads and replaces the cache entry.
+_STREAM_CACHE_LOCK = threading.Lock()
 
 
 def _get_numba_external_stream_for(pt_stream=None):
@@ -179,14 +224,15 @@ def _get_numba_external_stream_for(pt_stream=None):
     if device_index is None:
         device_index = torch.cuda.current_device()
     key = (device_index, ptr)
-    if _cached_stream_ptr == key and _cached_numba_stream is not None:
-        return _cached_numba_stream
     from numba import cuda
 
-    numba_stream = cuda.external_stream(pt_stream.cuda_stream)
-    _cached_stream_ptr = key
-    _cached_numba_stream = numba_stream
-    return numba_stream
+    with _STREAM_CACHE_LOCK:
+        if _cached_stream_ptr == key and _cached_numba_stream is not None:
+            return _cached_numba_stream
+        numba_stream = cuda.external_stream(pt_stream.cuda_stream)
+        _cached_stream_ptr = key
+        _cached_numba_stream = numba_stream
+        return numba_stream
 
 
 @contextlib.contextmanager

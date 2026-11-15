@@ -124,12 +124,12 @@ def instrument(rec, backends, distribution, pipeline, torch):
             yield piece
         rec.local.geometry_stage = "parameter"
 
-    def reduce(self, value, group, count, stats):
+    def reduce(self, value, group, count, stats, *args, **kwargs):
         if rec.phase == "geometry":
             rec.emit("geometry_reduce", stage=rec.local.geometry_stage,
                      tile=getattr(rec.local, "tile", []), rays=getattr(rec.local, "rays", []),
                      piece=getattr(rec.local, "piece", []), elements=value.numel(), participants=count)
-        return original_reduce(self, value, group, count, stats)
+        return original_reduce(self, value, group, count, stats, *args, **kwargs)
     reference._tiles, reference._batches = tiles, batches
     reference._leading_pieces, reference._reduce = staticmethod(pieces), reduce
 
@@ -515,6 +515,14 @@ def thread_race(rec, torch, diffct, device, backends):
     child_finished, other_reset, release_other = threading.Event(), threading.Event(), threading.Event()
     state = threading.local()
     failures = []
+    inputs = dict(A=torch.ones((8, *p.volume_shape), dtype=torch.float64),
+                  B=torch.ones(p.volume_shape, dtype=torch.float64))
+    seen = {}
+
+    def observed(name):
+        result = p.project(inputs[name])
+        seen[name] = (result, p.last_execution_stats)
+        return result
     backends._REFERENCE_WORK_BYTES = 256
 
     def apply(*args, **kwargs):
@@ -541,8 +549,7 @@ def thread_race(rec, torch, diffct, device, backends):
 
     def run_a():
         try:
-            call(rec, "thread-A", lambda: p.project(torch.ones((8, *p.volume_shape), dtype=torch.float64)),
-                 allowed_error=True)
+            call(rec, "thread-A", lambda: observed("A"), allowed_error=True)
         finally:
             release_other.set()
 
@@ -551,8 +558,7 @@ def thread_race(rec, torch, diffct, device, backends):
             failures.append("A did not split")
             release_other.set()
             return
-        call(rec, "thread-B", lambda: p.project(torch.ones(p.volume_shape, dtype=torch.float64)),
-             allowed_error=True)
+        call(rec, "thread-B", lambda: observed("B"), allowed_error=True)
     reference._tensor_apply = apply
     p._partition.preflight = preflight
     try:
@@ -567,10 +573,21 @@ def thread_race(rec, torch, diffct, device, backends):
         recorded = [json.loads(line) for line in Path(rec.output.name).read_text().splitlines()]
         errors = [(row["name"], row["type"], row["message"]) for row in recorded
                   if row["kind"] in ("call_error", "runtime_timeout") and row["name"].startswith("thread-")]
-        if errors != [("thread-A", "TypeError", "'NoneType' object is not subscriptable")]:
-            raise RuntimeError(f"statistics race witness changed: {errors}")
+        if errors:
+            raise RuntimeError(f"concurrent calls raised: {errors}")
     finally:
         reference._tensor_apply, p._partition.preflight = original_apply, original_preflight
+    try:
+        # Each thread reads the complete report of its own call, equal to the same call run alone.
+        for name, (result, stats) in seen.items():
+            alone = p.project(inputs[name])
+            expected = p.last_execution_stats
+            if (not torch.equal(result, alone) or stats is None
+                    or {**stats, "elapsed_seconds": 0} != {**expected, "elapsed_seconds": 0}):
+                raise RuntimeError(f"thread {name} statistics or result differ from the call run alone")
+        if sorted(seen) != ["A", "B"]:
+            raise RuntimeError(f"thread calls did not finish: {sorted(seen)}")
+    finally:
         backends._REFERENCE_WORK_BYTES = original_budget
 
 
@@ -760,10 +777,6 @@ def main():
         if any(codes) and not watchdog_exit:
             raise RuntimeError(f"collector {name} failed: {codes}; see {out}")
         expected = []
-        if name == "serial" and not args.native:
-            expected.append("NoUnexpectedCrash")
-        if name == "numerical":
-            expected.append("NoRuntimeTimeout")
         manifest.append(dict(name=name, files=[str((out / f"rank-{rank}.ndjson").relative_to(args.out))
                                               for rank in range(world)], world=world, fault=fault,
                              expected=expected, native=args.native, device=args.device, backend=args.backend,

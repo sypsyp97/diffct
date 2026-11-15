@@ -117,22 +117,18 @@ def validate_directory(trace_dir, out, java, jar, tlc):
             if case["fault"] == "admission":
                 required = {"call_begin", "call_error", "request_rejection"}
             elif case["fault"] == "numerical":
-                required = {"call_begin"}
+                required = {"call_begin", "call_error"}
             if not required <= observed:
                 raise RuntimeError(f"missing observations in {name}: {sorted(required - observed)}")
             rows.extend(rank_rows)
         rows.sort(key=lambda row: row["ns"])
         expected = list(case["expected"])
-        if case["fault"] == "numerical":
-            expected.append("NoMixedOutcomes")
         invariants = [name for name in INVARIANTS if name not in expected]
         prefix = trace_dir.name + "." + case["name"]
-        results.append(replay(rows, case["world"], out, prefix, java, jar, tlc, invariants,
-                              incomplete=case["fault"] == "numerical"))
+        results.append(replay(rows, case["world"], out, prefix, java, jar, tlc, invariants))
         for property_name in expected:
             results.append(replay(rows, case["world"], out, prefix + "." + property_name,
-                                  java, jar, tlc, [property_name], expected=property_name,
-                                  incomplete=case["fault"] == "numerical"))
+                                  java, jar, tlc, [property_name], expected=property_name))
         if case["name"] == "views":
             mutated = copy.deepcopy(rows)
             event = next(row for row in mutated if row["kind"] == "collective_enter")

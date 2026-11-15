@@ -18,9 +18,10 @@ from .storage import TensorStore
 from .streaming import _validate_stores
 from .surfaces import ParameterizedSurface, _GeometrySpec, _sample_geometry, _sample_offsets
 from .surface_gradients import surface_batch_vjp
-from .utils import TorchCUDABridge, _cast_work, _get_numba_external_stream_for, _raise_geometry_errors, _work_dtype
-from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _flat_admission_batches, _forward_tangent,
-                       select_backend, voxel_spacing_tuple)
+from .utils import (TorchCUDABridge, _ExecutionStats, _cast_work, _get_numba_external_stream_for,
+                    _publish_stats_into, _raise_geometry_errors, _stats_view, _work_dtype)
+from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _NumericalFailure, _flat_admission_batches,
+                       _forward_tangent, select_backend, voxel_spacing_tuple)
 from .distribution import Partition
 from .projectors import (
     _backproject_into,
@@ -242,6 +243,7 @@ class _ProjectorAutograd(torch.autograd.Function):
         ctx.geometry_spec = geometry_spec
         ctx.input_device = tensor.device
         ctx.input_dtype = tensor.dtype
+        ctx.stats_view = _stats_view()
         needs_geometry = any(component.requires_grad for component in geometry) or (
             projector._distributed and projector.world_size > 1
             and projector._geometry_trainable
@@ -258,6 +260,12 @@ class _ProjectorAutograd(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        # Autograd can run this on a device thread; report to the forward's thread.
+        with _publish_stats_into(ctx.stats_view):
+            return _ProjectorAutograd._backward(ctx, grad_output)
+
+    @staticmethod
+    def _backward(ctx, grad_output):
         tensor, *geometry = ctx.saved_tensors
         projector = ctx.projector
         # Both branches below contain collectives. In distributed mode they run
@@ -401,7 +409,9 @@ class Projector:
     independently of the resident GPU tile size. ``last_execution_stats``
     reports actual copy payloads, native launches/layouts, planned capacity
     and pilot metadata; it is None before execution, after errors, and on the
-    uninstrumented native full-CUDA path. Portable execution reports actual
+    uninstrumented native full-CUDA path. Each thread reads the report of its
+    own last call; backward reports go to the thread that ran the forward
+    call. Portable execution reports actual
     ray/tile pairs, store I/O, transfers and collective payloads, with
     conservative automatic chunks targeting 8 MiB work arrays. Explicit
     chunk hints take priority. Reports and selection caches retain metadata.
@@ -433,6 +443,8 @@ class Projector:
     do not apply an additional DDP reduction to them. Space ranks participate
     in backward even when their local input and geometry require no gradients.
     """
+
+    last_execution_stats = _ExecutionStats()
 
     def __init__(self, trajectory, volume_shape, detector_shape, *, beam="cone",
                  detector_spacing=1.0, voxel_spacing=1.0, devices=None,
@@ -1125,15 +1137,16 @@ class Projector:
             raise error
 
         # Keep all outputs alive until every device has launched its shard.
+        numeric = _NumericalFailure(self._distributed and self.world_size > 1)
         outputs = []
         for device, staged_input, geometry in staged:
             with torch.cuda.device(device), cuda.gpus[device.index]:
-                output = (
-                    self._project_raw(staged_input, geometry)
-                    if is_project
-                    else self._backproject_raw(staged_input, geometry)
-                )
+                output = numeric.attempt(self._project_raw if is_project else self._backproject_raw,
+                                         staged_input, geometry)
             outputs.append((device, output))
+        if numeric.error is not None:
+            # No local result: a backprojection joins the SUM below with zeros.
+            outputs = []
 
         with torch.cuda.device(input_device):
             if is_project:
@@ -1142,12 +1155,15 @@ class Projector:
                     for _, output in outputs
                 ]
                 if len(pieces) == 1:
-                    return pieces[0]
-                if pieces:
-                    return torch.cat(pieces, dim=0)
-                return torch.empty(
-                    self.projection_shape, dtype=torch.float32, device=input_device
-                )
+                    result = pieces[0]
+                elif pieces:
+                    result = torch.cat(pieces, dim=0)
+                else:
+                    result = torch.empty(
+                        self.projection_shape, dtype=torch.float32, device=input_device
+                    )
+                self._partition.settle(numeric.error)
+                return result
 
             # With native_volume_layout every rank holds its cone result in the native (W, H, D) order,
             # so collectives reduce the same element order on every rank.
@@ -1174,6 +1190,7 @@ class Projector:
                     op=torch.distributed.ReduceOp.SUM,
                     group=self._process_group,
                 )
+            self._partition.settle(numeric.error)
             return result
 
     def _view_rounds(self, plan):
@@ -1261,12 +1278,19 @@ class Projector:
             stats["d2h_bytes"] = self._snapshot_d2h_bytes
             self._snapshot_d2h_bytes = 0
             stats["pilot"], stats["selection_cached"] = pilots, cached
+            # Over NCCL, a rank whose launch failed skips its later launches but
+            # keeps every collective of the schedule; settle then raises on every
+            # rank. Over other backends a launch error raises at once.
+            numeric = _NumericalFailure(self._distributed and self.world_size > 1
+                                        and torch.distributed.get_backend(self._process_group) == "nccl")
             if self.partition == "space" and is_project:
-                self._space_project(source, sink, geometry, chosen, geometry_spec, stats)
+                self._space_project(source, sink, geometry, chosen, geometry_spec, stats, numeric)
             elif self.partition == "space" and getattr(source, "reduced", False):
-                self._space_back_reduced(source, sink, geometry, chosen, geometry_spec, stats)
+                self._space_back_reduced(source, sink, geometry, chosen, geometry_spec, stats, numeric=numeric)
             else:
-                self._execute_schedule(source, sink, is_project, geometry, chosen, geometry_spec, stats)
+                self._execute_schedule(source, sink, is_project, geometry, chosen, geometry_spec, stats, numeric)
+            if numeric.drain:
+                self._partition.settle(numeric.error)
             self.last_execution_stats = stats
         except BaseException:
             self.last_execution_stats = None
@@ -1397,20 +1421,29 @@ class Projector:
         if not collective and key in self._schedule_cache:
             return self._schedule_cache[key], [], True
         pilots = []
-        index = 0
+        index, failed = 0, None
         if self.schedule == "auto" and len(candidates) > 1 and (not collective or self.rank == 0):
-            for candidate in candidates:
-                pilots.append(self._pilot_candidate(source, sink, is_project, geometry, candidate, spec))
-            # Scale measured prefixes to the full workload; bytes break ties.
-            def cost(item):
-                pilot = pilots[item[0]]
-                return (pilot["estimated_elapsed_ms"],
-                        pilot["estimated_h2d_bytes"] + pilot["estimated_d2h_bytes"])
-            index = min(enumerate(candidates), key=cost)[0]
+            try:
+                for candidate in candidates:
+                    pilots.append(self._pilot_candidate(source, sink, is_project, geometry, candidate, spec))
+            except Exception as error:
+                if not collective:
+                    raise
+                failed = error
+            else:
+                # Scale measured prefixes to the full workload; bytes break ties.
+                def cost(item):
+                    pilot = pilots[item[0]]
+                    return (pilot["estimated_elapsed_ms"],
+                            pilot["estimated_h2d_bytes"] + pilot["estimated_d2h_bytes"])
+                index = min(enumerate(candidates), key=cost)[0]
         if collective:
-            selection = [index]
+            # None selects no schedule: the root's pilot launch failed.
+            selection = [index if failed is None else None]
             root = torch.distributed.get_global_rank(self._process_group, 0) if self._process_group is not None else 0
             torch.distributed.broadcast_object_list(selection, src=root, group=self._process_group)
+            if selection[0] is None:
+                self._partition.settle(failed)
             index = selection[0]
         chosen = candidates[index]
         if not collective:
@@ -1425,6 +1458,17 @@ class Projector:
         batch = (plan.view_chunk_size * rank + geometry if points else
                  geometry * (4 if self.beam == "cone" else 3))
         return max(math.prod(plan.chunk_shape), rays + batch)
+
+    def _native_operand(self, numeric, source, spatial, shape, pipe, is_project):
+        """A native tile that a collective reads. After a local error it is zeros, so the rank still joins."""
+        native = numeric.attempt(self._native_tile, source, spatial, shape, pipe, is_project)
+        return self._stand_in(pipe, shape[::-1] if self.beam in ("cone", "parallel3d") else shape) if native is None else native
+
+    @staticmethod
+    def _stand_in(pipe, shape):
+        """Zeros that a rank whose local work failed sends into a collective it still joins."""
+        with torch.cuda.device(pipe.device), torch.cuda.stream(pipe.compute):
+            return torch.zeros(shape, dtype=torch.float32, device=pipe.device)
 
     def _native_tile(self, source, spatial, shape, pipe, is_project):
         pipe.reclaim_output()
@@ -1643,9 +1687,12 @@ class Projector:
     def _ray_job(self, source, native, geometry, centre, local, global_views, pixels,
                  spec, pipe, groups, index, is_project, before_launch=None,
                  geometry_vjp=False, cpu_geometry=None, cached_rays=None, after_launch=None,
-                 sampled_offsets=None):
+                 sampled_offsets=None, numeric=None):
         from numba import cuda
 
+        if numeric is None:
+            # Without a call-level tracker a launch error raises at once.
+            numeric = _NumericalFailure(False)
         shape = (local.stop - local.start, *(value.stop - value.start for value in pixels))
         prefetch = groups.get(index, {}).pop("prefetch", None)
         surface = spec is not None and spec.kind in ("offsets", "sampled") and cpu_geometry is None
@@ -1694,11 +1741,11 @@ class Projector:
                 parts = _geometry_vjp(self.beam, None, rays, tuple(staged_geometry), spacing,
                                       self.voxel_spacing, prepared_volume=native)
             elif is_project:
-                _project_into(self.beam, native, tuple(staged_geometry), self.detector_spacing, self.voxel_spacing,
-                              rays, after_launch=after_launch)
+                numeric.attempt(_project_into, self.beam, native, tuple(staged_geometry), self.detector_spacing,
+                                self.voxel_spacing, rays, after_launch=after_launch)
             else:
-                _backproject_into(self.beam, rays, tuple(staged_geometry), self.detector_spacing, self.voxel_spacing,
-                                  native, after_launch=after_launch)
+                numeric.attempt(_backproject_into, self.beam, rays, tuple(staged_geometry), self.detector_spacing,
+                                self.voxel_spacing, native, after_launch=after_launch)
             pipe.stats["kernel_launches"] += 1
             done = pipe.event(pipe.compute)
             buffers["done"] = done
@@ -1791,7 +1838,7 @@ class Projector:
                 native[tile_index][device] = self._native_tile(source, spatial, tile_shape, pipe, True)
         return upload
 
-    def _execute_schedule(self, source, sink, is_project, geometry, plan, spec, stats):
+    def _execute_schedule(self, source, sink, is_project, geometry, plan, spec, stats, numeric):
         elements = self._pool_elements(plan, spec)
         with _pipeline._TransferPipeline(plan.devices, elements, stats, slots=plan.slots) as transfer:
             groups = {device: self._groups_for(plan, spec)
@@ -1799,7 +1846,7 @@ class Projector:
             sequences = {device: 0 for device in plan.devices}
             tiles = self._volume_tiles(plan.chunk_shape)
             if plan.schedule == "views" and is_project:
-                self._project_views(source, sink, geometry, plan, spec, stats, transfer, groups)
+                self._project_views(source, sink, geometry, plan, spec, stats, transfer, groups, numeric)
                 return
             window = plan.window_size
             iterator = iter(tiles)
@@ -1821,7 +1868,7 @@ class Projector:
                     for values, (spatial, shape, _) in zip(native, current):
                         primary = plan.devices[0]
                         pipe = transfer.for_device(primary)
-                        values[primary] = self._native_tile(source, spatial, shape, pipe, True)
+                        values[primary] = self._native_operand(numeric, source, spatial, shape, pipe, True)
                         self._reduce_native(values[primary], pipe)
                     del values
                 pending = {}
@@ -1846,14 +1893,18 @@ class Projector:
                 while job is not None:
                     following = next(iterator_jobs, None)
                     device, local, global_views, pixels, tile_index, spatial, shape, centre = job
+                    job = following
                     pipe = transfer.for_device(device)
                     if device not in native[tile_index]:
                         if getattr(source, "reduced", False):
-                            native[tile_index][device] = self._replicate_native(
-                                native[tile_index][plan.devices[0]], transfer.for_device(plan.devices[0]), pipe,
-                            )
+                            tile = numeric.attempt(self._replicate_native, native[tile_index][plan.devices[0]],
+                                                   transfer.for_device(plan.devices[0]), pipe)
                         else:
-                            native[tile_index][device] = self._native_tile(source, spatial, shape, pipe, is_project)
+                            tile = numeric.attempt(self._native_tile, source, spatial, shape, pipe, is_project)
+                        if tile is None:
+                            # After a local error the rank skips its jobs; its collectives still run.
+                            continue
+                        native[tile_index][device] = tile
                     index = tile_index if is_project and len(current) > 1 else sequences[device] % plan.slots
                     sequences[device] += 1
                     def before_launch(active_rays):
@@ -1874,11 +1925,15 @@ class Projector:
                                                           getattr(source, "reduced", False), active_rays,
                                                           next_epoch=following is None)
                         return None
-                    rays, done, buffers, ray_owner = self._ray_job(
-                        source, native[tile_index][device], geometry, centre, local, global_views,
+                    launched = numeric.attempt(
+                        self._ray_job, source, native[tile_index][device], geometry, centre, local, global_views,
                         pixels, spec, pipe, groups[device], index, is_project, before_launch,
                         cached_rays=ray_cache[device][0] if not is_project and tile_index > 0 else None,
+                        numeric=numeric,
                     )
+                    if launched is None:
+                        continue
+                    rays, done, buffers, ray_owner = launched
                     if not is_project:
                         if tile_index == 0:
                             ray_cache[device] = rays, ray_owner
@@ -1894,23 +1949,22 @@ class Projector:
                     if is_project and tile_index == len(current) - 1:
                         buffers["done"] = done
                         pending[device] = ((local, *pixels), rays, done, buffers)
-                    job = following
                 for device, (selected, rays, done, buffers) in pending.items():
                     pipe = transfer.for_device(device)
                     buffers["done"] = pipe.drain_tensor(rays, done, sink, selected, accumulate=not first_window)
                 if not is_project:
                     for values, (spatial, shape, _) in zip(native, current):
-                        self._finish_native(values, spatial, shape, sink, plan, stats, transfer)
+                        self._finish_native(values, spatial, shape, sink, plan, stats, transfer, numeric)
                     del values
                 del native, pending
                 current, native = upcoming, upcoming_native
                 first_window = False
 
-    def _project_views(self, source, sink, geometry, plan, spec, stats, transfer, groups):
+    def _project_views(self, source, sink, geometry, plan, spec, stats, transfer, groups, numeric):
         if getattr(source, "reduced", False):
             # A canonical spatial pass issues every SUM, including empty ranks.
             spatial_plan = replace(plan, schedule="spatial", window_size=1)
-            self._execute_schedule(source, sink, True, geometry, spatial_plan, spec, stats)
+            self._execute_schedule(source, sink, True, geometry, spatial_plan, spec, stats, numeric)
             stats["schedule"], stats["window_size"] = "spatial", 1
             stats["fallback_reason"] = "reduced volume cotangents use canonical spatial tile collectives"
             return
@@ -1921,9 +1975,13 @@ class Projector:
                     accumulator = None
                     count = math.prod(math.ceil(size / part) for size, part in zip(self.volume_shape, plan.chunk_shape))
                     for spatial, shape, centre in self._volume_tiles(plan.chunk_shape):
-                        native = self._native_tile(source, spatial, shape, pipe, True)
-                        rays, done, buffers, _ = self._ray_job(source, native, geometry, centre, local, global_views,
-                                                           pixels, spec, pipe, groups[device], 0, True)
+                        native = numeric.attempt(self._native_tile, source, spatial, shape, pipe, True)
+                        launched = None if native is None else numeric.attempt(
+                            self._ray_job, source, native, geometry, centre, local, global_views,
+                            pixels, spec, pipe, groups[device], 0, True, numeric=numeric)
+                        if launched is None:
+                            break
+                        rays, done, buffers, _ = launched
                         with torch.cuda.stream(pipe.compute):
                             if accumulator is None:
                                 accumulator = rays.clone() if count > 1 else rays
@@ -1932,7 +1990,8 @@ class Projector:
                             done = pipe.event(pipe.compute)
                             buffers["done"] = done
                         del native
-                    buffers["done"] = pipe.drain_tensor(accumulator, done, sink, (local, *pixels))
+                    if numeric.error is None:
+                        buffers["done"] = pipe.drain_tensor(accumulator, done, sink, (local, *pixels))
                     del accumulator
 
     def _global_ray_batches(self, plan):
@@ -1972,7 +2031,7 @@ class Projector:
                     pipe.stats["h2d_bytes"] += value.numel() * value.element_size()
         return pipe.drain_tensor(tensor, ready, GlooRays(), selected)
 
-    def _space_project(self, source, sink, geometry, plan, spec, stats):
+    def _space_project(self, source, sink, geometry, plan, spec, stats, numeric):
         with _pipeline._TransferPipeline(plan.devices, self._pool_elements(plan, spec), stats,
                                         slots=plan.slots) as transfer:
             primary = transfer.for_device(plan.devices[0])
@@ -1985,9 +2044,14 @@ class Projector:
                 for device, part, global_views in self._ray_devices(views, plan):
                     pipe = transfer.for_device(device)
                     for spatial, tile_shape, centre in self._volume_tiles(plan.chunk_shape):
-                        native = self._native_tile(source, spatial, tile_shape, pipe, True)
-                        rays, ready, buffers, _ = self._ray_job(source, native, geometry, centre, global_views,
-                                                              global_views, pixels, spec, pipe, groups[device], 0, True)
+                        native = numeric.attempt(self._native_tile, source, spatial, tile_shape, pipe, True)
+                        launched = None if native is None else numeric.attempt(
+                            self._ray_job, source, native, geometry, centre, global_views,
+                            global_views, pixels, spec, pipe, groups[device], 0, True, numeric=numeric)
+                        if launched is None:
+                            # After a local error the rank still joins the SUM of total below.
+                            break
+                        rays, ready, buffers, _ = launched
                         with torch.cuda.device(primary.device), torch.cuda.stream(primary.compute):
                             primary.compute.wait_event(ready)
                             value = rays.to(device=primary.device, non_blocking=True)
@@ -2004,9 +2068,13 @@ class Projector:
                 self._drain_shared_rays(total, ready, sink, (views, *pixels), primary)
                 del total
 
-    def _reduced_ray_batch(self, source, views, pixels, pipe, groups):
+    def _reduced_ray_batch(self, source, views, pixels, pipe, groups, numeric):
         shape = (views.stop - views.start, *(item.stop - item.start for item in pixels))
-        buffers = self._ray_buffers(groups, 0, pipe, shape, ())
+        buffers = numeric.attempt(self._ray_buffers, groups, 0, pipe, shape, ())
+        if buffers is None:
+            rays = self._stand_in(pipe, shape)
+            self._reduce_native(rays, pipe)
+            return rays, pipe.event(pipe.compute)
         if buffers["done"] is not None:
             pipe.upload.wait_event(buffers["done"])
         rays = buffers["rays"][:math.prod(shape)].view(shape)
@@ -2018,8 +2086,12 @@ class Projector:
         buffers["done"] = pipe.event(pipe.compute)
         return rays, buffers["done"]
 
-    def _space_back_reduced(self, source, sink, geometry, plan, spec, stats, *, volume_source=None, consume=None):
+    def _space_back_reduced(self, source, sink, geometry, plan, spec, stats, *, volume_source=None, consume=None,
+                            numeric=None):
         """Idle ranks repeat every ray SUM for each agreed local tile window."""
+        if numeric is None:
+            # Without a call-level tracker a local error raises at once.
+            numeric = _NumericalFailure(False)
         count = math.prod(math.ceil(size / part) for size, part in zip(self._planning_volume_shape, plan.chunk_shape))
         iterator = iter(self._volume_tiles(plan.chunk_shape))
         with _pipeline._TransferPipeline(plan.devices, self._pool_elements(plan, spec), stats,
@@ -2033,13 +2105,16 @@ class Projector:
                 current = [tile for _ in range(plan.window_size) if (tile := next(iterator, None)) is not None]
                 native = [{} for _ in current]
                 for views, pixels in self._global_ray_batches(plan):
-                    reduced, ready = self._reduced_ray_batch(source, views, pixels, primary, reduction)
+                    # After a local error the rank skips its local work but joins every ray SUM.
+                    reduced, ready = self._reduced_ray_batch(source, views, pixels, primary, reduction, numeric)
                     if not current:
                         continue
                     for device, part, global_views in self._ray_devices(views, plan):
                         pipe = transfer.for_device(device)
                         shape = (part.stop - part.start, *(item.stop - item.start for item in pixels))
-                        buffers = self._ray_buffers(groups[device], 0, pipe, shape, ())
+                        buffers = numeric.attempt(self._ray_buffers, groups[device], 0, pipe, shape, ())
+                        if buffers is None:
+                            break
                         if buffers["done"] is not None:
                             pipe.upload.wait_event(buffers["done"])
                         ray_input = buffers["rays"][:math.prod(shape)].view(shape)
@@ -2048,18 +2123,24 @@ class Projector:
                         primary.upload.wait_event(copied)
                         for values, (spatial, tile_shape, centre) in zip(native, current):
                             if device not in values:
-                                values[device] = self._native_tile(volume_source, spatial, tile_shape, pipe,
-                                                                  volume_source is not None)
+                                tile = numeric.attempt(self._native_tile, volume_source, spatial, tile_shape, pipe,
+                                                       volume_source is not None)
+                                if tile is None:
+                                    break
+                                values[device] = tile
                             if consume is not None:
                                 consume(pipe, groups[device], values[device], global_views, global_views, pixels,
                                         centre, ray_input)
-                            else:
-                                self._ray_job(source, values[device], geometry, centre, global_views, global_views,
-                                              pixels, spec, pipe, groups[device], 0, False, cached_rays=ray_input)
+                            elif numeric.attempt(self._ray_job, source, values[device], geometry, centre,
+                                                 global_views, global_views, pixels, spec, pipe, groups[device], 0,
+                                                 False, cached_rays=ray_input, numeric=numeric) is None:
+                                break
                         primary.upload.wait_event(pipe.event(pipe.compute))
                 if consume is None:
                     for values, (spatial, tile_shape, _) in zip(native, current):
-                        self._finish_native(values, spatial, tile_shape, sink, plan, stats, transfer)
+                        # The space partition has no collective here: skip it after a local error.
+                        numeric.attempt(self._finish_native, values, spatial, tile_shape, sink, plan, stats,
+                                        transfer, numeric)
                 if current:
                     del values
                 del native
@@ -2098,12 +2179,12 @@ class Projector:
         pipe.drain_tensor(native, ready, GlooTile(), tuple(slice(0, size) for size in native.shape))
         pipe.compute.wait_event(pipe.event(pipe.upload))
 
-    def _finish_native(self, values, spatial, shape, sink, plan, stats, transfer):
+    def _finish_native(self, values, spatial, shape, sink, plan, stats, transfer, numeric):
         device = plan.devices[0]
         pipe = transfer.for_device(device)
         pipe.reclaim_output()
         if device not in values:
-            values[device] = self._native_tile(None, spatial, shape, pipe, False)
+            values[device] = self._native_operand(numeric, None, spatial, shape, pipe, False)
         accumulator = values[device]
         with torch.cuda.device(device), torch.cuda.stream(pipe.compute):
             for peer, partial in values.items():
