@@ -105,6 +105,8 @@ def models(java, jar, out, large):
                             ("forceFunction", "Invariant PureForwardJvp is violated"),
                             ("geometryJvp", "Invariant GeometryForwardRejected is violated")],
         "RecomputeOrder": [("rankOrder", "Invariant ForwardOrder is violated")],
+        "ThreadSafety": [("sharedStats", "Invariant StatsIsolation is violated"),
+                         ("unlockedCache", "Invariant GroupReuse is violated")],
     }
     for module, cases in mutations.items():
         base = (HERE / f"{module}.small.cfg").read_text()
@@ -115,15 +117,6 @@ def models(java, jar, out, large):
             config.write_text(base.replace('Mutation = "none"', f'Mutation = "{mutation}"'))
             results.append(tlc(java, jar, HERE / f"{module}.tla", config, out,
                                f"{module}.{mutation}", expected))
-    for check, expected in (("stats", "Invariant StatsIsolation is violated"),
-                             ("groups", "Invariant GroupReuse is violated")):
-        config = out / f"ThreadSafety.{check}.cfg"
-        config.write_text((HERE / "ThreadSafety.small.cfg").read_text()
-                          .replace("Serialized = TRUE", "Serialized = FALSE")
-                          .replace("INVARIANTS StatsIsolation GroupReuse",
-                                   "INVARIANT " + ("StatsIsolation" if check == "stats" else "GroupReuse")))
-        results.append(tlc(java, jar, HERE / "ThreadSafety.tla", config, out,
-                           f"ThreadSafety.{check}", expected))
     config = out / "Distributed.order.cfg"
     config.write_text((out / "Distributed.localBudget.cfg").read_text()
                       .replace("INVARIANTS BudgetAgreement CollectiveOrder", "INVARIANT CollectiveOrder"))

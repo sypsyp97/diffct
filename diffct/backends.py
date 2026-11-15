@@ -12,7 +12,7 @@ import torch.distributed as dist
 from torch.autograd import forward_ad
 
 from .chunking import _memory_lower_bounds
-from .utils import _work_dtype
+from .utils import _publish_stats_into, _stats_view, _work_dtype
 from .distribution import control_status
 from .streaming import _store_phase, _store_rounds
 from .surfaces import ParameterizedSurface
@@ -170,6 +170,36 @@ def _flat_admission_batches(owner, geometry, detector_chunk_shape, *, batched_co
             yield selected, pixels
 
 
+class _NumericalFailure:
+    """First rank-local error of one distributed numerical stage.
+
+    After an error the rank skips its local work but still joins every
+    collective of the schedule, so its peers reach the outcome agreement
+    (`Partition.settle`) instead of waiting for it. Every rank then raises,
+    so no rank uses the values of that call. A single process has no peers
+    and raises at once.
+    """
+
+    def __init__(self, drain):
+        self.drain, self.error = drain, None
+
+    def attempt(self, function, *args, **kwargs):
+        """Run local work unless an earlier step failed; None marks skipped or failed work."""
+        if self.error is None:
+            try:
+                return function(*args, **kwargs)
+            except Exception as error:
+                if not self.drain:
+                    raise
+                self.error = error
+        return None
+
+
+def _shape_only(shape, dtype):
+    """Stand-in after a local failure: collectives read only its shape."""
+    return torch.empty(shape, dtype=dtype, device="meta")
+
+
 _GEOMETRY_SECOND_DERIVATIVE = "diffct does not support second derivatives with respect to the geometry"
 _GEOMETRY_FORWARD_DERIVATIVE = "diffct does not support forward-mode derivatives with respect to the geometry"
 
@@ -192,6 +222,7 @@ class _PortableApply(torch.autograd.Function):
         ctx.reference, ctx.is_project = reference, is_project
         ctx.reduce_cotangent = reduce_cotangent
         ctx.dtype = tensor.dtype
+        ctx.stats_view = _stats_view()
         ctx.geometry_grad = _PortableApply._geometry_grad_needed(reference.owner, ctx.needs_input_grad[6:])
         ctx.save_for_backward(tensor if ctx.geometry_grad else None, *geometry)
         ctx.save_for_forward(tensor, *geometry)
@@ -224,6 +255,12 @@ class _PortableApply(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, cotangent):
+        # Autograd can run this on a device thread; report to the forward's thread.
+        with _publish_stats_into(ctx.stats_view):
+            return _PortableApply._backward(ctx, cotangent)
+
+    @staticmethod
+    def _backward(ctx, cotangent):
         tensor, *geometry = ctx.saved_tensors
         owner = ctx.reference.owner
         gradient = None
@@ -865,16 +902,28 @@ class ReferenceProjector:
             stats["devices"].append(str(device))
         return device
 
-    def _reduce(self, value, group, count, stats):
+    def _reduce(self, value, group, count, stats, failure=None):
+        """SUM ``value`` over ``group``.
+
+        With ``failure``, a rank whose local work failed joins the SUM with
+        zeros of the same shape and gets None back.
+        """
         if count == 1 or value.numel() == 0:
             return value
         device = (torch.device("cuda", torch.cuda.current_device()) if dist.get_backend(group) == "nccl"
                   else torch.device("cpu"))
-        result = self._to(value, device, stats).clone()
+        if failure is None:
+            result = self._to(value, device, stats).clone()
+        else:
+            result = failure.attempt(lambda: self._to(value, device, stats).clone())
+            if result is None:
+                result = torch.zeros(value.shape, dtype=self.owner.dtype, device=device)
         dist.all_reduce(result, op=dist.ReduceOp.SUM, group=group)
         stats["collective_calls"] += 1
         stats["collective_bytes"] += result.numel() * result.element_size()
-        return self._to(result, value.device, stats)
+        if failure is None:
+            return self._to(result, value.device, stats)
+        return failure.attempt(lambda: self._to(result, value.device, stats))
 
     def _pixel_slices(self, views, pixels):
         return (slice(views.start - self.owner.view_slice.start, views.stop - self.owner.view_slice.start), *pixels)
@@ -892,9 +941,16 @@ class ReferenceProjector:
     # gradients, and in-place accumulation must not build CopySlices graphs.
     @torch.no_grad()
     def _tensor_apply(self, tensor, is_project, reduce_cotangent=False, *, geometry=None,
-                      reduce_output=True, _plan=None, admit=False):
+                      reduce_output=True, _plan=None, admit=False, _piece=None):
+        """Apply the operator to ``tensor`` with bounded work arrays.
+
+        ``_piece`` is ``(stats, failure)`` of the call that split its leading
+        dimensions: a piece adds its counters to that call's statistics, and
+        that call agrees the outcome and publishes the statistics once.
+        """
         owner = self.owner
-        owner.last_execution_stats = None
+        if _piece is None:
+            owner.last_execution_stats = None
         start = time.perf_counter()
         stats = self._stats(is_project)
         shape = owner.volume_shape if is_project else owner.projection_shape
@@ -915,7 +971,11 @@ class ReferenceProjector:
             plan = self._work_chunks(batch_elements, budget)
         else:
             plan, budget = _plan
-        stats = self._stats(is_project, plan)
+        if _piece is None:
+            stats = self._stats(is_project, plan)
+            failure = _NumericalFailure(owner.world_size > 1)
+        else:
+            stats, failure = _piece
         # Ray/voxel chunks cannot shrink below one. Split leading dimensions
         # as views when even that minimum would exceed the automatic payload.
         # Full explicit hints keep their priority over this automatic limit.
@@ -934,31 +994,23 @@ class ReferenceProjector:
                 batch_limit = self._agreed_limit(self._leading_limit(plan, budget, batch_elements, piece,
                                                                      on_host=tensor.device.type != "cuda"))
             if batch_elements > batch_limit:
-                counters = ("ray_tile_pairs", "store_reads", "store_writes", "read_bytes", "write_bytes",
-                            "h2d_bytes", "d2h_bytes", "p2p_bytes", "collective_calls", "collective_bytes")
                 # Each piece is copied into the returned array, so only one piece is extra.
-                result = _zero_dependency(tensor).to(dtype=owner.dtype).expand(
-                    *leading, *output_shape).clone(memory_format=torch.contiguous_format)
+                result = failure.attempt(lambda: _zero_dependency(tensor).to(dtype=owner.dtype).expand(
+                    *leading, *output_shape).clone(memory_format=torch.contiguous_format))
                 for piece in self._leading_pieces(leading, batch_limit):
-                    result[piece] = self._tensor_apply(
+                    part = self._tensor_apply(
                         tensor[piece], is_project, reduce_cotangent, geometry=geometry,
-                        reduce_output=reduce_output, _plan=(plan, budget), admit=admit,
+                        reduce_output=reduce_output, _plan=(plan, budget), admit=admit, _piece=(stats, failure),
                     )
-                    part_stats = owner.last_execution_stats
-                    stats["schedule"] = part_stats["schedule"]
-                    for key in counters:
-                        stats[key] += part_stats[key]
-                    for device in part_stats["devices"]:
-                        if device not in stats["devices"]:
-                            stats["devices"].append(device)
-                stats["elapsed_seconds"] = time.perf_counter() - start
-                owner.last_execution_stats = stats
-                return result
+                    failure.attempt(lambda: result.__setitem__(piece, part))
+                return self._settle(result, stats, start, failure)
         # The returned array is the only full-size output: it starts as zeros
         # (a differentiable seam for empty ownership and empty leading
         # dimensions) and every contribution accumulates in place.
-        output = _zero_dependency(tensor).to(dtype=owner.dtype).expand(
-            *leading, math.prod(output_shape)).clone(memory_format=torch.contiguous_format)
+        output = failure.attempt(lambda: _zero_dependency(tensor).to(dtype=owner.dtype).expand(
+            *leading, math.prod(output_shape)).clone(memory_format=torch.contiguous_format))
+        if output is None:
+            output = _shape_only((*leading, math.prod(output_shape)), owner.dtype)
         if is_project:
             tiles = list(self._tiles(plan[0]))
 
@@ -975,62 +1027,88 @@ class ReferenceProjector:
                 # one summed tile is alive; each tile sets up the rays again.
                 stats["schedule"] = "spatial"
                 for tile_index, (tile, world) in enumerate(tiles):
-                    values = self._reduce(tensor[(..., *tile)], owner.view_group, owner.view_world_size, stats)
-                    for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
-                        device = self._device(batch, tensor.device, stats)
-                        origins, directions, rays = self._rays(views, pixels, device, stats=stats,
-                                                               geometry=geometry,
-                                                               admit=admit and tile_index == 0)
-                        rays = self._transfer(rays, tensor.device, stats)
-                        accumulate(values, tile, world, origins, directions, rays, device)
+                    values = self._reduce(tensor[(..., *tile)], owner.view_group, owner.view_world_size, stats,
+                                          failure)
+
+                    def pairs():
+                        for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                            device = self._device(batch, tensor.device, stats)
+                            origins, directions, rays = self._rays(views, pixels, device, stats=stats,
+                                                                   geometry=geometry,
+                                                                   admit=admit and tile_index == 0)
+                            rays = self._transfer(rays, tensor.device, stats)
+                            accumulate(values, tile, world, origins, directions, rays, device)
+
+                    failure.attempt(pairs)
                     del values
             else:
                 # Set up each ray batch once for all volume tiles. Every ray
                 # still receives its tile contributions in tile order.
                 stats["schedule"] = "views"
-                for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
-                    device = self._device(batch, tensor.device, stats)
-                    origins, directions, rays = self._rays(views, pixels, device, stats=stats, geometry=geometry,
-                                                           admit=admit)
-                    rays = self._transfer(rays, tensor.device, stats)
-                    for tile, world in tiles:
-                        accumulate(tensor[(..., *tile)], tile, world, origins, directions, rays, device)
+
+                def pairs():
+                    for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                        device = self._device(batch, tensor.device, stats)
+                        origins, directions, rays = self._rays(views, pixels, device, stats=stats,
+                                                               geometry=geometry, admit=admit)
+                        rays = self._transfer(rays, tensor.device, stats)
+                        for tile, world in tiles:
+                            accumulate(tensor[(..., *tile)], tile, world, origins, directions, rays, device)
+
+                failure.attempt(pairs)
             if reduce_output and owner.space_world_size > 1:
                 # Each ray belongs to one batch: replace its partial sum in place.
                 for views, pixels in self._batches(*plan[1:]):
-                    _, _, rays = self._rays(views, pixels, tensor.device, stats=stats, geometry=geometry)
-                    values = torch.index_select(output, -1, rays)
-                    values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
-                    output.scatter_(-1, rays.expand(*leading, -1), values)
+                    rays = failure.attempt(lambda: self._rays(views, pixels, tensor.device, stats=stats,
+                                                              geometry=geometry)[2])
+                    values = failure.attempt(lambda: torch.index_select(output, -1, rays))
+                    if values is None:
+                        values = _shape_only((*leading, (views.stop - views.start)
+                                              * math.prod(part.stop - part.start for part in pixels)), owner.dtype)
+                    values = self._reduce(values, owner.space_group, owner.space_world_size, stats, failure)
+                    failure.attempt(lambda: output.scatter_(-1, rays.expand(*leading, -1), values))
         else:
             volume = output.view(*leading, *output_shape)
             for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                 device = self._device(batch, tensor.device, stats)
                 values = tensor[(..., *self._pixel_slices(views, pixels))]
                 if reduce_cotangent:
-                    values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
-                values = self._to(values, device, stats).reshape(*leading, math.prod(values.shape[-len(shape):]))
-                origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry,
-                                                    admit=admit)
-                for tile, world in self._tiles(plan[0]):
-                    indices, lengths = self._intervals(origins, directions, world)
-                    tile_shape = tuple(part.stop - part.start for part in tile)
-                    contributions = (values[..., None] * lengths).reshape(*leading, indices.numel())
-                    block = values.new_zeros((*leading, math.prod(tile_shape))).scatter_add(
-                        -1, indices.flatten().expand(*leading, -1), contributions,
-                    )
-                    # Add the tile block into its strided output view: no voxel
-                    # index tensor is built or kept by autograd.
-                    volume[(..., *tile)].add_(self._to(block, tensor.device, stats).reshape(*leading, *tile_shape))
-                    stats["ray_tile_pairs"] += 1
+                    values = self._reduce(values, owner.space_group, owner.space_world_size, stats, failure)
+
+                def pairs():
+                    local = self._to(values, device, stats).reshape(*leading, math.prod(values.shape[-len(shape):]))
+                    origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=geometry,
+                                                        admit=admit)
+                    for tile, world in self._tiles(plan[0]):
+                        indices, lengths = self._intervals(origins, directions, world)
+                        tile_shape = tuple(part.stop - part.start for part in tile)
+                        contributions = (local[..., None] * lengths).reshape(*leading, indices.numel())
+                        block = local.new_zeros((*leading, math.prod(tile_shape))).scatter_add(
+                            -1, indices.flatten().expand(*leading, -1), contributions,
+                        )
+                        # Add the tile block into its strided output view: no voxel
+                        # index tensor is built or kept by autograd.
+                        volume[(..., *tile)].add_(self._to(block, tensor.device, stats).reshape(*leading, *tile_shape))
+                        stats["ray_tile_pairs"] += 1
+
+                failure.attempt(pairs)
             if reduce_output and owner.view_world_size > 1:
                 # Each voxel belongs to one tile: replace its partial sum in place.
                 for tile, _ in self._tiles(plan[0]):
                     view = volume[(..., *tile)]
-                    view.copy_(self._reduce(view, owner.view_group, owner.view_world_size, stats))
+                    reduced = self._reduce(view, owner.view_group, owner.view_world_size, stats, failure)
+                    failure.attempt(lambda: view.copy_(reduced))
+        output = output.reshape(*leading, *output_shape)
+        if _piece is not None:
+            return output
+        return self._settle(output, stats, start, failure)
+
+    def _settle(self, output, stats, start, failure):
+        """Agree the call's numerical outcome on every rank, then publish its statistics."""
+        self.owner._partition.settle(failure.error)
         stats["elapsed_seconds"] = time.perf_counter() - start
-        owner.last_execution_stats = stats
-        return output.reshape(*leading, *output_shape)
+        self.owner.last_execution_stats = stats
+        return output
 
     def _apply(self, tensor, is_project):
         geometry = self._snapshot_geometry()
@@ -1052,6 +1130,7 @@ class ReferenceProjector:
     def _geometry_grad(self, tensor, cotangent, is_project, reduce_cotangent, geometry):
         owner = self.owner
         stats = self._stats(is_project)
+        failure = _NumericalFailure(owner.world_size > 1)
         # Output replicas contribute one cotangent SUM before local ray math.
         output_shape = owner.projection_shape if is_project else owner.volume_shape
         input_shape = owner.volume_shape if is_project else owner.projection_shape
@@ -1070,22 +1149,32 @@ class ReferenceProjector:
         # One cotangent-sized buffer is outside the work budget. Clone before
         # reshaping so a strided cotangent cannot create a second full copy.
         # Replicated sums replace disjoint batches or tiles in that same buffer.
-        reduced = cotangent.detach()
-        if replicas > 1:
-            reduced = reduced.clone(memory_format=torch.contiguous_format)
-        reduced = reduced.reshape(*leading, math.prod(output_shape))
+        def stage_cotangent():
+            reduced = cotangent.detach()
+            if replicas > 1:
+                reduced = reduced.clone(memory_format=torch.contiguous_format)
+            return reduced.reshape(*leading, math.prod(output_shape))
+
+        reduced = failure.attempt(stage_cotangent)
+        if reduced is None:
+            reduced = _shape_only((*leading, math.prod(output_shape)), cotangent.dtype)
         if replicas > 1 and is_project:
             for views, pixels in self._batches(*plan[1:]):
-                _, _, ids = self._rays(views, pixels, cotangent.device, geometry=geometry)
-                values = self._reduce(torch.index_select(reduced, -1, ids), owner.space_group,
-                                      owner.space_world_size, stats)
-                reduced.scatter_(-1, ids.expand(*leading, -1), values)
+                ids = failure.attempt(lambda: self._rays(views, pixels, cotangent.device, geometry=geometry)[2])
+                values = failure.attempt(lambda: torch.index_select(reduced, -1, ids))
+                if values is None:
+                    values = _shape_only((*leading, (views.stop - views.start)
+                                          * math.prod(part.stop - part.start for part in pixels)), owner.dtype)
+                values = self._reduce(values, owner.space_group, owner.space_world_size, stats, failure)
+                failure.attempt(lambda: reduced.scatter_(-1, ids.expand(*leading, -1), values))
         elif replicas > 1:
             for tile, _ in self._tiles(plan[0]):
-                ids = self._voxel_ids(tile, owner.volume_shape, cotangent.device)
-                values = self._reduce(torch.index_select(reduced, -1, ids), owner.view_group,
-                                      owner.view_world_size, stats)
-                reduced.scatter_(-1, ids.expand(*leading, -1), values)
+                ids = failure.attempt(self._voxel_ids, tile, owner.volume_shape, cotangent.device)
+                values = failure.attempt(lambda: torch.index_select(reduced, -1, ids))
+                if values is None:
+                    values = _shape_only((*leading, math.prod(part.stop - part.start for part in tile)), owner.dtype)
+                values = self._reduce(values, owner.view_group, owner.view_world_size, stats, failure)
+                failure.attempt(lambda: reduced.scatter_(-1, ids.expand(*leading, -1), values))
         # Split leading dimensions, as _tensor_apply does, when even the smallest
         # chunks exceed the automatic payload. Every rank uses the same pieces
         # in the same order.
@@ -1106,7 +1195,9 @@ class ReferenceProjector:
         # order, so input SUMs keep their collective order and only one pair's
         # graph is alive. The loss is <reduced cotangent, A_local(geometry) input>.
         leaves = tuple(value.detach().requires_grad_() for value in geometry)
-        gradients = [torch.zeros_like(value) for value in leaves]
+        gradients = failure.attempt(lambda: [torch.zeros_like(value) for value in leaves])
+        if gradients is None:
+            gradients = [_shape_only(value.shape, value.dtype) for value in leaves]
 
         def accumulate(loss, inputs, totals):
             # The zero dependency keeps unused inputs connected. With several
@@ -1134,40 +1225,50 @@ class ReferenceProjector:
                     for tile, world in self._tiles(plan[0]):
                         values = data[(..., *tile)]
                         if reduce_cotangent:
-                            values = self._reduce(values, owner.view_group, owner.view_world_size, stats)
-                        count = math.prod(values.shape[-len(tile):])
-                        for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
-                            device = self._device(batch, data.device, stats)
-                            origins, directions, rays = self._rays(views, pixels, device, stats=stats,
-                                                                   geometry=leaves)
-                            indices, lengths = self._intervals(origins, directions, world)
-                            local = self._to(values, device, stats).reshape(*part, count)
-                            selected = torch.index_select(local, -1, indices.flatten()).reshape(*part, *indices.shape)
-                            weights = self._to(torch.index_select(
-                                weights_flat, -1, self._transfer(rays, weights_flat.device),
-                            ), device, stats)
-                            accumulate(((selected * lengths).sum(-1) * weights).sum(), leaves, gradients)
+                            values = self._reduce(values, owner.view_group, owner.view_world_size, stats, failure)
+
+                        def pairs():
+                            count = math.prod(values.shape[-len(tile):])
+                            for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
+                                device = self._device(batch, data.device, stats)
+                                origins, directions, rays = self._rays(views, pixels, device, stats=stats,
+                                                                       geometry=leaves)
+                                indices, lengths = self._intervals(origins, directions, world)
+                                local = self._to(values, device, stats).reshape(*part, count)
+                                selected = torch.index_select(local, -1, indices.flatten()).reshape(
+                                    *part, *indices.shape)
+                                weights = self._to(torch.index_select(
+                                    weights_flat, -1, self._transfer(rays, weights_flat.device),
+                                ), device, stats)
+                                accumulate(((selected * lengths).sum(-1) * weights).sum(), leaves, gradients)
+
+                        failure.attempt(pairs)
                 else:
                     for batch, (views, pixels) in enumerate(self._batches(*plan[1:])):
                         device = self._device(batch, data.device, stats)
                         values = data[(..., *self._pixel_slices(views, pixels))]
                         if reduce_cotangent:
-                            values = self._reduce(values, owner.space_group, owner.space_world_size, stats)
-                        values = self._to(values, device, stats).reshape(
-                            *part, math.prod(values.shape[-len(input_shape):]),
-                        )
-                        # Tiles pull back to this batch's rays; the rays pull back once.
-                        origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=leaves)
-                        rays = (origins.detach().requires_grad_(), directions.detach().requires_grad_())
-                        ray_gradients = [torch.zeros_like(value) for value in rays]
-                        for tile, world in self._tiles(plan[0]):
-                            indices, lengths = self._intervals(*rays, world)
-                            voxels = self._voxel_ids(tile, owner.volume_shape, weights_flat.device)
-                            weights = self._to(torch.index_select(weights_flat, -1, voxels), device, stats)
-                            weights = torch.index_select(weights, -1, indices.flatten()).reshape(*part, *indices.shape)
-                            accumulate((values[..., None] * lengths * weights).sum(), rays, ray_gradients)
-                        accumulate((origins * ray_gradients[0]).sum() + (directions * ray_gradients[1]).sum(),
-                                   leaves, gradients)
+                            values = self._reduce(values, owner.space_group, owner.space_world_size, stats, failure)
+
+                        def pairs():
+                            local = self._to(values, device, stats).reshape(
+                                *part, math.prod(values.shape[-len(input_shape):]),
+                            )
+                            # Tiles pull back to this batch's rays; the rays pull back once.
+                            origins, directions, _ = self._rays(views, pixels, device, stats=stats, geometry=leaves)
+                            rays = (origins.detach().requires_grad_(), directions.detach().requires_grad_())
+                            ray_gradients = [torch.zeros_like(value) for value in rays]
+                            for tile, world in self._tiles(plan[0]):
+                                indices, lengths = self._intervals(*rays, world)
+                                voxels = self._voxel_ids(tile, owner.volume_shape, weights_flat.device)
+                                weights = self._to(torch.index_select(weights_flat, -1, voxels), device, stats)
+                                weights = torch.index_select(weights, -1, indices.flatten()).reshape(
+                                    *part, *indices.shape)
+                                accumulate((local[..., None] * lengths * weights).sum(), rays, ray_gradients)
+                            accumulate((origins * ray_gradients[0]).sum() + (directions * ray_gradients[1]).sum(),
+                                       leaves, gradients)
+
+                        failure.attempt(pairs)
         result = []
         for value in gradients:
             flat_value = value.reshape(-1)
@@ -1176,9 +1277,11 @@ class ReferenceProjector:
             block_elements = max(1, _REFERENCE_WORK_BYTES // value.element_size())
             for start in range(0, value.numel(), block_elements):
                 block = self._reduce(flat_value[start:start + block_elements], owner.process_group,
-                                     owner.world_size, stats)
-                pieces.append(block.to(dtype=value.dtype))
-            result.append(torch.cat(pieces).reshape_as(value) if pieces else torch.zeros_like(value))
+                                     owner.world_size, stats, failure)
+                pieces.append(failure.attempt(lambda: block.to(dtype=value.dtype)))
+            result.append(failure.attempt(lambda: torch.cat(pieces).reshape_as(value) if pieces
+                                          else torch.zeros_like(value)))
+        owner._partition.settle(failure.error)
         return tuple(result)
 
     def into(self, source, sink, is_project):

@@ -34,15 +34,19 @@ the [upstream README](https://github.com/tlaplus/tlaplus) describes that policy.
 | `PipelineLifecycle` | Two jobs, two independently selected host/device slots, two calls | Completed reads; safe reuse; empty pools after close; fixed pool capacity | Calls close after success or exceptions |
 | `AutogradRouting` | 448 grad/transform/geometry/world/batch forms | Recording uses bounded Function; single-process pure JVP avoids it; geometry JVP rejects | Route selection finishes |
 | `RecomputeOrder` | Three ranks, two tiles, three ray batches, two leading pieces, three parameter blocks; both directions and reduction flags | Output SUMs precede pieces; input SUMs precede pairs; parameter SUMs finish replay | Every rank finishes replay |
-| `ThreadSafety` | Two threads, shared statistics, one group-cache entry | Statistics isolation and single cache creation under serialization | Both calls finish |
+| `ThreadSafety` | Two unserialized threads, per-thread statistics, one locked group-cache entry | Statistics isolation; single cache creation | Both calls finish |
 
 TLC checks deadlocks. Terminal states have explicit self-loops.
 Temporal checks require weak fairness of `Next` and successful eventual completion of modeled asynchronous copies.
 Finite constants bound exploration. No extra state constraint removes legal executions.
 The runner checks rank symmetry separately for safety. Temporal checks do not use symmetry.
 
-`Distributed.Abort` models a required out-of-band failure signal. Current numerical paths do not implement that action.
-Removing it must produce a deadlock. `BudgetAgreement` follows the merged negated-MAX agreement, including CUDA data devices and CPU fallback.
+`Distributed.Abort` models the numerical failure agreement. A rank with a local error skips its local work,
+joins every remaining collective of the call, and `Partition.settle` raises on every rank after the last collective.
+Removing it must produce a deadlock. The portable path joins with zeros. The native full-volume path joins with a zero
+result; the native streamed path skips its remaining kernel launches, over NCCL only. A failed pilot on the schedule root
+sends no selection, and every rank settles at once. The native binding is mapped from the code only: the collector records
+no native numerical-failure trace. `BudgetAgreement` follows the merged negated-MAX agreement, including CUDA data devices and CPU fallback.
 It does not subtract a retained forward graph: portable traversal runs without recording one.
 `MemoryEnvelope` assumes exact costs for named work allocations—the tables, tile/piece copies, one recomputed pair's graph and reduced tiles.
 Caller data, returned arrays, geometry gradients and callback allocations are excluded.
@@ -59,7 +63,7 @@ The layout model starts after local constructor validation. It makes no all-rank
 
 Every listed safety property has a required counterexample.
 Mutations remove budget reductions, participation conditions, memory charges, lifetime conditions, cleanup or routing conditions.
-Other mutations swap replay order or remove thread serialization.
+Other mutations swap replay order, share statistics between threads or remove the group-cache lock.
 The runner requires the named invariant or specified deadlock. Unrelated errors fail the check.
 Observation mutations exercise every invariant in `ObservedProtocol` and `TraceValidation`.
 Reordered real collective entries and geometry pairs must also fail.
@@ -94,10 +98,11 @@ Its oracle enumerates rectangles and leading pieces from the plan and ownership.
 Replay checks explicit chunks and automatically split `(3, 2)` leading batches in both directions, with and without input SUMs.
 The harness caps leading limits to exercise splitting; these injected limits are not hardware memory measurements.
 
-Expected implementation failures are strict: the statistics race and numerical failure isolation.
-The former budget-floor and retained-forward-graph failures are no longer expected on this release.
-The numerical case also checks mixed success/error outcomes for one call. A missing expected counterexample fails the runner.
-Review a repair before updating its expectation. Do not use one Projector concurrently from several Python threads.
+No implementation failure is expected on this release.
+The statistics-race case requires both thread calls to finish, and each thread must read the statistics of its own call.
+The numerical case requires an error on every rank of the failed call, without mixed outcomes or a runtime timeout.
+The former budget-floor, retained-forward-graph, statistics-race and numerical-isolation failures are no longer expected.
+Review a repair before updating its expectation.
 Distributed callers must preserve collective ordering across owners that share a process group.
 
 ## CUDA observations

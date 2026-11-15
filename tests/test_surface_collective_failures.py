@@ -249,7 +249,9 @@ def _assert_valid_request_reaches_kernel(operator, operation, mode):
     calls = []
     with _numerical_calls(operator, calls):
         record = _attempt(partial(_invoke, operator, operation, mode), calls)
-    assert record["error"] == "RuntimeError" and calls == ["ray kernel"], record
+    # A rank whose kernel failed may still join the call's floating reductions.
+    assert record["error"] == "RuntimeError" and calls[:1] == ["ray kernel"], record
+    assert all(call == "floating all_reduce" for call in calls[1:]), record
 
 
 def _layout_worker(rank, rendezvous, directory, backend, mismatch, phase):

@@ -3,6 +3,7 @@
 import hashlib
 import math
 import numbers
+import threading
 from copy import deepcopy
 from weakref import WeakKeyDictionary
 
@@ -13,12 +14,21 @@ import torch.distributed as dist
 # Reuse groups while the same parent runtime is live. Never destroy a group
 # here: older autograd graphs can still own and use it after later calls.
 _HYBRID_GROUPS = WeakKeyDictionary()
+# One thread at a time checks, creates and stores a cache entry. Every rank
+# then runs the same collective sequence whatever the thread order.
+_HYBRID_LOCK = threading.Lock()
 
 
 def _hybrid_groups(parent, ranks, grid, view_rank, space_rank):
     view_size, space_size = grid
     if view_size == 1 or space_size == 1:
         return parent, parent
+    with _HYBRID_LOCK:
+        return _cached_hybrid_groups(parent, ranks, grid, view_rank, space_rank)
+
+
+def _cached_hybrid_groups(parent, ranks, grid, view_rank, space_rank):
+    view_size, space_size = grid
     cached_by_grid = _HYBRID_GROUPS.setdefault(parent, {})
     cached = cached_by_grid.get(grid)
     hit = False
@@ -188,6 +198,23 @@ class Partition:
 
     def global_rank(self, rank):
         return self.ranks[rank]
+
+    def settle(self, error=None):
+        """Agree one call's numerical outcome on every parent rank after its last collective.
+
+        A rank with a local error re-raises it. The other ranks raise
+        RuntimeError naming the failed global ranks.
+        """
+        if self.world_size > 1:
+            flags = [0] * self.world_size
+            flags[self.rank] = int(error is not None)
+            flags = control_status(flags, process_group=self.process_group, world_size=self.world_size)
+            failed = [self.ranks[index] for index, flag in enumerate(flags) if flag]
+            if error is None and failed:
+                raise RuntimeError(f"numerical execution failed on rank{'s' if len(failed) > 1 else ''} "
+                                   + ", ".join(map(str, failed)) + "; every rank of the call raises")
+        if error is not None:
+            raise error
 
     def preflight(self, error=None, metadata=None, *, cache_key=None, revision=None,
                   mismatch="distributed ranks must agree on request metadata"):
