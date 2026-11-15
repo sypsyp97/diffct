@@ -137,7 +137,8 @@ Transfers hold source and destination references in the bounded completion-event
 queue until they finish. Completed internal copies release these references
 directly, avoiding stale transfer-stream reservations across calls.
 
-``A.last_execution_stats`` reports the last instrumented operation's schedule,
+``A.last_execution_stats`` is per thread. It reports the calling thread's last
+instrumented operation's schedule,
 limits, layout/kernel counts and actual upload/download/peer-copy payloads.
 ``estimated_gpu_bytes`` describes the tensor-buffer inventory;
 ``estimated_reserved_bytes`` and ``reservation_budget_bytes`` expose the
