@@ -24,6 +24,7 @@ from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _Numeri
                        _forward_tangent, select_backend, voxel_spacing_tuple)
 from .distribution import Partition
 from .projectors import (
+    _BEAMS_3D,
     _backproject_into,
     _geometry_vjp,
     _prepare_volume,
