@@ -24,7 +24,6 @@ from .backends import (_GEOMETRY_FORWARD_DERIVATIVE, ReferenceProjector, _Numeri
                        _forward_tangent, select_backend, voxel_spacing_tuple)
 from .distribution import Partition
 from .projectors import (
-    _BEAMS_3D,
     _backproject_into,
     _geometry_vjp,
     _prepare_volume,
@@ -1463,7 +1462,7 @@ class Projector:
     def _native_operand(self, numeric, source, spatial, shape, pipe, is_project):
         """A native tile that a collective reads. After a local error it is zeros, so the rank still joins."""
         native = numeric.attempt(self._native_tile, source, spatial, shape, pipe, is_project)
-        return self._stand_in(pipe, shape[::-1] if self.beam in _BEAMS_3D else shape) if native is None else native
+        return self._stand_in(pipe, shape[::-1] if self.beam in ("cone", "parallel3d") else shape) if native is None else native
 
     @staticmethod
     def _stand_in(pipe, shape):
