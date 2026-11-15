@@ -228,15 +228,15 @@ def test_each_single_view_rejects_a_ray_equal_to_its_detector_axis():
             _operator(replace(case, trajectory=tangent))
 
 
-def test_auto_fast_and_scalar_pitch_route_to_torch_and_explicit_numba_rejects(monkeypatch):
+def test_auto_fast_and_scalar_pitch_route_to_torch_without_nvidia_cuda(monkeypatch):
+    # With NVIDIA CUDA the same request is native: tests/test_parallel3d_native.py.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(TorchCUDABridge, "tensor_to_cuda_array", _no_native)
     case = replace(_case(), spacing=.73, pitch=(.71, .71))
     operator = _operator(case, backend="auto", precision="fast", detector_spacing=.71)
     assert operator.backend == "torch" and operator.dtype == torch.float32
     image = _data(case.shape, dtype=torch.float32)
     torch.testing.assert_close(operator(image).double().flatten(), _matrix(case) @ image.double().flatten(), rtol=5e-5, atol=5e-6)
-    with pytest.raises((ValueError, RuntimeError), match="(?i)(parallel3d|parallel.?3d|3d.parallel|numba)"):
-        _operator(case, backend="numba", precision="fast")
 
 
 def test_circular_3d_parallel_lifts_legacy_xy_convention_and_angle_gradients():
