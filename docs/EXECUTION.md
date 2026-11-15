@@ -51,6 +51,14 @@ Hardware support depends on the installed PyTorch build and process-group
 backend. Existing published native performance numbers do not measure the
 portable precision backend or hybrid execution.
 
+On AMD GPUs, diffct runs the portable PyTorch backend. The native Numba kernels
+need NVIDIA CUDA, and `backend="auto"` selects the portable backend on ROCm.
+We tested one AMD Instinct MI250X GCD with PyTorch 2.7.1 and ROCm 6.2.4.
+Projection, backprojection and volume gradients for parallel, fan, cone,
+spiral and parallel3d trajectories matched a CPU FP64 reference. The relative
+error was at most 1.3e-6 with `precision="float32"` and 1.2e-15 with
+`precision="float64"`.
+
 ## Call-time trajectory validation
 
 An ordinary flat detector's trajectory override is checked at its corners,
@@ -260,6 +268,20 @@ ranks run backward. Geometry/surface gradients already sum globally; avoid a
 second DDP reduction. `total_variation` returns a global scalar with the correct
 derivative for its owned volume input. If that input is a replicated output of
 another distributed operator, apply that operator's loss replica divisor.
+
+## Errors on one rank
+
+When the numerical stage of a distributed call fails on one rank, every rank
+raises from that same call. Examples are a CUDA out-of-memory error in a kernel
+launch or in a native work-buffer allocation. The failing rank keeps its own
+exception. The other ranks raise a `RuntimeError` that names the failing rank.
+No rank returns success, and no rank waits for the process-group timeout. The
+projector and the process group stay usable for the next call. This applies to
+the portable and the native backend, in forward, adjoint and autograd calls.
+To agree on the outcome, each distributed call does one small extra control
+reduction. If the replacement buffer that a failing rank allocates for the
+remaining collectives also runs out of memory, the other ranks still wait for
+the process-group timeout.
 
 ## Numerical solver API
 

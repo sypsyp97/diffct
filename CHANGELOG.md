@@ -5,6 +5,50 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2] - 2026-11-15
+
+### Added
+
+- `beam="parallel3d"` runs on the native NVIDIA CUDA backend. `backend="numba"`
+  accepts it under the same conditions as cone, and `backend="auto"` selects
+  it on NVIDIA CUDA with `precision="fast"` and a views or space partition.
+  Values, data gradients and trajectory gradients match the portable backend;
+  detector surfaces, per-axis spacing, chunking, `*_into` streaming,
+  `native_volume_layout`, multiple devices and NCCL partitions are supported
+  ([#72](https://github.com/sypsyp97/diffct/pull/72)).
+
+### Fixed
+
+- A numerical failure on one rank, such as a CUDA out-of-memory error during
+  a kernel launch, now raises on every rank of the same call, on the portable
+  and the native backend. The failing rank keeps its own exception; peers
+  raise a `RuntimeError` that names the failing rank. Before, peers could
+  return success or wait until the process-group timeout. The projector and
+  process group stay usable after the error. Distributed calls do one extra
+  small control reduction to agree on the outcome
+  ([#71](https://github.com/sypsyp97/diffct/pull/71)).
+- Concurrent calls from several Python threads on one `Projector` no longer
+  fail with `TypeError` in statistics bookkeeping. `last_execution_stats` is
+  per thread: each thread reads the statistics of its own last call
+  ([#71](https://github.com/sypsyp97/diffct/pull/71)).
+- Portable store errors no longer strand peer ranks in the next collective;
+  analytical weight/output byte overlap is rejected before numerical I/O for
+  every dtype; CGLS callback iterates are read-only, and a mutation raises
+  before more numerical work
+  ([#69](https://github.com/sypsyp97/diffct/pull/69)).
+
+### Documentation
+
+- AMD GPUs: the execution guide states that ROCm runs the portable backend and
+  lists the tested AMD hardware and software versions.
+- The execution guide describes how a failure on one rank is raised on every
+  rank, and the chunking guide states that `last_execution_stats` is per thread.
+- The documentation search recovers from model download failures, offers a
+  retry, and falls back to the CPU when WebGPU fails
+  ([#70](https://github.com/sypsyp97/diffct/pull/70)).
+- The execution guide describes the 2.5.1 checkpoint and seed behaviour
+  ([#68](https://github.com/sypsyp97/diffct/pull/68)).
+
 ## [2.5.1] - 2026-11-07
 
 ### Fixed
