@@ -222,15 +222,6 @@ Run the test suite on a CUDA host with `python -m pytest tests/ -q`.
 If you use this library in your research, please cite the software and the technical report:
 
 ```bibtex
-@software{diffct2025,
-  author    = {Yipeng Sun},
-  title     = {diffct: Differentiable Computed Tomography Reconstruction with CUDA},
-  year      = 2025,
-  publisher = {Zenodo},
-  doi       = {10.5281/zenodo.14999333},
-  url       = {https://doi.org/10.5281/zenodo.14999333}
-}
-
 @article{202605.1446,
   doi       = {10.20944/preprints202605.1446.v2},
   url       = {https://doi.org/10.20944/preprints202605.1446.v2},
