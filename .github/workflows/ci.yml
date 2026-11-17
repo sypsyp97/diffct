@@ -212,9 +212,13 @@ jobs:
       - name: Install wheel and CPU test dependencies
         run: |
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install "$(ls dist/*.whl)[cu12]" pytest pytest-benchmark matplotlib tifffile
+          python -m pip install "$(ls dist/*.whl)[cu12]" pytest pytest-benchmark pytest-xdist matplotlib tifffile
           python -m pip check
       - name: Test outside the source checkout
+        # One test process per vCPU. Multi-rank Gloo tests spawn more processes, so each
+        # process keeps one OpenMP thread to avoid oversubscription.
+        env:
+          OMP_NUM_THREADS: "1"
         run: |
           mkdir -p "$RUNNER_TEMP/wheel-tests"
           cp -R tests examples pytest.ini "$RUNNER_TEMP/wheel-tests/"
@@ -233,7 +237,7 @@ jobs:
           assert not torch.cuda.is_available(), 'This job must exercise the CPU path'
           print(f'Imported installed wheel: {installed}; numba.cuda: {cuda.__file__}')
           PY
-          python -m pytest tests -q -rs --strict-markers --junitxml=results.xml
+          python -m pytest tests -n 4 --dist loadfile -q -rs --strict-markers --junitxml=results.xml
           python - <<'PY'
           import xml.etree.ElementTree as ET
           cases = ET.parse('results.xml').findall('.//testcase')
