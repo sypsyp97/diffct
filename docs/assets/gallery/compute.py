@@ -31,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "examples"))
 
 from diffct import (  # noqa: E402
     Projector,
+    ClinicalScan,
+    clinical_geometry,
     cgls,
     circular_trajectory_2d_fan,
     circular_trajectory_2d_parallel,
@@ -278,32 +280,23 @@ def helical(args):
     case = Path(args.case)
     m = dict(np.load(case / "meta.npz"))
     proj = np.load(case / "proj.npy", mmap_mode="r")
+    scan = ClinicalScan(
+        projections=proj, angle=m["phi"], z=m["z"], radius=m["rho"], sdd=m["sdd"],
+        focal_angle_offset=m["dphi"], focal_z_offset=m["dz"], focal_radius_offset=m["drho"],
+        instance=m["instance"], detector_spacing=(float(m["du"][0]), float(m["dv"][0])),
+        central_element=(float(m["ce_col"][0]) - 1, float(m["ce_row"][0]) - 1),
+        detector_shape=str(m["detector_shape"]), ffs_mode=str(m["ffs"]),
+        water_attenuation=float(m["water_attenuation"]), manufacturer=str(m["manufacturer"]))
     (n_cols, n_rows), z = proj.shape[1:], m["z"]
-    sdd, du, dv, rho = (float(m[k][0]) for k in ("sdd", "du", "dv", "rho"))
+    sdd, dv, rho = (float(m[k][0]) for k in ("sdd", "dv", "rho"))
     margin = math.ceil(n_rows / 2 * dv * (rho + 250) / sdd + np.abs(m["dz"]).max())
     mid = 0.5 * (z.min() + z.max())
     depth = int(math.ceil(z.max() - z.min() + 2 * margin))
-    off_u = args.center - (n_cols / 2 - 0.5)
-    off_v = (float(m["ce_row"][0]) - 1) - (n_rows / 2 - 0.5)
-
-    def cyl(r, phi, height):
-        return torch.stack((-r * phi.sin(), r * phi.cos(), height), 1)
-
-    t = lambda k: torch.as_tensor(m[k], dtype=torch.float64)  # noqa: E731
-    phi, zz, r = t("phi"), t("z") - mid, t("rho")
-    source = cyl(r + t("drho"), phi + t("dphi"), zz + t("dz"))  # flying focal spot
-    s, c, zero = phi.sin(), phi.cos(), torch.zeros_like(phi)
-    detector = cyl(r, phi, zz) + sdd * torch.stack((s, -c, zero), 1)
-    trajectory = tuple(x.float() for x in (source, detector, torch.stack((c, s, zero), 1),
-                                            torch.stack((zero, zero, torch.ones_like(phi)), 1)))
-
-    def surface(u, v):  # cylinder centred on the nominal focal spot; stored rows run against v
-        gamma = (u - off_u * du) / sdd
-        return torch.stack((sdd * gamma.sin(), -(v - off_v * dv), sdd * (gamma.cos() - 1)), -1)
-
-    operator = Projector(trajectory, (depth, 512, 512), (n_cols, n_rows), detector_spacing=(du, dv),
-                         voxel_spacing=1.0, detector_surface=surface, distributed=True, partition="views")
-    b = torch.from_numpy(np.ascontiguousarray(proj[operator.view_slice])).to(device).div_(MU_WATER)
+    geometry = clinical_geometry(scan, z_center=mid, central_column=args.center)
+    operator = Projector(geometry.trajectory, (depth, 512, 512), geometry.detector_shape,
+                         detector_spacing=geometry.detector_spacing, voxel_spacing=1.0,
+                         detector_surface=geometry.detector_surface, distributed=True, partition="views")
+    b = torch.from_numpy(np.ascontiguousarray(proj[operator.view_slice])).to(device).div_(scan.water_attenuation)
     keep, snapshots = set(args.keep), {}
 
     def callback(iteration, residual, volume):

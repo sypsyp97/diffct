@@ -15,6 +15,7 @@ from .projectors import (
 )
 
 from .operators import Projector
+from .clinical import ClinicalScan, ClinicalGeometry, read_dicom_ct_pd, clinical_geometry
 from .storage import TensorStore, NpyStore
 from .surfaces import ParameterizedSurface
 from .reconstruction import (
@@ -68,6 +69,10 @@ __version__ = '2.5.2'
 
 __all__ = [
     'Projector',
+    'ClinicalScan',
+    'ClinicalGeometry',
+    'read_dicom_ct_pd',
+    'clinical_geometry',
     'TensorStore',
     'NpyStore',
     'ParameterizedSurface',

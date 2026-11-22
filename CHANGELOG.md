@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `diffct[dicom]` reader for sparse DICOM-CT-PD projections and
+  `clinical_geometry` for measured cylindrical detectors and flying focal
+  spots on CPU or GPU. The clinical gallery uses the scan's water calibration.
+
 ### Fixed
 
 - The CPU test suite runs against a plain wheel without a CUDA runtime. CI

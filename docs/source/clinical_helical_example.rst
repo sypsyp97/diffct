@@ -46,8 +46,11 @@ Run it
 
    .. code-block:: bash
 
-      pip install pydicom
+      pip install 'diffct[dicom]'
       python docs/assets/gallery/ldct_prep.py <projection dir> <image dir> ldct/L213
+
+   Re-run preparation for older arrays: metadata now includes the detector
+   shape and the scan's water attenuation, rather than assuming GE's value.
 
 3. Reconstruct on 8 GPUs:
 
@@ -55,3 +58,44 @@ Run it
 
       torchrun --nproc-per-node=8 docs/assets/gallery/compute.py helical \
           --case ldct/L213 --center 442.2 --axial-z -418 -364 -307 --out arrays
+
+Library API (CPU or GPU)
+------------------------
+
+The reader accepts a directory or a list of projection files. Views are sorted
+by InstanceNumber; sparse gaps are allowed, duplicates and changing detector
+geometry are rejected. It reads already-corrected CT-PD data and applies each
+file's rescale slope/intercept without taking another logarithm.
+
+.. code-block:: python
+
+   import torch
+   from diffct import read_dicom_ct_pd, clinical_geometry, Projector, cgls
+
+   scan = read_dicom_ct_pd("projections")
+   geometry = clinical_geometry(scan)  # CPU float32, FFS enabled
+   operator = Projector(
+       geometry.trajectory, (32, 64, 64), geometry.detector_shape,
+       detector_spacing=geometry.detector_spacing,
+       detector_surface=geometry.detector_surface,
+       voxel_spacing=4.0, backend="torch")
+   measurements = torch.from_numpy(scan.projections) / scan.water_attenuation
+   result = cgls(operator, measurements, iterations=6)
+
+Size the volume and view/detector subset for available memory and CPU time.
+``ClinicalScan`` is a frozen dataclass (its NumPy arrays remain mutable).
+Geometry vectors are float64 in mm/radians; projections are float32 with shape
+``(views, channels, rows)``. ``ClinicalGeometry`` contains the four named
+Projector arguments shown above. ``z_center`` defaults to the midpoint of the
+nominal source-z range. ``central_column`` overrides the zero-based header
+column for calibrated data; ``flying_focal_spot=False`` removes all source
+offsets. ``device`` and ``dtype`` control the returned trajectory tensors.
+
+The detector frame remains nominal while the source receives all three
+offsets, even if a mode named ``FFSZ`` also has radial/angular offsets. Stored
+rows run opposite to v. Only cylindrical detectors are currently implemented;
+other shapes raise NotImplementedError. Analytical FBP/FDK still require flat
+data, and this API does not relax helical FDK's CUDA/constant-radius/monotone-z
+restrictions. Patient-coordinate registration of vendor images remains a
+separate step. Water calibration comes from CT-PD tag (7041,1001), e.g.
+0.0192/mm for C002 versus 0.0186/mm for L213.
