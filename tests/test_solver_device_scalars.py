@@ -129,7 +129,9 @@ def test_cgls_breakdown_preserves_state_before_invalid_update(kind):
         result = diffct.cgls(operator, measurements, 4, rtol=0., atol=0.,
                             callback=lambda iteration, residual, volume: callbacks.append(iteration))
     completed = int(kind == "terminal-zero-gamma")
-    assert result.iterations == completed and not result.converged
+    assert result.iterations == completed and result.converged == (kind != "denominator-zero")
+    assert result.reason == ("normal equation breakdown" if kind == "denominator-zero"
+                             else "normal equations satisfied")
     assert callbacks == ([1] if completed else [])
     expected_calls = (["backproject", "project", "backproject"] if completed else
                       ["backproject", "project"] if kind == "denominator-zero" else ["backproject"])
