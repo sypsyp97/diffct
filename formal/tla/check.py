@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tarfile
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -22,8 +24,24 @@ def download(cache, name, lock):
     destination = cache / name
     if not destination.exists():
         temporary = destination.with_suffix(destination.suffix + ".download")
-        with urllib.request.urlopen(lock["url"], timeout=120) as source, temporary.open("wb") as target:
-            shutil.copyfileobj(source, target)
+        for attempt in range(4):
+            url = lock["url"]
+            if attempt:
+                parts = urllib.parse.urlsplit(url)
+                query = urllib.parse.urlencode({"download_retry": time.time_ns()})
+                url = urllib.parse.urlunsplit(parts._replace(
+                    query=parts.query + "&" + query if parts.query else query))
+            try:
+                with urllib.request.urlopen(url, timeout=120) as source, temporary.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+                break
+            except urllib.error.URLError as error:
+                temporary.unlink(missing_ok=True)
+                if (attempt == 3 or isinstance(error, urllib.error.HTTPError)
+                        and error.code not in (403, 408, 429, 500, 502, 503, 504)):
+                    raise
+                print(f"Download failed ({error}); retrying {name}", file=sys.stderr, flush=True)
+                time.sleep(2 ** attempt)
         temporary.replace(destination)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     if digest != lock["sha256"]:
