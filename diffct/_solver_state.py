@@ -138,6 +138,52 @@ def fingerprint(value, elements):
     return digest.hexdigest()
 
 
+# Prime modulus: 16-bit chunk times residue products and block sums fit int64.
+_MODULUS = 2 ** 31 - 1
+
+
+def _checksum(value, elements):
+    """Exact on-device guard for changes confined to at most two elements.
+
+    Raw storage is read as 16-bit chunks c_m at row-major positions x_m = m + 1.
+    The syndromes sum(c_m * x_m**k) mod p, k = 1..2 * chunks per element, form
+    a Vandermonde system, so no nonzero change to two elements can cancel.
+    Every block term stays on its own device; nothing is read back here.
+    """
+    store = TensorStore(value.detach()) if isinstance(value, torch.Tensor) else value
+    shape = tuple(store.shape)
+    size = torch.empty((), dtype=store.dtype).element_size()
+    chunk = torch.int16 if size % 2 == 0 else torch.uint8
+    width = size // torch.empty((), dtype=chunk).element_size()
+    strides = [math.prod(shape[axis + 1:]) * width for axis in range(len(shape))]
+    total = None
+    # Positions, powers and products use three int64 chunk buffers of the block.
+    for selected in _fragments(shape, elements // (4 * width)):
+        block = store.read(selected).detach().contiguous()
+        device = block.device
+        chunks = block.reshape(-1).view(chunk)
+        position = torch.arange(1, width + 1, dtype=torch.int64, device=device).expand(
+            *block.shape, width).clone()
+        for axis, part in enumerate(selected):
+            index = torch.arange(part.start, part.stop, dtype=torch.int64, device=device)
+            position.add_(index.mul_(strides[axis]).view(
+                [-1 if other == axis else 1 for other in range(len(selected) + 1)]))
+        position = position.reshape(-1).remainder_(_MODULUS)
+        power, product, sums = position.clone(), torch.empty_like(position), []
+        for _ in range(2 * width):
+            torch.mul(power, chunks, out=product)
+            sums.append(product.remainder_(_MODULUS).sum())
+            power.mul_(position).remainder_(_MODULUS)
+        sums = torch.stack(sums)
+        total = sums if total is None else total.add_(sums)
+        total.remainder_(_MODULUS)
+    return total
+
+
+def _layout(value):
+    return getattr(value, "device", None), value.dtype, tuple(value.shape)
+
+
 def _effective_surface(operator, frames, elements):
     """Hash the actual physical pixel rays, without materializing a volume."""
     surface = getattr(operator, "detector_surface", None)
@@ -333,10 +379,12 @@ def callback_stop(operator, callback, iteration, residual, volume, *, readonly=F
     error, stop = None, False
     try:
         if callback is not None:
-            before = (fingerprint(volume, block_elements), getattr(volume, "device", None)) if readonly else None
+            if readonly:
+                layout, before = _layout(volume), _checksum(volume, block_elements)
             stop = callback(iteration, residual, volume) is False
-            if readonly and ((isinstance(volume, torch.Tensor) and not torch.is_floating_point(volume))
-                             or (fingerprint(volume, block_elements), getattr(volume, "device", None)) != before):
+            # Layout is host metadata; the storage comparison reads back one flag.
+            if readonly and (_layout(volume) != layout or (
+                    before is not None and bool((_checksum(volume, block_elements) != before).any()))):
                 raise ValueError("CGLS callback iterate is read-only")
     except Exception as caught:
         error = caught
