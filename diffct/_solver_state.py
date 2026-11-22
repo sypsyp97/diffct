@@ -149,6 +149,7 @@ def _logical_positions(shape, selected, device):
         index = torch.arange(part.start, part.stop, dtype=torch.int64, device=device)
         index.mul_(math.prod(shape[axis + 1:]))
         position.add_(index.view([-1 if other == axis else 1 for other in range(len(shape))]))
+        del index
     return position.reshape(-1)
 
 
@@ -157,14 +158,30 @@ def _block_syndromes(block, position, size):
     flat = torch.empty(block.numel(), dtype=block.dtype, device=block.device)
     flat.copy_(block.reshape(-1))
     bits = flat.view(integer).to(dtype=torch.int64)
+    del flat
     for shift in range(0, block.element_size() * 8, 16):
         word = (bits >> shift).bitwise_and_(65535)
         yield word.sum().remainder_(_MODULUS)
         divisor = 1
         while divisor <= size:
             digit = position.div(divisor, rounding_mode="floor").remainder_(_MODULUS)
-            yield word.mul(digit).remainder_(_MODULUS).sum().remainder_(_MODULUS)
+            yield digit.mul_(word).remainder_(_MODULUS).sum().remainder_(_MODULUS)
+            del digit
             divisor *= _MODULUS
+        del word
+
+
+def _checksum_block_elements(shape, dtype, elements):
+    size, digits = math.prod(shape), 1
+    while size >= _MODULUS:
+        size //= _MODULUS
+        digits += 1
+    lanes = max(1, torch.empty((), dtype=dtype).element_size() // 2)
+    # Count all buffers conservatively as int64 slots: five block buffers plus
+    # before/old/new scalar syndromes and reduction scratch. Tiny budgets need
+    # an unavoidable constant workspace even with one-element blocks.
+    scalars = 3 * lanes * (1 + digits) + 4
+    return max(1, (elements - scalars) // 5)
 
 
 def _checksum(value, elements):
@@ -177,11 +194,12 @@ def _checksum(value, elements):
     """
     store = TensorStore(value.detach()) if isinstance(value, torch.Tensor) else value
     shape, total = tuple(store.shape), ()
-    for selected in _fragments(shape, min(elements, 1048576)):
+    for selected in _fragments(shape, _checksum_block_elements(shape, store.dtype, elements)):
         block = store.read(selected).detach()
         position = _logical_positions(shape, selected, block.device)
         sums = _block_syndromes(block, position, math.prod(shape))
         total = tuple((old + new).remainder_(_MODULUS) for old, new in zip(total, sums)) if total else tuple(sums)
+        del block, position, sums
     return total
 
 
