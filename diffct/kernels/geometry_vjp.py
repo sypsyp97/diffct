@@ -81,6 +81,9 @@ def _parallel_scalar_terms(voxel_spacing, c_x, c_y, ct_x, ct_y, t_min,
     if abs(ray_y) > _TINY:
         gp_y = -c_y / ray_y
         gr_y = np.float32(-voxel_spacing * (t_min * c_y + ct_y) / ray_y)
+    radial = gr_x * dir_x + gr_y * dir_y
+    gr_x = np.float32((gr_x - radial * dir_x) / scaled_length)
+    gr_y = np.float32((gr_y - radial * dir_y) / scaled_length)
     return gp_x, gp_y, gr_x, gr_y
 
 
@@ -555,7 +558,7 @@ def _parallel_2d_geometry_vjp_kernel(
     """Accumulate parallel-beam geometry gradients of ``<grad_sino, A x>`` per view.
 
     The ray is ``P + t r`` over the whole line, with P the detector pixel and
-    r the ray direction as given. A face crossing ``t = (b - P_a) / r_a`` gives
+    r the normalized ray direction. A face crossing ``t = (b - P_a) / r_a`` gives
     ``dt/dP_a = -1 / r_a`` and ``dt/dr_a = -t / r_a``.
     """
     iang, idet = cuda.grid(2)
@@ -569,13 +572,12 @@ def _parallel_2d_geometry_vjp_kernel(
     # entry and exit faces.
     dir_x = np.float64(d_ray_dir[iang, 0])
     dir_y = np.float64(d_ray_dir[iang, 1])
-    scaled_length = np.float64(1.0)
     if _is_per_axis(voxel_spacing):
         dir_x /= _axis_pitch(voxel_spacing, 0)
         dir_y /= _axis_pitch(voxel_spacing, 1)
-        scaled_length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
-        inv_length = _ONE / scaled_length
-        dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
+    scaled_length = math.sqrt(dir_x * dir_x + dir_y * dir_y)
+    inv_length = _ONE / scaled_length
+    dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
     u_phys = (np.float32(idet) + _HALF - np.float32(n_det) * _HALF) * det_spacing
     if d_detector_positions is None or d_detector_positions.size == 0:
         det_ox = np.float64(d_det_origin[iang, 0]) / _axis_pitch(voxel_spacing, 0)

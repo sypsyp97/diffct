@@ -24,6 +24,54 @@ RTOL = 3e-5
 ATOL = 3e-6
 
 
+@pytest.mark.parametrize("backward", [False, True], ids=["forward", "backward"])
+@pytest.mark.parametrize("miss", [False, True], ids=["hit", "miss"])
+def test_parallel_scalar_nonunit_direction_values(simulated_kernels, backward, miss):
+    import numpy as np
+
+    geometry = _matrix_geometry("parallel", 1.)
+    if miss:
+        geometry[1][:] = (100., 100.)
+    outputs = []
+    for scale in (1., 2.):
+        image = np.zeros((16, 16), np.float32) if backward else np.ones((16, 16), np.float32)
+        sino = np.ones((3, 1), np.float32) if backward else np.zeros((3, 1), np.float32)
+        _launch(simulated_kernels, "parallel", image, sino, 1.,
+                (geometry[0] * scale, *geometry[1:]), 1., backward)
+        outputs.append(image if backward else sino)
+    np.testing.assert_allclose(outputs[1], outputs[0], rtol=RTOL, atol=ATOL)
+    if miss:
+        assert not outputs[0].any()
+    else:
+        assert outputs[0].max() > 0
+
+
+@pytest.mark.parametrize("scale", [1., 2.])
+@pytest.mark.parametrize("miss", [False, True], ids=["hit", "miss"])
+def test_parallel_scalar_direction_vjp_matches_uniform_spacing(simulated_kernels, scale, miss):
+    import numpy as np
+
+    geometry = _matrix_geometry("parallel", 1.)
+    geometry[0][:] = np.asarray([[.93, .37], [.29, -.91], [.81, .63]], np.float32) * scale
+    if miss:
+        geometry[1][:] = (100., 100.)
+    image = np.arange(12, dtype=np.float32).reshape(3, 4) / 7 + .1
+    weights = np.asarray([[.3, .7, .2], [.8, .1, .5], [.2, .6, .9]], np.float32)
+    gradients = []
+    kernel = simulated_kernels._parallel_2d_geometry_vjp_kernel
+    for pitch in (np.float32(1.), (np.float32(1.), np.float32(1.))):
+        grads = [np.zeros_like(value) for value in geometry]
+        kernel[(3, 3), (1, 1)](image, 4, 3, weights, 3, 3, np.float32(.71),
+                               *geometry, np.float32(2), np.float32(1.5), pitch, *grads)
+        gradients.append(grads[0])
+    np.testing.assert_allclose(gradients[0], gradients[1], rtol=5e-3, atol=3e-4)
+    np.testing.assert_allclose((gradients[0] * geometry[0]).sum(-1), 0., atol=3e-4)
+    if miss:
+        assert not gradients[0].any()
+    else:
+        assert np.abs(gradients[0]).max() > .01
+
+
 def _shape(beam, grid):
     # Two-dimensional arrays use (y, x); cone kernel arrays use (x, y, z).
     return ((2, 3, 2), (3, 2, 3))[grid] if beam == "cone" else ((2, 3), (3, 2))[grid]
