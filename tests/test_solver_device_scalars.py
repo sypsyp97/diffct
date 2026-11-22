@@ -11,6 +11,10 @@ from torch.utils._python_dispatch import TorchDispatchMode
 
 import diffct
 from diffct import _solver_state
+from tests.test_cgls_guard_exact_local import (
+    BITS, DEFAULT_BLOCK, FLOATS, LAYOUTS, READ_ONLY, WIDTH, _FreshTensors, _bits, _flip, _guard, _iterate, _rejects,
+    _signed,
+)
 from tests.test_solver_api import _DiskAllocations, _MatrixOperator, _SolverStore, _cgls_reference, _checkpoint
 
 
@@ -35,6 +39,9 @@ class _CudaReads(TorchDispatchMode):
             source = args[0]
         elif name == "aten.copy_.default" and args[0].device.type == "cpu":
             source = args[1]
+        elif name in ("aten.equal.default", "aten.is_nonzero.default") and args[0].is_cuda:
+            # One host boolean computed on the device: a synchronizing readback.
+            source = torch.empty((), dtype=torch.bool, device=args[0].device)
         if isinstance(source, torch.Tensor) and source.is_cuda:
             event = (name, tuple(source.shape), source.numel() * source.element_size())
             self.events.append(event)
@@ -56,18 +63,18 @@ def _problem(dtype):
 
 
 @pytest.mark.parametrize("dtype", (torch.float32, torch.float64))
-@pytest.mark.parametrize("stop", ("limit", "callback", "tolerance"))
-def test_resident_cgls_reads_at_most_two_reduction_results_per_iteration(dtype, stop):
+@pytest.mark.parametrize("stop", ("limit", "callback", "observer", "tolerance"))
+def test_resident_cgls_reads_two_reduction_results_plus_one_guard_result_per_iteration(dtype, stop):
     operator, measurements = _problem(dtype)
     original = measurements.clone()
     callbacks = []
 
     def callback(iteration, residual, volume):
         callbacks.append((iteration, residual, volume.clone()))
-        return iteration < 2
+        return iteration < 2 if stop == "callback" else None
 
     options = dict(rtol=.04 if stop == "tolerance" else 0., atol=0.)
-    if stop == "callback":
+    if stop in ("callback", "observer"):
         options["callback"] = callback
     project = operator.project
     backproject = operator.backproject
@@ -95,9 +102,9 @@ def test_resident_cgls_reads_at_most_two_reduction_results_per_iteration(dtype, 
     np.testing.assert_allclose(result.residual_history, history, **tolerance)
     torch.testing.assert_close(measurements, original, rtol=0, atol=0)
     assert result.volume.device == measurements.device and result.volume.dtype == dtype
-    if stop == "callback":
-        assert result.iterations == 2 and not result.converged
-        assert [value[0] for value in callbacks] == [1, 2]
+    if stop in ("callback", "observer"):
+        assert result.iterations == (2 if stop == "callback" else 4) and not result.converged
+        assert [value[0] for value in callbacks] == list(range(1, result.iterations + 1))
         for (_, residual, volume), expected_volume, expected_residual in zip(callbacks, snapshots, history[1:]):
             assert isinstance(residual, float)
             np.testing.assert_allclose(volume.cpu().numpy().ravel(), expected_volume, **tolerance)
@@ -112,9 +119,198 @@ def test_resident_cgls_reads_at_most_two_reduction_results_per_iteration(dtype, 
     assert all(math.prod(shape) <= 2 for _, shape, _ in trace.events), (
         f"resident CGLS copied more than a scalar pair to CPU: {trace.events}"
     )
-    assert all(count <= 2 for count in counts), (
-        f"resident CGLS made {counts} CUDA reduction readbacks per iteration; maximum is 2"
+    # The read-only callback guard may add one readback of at most two values.
+    limit = 3 if "callback" in options else 2
+    assert all(count <= limit for count in counts), (
+        f"resident CGLS made {counts} CUDA readbacks per iteration; maximum is {limit}: {trace.iterations}"
     )
+
+
+@pytest.mark.parametrize("layout", ("contiguous", "transposed"))
+@pytest.mark.parametrize("dtype", FLOATS, ids=str)
+@pytest.mark.parametrize("block", (2, 5, DEFAULT_BLOCK))
+@pytest.mark.parametrize("mutated", (False, True), ids=("observer", "mutation"))
+def test_cuda_guard_reads_back_at_most_one_value_pair(dtype, layout, block, mutated):
+    volume = _iterate(dtype, layout, device="cuda")
+    before = _bits(volume)
+
+    def callback(iteration, residual, value):
+        if mutated:
+            _flip(value, (2, 3), 1)
+
+    with _CudaReads() as trace:
+        if mutated:
+            with pytest.raises(ValueError, match=READ_ONLY):
+                _guard(volume, callback, block)
+        else:
+            assert _guard(volume, callback, block) is False
+    assert not mutated or not torch.equal(_bits(volume), before)
+    assert len(trace.events) <= 1 and all(math.prod(shape) <= 2 for _, shape, _ in trace.events), (
+        f"CUDA guard copied the iterate to CPU: {trace.events}"
+    )
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+@pytest.mark.parametrize("dtype", FLOATS, ids=str)
+def test_cuda_guard_rejects_every_single_bit_change_at_every_position(dtype, layout):
+    width = WIDTH[BITS[dtype]]
+    missed = []
+    for flat in range(12):
+        index = divmod(flat, 4)
+        for bit in range(width):
+            block = (2, 4, 6, DEFAULT_BLOCK)[(flat + bit) % 4]
+            mask = _signed(1 << bit, width)
+            if not _rejects(_iterate(dtype, layout, device="cuda"), lambda value: _flip(value, index, mask), block):
+                missed.append((index, bit, block))
+    assert not missed, f"{len(missed)} single-bit CUDA iterate changes escaped the guard: {missed[:8]}"
+
+
+@pytest.mark.parametrize("dtype", FLOATS, ids=str)
+def test_cuda_guard_rejects_swaps_signed_zero_and_nan_payload_changes(dtype):
+    width = WIDTH[BITS[dtype]]
+    integer = BITS[dtype]
+
+    def swap(value):
+        bits = value.view(integer)
+        left, right = bits[0, 0].clone(), bits[2, 3].clone()
+        bits[0, 0], bits[2, 3] = right, left
+
+    def bit_pattern(index, xor):
+        return lambda value: value.view(integer)[index].bitwise_xor_(_signed(xor, width))
+
+    changes = {"swap": swap, "+0 to -0": bit_pattern((0, 0), 1 << (width - 1)),
+               "-0 to +0": bit_pattern((0, 1), 1 << (width - 1)), "NaN payload": bit_pattern((0, 2), 1)}
+    for name, change in changes.items():
+        volume = _iterate(dtype, device="cuda")
+        if name == "NaN payload":
+            assert torch.isnan(volume[0, 2]).item()
+        assert _rejects(volume, change, 5), f"{name} escaped the CUDA guard"
+
+
+@pytest.mark.parametrize("dtype", FLOATS, ids=str)
+@pytest.mark.parametrize("means", ("inplace", "data", "dlpack", "cuda-array-interface", "set-storage"))
+def test_cuda_guard_rejects_writes_by_any_means(dtype, means):
+    volume = _iterate(dtype, "transposed", device="cuda")
+    before = _bits(volume)
+    integer = BITS[dtype]
+
+    def mutate(value):
+        if means == "inplace":
+            value.view(integer)[1, 2].bitwise_xor_(1)
+        elif means == "data":
+            value.data.view(integer)[1, 2].bitwise_xor_(1)
+        elif means == "dlpack":
+            torch.from_dlpack(value.detach().view(integer))[1, 2].bitwise_xor_(1)
+        elif means == "cuda-array-interface":
+            from numba import cuda
+
+            alias = cuda.as_cuda_array(value.detach().view(integer))
+            alias[1, 2] = int(alias[1, 2]) ^ 1
+        else:
+            changed = value.detach().clone()
+            changed.view(integer)[1, 2].bitwise_xor_(1)
+            value.set_(changed)
+
+    if means == "cuda-array-interface":
+        pytest.importorskip("numba.cuda")
+    assert _rejects(volume, mutate, 5), f"{means} write escaped the CUDA guard"
+    assert not torch.equal(_bits(volume), before)
+
+
+@pytest.mark.parametrize("dtype", FLOATS, ids=str)
+@pytest.mark.parametrize("block", (2, 4, 16))
+@pytest.mark.parametrize("mutated", (False, True), ids=("observer", "mutation"))
+def test_cuda_guard_allocates_at_most_block_elements_per_tensor(dtype, block, mutated):
+    volume = _iterate(dtype, "transposed", shape=(8, 8), device="cuda")
+
+    def callback(iteration, residual, value):
+        trace.active = False
+        if mutated:
+            _flip(value, (7, 7), 1)
+        trace.active = True
+
+    with _FreshTensors() as trace:
+        if mutated:
+            with pytest.raises(ValueError, match=READ_ONLY):
+                _guard(volume, callback, block)
+        else:
+            _guard(volume, callback, block)
+    oversized = [entry for entry in trace.sizes if entry[-1] > block]
+    assert not oversized, f"CUDA guard allocated more than block_elements={block} elements: {oversized}"
+
+
+@pytest.mark.parametrize("dtype", FLOATS, ids=str)
+@pytest.mark.parametrize("mode", ("observer", "bit", "sign", "dlpack", "move-to-cpu", "dtype", "shape"))
+def test_resident_cgls_guard_is_exact_before_the_next_projection(dtype, mode):
+    operator, measurements = _problem(dtype)
+    integer = BITS[dtype]
+    boundary = []
+
+    def callback(iteration, residual, volume):
+        assert volume.is_cuda
+        if iteration == 2 and mode != "observer":
+            boundary.append(len(operator.calls))
+            if mode == "bit":
+                volume.view(integer)[1, 2].bitwise_xor_(1)
+            elif mode == "sign":
+                volume.view(integer)[0, 0].bitwise_xor_(_signed(1 << (WIDTH[integer] - 1), WIDTH[integer]))
+            elif mode == "dlpack":
+                torch.from_dlpack(volume.detach().view(integer))[0, 1].bitwise_xor_(1)
+            elif mode == "move-to-cpu":
+                volume.data = volume.cpu()
+            elif mode == "dtype":
+                volume.data = volume.view({torch.float16: torch.bfloat16, torch.bfloat16: torch.float16}.get(
+                    dtype, integer))
+            else:
+                volume.data = volume.reshape(3, 2)
+
+    baseline = diffct.cgls(operator, measurements, 4, rtol=0., atol=0.)
+    operator.calls.clear()
+    if mode == "observer":
+        observed = diffct.cgls(operator, measurements, 4, rtol=0., atol=0., callback=callback)
+        assert torch.equal(_bits(observed.volume), _bits(baseline.volume))
+        assert observed.residual_history == baseline.residual_history
+        return
+    with pytest.raises(ValueError, match=READ_ONLY):
+        diffct.cgls(operator, measurements, 4, rtol=0., atol=0., callback=callback)
+    assert boundary == [5] and len(operator.calls) == 5, "iterate change crossed the next projection"
+
+
+@pytest.mark.parametrize("dtype", (torch.float32, torch.float64))
+def test_cgls_into_cuda_output_rejects_device_change_before_next_projection(dtype, tmp_path):
+    class CudaMatrixOperator(_MatrixOperator):
+        def _into(self, value, output, *, forward):
+            self.calls.append("project_into" if forward else "backproject_into")
+            source = diffct.TensorStore(value) if isinstance(value, torch.Tensor) else value
+            sink = diffct.TensorStore(output) if isinstance(output, torch.Tensor) else output
+            matrix = (self.matrix if forward else self.matrix.T).to(device="cuda", dtype=sink.dtype)
+            for row, output_index in enumerate(np.ndindex(sink.shape)):
+                result = torch.zeros((), dtype=sink.dtype, device="cuda")
+                for column, source_index in enumerate(np.ndindex(source.shape)):
+                    selected = tuple(slice(index, index + 1) for index in source_index)
+                    result += matrix[row, column] * source.read(selected).reshape(()).to(matrix)
+                selected = tuple(slice(index, index + 1) for index in output_index)
+                sink.write(selected, result.reshape((1,) * len(sink.shape)))
+            return output
+
+    operator = CudaMatrixOperator(dtype=dtype)
+    truth = torch.tensor([[-.3, .7, 1.1], [.2, -.15, .9]], dtype=dtype, device="cuda")
+    measurements = operator.project(truth)
+    operator.calls.clear()
+    output = torch.empty(operator.volume_shape, dtype=dtype, device="cuda")
+    boundary = []
+
+    def callback(iteration, residual, volume):
+        assert volume is output and volume.is_cuda
+        if iteration == 2:
+            boundary.append(len(operator.calls))
+            volume.data = volume.cpu()
+            assert volume.device.type == "cpu"
+
+    with pytest.raises(ValueError, match=READ_ONLY):
+        diffct.cgls_into(operator, measurements, output, 4, workspace=tmp_path / "workspace",
+                         block_elements=3, rtol=0., atol=0., callback=callback)
+    assert boundary == [5] and len(operator.calls) == 5, "device change crossed the next numerical call"
 
 
 @pytest.mark.parametrize("kind", ("denominator-zero", "initial-zero-gamma", "terminal-zero-gamma"))
