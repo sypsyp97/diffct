@@ -5,15 +5,6 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- Native 2D parallel projection and backprojection with scalar voxel spacing
-  now normalize ray directions, matching per-axis spacing and the portable
-  backend for non-unit directions. Ray-direction gradients have no radial
-  component, consistently differentiating only the direction of each ray.
-
 ## [2.5.2] - 2026-11-15
 
 ### Added
