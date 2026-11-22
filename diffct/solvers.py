@@ -80,6 +80,16 @@ def _status(residual, threshold, stopped=False):
     return False, "iteration limit reached"
 
 
+def _cgls_status(residual, threshold, stopped, solved, breakdown):
+    converged, reason = _status(residual, threshold, stopped)
+    if solved and not converged:
+        # A zero normal-equation residual means the iterate solves least squares.
+        return True, "normal equations satisfied"
+    if breakdown and not converged:
+        reason = "normal equation breakdown"
+    return converged, reason
+
+
 @torch.no_grad()
 def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
          callback=None, checkpoint_directory=None, resume=None):
@@ -108,10 +118,10 @@ def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
         states = dict(x=x, s=adjoint, p=adjoint.clone(), r=residual, q=torch.zeros_like(data))
         gamma = squared_norm(operator, adjoint, "volume")
     threshold = atol + rtol * norm
-    stopped, breakdown = False, False
+    stopped, solved, breakdown = False, False, False
     while completed < iterations and history[-1] > threshold:
         if gamma == 0:
-            breakdown = True
+            solved = True
             break
         states["q"] = operator.project(states["p"])
         denominator = squared_norm(operator, states["q"], "rays")
@@ -138,9 +148,7 @@ def cgls(operator, measurements, iterations=30, *, x0=None, rtol=1e-6, atol=0.,
             stopped = callback_stop(operator, callback, completed, history[-1], states["x"], readonly=True)
         if stopped:
             break
-    converged, reason = _status(history[-1], threshold, stopped)
-    if breakdown and not converged:
-        reason = "normal equation breakdown"
+    converged, reason = _cgls_status(history[-1], threshold, stopped, solved, breakdown)
     return SolverResult(states["x"].detach(), completed, history, converged, reason)
 
 
@@ -308,10 +316,10 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
             fill_blocks(states["s"], block_elements)
             fill_blocks(states["p"], block_elements)
         gamma = squared_norm(operator, states["s"], "volume", block_elements)
-    threshold, stopped, breakdown = atol + rtol * norm, False, False
+    threshold, stopped, solved, breakdown = atol + rtol * norm, False, False, False
     while completed < iterations and history[-1] > threshold:
         if gamma == 0:
-            breakdown = True
+            solved = True
             break
         operator.project_into(states["p"], states["q"])
         denominator = squared_norm(operator, states["q"], "rays", block_elements)
@@ -338,7 +346,5 @@ def cgls_into(operator, measurements, output, iterations, *, workspace,
             break
     for store in states.values():
         store.flush()
-    converged, reason = _status(history[-1], threshold, stopped)
-    if breakdown and not converged:
-        reason = "normal equation breakdown"
+    converged, reason = _cgls_status(history[-1], threshold, stopped, solved, breakdown)
     return SolverResult(output, completed, history, converged, reason)

@@ -214,6 +214,74 @@ def test_cgls_convergence_during_iteration_is_residual_based():
     assert result.residual_history[-2] > threshold
 
 
+def _stationary_problem(kind):
+    """Measurements whose initial or first-step residual is orthogonal to the range."""
+    operator = _MatrixOperator()
+    measurements = torch.zeros(operator.projection_shape)
+    if kind == "initial":
+        operator.matrix[-1].zero_()
+        measurements[-1, -1] = 2.
+        return operator, measurements, 0, torch.zeros(operator.volume_shape)
+    operator.matrix.zero_()
+    operator.matrix[:6].copy_(torch.eye(6))
+    measurements.view(-1)[:6] = torch.arange(1., 7.)
+    measurements[-1, -1] = 2.
+    return operator, measurements, 1, torch.arange(1., 7.).reshape(operator.volume_shape)
+
+
+def _run_cgls(name, operator, measurements, iterations, tmp_path, label, **options):
+    if name == "cgls":
+        return _api(name)(operator, measurements, iterations, rtol=0., atol=0., **options)
+    output = diffct.NpyStore.create(tmp_path / f"{label}.npy", operator.volume_shape)
+    result = _api(name)(operator, measurements, output, iterations, workspace=tmp_path / f"{label}-work",
+                        block_elements=5, rtol=0., atol=0., **options)
+    assert result.volume is output
+    return result
+
+
+def _volume(result):
+    if isinstance(result.volume, torch.Tensor):
+        return result.volume
+    return torch.from_numpy(np.load(result.volume.path).copy())
+
+
+@pytest.mark.parametrize("name", ["cgls", "cgls_into"])
+@pytest.mark.parametrize("kind", ["initial", "after-step"])
+def test_cgls_zero_normal_equation_residual_is_converged_least_squares_solution(name, kind, tmp_path):
+    operator, measurements, completed, expected = _stationary_problem(kind)
+    assert torch.count_nonzero(operator.backproject(measurements - operator.project(expected))) == 0
+    assert bool(torch.count_nonzero(operator.backproject(measurements))) == bool(completed)
+    result = _run_cgls(name, operator, measurements, 4, tmp_path, "solve",
+                       checkpoint_directory=tmp_path / "checkpoint")
+    _result(result, iterations=completed)
+    assert result.converged and result.reason == "normal equations satisfied"
+    torch.testing.assert_close(_volume(result), expected, rtol=0, atol=0)
+    assert result.residual_history[-1] == pytest.approx(2.)
+    if completed:
+        resumed = _run_cgls(name, operator, measurements, 4, tmp_path, "resume",
+                            resume=_checkpoint(tmp_path / "checkpoint", completed))
+        _result(resumed, iterations=completed)
+        assert resumed.converged and resumed.reason == result.reason
+        assert resumed.residual_history == result.residual_history
+        torch.testing.assert_close(_volume(resumed), expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("name", ["cgls", "cgls_into"])
+def test_cgls_measurements_only_in_unhit_detector_bin_converge_at_zero_volume(name, tmp_path):
+    angles = torch.linspace(0, math.pi, 4, dtype=torch.float64)[:-1]
+    radial = torch.stack((angles.cos(), angles.sin()), dim=-1)
+    tangent = torch.stack((-angles.sin(), angles.cos()), dim=-1)
+    projector = diffct.Projector((radial, torch.zeros_like(radial), tangent), (4, 4), (16,),
+                                 beam="parallel", backend="torch")
+    measurements = torch.zeros(projector.projection_shape)
+    measurements[:, 0] = 1.
+    assert torch.count_nonzero(projector.backproject(measurements)) == 0
+    result = _run_cgls(name, projector, measurements, 5, tmp_path, "unhit")
+    _result(result, iterations=0)
+    assert result.converged and result.reason == "normal equations satisfied"
+    torch.testing.assert_close(_volume(result), torch.zeros(4, 4), rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("name", ALGORITHMS)
 @pytest.mark.parametrize("option", [dict(iterations=-1), dict(iterations=True), dict(iterations=1.5),
                                   dict(rtol=-1), dict(rtol=float("nan")), dict(atol=-1),
