@@ -5,18 +5,6 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- `cgls` and `cgls_into` report `converged=True` with reason
-  `"normal equations satisfied"` when the normal-equation residual `Aᵀr` is
-  exactly zero, for example when the measurements are nonzero only in detector
-  bins that no ray through the volume reaches. The iterate is then already a
-  least-squares solution. Before, these runs returned `converged=False` with
-  reason `"normal equation breakdown"`. That reason now applies only when
-  `Aᵀr` is nonzero and the search direction projects to zero.
-
 ## [2.5.2] - 2026-11-15
 
 ### Added
