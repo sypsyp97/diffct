@@ -107,7 +107,13 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     handles their redundancy at the sinogram-filtering stage. Leave
     ``redundant_full_scan=True`` for automatic fan/cone scan classification.
     Setting it to ``False`` explicitly disables the full-turn ``1/2`` factor.
-    Parker and angular quadrature share the same periodic-scan decision.
+
+    Angles are in radians and weights are returned in input order. For a
+    short scan wrapped modulo ``2*pi``, the gap outside the acquisition must
+    be clearly more than twice every other gap. If the sorted range looks
+    like a full turn, that isolated gap marks the scan boundary instead.
+    A full turn with a similarly large missing sector is ambiguous from
+    angles alone. Pass continuous (unwrapped) angles to ``parker_weights``.
     FP16 and BF16 angles are promoted to FP32; FP64 angles retain their precision.
     """
     if angles.dtype not in (torch.float32, torch.float64):
@@ -132,6 +138,19 @@ def angular_integration_weights(angles, redundant_full_scan=True):
     median_step = torch.median(diffs)
     span = angles_sorted[-1] - angles_sorted[0]
     period = _angular_scan_period(span, median_step)
+
+    if period == 2.0 * math.pi and n > 2:
+        turn = angles.new_tensor(period)
+        closure = turn - span
+        gaps, indices = diffs.topk(2)
+        other_gap = torch.maximum(gaps[1], closure)
+        # Keep endpoint-included turns and turns with a single missing view periodic.
+        if (closure > 0) & (gaps[0] > 2.0 * other_gap + 1e-4):
+            cut = int(indices[0].item())
+            diffs = torch.cat((diffs[cut + 1:], closure[None], diffs[:cut]))
+            sort_idx = sort_idx.roll(-cut - 1)
+            span = turn - gaps[0]
+            period = _angular_scan_period(span, torch.median(diffs))
 
     w = torch.zeros(n, device=device, dtype=angles.dtype)
     if period is not None:
@@ -231,7 +250,7 @@ def parker_weights(angles, num_detectors, detector_spacing, sdd, detector_offset
     span = angles_sorted[-1] - angles_sorted[0]
     median_step = torch.median(angles_sorted[1:] - angles_sorted[:-1])
     # Full-scan detection depends on acquired angles, not detector fan width.
-    # Use exactly the quadrature's classification, including its tolerance.
+    # Use the same periodic-scan tolerance as angular quadrature.
     if _angular_scan_period(span, median_step) == 2.0 * math.pi:
         # Already a full scan — no Parker needed.
         return torch.ones((n_ang, num_detectors), device=device, dtype=angles.dtype)

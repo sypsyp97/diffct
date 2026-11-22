@@ -79,6 +79,33 @@ def test_angular_integration_weights_open_short_scan_uses_trapezoid():
     assert abs(w.sum().item() - 0.75 * math.pi) < 1e-6
 
 
+@pytest.mark.parametrize("wrap_origin", [0.0, -math.pi])
+@pytest.mark.parametrize("redundant_full_scan", [True, False])
+def test_angular_integration_weights_wrapped_short_scan(wrap_origin, redundant_full_scan):
+    n = 200
+    span = 1.3 * math.pi
+    angles = torch.linspace(0.0, span, n, dtype=torch.float64)
+    wrapped = ((angles + 1.5 * math.pi) % (2.0 * math.pi)) + wrap_origin
+    expected = torch.full_like(angles, span / (n - 1))
+    expected[[0, -1]] *= 0.5
+    wrapped, order = wrapped.sort()
+    actual = angular_integration_weights(wrapped, redundant_full_scan=redundant_full_scan)
+    assert actual.sum().item() == pytest.approx(span)
+    torch.testing.assert_close(actual, expected[order], rtol=0, atol=1e-12)
+
+
+def test_angular_integration_weights_wrapped_full_scan_with_missing_view():
+    n = 200
+    step = 2.0 * math.pi / n
+    angles = torch.arange(n, dtype=torch.float64) * step + 1.5 * math.pi
+    angles = (angles % (2.0 * math.pi)).sort().values
+    angles = torch.cat((angles[:60], angles[61:]))
+    expected = torch.full_like(angles, step / 2)
+    expected[59:61] *= 1.5
+    actual = angular_integration_weights(angles)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=1e-12)
+
+
 def test_fan_cosine_weights_peak_at_origin():
     w = fan_cosine_weights(7, 1.0, 1000.0)
     # cos(gamma) = sdd / sqrt(sdd^2 + u^2): max at u closest to 0.

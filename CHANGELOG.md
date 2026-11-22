@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `angular_integration_weights` integrates wrapped short scans over their
+  acquired arc rather than treating them as full turns when the unacquired
+  gap is clearly larger than the view spacing.
+
 ## [2.5.2] - 2026-11-15
 
 ### Added
