@@ -10,6 +10,7 @@ import pytest
 import torch
 
 from diffct import (
+    Projector,
     ParallelProjectorFunction,
     FanProjectorFunction,
     ConeProjectorFunction,
@@ -58,7 +59,6 @@ def test_parallel_projector_gradcheck():
         atol=_GC_ATOL,
         rtol=_GC_RTOL,
         nondet_tol=_GC_NONDET,
-        check_undefined_grad=False,
     )
 
 
@@ -89,7 +89,6 @@ def test_fan_projector_gradcheck():
         atol=_GC_ATOL,
         rtol=_GC_RTOL,
         nondet_tol=_GC_NONDET,
-        check_undefined_grad=False,
     )
 
 
@@ -121,5 +120,43 @@ def test_cone_projector_gradcheck():
         atol=_GC_ATOL,
         rtol=_GC_RTOL,
         nondet_tol=_GC_NONDET,
-        check_undefined_grad=False,
     )
+
+
+@pytest.mark.parametrize("operation", ["project", "backproject"])
+def test_portable_projector_gradcheck(operation):
+    trajectory = circular_trajectory_2d_fan(
+        3, sid=6.0, sdd=9.0, device="cpu", dtype=torch.float64
+    )
+    projector = Projector(trajectory, (2, 2), (3,), beam="fan",
+                          backend="torch", precision="float64")
+    shape = (2, 2) if operation == "project" else (3, 3)
+    tensor = torch.randn(shape, dtype=torch.float64, requires_grad=True)
+
+    assert torch.autograd.gradcheck(getattr(projector, operation), (tensor,))
+
+
+@pytest.mark.parametrize("operation", ["project", "backproject"])
+def test_portable_undefined_cotangent_geometry_gradients(operation):
+    class UndefinedCotangent(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, tensor):
+            return tensor.clone()
+
+        @staticmethod
+        def backward(ctx, cotangent):
+            return None
+
+    trajectory = tuple(value.requires_grad_() for value in circular_trajectory_2d_fan(
+        3, sid=6.0, sdd=9.0, device="cpu", dtype=torch.float64
+    ))
+    projector = Projector(trajectory, (2, 2), (3,), beam="fan",
+                          backend="torch", precision="float64")
+    shape = (2, 2) if operation == "project" else (3, 3)
+    tensor = torch.randn(shape, dtype=torch.float64, requires_grad=True)
+    output = UndefinedCotangent.apply(getattr(projector, operation)(tensor))
+
+    gradients = torch.autograd.grad(output.sum(), (tensor, *trajectory))
+
+    for gradient in gradients:
+        torch.testing.assert_close(gradient, torch.zeros_like(gradient))

@@ -226,6 +226,7 @@ class _PortableApply(torch.autograd.Function):
         ctx.geometry_grad = _PortableApply._geometry_grad_needed(reference.owner, ctx.needs_input_grad[6:])
         ctx.save_for_backward(tensor if ctx.geometry_grad else None, *geometry)
         ctx.save_for_forward(tensor, *geometry)
+        ctx.cotangent_metadata = output.shape, output.dtype, output.device
         ctx.set_materialize_grads(False)
 
     @staticmethod
@@ -263,6 +264,9 @@ class _PortableApply(torch.autograd.Function):
     def _backward(ctx, cotangent):
         tensor, *geometry = ctx.saved_tensors
         owner = ctx.reference.owner
+        if cotangent is None:
+            shape, dtype, device = ctx.cotangent_metadata
+            cotangent = torch.zeros(shape, dtype=dtype, device=device)
         gradient = None
         # The adjoint is this Function again, so data second derivatives work.
         # Distributed ranks always run it to keep its collectives in lockstep.
