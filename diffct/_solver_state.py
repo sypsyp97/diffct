@@ -138,46 +138,58 @@ def fingerprint(value, elements):
     return digest.hexdigest()
 
 
-# Prime modulus: 16-bit chunk times residue products and block sums fit int64.
+# Prime modulus: 16-bit word products and reduced block sums fit int64.
 _MODULUS = 2 ** 31 - 1
 
 
-def _checksum(value, elements):
-    """Exact on-device guard for changes confined to at most two elements.
+def _logical_positions(shape, selected, device):
+    position = torch.zeros(tuple(part.stop - part.start for part in selected),
+                           dtype=torch.int64, device=device)
+    for axis, part in enumerate(selected):
+        index = torch.arange(part.start, part.stop, dtype=torch.int64, device=device)
+        index.mul_(math.prod(shape[axis + 1:]))
+        position.add_(index.view([-1 if other == axis else 1 for other in range(len(shape))]))
+    return position.reshape(-1)
 
-    Raw storage is read as 16-bit chunks c_m at row-major positions x_m = m + 1.
-    The syndromes sum(c_m * x_m**k) mod p, k = 1..2 * chunks per element, form
-    a Vandermonde system, so no nonzero change to two elements can cancel.
-    Every block term stays on its own device; nothing is read back here.
+
+def _block_syndromes(block, position, size):
+    integer = {1: torch.int8, 2: torch.int16, 4: torch.int32, 8: torch.int64}[block.element_size()]
+    flat = torch.empty(block.numel(), dtype=block.dtype, device=block.device)
+    flat.copy_(block.reshape(-1))
+    bits = flat.view(integer).to(dtype=torch.int64)
+    for shift in range(0, block.element_size() * 8, 16):
+        word = (bits >> shift).bitwise_and_(65535)
+        yield word.sum().remainder_(_MODULUS)
+        divisor = 1
+        while divisor <= size:
+            digit = position.div(divisor, rounding_mode="floor").remainder_(_MODULUS)
+            yield word.mul(digit).remainder_(_MODULUS).sum().remainder_(_MODULUS)
+            divisor *= _MODULUS
+
+
+def _checksum(value, elements):
+    """Separate distance-three codes for each 16-bit lane of logical elements.
+
+    Each lane has at most two changed words when at most two elements change.
+    Its sum and position-weighted sum cannot both cancel modulo the prime.
+    Position digits distinguish even iterates larger than the modulus. Only
+    scalar syndromes survive a block; no iterate snapshot or host copy is kept.
     """
     store = TensorStore(value.detach()) if isinstance(value, torch.Tensor) else value
-    shape = tuple(store.shape)
-    size = torch.empty((), dtype=store.dtype).element_size()
-    chunk = torch.int16 if size % 2 == 0 else torch.uint8
-    width = size // torch.empty((), dtype=chunk).element_size()
-    strides = [math.prod(shape[axis + 1:]) * width for axis in range(len(shape))]
-    total = None
-    # Positions, powers and products use three int64 chunk buffers of the block.
-    for selected in _fragments(shape, elements // (4 * width)):
-        block = store.read(selected).detach().contiguous()
-        device = block.device
-        chunks = block.reshape(-1).view(chunk)
-        position = torch.arange(1, width + 1, dtype=torch.int64, device=device).expand(
-            *block.shape, width).clone()
-        for axis, part in enumerate(selected):
-            index = torch.arange(part.start, part.stop, dtype=torch.int64, device=device)
-            position.add_(index.mul_(strides[axis]).view(
-                [-1 if other == axis else 1 for other in range(len(selected) + 1)]))
-        position = position.reshape(-1).remainder_(_MODULUS)
-        power, product, sums = position.clone(), torch.empty_like(position), []
-        for _ in range(2 * width):
-            torch.mul(power, chunks, out=product)
-            sums.append(product.remainder_(_MODULUS).sum())
-            power.mul_(position).remainder_(_MODULUS)
-        sums = torch.stack(sums)
-        total = sums if total is None else total.add_(sums)
-        total.remainder_(_MODULUS)
+    shape, total = tuple(store.shape), ()
+    for selected in _fragments(shape, min(elements, 1048576)):
+        block = store.read(selected).detach()
+        position = _logical_positions(shape, selected, block.device)
+        sums = _block_syndromes(block, position, math.prod(shape))
+        total = tuple((old + new).remainder_(_MODULUS) for old, new in zip(total, sums)) if total else tuple(sums)
     return total
+
+
+def _checksum_changed(before, after):
+    changed = False
+    for old, new in zip(before, after):
+        changed = (old != new) | changed
+    return bool(changed)
 
 
 def _layout(value):
@@ -384,7 +396,7 @@ def callback_stop(operator, callback, iteration, residual, volume, *, readonly=F
             stop = callback(iteration, residual, volume) is False
             # Layout is host metadata; the storage comparison reads back one flag.
             if readonly and (_layout(volume) != layout or (
-                    before is not None and bool((_checksum(volume, block_elements) != before).any()))):
+                    _checksum_changed(before, _checksum(volume, block_elements)))):
                 raise ValueError("CGLS callback iterate is read-only")
     except Exception as caught:
         error = caught
