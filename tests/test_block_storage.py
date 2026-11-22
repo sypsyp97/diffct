@@ -119,6 +119,8 @@ class _ObservedMemmap(np.memmap):
 @contextmanager
 def _numpy_blocks(maximum):
     """Observe actual NumPy allocations/mappings; always forward their operations."""
+    # Initialize PyTorch's NumPy bridge before counting allocations.
+    torch.from_numpy(np.empty(0, dtype=np.float32))
     with ExitStack() as patches:
         for name in ("empty", "zeros", "ones", "full", "array", "asarray", "ascontiguousarray", "copy", "fromfile"):
             original = getattr(np, name)

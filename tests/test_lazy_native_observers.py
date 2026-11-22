@@ -8,6 +8,11 @@ import sys
 import pytest
 import torch
 
+from tests._numba_cuda import import_numba_cuda
+
+
+_CUDASIM_MISSING_RUNTIME = 77
+
 
 def _run_cold(mode):
     repository = Path(__file__).resolve().parents[1]
@@ -17,10 +22,14 @@ def _run_cold(mode):
     env.pop("NUMBA_ENABLE_CUDASIM", None)
     if mode == "cudasim":
         env["NUMBA_ENABLE_CUDASIM"] = "1"
+    if mode == "cpu-observer":
+        env["CUDA_VISIBLE_DEVICES"] = ""
     child = subprocess.run(
         [sys.executable, str(Path(__file__).resolve()), mode],
         cwd=repository, env=env, capture_output=True, text=True, timeout=120,
     )
+    if mode == "cudasim" and child.returncode == _CUDASIM_MISSING_RUNTIME:
+        pytest.skip("This Numba CUDA build needs libcudart even in simulator mode")
     assert child.returncode == 0, child.stdout + child.stderr
 
 
@@ -53,23 +62,39 @@ def _cpu_worker():
     _assert_cuda_unloaded()
 
 
+def _cpu_observer_worker():
+    from tests.test_chunked_projector import _Launches
+
+    _assert_cuda_unloaded()
+    with _Launches() as launches:
+        _cpu_worker()
+    assert not launches.records
+    _assert_cuda_unloaded()
+
+
 def _cudasim_worker():
     import diffct.projectors as projectors
     from diffct import kernels
     from tests.test_chunked_projector import _Launches
 
+    if import_numba_cuda() is None:
+        return _CUDASIM_MISSING_RUNTIME
     assert "diffct.kernels.parallel_beam" not in sys.modules
     name = "_parallel_2d_forward_kernel"
     # Real simulator dispatchers exercise export/patch lifetimes without CUDA.
     # No substitute kernel or simulated public Projector execution is involved.
     with _Launches():
-        assert getattr(projectors, name) is getattr(kernels, name)
-    assert getattr(projectors, name) is getattr(kernels, name), \
-        "projector export retained the exited launch observer"
+        first = getattr(kernels, name)
+        assert getattr(projectors, name) is first
+    original = getattr(kernels, name)
+    assert original is not first
+    assert getattr(projectors, name) is original, "projector export retained the exited launch observer"
     with _Launches():
-        assert getattr(projectors, name) is getattr(kernels, name), \
+        second = getattr(kernels, name)
+        assert second is not first and second is not original
+        assert getattr(projectors, name) is second, \
             "projector export bypassed the second launch observer"
-    assert getattr(projectors, name) is getattr(kernels, name)
+    assert getattr(projectors, name) is getattr(kernels, name) is original
 
 
 def _native_worker(mode):
@@ -120,6 +145,10 @@ def test_cpu_import_and_projection_do_not_load_cuda():
     _run_cold("cpu")
 
 
+def test_cpu_projection_with_launch_observer_does_not_load_cuda():
+    _run_cold("cpu-observer")
+
+
 def test_cudasim_observer_exports_restore_and_accept_next_observer():
     _run_cold("cudasim")
 
@@ -136,7 +165,9 @@ if __name__ == "__main__":
     mode = sys.argv[1]
     if mode == "cpu":
         _cpu_worker()
+    elif mode == "cpu-observer":
+        _cpu_observer_worker()
     elif mode == "cudasim":
-        _cudasim_worker()
+        sys.exit(_cudasim_worker())
     else:
         _native_worker(mode)

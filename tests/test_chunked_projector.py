@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
+from numba.core import config
 from tests._multiprocessing import spawn
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_flatten
@@ -29,7 +30,8 @@ from tests.test_detector_surfaces import (
 
 
 BEAMS = ("parallel", "fan", "cone")
-cuda_required = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+_CUDA_AVAILABLE = torch.cuda.is_available()
+cuda_required = pytest.mark.skipif(not _CUDA_AVAILABLE, reason="CUDA is required")
 
 
 def _chunk(case):
@@ -418,6 +420,8 @@ class _Launches:
         self.patches = ExitStack()
 
     def __enter__(self):
+        if not config.ENABLE_CUDASIM and (not _CUDA_AVAILABLE or torch.version.hip is not None):
+            return self
         originals = {}
         for beam in BEAMS:
             prefix = "_cone_3d" if beam == "cone" else f"_{beam}_2d"

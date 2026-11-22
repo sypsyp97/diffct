@@ -283,6 +283,7 @@ jobs:
     timeout-minutes: 20
     env:
       DIFFCT_REQUIRE_CLEAN_CPU: "1"
+      OMP_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -294,14 +295,14 @@ jobs:
       - name: Install CPU PyTorch and the plain wheel
         run: |
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install "$(ls dist/*.whl)" pytest
+          python -m pip install "$(ls dist/*.whl)" pytest pytest-benchmark pytest-xdist matplotlib tifffile
           python -m pip check
-      - name: Exercise public CPU APIs outside the checkout
+      - name: Run the CPU suite outside the checkout
         run: |
           mkdir -p "$RUNNER_TEMP/clean-cpu-wheel-tests"
-          cp tests/test_cpu_install.py "$RUNNER_TEMP/clean-cpu-wheel-tests/"
+          cp -R tests examples pytest.ini "$RUNNER_TEMP/clean-cpu-wheel-tests/"
           cd "$RUNNER_TEMP/clean-cpu-wheel-tests"
-          python -m pytest -c /dev/null --rootdir=. --confcutdir=. test_cpu_install.py -q --strict-markers --junitxml=results.xml
+          python -m pytest tests -n 4 --dist loadfile -q -rs --strict-markers --junitxml=results.xml
       - uses: actions/upload-artifact@v7
         if: always()
         with:

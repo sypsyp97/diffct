@@ -14,7 +14,6 @@ from unittest import mock
 
 import pytest
 import torch
-from numba import cuda as numba_cuda
 
 import diffct.projectors as projectors_module
 
@@ -472,6 +471,8 @@ class _KernelLaunchProxy:
         stream_handle = int(getattr(handle, "value", handle))
 
         def launch(*args, **kwargs):
+            from numba import cuda as numba_cuda
+
             torch_device = torch.cuda.current_device()
             numba_device = numba_cuda.current_context().device.id
             n_views = int(args[self.views_arg])

@@ -5,7 +5,6 @@ import math
 import numpy as np
 import pytest
 import torch
-from numba import cuda
 
 from diffct import (
     angular_integration_weights, circular_trajectory_2d_fan, circular_trajectory_3d,
@@ -14,10 +13,15 @@ from diffct import (
     ramp_filter_1d,
 )
 from diffct.analytical import _analytical_geometry
-from diffct.kernels import (
-    _cone_3d_fdk_backproject_kernel, _fan_2d_fbp_backproject_kernel,
-    _parallel_2d_fbp_backproject_kernel,
-)
+from tests._numba_cuda import import_numba_cuda
+
+
+@pytest.fixture(scope="module")
+def numba_cuda():
+    cuda = import_numba_cuda()
+    if cuda is None:
+        pytest.skip("This Numba CUDA build needs libcudart to import kernel bodies")
+    return cuda
 
 
 @pytest.mark.parametrize("n_det", [0, 1])
@@ -43,11 +47,16 @@ def test_cone_analytical_rejects_too_few_bins_before_cuda(det_shape):
 
 
 @pytest.mark.parametrize("beam", ["parallel", "fan", "cone_u", "cone_v", "cone_uv"])
-def test_single_bin_kernel_body_never_reads_a_neighbor(monkeypatch, beam):
+def test_single_bin_kernel_body_never_reads_a_neighbor(monkeypatch, beam, numba_cuda):
+    from diffct.kernels import (
+        _cone_3d_fdk_backproject_kernel, _fan_2d_fbp_backproject_kernel,
+        _parallel_2d_fbp_backproject_kernel,
+    )
+
     # Execute the original kernel body with NumPy's bounds checking. Geometry
     # places the output voxel exactly on bin zero, so the old body reads bin 1.
     is_cone = beam.startswith("cone")
-    monkeypatch.setattr(cuda, "grid", lambda dim: (0,) * dim)
+    monkeypatch.setattr(numba_cuda, "grid", lambda dim: (0,) * dim)
     output = np.ones((1, 1, 1) if is_cone else (1, 1), dtype=np.float32)
     if not is_cone:
         sino = np.ones((1, 1), dtype=np.float32)
