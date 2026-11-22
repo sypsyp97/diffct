@@ -305,8 +305,9 @@ def _check_beam_source_bindings(name, tree):
             normalized = ", ".join(f"dir_{axis} * inv_len" for axis in axes)
             assert normalize(f"{direction} = {normalized}") in statements
         else:
-            assert "inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)" in per_axis
-            assert normalize("dir_x, dir_y = dir_x * inv_length, dir_y * inv_length") in per_axis
+            unconditional = {ast.unparse(node) for node in fn.body}
+            assert "inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)" in unconditional
+            assert normalize("dir_x, dir_y = dir_x * inv_length, dir_y * inv_length") in unconditional
         precision = "float64" if name == "parallel_beam" else "float32"
         if name == "cone_beam":
             offsets = ["u_offset = (np.float32(iu) + _HALF - np.float32(n_u) * _HALF) * du / _axis_pitch(voxel_spacing, 0)",

@@ -87,8 +87,8 @@ def _parallel_2d_forward_kernel(
     if _is_per_axis(voxel_spacing):
         dir_x /= _axis_pitch(voxel_spacing, 0)
         dir_y /= _axis_pitch(voxel_spacing, 1)
-        inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
-        dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
+    inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
+    dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector origin and orientation vector
@@ -268,8 +268,8 @@ def _parallel_2d_backward_kernel(
     if _is_per_axis(voxel_spacing):
         dir_x /= _axis_pitch(voxel_spacing, 0)
         dir_y /= _axis_pitch(voxel_spacing, 1)
-        inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
-        dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
+    inv_length = _ONE / math.sqrt(dir_x * dir_x + dir_y * dir_y)
+    dir_x, dir_y = dir_x * inv_length, dir_y * inv_length
 
     if d_detector_positions is None or d_detector_positions.size == 0:
         # Read detector origin and orientation vector
