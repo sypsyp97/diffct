@@ -12,11 +12,9 @@ continues. Every line of A's request is used as the stopping point once.
 A's stop has a time limit, so an implementation that makes B wait for A
 (a lock) passes instead of blocking the test.
 
-No CUDA device is needed, only an importable ``numba.cuda`` (on a host
-without the NVIDIA bindings: ``NUMBA_ENABLE_CUDASIM=1
-NUMBA_CUDA_USE_NVIDIA_BINDING=0``): the streams are plain objects with the two
-attributes the boundary reads, and ``numba.cuda.external_stream`` is replaced
-by a factory that records the stream pointer of each wrapper.
+No CUDA device or runtime is needed: the streams are plain objects with the
+two attributes the boundary reads, and the Numba CUDA boundary is replaced by
+a factory that records the stream pointer of each wrapper.
 """
 
 from itertools import count
@@ -26,19 +24,12 @@ import threading
 from types import SimpleNamespace
 from unittest import mock
 
+import numba
 import pytest
 import torch
 
 import diffct
 from diffct import utils
-
-# The boundary imports numba.cuda. A host without the NVIDIA bindings can
-# import it only as the simulator.
-cuda = pytest.importorskip(
-    "numba.cuda", exc_type=ImportError,
-    reason="numba.cuda is not importable: NVIDIA CUDA bindings or "
-           "NUMBA_ENABLE_CUDASIM=1 NUMBA_CUDA_USE_NVIDIA_BINDING=0 are required")
-
 
 PACKAGE = Path(diffct.__file__).absolute().parent
 JOIN_SECONDS = 60
@@ -62,7 +53,7 @@ def wrappers():
         created.append(_Wrapper(pointer))
         return created[-1]
 
-    with mock.patch.object(cuda, "external_stream", external_stream, create=True):
+    with mock.patch.object(numba, "cuda", SimpleNamespace(external_stream=external_stream), create=True):
         yield created
 
 
