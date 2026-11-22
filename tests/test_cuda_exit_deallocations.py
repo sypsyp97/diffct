@@ -4,11 +4,15 @@ import logging
 
 import pytest
 
+from tests._numba_cuda import import_numba_cuda
+
 
 @pytest.mark.parametrize("capacity", [None, 80 * 1024**3], ids=["unset", "80-GiB"])
 @pytest.mark.parametrize("with_size", [False, True], ids=["unsized", "sized"])
 def test_exit_hook_keeps_cuda_deallocations_pending(monkeypatch, capacity, with_size):
     try:
+        if import_numba_cuda() is None:
+            pytest.skip("This Numba CUDA build needs libcudart to import its deallocation queue")
         from numba.cuda.cudadrv import driver
         from numba.cuda.cudadrv.driver import _PendingDeallocs
     except ImportError as error:

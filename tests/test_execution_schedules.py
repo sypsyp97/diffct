@@ -243,12 +243,14 @@ def test_METADATA_foreign_output_device_budget_is_admitted_before_any_store_io_o
     with mock.patch.object(torch.cuda, "is_available", return_value=True), \
             mock.patch.object(torch.cuda, "device_count", return_value=2), \
             mock.patch.object(torch.cuda, "get_allocator_backend", return_value="native"), \
-            mock.patch.object(operators, "_memory_budget", side_effect=budget), _CopyTrace(case) as trace:
+            mock.patch.object(operators, "_memory_budget", side_effect=budget):
         projector = _scheduled_projector(case, devices=[0], volume_chunk_shape=(2, 3), view_chunk_size=1)
-        with _rejection("memory|budget|fit|minimum|limit"):
+        with mock.patch.object(projector, "_ray_job", side_effect=AssertionError("admission reached ray execution")) as ray_job, \
+                _rejection("memory|budget|fit|minimum|limit"):
             projector.project_into(source, output)
     assert 1 in inventory, "foreign output capacity was omitted from the minimum budget"
-    assert not calls and not trace.launches
+    assert not calls
+    ray_job.assert_not_called()
 
 
 @pytest.mark.cuda

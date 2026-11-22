@@ -106,7 +106,8 @@ def test_flat_and_explicit_geometry_stays_cpu_until_reusable_pipeline_upload(bea
             raise _ReachedUpload
 
     pipe = SimpleNamespace(device=torch.device("cuda:0"), empty=torch.empty, upload_tensor=upload)
-    with mock.patch.object(torch.cuda, "_lazy_init", side_effect=AssertionError("geometry initialized CUDA before upload")):
+    with mock.patch("numba.cuda", SimpleNamespace(), create=True), \
+            mock.patch.object(torch.cuda, "_lazy_init", side_effect=AssertionError("geometry initialized CUDA before upload")):
         for _ in range(2):
             with pytest.raises(_ReachedUpload):
                 projector._ray_job(None, None, geometry, center, slice(0, 2), view, selected,
