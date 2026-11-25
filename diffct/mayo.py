@@ -81,9 +81,7 @@ def discover_mayo_2020_cases(data_root):
     for patient_root in sorted(path for path in root.iterdir() if path.is_dir()):
         found = {key: None for key in ('projection_full_dose', 'projection_low_dose',
                                        'image_full_dose', 'image_low_dose')}
-        for folder in patient_root.rglob('*'):
-            if not folder.is_dir():
-                continue
+        for folder in sorted(path for path in patient_root.rglob('*') if path.is_dir()):
             name = folder.name.casefold()
             is_full = 'full' in name and 'dose' in name
             is_low = ('low' in name or 'quarter' in name) and 'dose' in name
@@ -250,12 +248,16 @@ def load_mayo_case(case, dose='full', *, reference_images=True):
 
 
 def attenuation_to_hu(values, water_attenuation):
-    """Convert linear attenuation coefficients to Hounsfield units.
+    """Convert absolute linear attenuation coefficients to Hounsfield units.
 
     Applies ``1000 * (mu - mu_w) / mu_w``, the calibration the TCIA datasets
     document through the WaterAttenuationCoefficient tag exposed as
-    ``ClinicalScan.water_attenuation``. Accepts NumPy arrays, PyTorch tensors
-    and scalars; the input type is preserved.
+    ``ClinicalScan.water_attenuation``. Use this for reconstructions in
+    absolute inverse-mm attenuation. If measurements were explicitly divided
+    by ``water_attenuation`` before reconstruction, the result is instead in
+    water units and its HU values are ``1000 * (reconstruction - 1)``.
+    Accepts NumPy arrays, PyTorch tensors and scalars; the input type is
+    preserved.
     """
     water = float(water_attenuation)
     if not np.isfinite(water) or water == 0.0:
@@ -263,11 +265,26 @@ def attenuation_to_hu(values, water_attenuation):
     return 1000.0 * (values - water) / water
 
 
+def hu_to_attenuation(values, water_attenuation):
+    """Convert Hounsfield units to absolute linear attenuation coefficients.
+
+    Applies ``mu = mu_w * (1 + HU / 1000)``, the inverse of
+    :func:`attenuation_to_hu`. The result is in the same inverse-length unit
+    as ``water_attenuation``. Accepts NumPy arrays, PyTorch tensors and
+    scalars; the input type is preserved.
+    """
+    water = float(water_attenuation)
+    if not np.isfinite(water) or water == 0.0:
+        raise ValueError('water_attenuation must be finite and non-zero')
+    return water + water * values / 1000.0
+
+
 __all__ = [
     'CTImageSeries',
     'Mayo2020Case',
     'MayoChallenge2016Case',
     'attenuation_to_hu',
+    'hu_to_attenuation',
     'discover_mayo_2020_cases',
     'discover_mayo_challenge_2016_cases',
     'load_mayo_case',

@@ -2,6 +2,7 @@
 
 import builtins
 import struct
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -97,6 +98,24 @@ def test_discover_mayo_2020(tmp_path):
         diffct.discover_mayo_2020_cases(tmp_path / 'missing')
 
 
+def test_discover_mayo_2020_first_match_is_sorted(tmp_path, monkeypatch):
+    patient = tmp_path / 'L506'
+    late = patient / 'zz full dose projection'
+    early = patient / 'aa full dose projection'
+    late.mkdir(parents=True)
+    early.mkdir(parents=True)
+
+    original_rglob = Path.rglob
+
+    def reverse_rglob(self, pattern):
+        yield from sorted(original_rglob(self, pattern), reverse=True)
+
+    monkeypatch.setattr(Path, 'rglob', reverse_rglob)
+    (case,) = diffct.discover_mayo_2020_cases(tmp_path)
+    assert case.projection_full_dose == early
+    assert case.projection_full_dose != late
+
+
 def test_discover_mayo_challenge_2016(tmp_path):
     proj_root = tmp_path / 'Training_Projection_Data' / 'P1'
     (proj_root / 'DICOM-CT-PD_FD').mkdir(parents=True)
@@ -189,3 +208,22 @@ def test_attenuation_to_hu():
     torch.testing.assert_close(t, torch.tensor([-1000., 0.]))
     with pytest.raises(ValueError, match='water_attenuation'):
         diffct.attenuation_to_hu(1., 0.)
+
+
+def test_hu_to_attenuation():
+    assert diffct.hu_to_attenuation(0., .0192) == pytest.approx(.0192)
+    assert diffct.hu_to_attenuation(-1000., .0192) == pytest.approx(0.)
+    assert diffct.hu_to_attenuation(1000., .0192) == pytest.approx(.0384)
+
+    hu = np.array([-1000., 0., 40., 1000.])
+    mu = diffct.hu_to_attenuation(hu, .0192)
+    assert isinstance(mu, np.ndarray)
+    np.testing.assert_allclose(mu, .0192 * (1 + hu / 1000.))
+    np.testing.assert_allclose(diffct.attenuation_to_hu(mu, .0192), hu)
+
+    hu_torch = torch.tensor([-1000., 0., 40., 1000.])
+    mu_torch = diffct.hu_to_attenuation(hu_torch, .0192)
+    assert isinstance(mu_torch, torch.Tensor)
+    torch.testing.assert_close(diffct.attenuation_to_hu(mu_torch, .0192), hu_torch)
+    with pytest.raises(ValueError, match='water_attenuation'):
+        diffct.hu_to_attenuation(1., 0.)

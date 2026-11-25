@@ -15,10 +15,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mayo 2016/2020 public dataset helpers in `diffct.mayo`: patient folder
   discovery, `load_mayo_case` returning `ClinicalScan` plus the vendor
   reference image series, `read_dicom_ct_images` with HU conversion, and
-  `attenuation_to_hu` water calibration.
+  `attenuation_to_hu`/`hu_to_attenuation` water calibration in both directions.
+- `probe_dicom_ct_pd` reads only CT-PD headers with `stop_before_pixels=True`
+  and returns file-count, detector, manufacturer and manufacturer-model
+  metadata for cohort selection. `ClinicalScan.manufacturer_model_name`
+  exposes the optional DICOM manufacturer model as a constant series property.
+
+### Changed
+
+- DICOM-CT-PD projection reading accepts `.ima` as well as `.dcm`, unwraps the
+  instance-sorted scan angles, and writes pixels into one preallocated array
+  rather than forming a second full `np.stack` copy.
 
 ### Fixed
 
+- Mayo 2020 folder discovery chooses deterministically when several candidate
+  folders match the same dose/kind classification.
 - The CPU test suite runs against a plain wheel without a CUDA runtime. CI
   checks the full suite both with and without the `cu12` extra.
 - The read-only check on a `cgls` callback no longer copies the whole iterate
