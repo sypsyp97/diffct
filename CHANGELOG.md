@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The CPU test suite runs against a plain wheel without a CUDA runtime. CI
   checks the full suite both with and without the `cu12` extra.
+- The read-only check on a `cgls` callback no longer copies the whole iterate
+  to the host. It compares a checksum computed on the iterate's own device and
+  reads back one flag, so a CUDA solve with a callback makes at most three
+  small readbacks per iteration.
 
 ## [2.5.2] - 2026-11-15
 
