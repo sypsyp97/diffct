@@ -3,8 +3,8 @@
 <p align="center">English · <a href="https://github.com/sypsyp97/diffct/blob/main/README.zh.md">简体中文</a></p>
 
 <p align="center">
-  <strong>Put real CT geometry inside a PyTorch training loop.</strong><br>
-  Differentiable CT projection and matched backprojection operators for arbitrary scanner trajectories — from CPU experiments to multi-node CUDA reconstruction.
+  <strong>Differentiable CT operators for measured scanner geometry.</strong><br>
+  Project volumes, backproject measurements, reconstruct images and calibrate scanner geometry in PyTorch, from CPU experiments to multi-node CUDA execution.
 </p>
 
 <p align="center">
@@ -21,49 +21,107 @@
 </p>
 
 <p align="center">
-  Video overview of trajectories, autograd, geometry gradients, multi-GPU execution and measured walnut reconstruction · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">MP4</a>.<br>
+  The video shows trajectories, autograd, geometry gradients, multi-GPU execution and reconstruction from measured walnut data · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">MP4</a>.<br>
   Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see <a href="https://github.com/sypsyp97/diffct/blob/main/examples/data/NOTICE">examples/data/NOTICE</a>.
 </p>
 
 <p align="center">
-  <a href="#why-diffct">Why diffct</a> ·
-  <a href="#install">Install</a> ·
-  <a href="#quickstart">Quickstart</a> ·
-  <a href="#results">Results</a> ·
-  <a href="#where-to-go-next">Next steps</a> ·
-  <strong><a href="https://sypsyp97.github.io/diffct/">Full documentation</a></strong>
+  <a href="#ct-operators">Operators</a> ·
+  <a href="#reconstruction-methods">Reconstruction</a> ·
+  <a href="#measured-helical-ct">Clinical CT</a> ·
+  <a href="#multi-gpu-scaling">Scaling</a> ·
+  <a href="#installation">Installation</a> ·
+  <strong><a href="https://sypsyp97.github.io/diffct/">Documentation</a></strong>
 </p>
 
-> **Version 2.x** uses per-view trajectories; code written for 1.x needs [migration](https://sypsyp97.github.io/diffct/migration.html). This README tracks the source checkout; features under [Unreleased](https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md#unreleased) require installation from source.
+> **Version 2.x** uses per-view trajectories. Code written for 1.x needs [migration](https://sypsyp97.github.io/diffct/migration.html). This README tracks the source checkout. Features under [Unreleased](https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md#unreleased) require installation from source.
 
-## Why diffct
+## CT operators
 
-diffct is for researchers building learned reconstruction, geometry calibration and inverse-problem methods in PyTorch. It is designed around one combination: arbitrary per-view acquisition geometry, autograd through the volume and geometry, and execution that scales to measured clinical scans.
+diffct gives PyTorch a matched pair of CT projection operators. The trajectory tensors specify a ray direction or source position for each view, together with the detector centre and axes. Circular, helical, saddle, calibrated and measured clinical trajectories use the same tensor format.
 
-- **PyTorch-native operators.** `project()` and `backproject()` form a matched adjoint pair for the cell-constant Siddon model. Both support autograd, Hessian-vector products and ordinary PyTorch training loops.
-- **Real scanner geometry.** Circular, helical, saddle, calibrated and measured clinical trajectories use the same per-view tensors; curved detectors and flying focal spot offsets can be represented without rebinning to a circular orbit.
-- **Reconstruction and learning.** `cgls`, `sirt`, `tv_reconstruction`, differentiable FBP/FDK and gradient-based optimization share the same operators.
-- **Large scans.** Automatic chunking, disk-backed state, multi-GPU and multi-node execution scale beyond one GPU's memory.
+To our knowledge, diffct is the only open-source GPU CT library with arbitrary per-view trajectories, autograd through the volume, first-order geometry gradients, and multi-node execution. We checked LEAP, TIGRE, ASTRA/tomosipo, DiffDRR and other libraries in October 2026.
+
+- **Matched adjoint.** `project()` and `backproject()` implement the cell-constant Siddon model as an exact adjoint pair. `project()` supports gradients with respect to the input volume, and `backproject()` with respect to the input measurements. Both support Hessian-vector products.
+- **Measured geometry.** Per-view source positions can include flying focal spot offsets. `ParameterizedSurface` describes cylindrical and other curved detectors without rebinning.
+- **Reconstruction.** `cgls`, `sirt`, `tv_reconstruction`, differentiable FBP/FDK and gradient-based optimization share the same operators. Differentiable FBP/FDK can learn filters and weights. The projection operators can supply volume gradients for optimization.
+- **Scale.** Automatic chunking, disk-backed state and distributed execution let diffct reconstruct scans that exceed one GPU's memory.
 
 Technical report: [diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories](https://doi.org/10.20944/preprints202605.1446.v2).
 
-## Install
+## Reconstruction methods
 
-diffct needs Python 3.10 or newer and a PyTorch build for your device. For the native NVIDIA CUDA path, install PyTorch first, check its CUDA version, then install the matching extra:
+The figure compares analytical and iterative reconstruction. The input is a noiseless 120-view fan-beam scan simulated from a clinical abdominal slice of Mayo liver case L213. The reference panel is the vendor image. The other panels show FBP and three iterative methods. SIRT uses 200 iterations, CGLS 30 iterations and TV-regularized reconstruction 300 iterations with weight 0.3.
+
+<p align="center">
+  <picture>
+    <source srcset="docs/source/_static/gallery/readme_methods.png">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_methods.png" width="100%" alt="Reference patient slice and FBP, SIRT, CGLS and TV reconstructions">
+  </picture>
+</p>
+
+<p align="center">
+  Patient image source: Mayo Clinic LDCT-and-Projection-data, liver case L213, CC BY 4.0.
+</p>
+
+## Measured helical CT
+
+diffct reconstructs the measured helical scan of liver case L213. The scan was acquired on a GE scanner and has 7,140 full-dose projection views on an 888 × 64 cylindrical detector. The sections show unregularized CGLS at iteration 15 with 1 mm voxels.
+
+<p align="center">
+  <picture>
+    <source srcset="docs/source/_static/gallery/readme_clinical.png">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_clinical.png" width="100%" alt="Axial, coronal and sagittal sections of measured clinical helical CT case L213">
+  </picture>
+</p>
+
+Patient data: McCollough et al., *Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*, Version 7, The Cancer Imaging Archive, 2020, [10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637). Dataset paper: Moen et al., Medical Physics, 2020, [10.1002/mp.14594](https://doi.org/10.1002/mp.14594). Chest and Liver subsets: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see [docs/assets/gallery/NOTICE](https://github.com/sypsyp97/diffct/blob/main/docs/assets/gallery/NOTICE).
+
+## Multi-GPU scaling
+
+The benchmark uses a 512³ FP32 volume, A100 64 GB GPUs, a circular cone beam, 360 views, a 1024 × 768 detector and pitch 1.25.
+
+| 512³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
+|---|---:|---:|---:|
+| Forward projection | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
+| Adjoint (backprojection) | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
+| CGLS iteration | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
+
+The [performance guide](https://sypsyp97.github.io/diffct/performance.html) gives the methodology, chart and raw samples. For more reconstructions, see the [examples](https://sypsyp97.github.io/diffct/examples.html).
+
+## Installation
+
+diffct needs Python 3.10 or newer. Install PyTorch for your device.
+
+For native NVIDIA CUDA execution, check the CUDA version of the PyTorch build:
 
 ```bash
-python -c "import torch; print(torch.version.cuda)"   # 12.x or 13.x
-
-# Pick the extra matching torch.version.cuda:
-pip install "diffct[cu12]"    # CUDA 12.x
-pip install "diffct[cu13]"    # CUDA 13.x
+python -c "import torch; print(torch.version.cuda)"
 ```
 
-For CPU, PyTorch ROCm or Apple Silicon (MPS), use plain `pip install diffct` and `backend="torch"`. Apple Silicon runs through the built-in MPS support; a community [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX) also exists. CUDA compatibility notes and source installation: [installation guide](https://sypsyp97.github.io/diffct/installation.html).
+When `torch.version.cuda` is 12.x, run:
+
+```bash
+pip install "diffct[cu12]"
+```
+
+When `torch.version.cuda` is 13.x, run:
+
+```bash
+pip install "diffct[cu13]"
+```
+
+For CPU, PyTorch ROCm or Apple Silicon, install diffct without an extra:
+
+```bash
+pip install diffct
+```
+
+Select `backend="torch"` for the portable backend. Apple Silicon uses the built-in MPS support. A community [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX) also exists. CUDA compatibility notes and source installation: [installation guide](https://sypsyp97.github.io/diffct/installation.html).
 
 ## Quickstart
 
-Project an image, apply the matched adjoint and compute a gradient:
+Create one projector. Project the image and backproject the measurements. Then compute the loss gradient with respect to the image estimate:
 
 ```python
 import torch
@@ -86,45 +144,13 @@ print(measurements.shape, estimate.grad.shape)
 
 Expected output: `torch.Size([180, 96]) torch.Size([64, 64])`. CPU and Apple Silicon variants are in the [quickstart guide](https://sypsyp97.github.io/diffct/quickstart.html).
 
-## Results
+## Documentation
 
-**Measured reconstruction, from bench phantom to clinical scan.** The walnut row compares FDK, SIRT, CGLS and TV on 240 measured circular cone-beam views. The clinical row shows liver case L213 of the Mayo Clinic 2020 low-dose CT dataset (LDCT-and-Projection-data), acquired on a GE scanner: full-dose projections, 7140 views, 888 × 64 cylindrical detector, reconstructed with 1 mm voxels using unregularized CGLS. The clinical slices show iteration 15; the residual curve runs to iteration 60. See the [measured walnut](https://sypsyp97.github.io/diffct/walnut_example.html), [clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) and [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) examples.
-
-<p align="center">
-  <picture>
-    <source srcset="docs/source/_static/gallery/readme_proof.png">
-    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_proof.png" width="100%" alt="Measured walnut FDK, SIRT, CGLS and TV reconstructions above clinical helical CT slices and CGLS residual for liver case L213">
-  </picture>
-</p>
-
-Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](https://github.com/sypsyp97/diffct/blob/main/examples/data/NOTICE). Patient data: McCollough et al., *Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*, Version 7, The Cancer Imaging Archive, 2020, [10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637); dataset paper: Moen et al., Medical Physics, 2020, [10.1002/mp.14594](https://doi.org/10.1002/mp.14594). Chest and Liver subsets: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see [docs/assets/gallery/NOTICE](https://github.com/sypsyp97/diffct/blob/main/docs/assets/gallery/NOTICE).
-
-**Multi-GPU scaling.** diffct 2.4.3, 512³ volume, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25:
-
-| 512³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
-|---|---:|---:|---:|
-| Forward projection | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
-| Adjoint (backprojection) | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
-| CGLS iteration | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
-
-Methodology, chart and raw samples: [performance guide](https://sypsyp97.github.io/diffct/performance.html). More reconstruction examples: [examples](https://sypsyp97.github.io/diffct/examples.html).
-
-## Where to go next
-
-| I want to… | Start here |
-|---|---|
-| Run the first projection and gradient | [Quickstart](https://sypsyp97.github.io/diffct/quickstart.html) |
-| Use a custom, calibrated or helical trajectory | [Trajectories and geometry](https://sypsyp97.github.io/diffct/trajectories.html) |
-| Load Mayo clinical projections and images | [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) |
-| Reconstruct measured clinical helical CT | [Clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) |
-| Scale across GPUs, nodes or limited memory | [Multi-GPU](https://sypsyp97.github.io/diffct/multi_gpu.html) · [Chunking](https://sypsyp97.github.io/diffct/chunking.html) |
-| Train filters, weights or a volume with autograd | [Differentiable FBP/FDK](https://sypsyp97.github.io/diffct/analytical_learning.html) · [Gradient reconstruction](https://sypsyp97.github.io/diffct/gradient_reconstruction.html) |
-| Look up execution contracts or API details | [Execution](https://sypsyp97.github.io/diffct/execution.html) · [API reference](https://sypsyp97.github.io/diffct/api.html) |
-| Browse every reconstruction example | [Examples](https://sypsyp97.github.io/diffct/examples.html) |
+[Quickstart](https://sypsyp97.github.io/diffct/quickstart.html) · [Trajectories and geometry](https://sypsyp97.github.io/diffct/trajectories.html) · [Clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) · [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) · [Multi-GPU](https://sypsyp97.github.io/diffct/multi_gpu.html) · [API reference](https://sypsyp97.github.io/diffct/api.html) · [Examples](https://sypsyp97.github.io/diffct/examples.html)
 
 ## Citation
 
-If you use diffct in your research, please cite both the software and the technical report. Machine-readable metadata is in [CITATION.cff](https://github.com/sypsyp97/diffct/blob/main/CITATION.cff).
+If you use diffct in your research, cite both the software and the technical report. Machine-readable metadata is in [CITATION.cff](https://github.com/sypsyp97/diffct/blob/main/CITATION.cff).
 
 <details>
 <summary>BibTeX</summary>

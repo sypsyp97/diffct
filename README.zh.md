@@ -3,8 +3,8 @@
 <p align="center"><a href="https://github.com/sypsyp97/diffct/blob/main/README.md">English</a> · 简体中文</p>
 
 <p align="center">
-  <strong>把真实 CT 扫描几何放进 PyTorch 训练循环。</strong><br>
-  diffct 提供可微 CT 投影和匹配反投影算子，支持任意扫描轨迹——从 CPU 实验到多节点 CUDA 重建。
+  <strong>面向实测扫描几何的可微 CT 算子。</strong><br>
+  diffct 在 PyTorch 中投影体数据、反投影测量数据、重建图像并标定扫描几何，从 CPU 实验扩展到多节点 CUDA 执行。
 </p>
 
 <p align="center">
@@ -21,49 +21,107 @@
 </p>
 
 <p align="center">
-  视频概览轨迹、自动求导、几何梯度、多卡执行和实测核桃重建 · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">MP4</a>。<br>
+  视频展示轨迹、自动求导、几何梯度、多卡执行和实测核桃重建 · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">MP4</a>。<br>
   核桃数据：Meaney 2022，Zenodo 6986012，CC BY 4.0，见 <a href="examples/data/NOTICE">examples/data/NOTICE</a>。
 </p>
 
 <p align="center">
-  <a href="#为什么使用-diffct">为什么使用 diffct</a> ·
+  <a href="#算子">算子</a> ·
+  <a href="#重建方法">重建方法</a> ·
+  <a href="#实测螺旋-ct">临床 CT</a> ·
+  <a href="#多卡扩展">多卡扩展</a> ·
   <a href="#安装">安装</a> ·
-  <a href="#快速上手">快速上手</a> ·
-  <a href="#结果">结果</a> ·
-  <a href="#下一步">下一步</a> ·
   <strong><a href="https://sypsyp97.github.io/diffct/">完整文档</a></strong>
 </p>
 
-> **2.x 版**使用逐视角轨迹；为 1.x 写的代码需要[迁移](https://sypsyp97.github.io/diffct/migration.html)（英文）。本 README 对应源码版本；[Unreleased](https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md#unreleased) 中列出的功能需要从源码安装。
+> **2.x 版**使用逐视角轨迹。为 1.x 写的代码需要[迁移](https://sypsyp97.github.io/diffct/migration.html)（英文）。本 README 对应源码版本；[Unreleased](https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md#unreleased) 中列出的功能需要从源码安装。
 
-## 为什么使用 diffct
+## 算子
 
-diffct 面向在 PyTorch 中构建学习型重建、几何标定和反问题方法的研究者。它的设计核心是同一套能力组合：任意逐视角采集几何、对体数据和几何的自动求导，以及能扩展到实测临床扫描的执行能力。
+diffct 为 PyTorch 提供一对匹配的 CT 投影算子。轨迹张量指定每个视角的射线方向或源位置，以及探测器中心和轴向。圆轨迹、螺旋、鞍形、标定轨迹和实测临床轨迹使用相同的张量格式。
 
-- **PyTorch 原生算子。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成匹配的伴随对；两者都支持自动求导、Hessian 向量积和常规 PyTorch 训练循环。
-- **真实扫描几何。** 圆轨迹、螺旋、鞍形、标定轨迹和实测临床轨迹使用同一套逐视角张量；柱面探测器和 flying focal spot 偏移无需重合并到圆轨迹。
-- **重建与学习。** `cgls`、`sirt`、`tv_reconstruction`、可微 FBP/FDK 和基于梯度的优化共享同一套算子。
-- **大体积扫描。** 自动分块、磁盘状态、多卡和多节点执行可超过单张 GPU 的显存限制。
+据我们所知，diffct 是唯一同时具备任意逐视角轨迹、体数据自动求导、一阶几何梯度和多节点执行的开源 GPU CT 库。我们于 2026 年 10 月核查了 LEAP、TIGRE、ASTRA/tomosipo、DiffDRR 等库。
+
+- **匹配的伴随。** `project()` 与 `backproject()` 对分片常数 Siddon 模型构成精确的伴随对。`project()` 对输入体数据求导，`backproject()` 对输入测量数据求导。两者都支持 Hessian 向量积。
+- **实测几何。** 逐视角源位置可包含 flying focal spot 偏移。`ParameterizedSurface` 可描述柱面等曲面探测器，无需重排。
+- **重建。** `cgls`、`sirt`、`tv_reconstruction`、可微 FBP/FDK 和基于梯度的优化共享同一套算子。可微 FBP/FDK 可学习滤波器和权重。投影算子可为优化提供体数据梯度。
+- **扩展。** 自动分块、磁盘状态和分布式执行让 diffct 重建超过单张 GPU 显存的扫描。
 
 技术报告：[diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories](https://doi.org/10.20944/preprints202605.1446.v2)。
 
+## 重建方法
+
+图中比较解析重建和迭代重建。模拟使用 Mayo 肝脏病例 L213 的腹部切片。模拟的扇形束投影含 120 个视角，无噪声。Reference 面板是厂商重建图像。其余面板为 FBP 和三种迭代方法。SIRT 迭代 200 次。CGLS 迭代 30 次。TV 正则化重建迭代 300 次，正则化权重为 0.3。
+
+<p align="center">
+  <picture>
+    <source srcset="docs/source/_static/gallery/readme_methods.png">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_methods.png" width="100%" alt="患者参考切片及 FBP、SIRT、CGLS、TV 重建">
+  </picture>
+</p>
+
+<p align="center">
+  患者图像来源：Mayo Clinic LDCT-and-Projection-data，肝脏病例 L213，CC BY 4.0。
+</p>
+
+## 实测螺旋 CT
+
+diffct 重建了肝脏病例 L213 的实测螺旋扫描。GE 扫描仪采集了 7,140 个视角的全剂量投影。柱面探测器的尺寸为 888 × 64。图中显示 1 mm 体素、无正则化 CGLS 第 15 次迭代的结果。
+
+<p align="center">
+  <picture>
+    <source srcset="docs/source/_static/gallery/readme_clinical.png">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_clinical.png" width="100%" alt="实测临床螺旋 CT 病例 L213 的轴位、冠状位和矢状位切片">
+  </picture>
+</p>
+
+患者数据：McCollough et al.，*Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*，Version 7，The Cancer Imaging Archive，2020，[10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637)。数据集论文：Moen et al.，Medical Physics，2020，[10.1002/mp.14594](https://doi.org/10.1002/mp.14594)。Chest 和 Liver 子集采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可，见 [docs/assets/gallery/NOTICE](docs/assets/gallery/NOTICE)。
+
+## 多卡扩展
+
+基准使用 512³ FP32 体数据、A100 64 GB GPU、圆形锥束、360 个视角、1024 × 768 探测器和 pitch 1.25。
+
+| 512³ 体数据 | 1 卡 | 4 卡，1 节点 | 8 卡，2 节点 |
+|---|---:|---:|---:|
+| 正投影 | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
+| 伴随（反投影） | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
+| CGLS 迭代 | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
+
+[性能指南](https://sypsyp97.github.io/diffct/performance.html)给出方法、图表和原始样本。更多重建见[示例](https://sypsyp97.github.io/diffct/examples.html)（均为英文）。
+
 ## 安装
 
-diffct 需要 Python 3.10 或更高版本，以及与设备匹配的 PyTorch。使用原生 NVIDIA CUDA 路径时，先安装 PyTorch，检查其 CUDA 版本，再安装对应 extra：
+diffct 需要 Python 3.10 或更高版本。先安装与设备匹配的 PyTorch。
+
+使用原生 NVIDIA CUDA 路径时，检查 PyTorch 构建所用的 CUDA 版本：
 
 ```bash
-python -c "import torch; print(torch.version.cuda)"   # 12.x or 13.x
-
-# Pick the extra matching torch.version.cuda:
-pip install "diffct[cu12]"    # CUDA 12.x
-pip install "diffct[cu13]"    # CUDA 13.x
+python -c "import torch; print(torch.version.cuda)"
 ```
 
-CPU、PyTorch ROCm 或 Apple Silicon（MPS）使用普通 `pip install diffct`，并选择 `backend="torch"`。Apple Silicon 通过内置 MPS 支持运行；Linda-Sophie Schneider 还有一个社区 [MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。CUDA 兼容性说明和源码安装见[安装指南](https://sypsyp97.github.io/diffct/installation.html)（英文）。
+当 `torch.version.cuda` 为 12.x 时，运行：
+
+```bash
+pip install "diffct[cu12]"
+```
+
+当 `torch.version.cuda` 为 13.x 时，运行：
+
+```bash
+pip install "diffct[cu13]"
+```
+
+CPU、PyTorch ROCm 或 Apple Silicon 安装不带 extra 的 diffct：
+
+```bash
+pip install diffct
+```
+
+可移植后端需选择 `backend="torch"`。Apple Silicon 通过内置 MPS 支持运行。Linda-Sophie Schneider 还有一个社区 [MLX 移植版](https://github.com/Linda-SophieSchneider/DiffCT-MLX)。CUDA 兼容性说明和源码安装见[安装指南](https://sypsyp97.github.io/diffct/installation.html)（英文）。
 
 ## 快速上手
 
-投影一幅图像，应用匹配伴随，并计算梯度：
+创建一个投影算子。投影图像并反投影测量数据。然后计算损失对图像估计值的梯度：
 
 ```python
 import torch
@@ -86,38 +144,9 @@ print(measurements.shape, estimate.grad.shape)
 
 预期输出：`torch.Size([180, 96]) torch.Size([64, 64])`。CPU 和 Apple Silicon 版本见[快速上手指南](https://sypsyp97.github.io/diffct/quickstart.html)（英文）。
 
-## 结果
+## 文档
 
-**从体模到临床扫描的实测重建。** 核桃一行比较了 240 个实测圆形锥束视角上的 FDK、SIRT、CGLS 和 TV。临床一行展示 Mayo Clinic 2020 低剂量 CT 数据集（LDCT-and-Projection-data）的肝脏病例 L213（GE 扫描仪）：全剂量投影，7140 个视角，888 × 64 柱面探测器；diffct 以 1 mm 体素、无正则化 CGLS 重建。临床切片显示第 15 次迭代，残差曲线持续到第 60 次。示例文档见 [实测核桃](https://sypsyp97.github.io/diffct/walnut_example.html)、[临床螺旋 CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) 与 [Mayo 公开数据集](https://sypsyp97.github.io/diffct/mayo_datasets_example.html)（英文）。
-
-<p align="center">
-  <img src="docs/source/_static/gallery/readme_proof.png" width="100%" alt="实测核桃的 FDK、SIRT、CGLS、TV 重建，以及肝脏病例 L213 的临床螺旋 CT 切片和 CGLS 残差曲线">
-</p>
-
-核桃数据：Meaney 2022，Zenodo 6986012，CC BY 4.0，见 [examples/data/NOTICE](examples/data/NOTICE)。患者数据：McCollough et al.，*Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*，Version 7，The Cancer Imaging Archive，2020，[10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637)；数据集论文：Moen et al.，Medical Physics，2020，[10.1002/mp.14594](https://doi.org/10.1002/mp.14594)。Chest 和 Liver 子集采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可，见 [docs/assets/gallery/NOTICE](docs/assets/gallery/NOTICE)。
-
-**多卡扩展。** diffct 2.4.3，512³ 体数据，FP32，A100 64 GB GPU；圆形锥束，360 个视角，1024×768 探测器，pitch 1.25：
-
-| 512³ 体数据 | 1 卡 | 4 卡，1 节点 | 8 卡，2 节点 |
-|---|---:|---:|---:|
-| 正投影 | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
-| 伴随（反投影） | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
-| CGLS 迭代 | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
-
-方法、图表和原始样本见[性能指南](https://sypsyp97.github.io/diffct/performance.html)（英文）；更多重建示例见[示例](https://sypsyp97.github.io/diffct/examples.html)（英文）。
-
-## 下一步
-
-| 我想…… | 入口 |
-|---|---|
-| 运行第一个投影和梯度 | [Quickstart](https://sypsyp97.github.io/diffct/quickstart.html)（英文） |
-| 使用自定义、标定或螺旋轨迹 | [Trajectories and geometry](https://sypsyp97.github.io/diffct/trajectories.html)（英文） |
-| 读取 Mayo 临床投影和图像 | [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html)（英文） |
-| 重建实测临床螺旋 CT | [Clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html)（英文） |
-| 扩展到多卡、多节点或有限内存 | [Multi-GPU](https://sypsyp97.github.io/diffct/multi_gpu.html) · [Chunking](https://sypsyp97.github.io/diffct/chunking.html)（英文） |
-| 用 autograd 训练滤波器、权重或体数据 | [Differentiable FBP/FDK](https://sypsyp97.github.io/diffct/analytical_learning.html) · [Gradient reconstruction](https://sypsyp97.github.io/diffct/gradient_reconstruction.html)（英文） |
-| 查询执行规则或 API 细节 | [Execution](https://sypsyp97.github.io/diffct/execution.html) · [API reference](https://sypsyp97.github.io/diffct/api.html)（英文） |
-| 浏览全部重建示例 | [Examples](https://sypsyp97.github.io/diffct/examples.html)（英文） |
+[快速上手](https://sypsyp97.github.io/diffct/quickstart.html) · [轨迹与几何](https://sypsyp97.github.io/diffct/trajectories.html) · [临床螺旋 CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) · [Mayo 公开数据集](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) · [多卡执行](https://sypsyp97.github.io/diffct/multi_gpu.html) · [API 参考](https://sypsyp97.github.io/diffct/api.html) · [示例](https://sypsyp97.github.io/diffct/examples.html)（均为英文）
 
 ## 引用
 

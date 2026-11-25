@@ -223,32 +223,57 @@ def walnut():
     save(fig, "iterative_cone.png", ["Axial", "Coronal"], axes)
 
 
-def readme_proof(data, iteration=15):
-    """Combined measured-data figure for the README landing page."""
-    measured = np.load(VIDEO / "walnut_measured.npz")
-    box = body_box(measured["fdk_axial"], .15)
+def readme_methods(data, case="fan120"):
+    """One-row reconstruction-method comparison for the README landing page."""
+    d = np.load(data / "patient_methods.npz")
+    truth = d["truth"]
+    active = truth > .9
+
+    def longest(indices):
+        groups = np.split(indices, np.flatnonzero(np.diff(indices) > 5) + 1)
+        selected = max(groups, key=len)
+        return selected[0], selected[-1]
+
+    row0, row1 = longest(np.flatnonzero(active.mean(1) > .1))
+    col0, col1 = longest(np.flatnonzero(active[row0:row1 + 1].mean(0) > .1))
+    pad = 10
+    box = (slice(max(row0 - pad, 0), row1 + pad), slice(max(col0 - pad, 0), col1 + pad))
+    names = [(truth, "Reference")]
+    names += [(d[f"{case}_{key}"], title) for key, title in (
+        ("fbp", "FBP"), ("sirt", "SIRT, 200 it"), ("cgls", "CGLS, 30 it"), ("tv", "TV, 300 it"))]
+    fig, axes = figure(1, len(names))
+    for column, (array, title) in enumerate(names):
+        image(axes[0, column], array[box], SOFT_TISSUE, title)
+    save(fig, "readme_methods.png")
+
+
+def readme_clinical(data, iteration=15):
+    """Measured clinical helical CT sections for the README landing page."""
     d = np.load(data / "helical_L213.npz")
     axial = d[f"axial_{iteration}"][:, ::-1, ::-1]
-    coronal = d[f"coronal_{iteration}"][:, ::-1]
-    sagittal = d[f"sagittal_{iteration}"][:, ::-1]
-    coronal, sagittal = coronal[::-1], sagittal[::-1]
-    clinical_box = body_box(axial[1], 1.0, pad=20)
-    rows = np.where((coronal > .7).mean(1) > .05)[0]
-    zrange = slice(rows[0] + 30, rows[-1] - 30)
+    coronal = d[f"coronal_{iteration}"][:, ::-1][::-1]
+    sagittal = d[f"sagittal_{iteration}"][:, ::-1][::-1]
 
-    fig, axes = figure(2, 4, height=4.0)
-    names = [("fdk", "FDK"), ("sirt", "SIRT, 200 it"), ("cgls", "CGLS, 20 it"), ("tv", "TV, 300 it")]
-    for column, (key, name) in enumerate(names):
-        image(axes[0, column], measured[f"{key}_axial"][box], UNIT, name)
-    image(axes[1, 0], axial[1][clinical_box], SOFT_TISSUE, f"Axial, CGLS {iteration} it")
-    image(axes[1, 1], coronal[zrange][:, clinical_box[1]], SOFT_TISSUE, "Coronal")
-    image(axes[1, 2], sagittal[zrange][:, clinical_box[0]], SOFT_TISSUE, "Sagittal")
-    ax = axes[1, 3]
-    curve_axes(ax, "CGLS residual", "iteration")
-    ax.semilogy(np.arange(len(d["residual"])), d["residual"], color=ACCENT, linewidth=1.3)
-    ax.axvline(iteration, color=MUTED, linewidth=.8, linestyle="--")
-    ax.set_box_aspect(1)
-    save(fig, "readme_proof.png", ["Walnut axial", "Clinical L213"], axes)
+    center = axial[1]
+    mask = center > 1.0
+    rows = np.where(mask.mean(1) > .1)[0]
+    cols = np.where(mask.mean(0) > .1)[0]
+    pad = 15
+    box = (slice(max(rows[0] - pad, 0), rows[-1] + pad), slice(max(cols[0] - pad, 0), cols[-1] + pad))
+    zrows = np.where((coronal > .7).mean(1) > .05)[0]
+    zrange = slice(zrows[0] + 30, zrows[-1] - 30)
+    panels = [
+        (center[box], "Axial"),
+        (coronal[zrange][:, box[1]], "Coronal"),
+        (sagittal[zrange][:, box[0]], "Sagittal"),
+    ]
+    ratios = [panel.shape[1] / panel.shape[0] for panel, _ in panels]
+    height = WIDTH / sum(ratios) + .38
+    fig, axes = plt.subplots(1, 3, figsize=(WIDTH, height), squeeze=False, facecolor=BACKGROUND,
+                             gridspec_kw={"width_ratios": ratios})
+    for column, (panel, title) in enumerate(panels):
+        image(axes[0, column], panel, SOFT_TISSUE, title)
+    save(fig, "readme_clinical.png")
 
 
 def main():
@@ -266,7 +291,8 @@ def main():
     curved(args.data)
     learning(args.data)
     walnut()
-    readme_proof(args.data)
+    readme_methods(args.data)
+    readme_clinical(args.data)
 
 
 if __name__ == "__main__":
