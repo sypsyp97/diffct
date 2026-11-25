@@ -32,6 +32,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dicom = ["pydicom"]
 # CUDA bindings for numba-cuda; pick the one that matches the CUDA version of your PyTorch build.
 cu12 = ["numba-cuda[cu12]"]
 cu13 = ["numba-cuda[cu13]"]

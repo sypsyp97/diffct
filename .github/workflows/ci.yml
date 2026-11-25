@@ -212,7 +212,7 @@ jobs:
       - name: Install wheel and CPU test dependencies
         run: |
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install "$(ls dist/*.whl)[cu12]" pytest pytest-benchmark pytest-xdist matplotlib tifffile
+          python -m pip install "$(ls dist/*.whl)[cu12,dicom]" pytest pytest-benchmark pytest-xdist matplotlib tifffile
           python -m pip check
       - name: Test outside the source checkout
         # One test process per vCPU. Multi-rank Gloo tests spawn more processes, so each
@@ -295,7 +295,7 @@ jobs:
       - name: Install CPU PyTorch and the plain wheel
         run: |
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install "$(ls dist/*.whl)" pytest pytest-benchmark pytest-xdist matplotlib tifffile
+          python -m pip install "$(ls dist/*.whl)[dicom]" pytest pytest-benchmark pytest-xdist matplotlib tifffile
           python -m pip check
       - name: Run the CPU suite outside the checkout
         run: |

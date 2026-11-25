@@ -22,6 +22,21 @@ autograd. Geometry gradients are rejected by analytical APIs; use `Projector`
 for calibration. See the [analytical learning guide](source/analytical_learning.rst)
 for custom stages, circular short scans and the slice-windowed helical approximation.
 
+## Clinical CT-PD data
+
+Install `diffct[dicom]`, then use `read_dicom_ct_pd(directory_or_files)` to obtain
+a frozen `ClinicalScan` with rescaled float32 projections, float64 per-view
+geometry and header water calibration. Sparse instance gaps are supported;
+duplicates and nonconstant detector geometry are rejected.
+`clinical_geometry(scan, flying_focal_spot=True, z_center=None,
+central_column=None, device="cpu", dtype=torch.float32)` returns
+`ClinicalGeometry(trajectory, detector_shape, detector_spacing, detector_surface)`.
+Pass these fields to `Projector`; source offsets and cylindrical stored-row
+orientation are applied without rebinning. Central elements/overrides are zero-based.
+Flat/spherical detectors raise `NotImplementedError`. This does not add curved
+detector support to analytical FBP/FDK or relax helical FDK's geometry restrictions.
+See [the clinical example](source/clinical_helical_example.rst).
+
 ## Custom or calibrated trajectories
 
 Use a generator for a standard scan, or pass your calibrated tensors directly.
@@ -450,4 +465,3 @@ check are in [docs/DISTRIBUTED.md](DISTRIBUTED.md).
 - Trajectory frame checks run at construction and on each call with live default frames or an override; surface positions are also
   checked on every call. Optimize angles and offsets, not raw axis vectors, so
   the geometry stays valid.
-

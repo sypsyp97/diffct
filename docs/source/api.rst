@@ -18,6 +18,21 @@ API Reference
    })();
    </script>
 
+Clinical CT-PD data
+-------------------
+
+.. currentmodule:: diffct
+
+.. autosummary::
+   :toctree: generated
+
+   ClinicalScan
+   ClinicalGeometry
+   read_dicom_ct_pd
+   clinical_geometry
+
+See :doc:`clinical_helical_example` for measured flying-focal-spot data.
+
 High-level Projector
 --------------------
 
