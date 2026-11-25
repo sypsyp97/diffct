@@ -259,7 +259,8 @@ def readme_methods(data, case="fan120"):
 def readme_clinical(data):
     """Measured helical reconstruction methods in axial, coronal and sagittal rows."""
     d = np.load(data / "helical_methods.npz")
-    methods = [("CGLS, 15 it", "cgls"), ("SIRT, 100 it", "sirt"), ("TV, 150 it", "tv")]
+    methods = [("Reference", "reference"), ("SIRT, 100 it", "sirt"), ("CGLS, 15 it", "cgls"),
+               ("TV, 1", "tvlow"), ("TV, 10", "tv")]
 
     def orient_axial(array):
         return np.asarray(array, dtype=np.float32)[::-1, ::-1]
@@ -288,7 +289,7 @@ def readme_clinical(data):
 
     left, right, column_gap, row_gap = .34, .04, .07, .07
     top, bottom = .30, .05
-    column_width = (WIDTH - left - right - column_gap * 2) / 3
+    column_width = (WIDTH - left - right - column_gap * (len(methods) - 1)) / len(methods)
     row_heights = [column_width * panels[0][1][row].shape[0] / panels[0][1][row].shape[1]
                    for row in range(3)]
     height = top + bottom + sum(row_heights) + row_gap * 2
