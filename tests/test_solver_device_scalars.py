@@ -294,6 +294,7 @@ def test_cgls_into_cuda_output_rejects_device_change_before_next_projection(dtyp
             return output
 
     operator = CudaMatrixOperator(dtype=dtype)
+    operator.dtype = dtype
     truth = torch.tensor([[-.3, .7, 1.1], [.2, -.15, .9]], dtype=dtype, device="cuda")
     measurements = operator.project(truth)
     operator.calls.clear()

@@ -52,19 +52,19 @@ def _iterate(dtype, layout="contiguous", shape=(3, 4), seed=0, device="cpu"):
     nan = ((1 << (width - 1 - mantissa)) - 1) << mantissa | 1 << (mantissa - 1)
     specials = [0, 1 << (width - 1), nan, nan | 1]
     values = specials + sorted(patterns - set(specials))[:count - len(specials)]
-    bits = torch.tensor([_signed(value, width) for value in values], dtype=integer)
+    bits = torch.tensor([_signed(value, width) for value in values], dtype=integer, device=device)
     if layout == "contiguous":
         base = bits.reshape(shape)
     elif layout == "transposed":
-        base = torch.empty(shape[::-1], dtype=integer).t()
+        base = bits.new_empty(shape[::-1]).t()
         base.copy_(bits.reshape(shape))
     elif layout == "strided":
-        base = torch.zeros((shape[0], 2 * shape[1]), dtype=integer)[:, ::2]
+        base = bits.new_zeros((shape[0], 2 * shape[1]))[:, ::2]
         base.copy_(bits.reshape(shape))
     else:
-        base = torch.zeros((shape[0] + 2, shape[1] + 3), dtype=integer)[1:-1, 2:-1]
+        base = bits.new_zeros((shape[0] + 2, shape[1] + 3))[1:-1, 2:-1]
         base.copy_(bits.reshape(shape))
-    volume = base.view(dtype).to(device)
+    volume = base.view(dtype)
     assert tuple(volume.shape) == tuple(shape)
     assert volume.is_contiguous() == (layout == "contiguous")
     return volume
