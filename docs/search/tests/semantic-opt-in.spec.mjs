@@ -34,7 +34,7 @@ async function expectKeywordOnly(ui, site, hub, workers) {
 
 async function expectSemantic(ui) {
   const lb = await ui.listbox.locator();
-  await expect(lb.getByText(/^(Semantic|Both)$/).first()).toBeVisible({ timeout: 30_000 });
+  await expect(lb.locator('.srch-tag').filter({ hasText: /^(Semantic|Both)$/ }).visible().first()).toBeVisible({ timeout: 30_000 });
 }
 
 for (const where of ['landing', 'dialog', 'page']) {
