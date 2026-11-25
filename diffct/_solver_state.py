@@ -138,6 +138,82 @@ def fingerprint(value, elements):
     return digest.hexdigest()
 
 
+# Prime modulus: 16-bit word products and reduced block sums fit int64.
+_MODULUS = 2 ** 31 - 1
+
+
+def _logical_positions(shape, selected, device):
+    position = torch.zeros(tuple(part.stop - part.start for part in selected),
+                           dtype=torch.int64, device=device)
+    for axis, part in enumerate(selected):
+        index = torch.arange(part.start, part.stop, dtype=torch.int64, device=device)
+        index.mul_(math.prod(shape[axis + 1:]))
+        position.add_(index.view([-1 if other == axis else 1 for other in range(len(shape))]))
+        del index
+    return position.reshape(-1)
+
+
+def _block_syndromes(block, position, size):
+    integer = {1: torch.int8, 2: torch.int16, 4: torch.int32, 8: torch.int64}[block.element_size()]
+    flat = torch.empty(block.numel(), dtype=block.dtype, device=block.device)
+    flat.copy_(block.reshape(-1))
+    bits = flat.view(integer).to(dtype=torch.int64)
+    del flat
+    for shift in range(0, block.element_size() * 8, 16):
+        word = (bits >> shift).bitwise_and_(65535)
+        yield word.sum().remainder_(_MODULUS)
+        divisor = 1
+        while divisor <= size:
+            digit = position.div(divisor, rounding_mode="floor").remainder_(_MODULUS)
+            yield digit.mul_(word).remainder_(_MODULUS).sum().remainder_(_MODULUS)
+            del digit
+            divisor *= _MODULUS
+        del word
+
+
+def _checksum_block_elements(shape, dtype, elements):
+    size, digits = math.prod(shape), 1
+    while size >= _MODULUS:
+        size //= _MODULUS
+        digits += 1
+    lanes = max(1, torch.empty((), dtype=dtype).element_size() // 2)
+    # Count all buffers conservatively as int64 slots: five block buffers plus
+    # before/old/new scalar syndromes and reduction scratch. Tiny budgets need
+    # an unavoidable constant workspace even with one-element blocks.
+    scalars = 3 * lanes * (1 + digits) + 4
+    return max(1, (elements - scalars) // 5)
+
+
+def _checksum(value, elements):
+    """Separate distance-three codes for each 16-bit lane of logical elements.
+
+    Each lane has at most two changed words when at most two elements change.
+    Its sum and position-weighted sum cannot both cancel modulo the prime.
+    Position digits distinguish even iterates larger than the modulus. Only
+    scalar syndromes survive a block; no iterate snapshot or host copy is kept.
+    """
+    store = TensorStore(value.detach()) if isinstance(value, torch.Tensor) else value
+    shape, total = tuple(store.shape), ()
+    for selected in _fragments(shape, _checksum_block_elements(shape, store.dtype, elements)):
+        block = store.read(selected).detach()
+        position = _logical_positions(shape, selected, block.device)
+        sums = _block_syndromes(block, position, math.prod(shape))
+        total = tuple((old + new).remainder_(_MODULUS) for old, new in zip(total, sums)) if total else tuple(sums)
+        del block, position, sums
+    return total
+
+
+def _checksum_changed(before, after):
+    changed = False
+    for old, new in zip(before, after):
+        changed = (old != new) | changed
+    return bool(changed)
+
+
+def _layout(value):
+    return getattr(value, "device", None), value.dtype, tuple(value.shape)
+
+
 def _effective_surface(operator, frames, elements):
     """Hash the actual physical pixel rays, without materializing a volume."""
     surface = getattr(operator, "detector_surface", None)
@@ -333,10 +409,12 @@ def callback_stop(operator, callback, iteration, residual, volume, *, readonly=F
     error, stop = None, False
     try:
         if callback is not None:
-            before = (fingerprint(volume, block_elements), getattr(volume, "device", None)) if readonly else None
+            if readonly:
+                layout, before = _layout(volume), _checksum(volume, block_elements)
             stop = callback(iteration, residual, volume) is False
-            if readonly and ((isinstance(volume, torch.Tensor) and not torch.is_floating_point(volume))
-                             or (fingerprint(volume, block_elements), getattr(volume, "device", None)) != before):
+            # Layout is host metadata; the storage comparison reads back one flag.
+            if readonly and (_layout(volume) != layout or (
+                    _checksum_changed(before, _checksum(volume, block_elements)))):
                 raise ValueError("CGLS callback iterate is read-only")
     except Exception as caught:
         error = caught
