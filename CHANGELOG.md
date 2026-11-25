@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `diffct[dicom]` reader for sparse DICOM-CT-PD projections and
   `clinical_geometry` for measured cylindrical detectors and flying focal
   spots on CPU or GPU. The clinical gallery uses the scan's water calibration.
+- Mayo 2016/2020 public dataset helpers in `diffct.mayo`: patient folder
+  discovery, `load_mayo_case` returning `ClinicalScan` plus the vendor
+  reference image series, `read_dicom_ct_images` with HU conversion, and
+  `attenuation_to_hu` water calibration.
 
 ### Fixed
 

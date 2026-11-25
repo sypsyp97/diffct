@@ -16,6 +16,9 @@ from .projectors import (
 
 from .operators import Projector
 from .clinical import ClinicalScan, ClinicalGeometry, read_dicom_ct_pd, clinical_geometry
+from .mayo import (CTImageSeries, Mayo2020Case, MayoChallenge2016Case, attenuation_to_hu,
+                   discover_mayo_2020_cases, discover_mayo_challenge_2016_cases,
+                   load_mayo_case, read_dicom_ct_images)
 from .storage import TensorStore, NpyStore
 from .surfaces import ParameterizedSurface
 from .reconstruction import (
@@ -73,6 +76,14 @@ __all__ = [
     'ClinicalGeometry',
     'read_dicom_ct_pd',
     'clinical_geometry',
+    'CTImageSeries',
+    'Mayo2020Case',
+    'MayoChallenge2016Case',
+    'attenuation_to_hu',
+    'discover_mayo_2020_cases',
+    'discover_mayo_challenge_2016_cases',
+    'load_mayo_case',
+    'read_dicom_ct_images',
     'TensorStore',
     'NpyStore',
     'ParameterizedSurface',

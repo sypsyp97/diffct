@@ -33,6 +33,23 @@ Clinical CT-PD data
 
 See :doc:`clinical_helical_example` for measured flying-focal-spot data.
 
+Mayo public datasets
+--------------------
+
+.. currentmodule:: diffct
+
+.. autosummary::
+   :toctree: generated
+
+   Mayo2020Case
+   MayoChallenge2016Case
+   CTImageSeries
+   discover_mayo_2020_cases
+   discover_mayo_challenge_2016_cases
+   load_mayo_case
+   read_dicom_ct_images
+   attenuation_to_hu
+
 High-level Projector
 --------------------
 
