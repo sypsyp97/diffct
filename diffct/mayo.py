@@ -158,7 +158,10 @@ def _require_pydicom():
 
 def _dicom_files(path):
     if isinstance(path, (str, Path)):
-        return sorted(p for p in Path(path).iterdir()
+        directory = Path(path)
+        if not directory.is_dir():
+            return []
+        return sorted(p for p in directory.iterdir()
                       if p.suffix.lower() in {'.dcm', '.ima'})
     return list(path)
 
