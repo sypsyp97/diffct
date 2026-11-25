@@ -66,12 +66,12 @@ diffct 为 PyTorch 提供一对匹配的 CT 投影算子。轨迹张量指定每
 
 ## 实测螺旋 CT
 
-diffct 重建了肝脏病例 L213 的实测螺旋扫描。GE 扫描仪采集了 7,140 个视角的全剂量投影。柱面探测器的尺寸为 888 × 64。图中显示 1 mm 体素、无正则化 CGLS 第 15 次迭代的结果。
+diffct 重建了肝脏病例 L213 的实测螺旋扫描。GE 扫描仪采集了 7,140 个视角的全剂量投影。柱面探测器的尺寸为 888 × 64。图中三行分别为轴位、冠状位和矢状位。CGLS 迭代 15 次，SIRT 迭代 100 次，TV 正则化重建迭代 150 次、权重 0.1，体素均为 1 mm。
 
 <p align="center">
   <picture>
     <source srcset="docs/source/_static/gallery/readme_clinical.png">
-    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_clinical.png" width="100%" alt="实测临床螺旋 CT 病例 L213 的轴位、冠状位和矢状位切片">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_clinical.png" width="100%" alt="实测螺旋 CT 病例 L213 的 CGLS、SIRT 和低权重 TV 重建">
   </picture>
 </p>
 

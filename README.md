@@ -66,12 +66,12 @@ The figure compares analytical and iterative reconstruction. The input is a nois
 
 ## Measured helical CT
 
-diffct reconstructs the measured helical scan of liver case L213. The scan was acquired on a GE scanner and has 7,140 full-dose projection views on an 888 × 64 cylindrical detector. The sections show unregularized CGLS at iteration 15 with 1 mm voxels.
+diffct reconstructs the measured helical scan of liver case L213. The scan was acquired on a GE scanner and has 7,140 full-dose projection views on an 888 × 64 cylindrical detector. The rows show axial, coronal and sagittal sections. CGLS uses 15 iterations, SIRT 100 iterations and TV-regularized reconstruction 150 iterations with weight 0.1, all with 1 mm voxels.
 
 <p align="center">
   <picture>
     <source srcset="docs/source/_static/gallery/readme_clinical.png">
-    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_clinical.png" width="100%" alt="Axial, coronal and sagittal sections of measured clinical helical CT case L213">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_clinical.png" width="100%" alt="Measured helical CT case L213 reconstructed with CGLS, SIRT and low-weight TV">
   </picture>
 </p>
 

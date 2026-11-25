@@ -256,33 +256,60 @@ def readme_methods(data, case="fan120"):
     save(fig, "readme_methods.png", trim_bottom=True)
 
 
-def readme_clinical(data, iteration=15):
-    """Measured clinical helical CT sections for the README landing page."""
-    d = np.load(data / "helical_L213.npz")
-    axial = d[f"axial_{iteration}"][:, ::-1, ::-1]
-    coronal = d[f"coronal_{iteration}"][:, ::-1][::-1]
-    sagittal = d[f"sagittal_{iteration}"][:, ::-1][::-1]
+def readme_clinical(data):
+    """Measured helical reconstruction methods in axial, coronal and sagittal rows."""
+    d = np.load(data / "helical_methods.npz")
+    methods = [("CGLS, 15 it", "cgls"), ("SIRT, 100 it", "sirt"), ("TV, 150 it", "tv")]
 
-    center = axial[1]
-    mask = center > 1.0
+    def orient_axial(array):
+        return np.asarray(array, dtype=np.float32)[::-1, ::-1]
+
+    def orient_plane(array):
+        return np.asarray(array, dtype=np.float32)[:, ::-1][::-1]
+
+    axial0 = orient_axial(d["cgls_axial"])
+    mask = axial0 > 1.0
     rows = np.where(mask.mean(1) > .1)[0]
     cols = np.where(mask.mean(0) > .1)[0]
-    pad = 15
-    box = (slice(max(rows[0] - pad, 0), rows[-1] + pad), slice(max(cols[0] - pad, 0), cols[-1] + pad))
-    zrows = np.where((coronal > .7).mean(1) > .05)[0]
-    zrange = slice(zrows[0] + 30, zrows[-1] - 30)
-    panels = [
-        (center[box], "Axial"),
-        (coronal[zrange][:, box[1]], "Coronal"),
-        (sagittal[zrange][:, box[0]], "Sagittal"),
-    ]
-    ratios = [panel.shape[1] / panel.shape[0] for panel, _ in panels]
-    height = WIDTH / sum(ratios) + .38
-    fig, axes = plt.subplots(1, 3, figsize=(WIDTH, height), squeeze=False, facecolor=BACKGROUND,
-                             gridspec_kw={"width_ratios": ratios})
-    for column, (panel, title) in enumerate(panels):
-        image(axes[0, column], panel, SOFT_TISSUE, title)
-    save(fig, "readme_clinical.png", trim_bottom=True)
+    pad = 10
+    axial_box = (slice(max(rows[0] - pad, 0), rows[-1] + pad),
+                 slice(max(cols[0] - pad, 0), cols[-1] + pad))
+    zrange = slice(100, 245)
+    coronal_box = (zrange, slice(95, 415))
+    sagittal_box = (zrange, slice(145, 390))
+    boxes = (axial_box, coronal_box, sagittal_box)
+    row_names = ("Axial", "Coronal", "Sagittal")
+    panels = []
+    for title, key in methods:
+        values = (orient_axial(d[f"{key}_axial"])[axial_box],
+                  orient_plane(d[f"{key}_coronal"])[coronal_box],
+                  orient_plane(d[f"{key}_sagittal"])[sagittal_box])
+        panels.append((title, values))
+
+    left, right, column_gap, row_gap = .34, .04, .07, .07
+    top, bottom = .30, .05
+    column_width = (WIDTH - left - right - column_gap * 2) / 3
+    row_heights = [column_width * panels[0][1][row].shape[0] / panels[0][1][row].shape[1]
+                   for row in range(3)]
+    height = top + bottom + sum(row_heights) + row_gap * 2
+    fig = plt.figure(figsize=(WIDTH, height), facecolor=BACKGROUND)
+    y = height - top
+    for row, (row_name, row_height) in enumerate(zip(row_names, row_heights)):
+        y -= row_height
+        fig.text(.012, (y + row_height / 2) / height, row_name, rotation=90,
+                 va="center", ha="center", color=MUTED, fontsize=8)
+        for column, (title, values) in enumerate(panels):
+            x = left + column * (column_width + column_gap)
+            ax = fig.add_axes((x / WIDTH, y / height, column_width / WIDTH, row_height / height))
+            image(ax, values[row], SOFT_TISSUE)
+            if row == 0:
+                fig.text((x + column_width / 2) / WIDTH, 1 - .16 / height, title,
+                         ha="center", va="center", color=INK, fontsize=8)
+        y -= row_gap
+    path = OUT / "readme_clinical.png"
+    fig.savefig(path, dpi=DPI, facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print("saved", "readme_clinical.png")
 
 
 def main():
