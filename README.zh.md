@@ -194,6 +194,14 @@ python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory 
 
 核桃数据：Meaney 2022，Zenodo 6986012，CC BY 4.0，见 [examples/data/NOTICE](examples/data/NOTICE)。
 
+**实测临床螺旋 CT。** Mayo Clinic 2020 低剂量 CT 数据集（LDCT-and-Projection-data）的肝脏病例 L213（GE 扫描仪）：全剂量投影，7140 个视角，888 × 64 柱面探测器；diffct 以 1 mm 体素、无正则化 CGLS 重建。轴向、冠状面和矢状面切片显示第 30 次迭代，残差曲线持续到第 60 次。示例文档见 [临床螺旋 CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) 与 [Mayo 公开数据集](https://sypsyp97.github.io/diffct/mayo_datasets_example.html)（英文）。
+
+<p align="center">
+  <img src="docs/source/_static/gallery/helical_L213.png?v=497749b" width="100%" alt="实测临床螺旋 CT：肝脏病例 L213 的 CGLS 轴向、冠状面、矢状面切片和残差曲线">
+</p>
+
+患者数据：McCollough et al.，*Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*，Version 7，The Cancer Imaging Archive，2020，[10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637)；数据集论文：Moen et al.，Medical Physics，2020，[10.1002/mp.14594](https://doi.org/10.1002/mp.14594)。Chest 和 Liver 子集采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可，见 [docs/assets/gallery/NOTICE](docs/assets/gallery/NOTICE)。
+
 ## 示例
 
 `quickstart.py`、`curved_detector.py`、`chunked_reconstruction.py`、`disk_reconstruction.py`、`benchmark_execution.py`、`benchmark_trajectory_admission.py`、`benchmark_surface_geometry.py`、`benchmark_gpu_overheads.py`、`analytical_reconstruction.py`、`learnable_reconstruction.py`、`helical_fdk.py`、`iterative_reconstruction.py`、`walnut_reconstruction.py`、`geometry_calibration.py`、`benchmark_projector.py`、`benchmark_scaling.py`、`plot_trajectory.py`，以及 Slurm 模板 `slurm/multi_node.sbatch`。启动方式和分布式损失规则见 [examples/README.md](examples/README.md)。
