@@ -36,7 +36,7 @@ test('real model: semantic results, then a reload with no second download', asyn
     await typeQuery(ui.input, 'how do I use a curved detector');
     await enableSemanticButton(ui.host).click();
     let lb = await ui.listbox.locator();
-    await expect(lb.getByText(/^(Semantic|Both)$/).first()).toBeVisible({ timeout: 25 * 60_000 });
+    await expect(lb.locator('.srch-tag').filter({ hasText: /^(Semantic|Both)$/ }).visible().first()).toBeVisible({ timeout: 25 * 60_000 });
     const first = downloads();
     const mark = requests.length;
 
@@ -44,7 +44,7 @@ test('real model: semantic results, then a reload with no second download', asyn
     ui = landingUI(page);
     await typeQuery(ui.input, '如何迭代重建?');
     lb = await ui.listbox.locator();
-    await expect(lb.getByText(/^(Semantic|Both)$/).first()).toBeVisible({ timeout: 25 * 60_000 });
+    await expect(lb.locator('.srch-tag').filter({ hasText: /^(Semantic|Both)$/ }).visible().first()).toBeVisible({ timeout: 25 * 60_000 });
     const again = downloads(mark);
 
     const evidence = { first, firstMegabytes: megabytes(first), again, againMegabytes: megabytes(again) };
