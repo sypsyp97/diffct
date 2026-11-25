@@ -3,8 +3,8 @@
 <p align="center">English · <a href="https://github.com/sypsyp97/diffct/blob/main/README.zh.md">简体中文</a></p>
 
 <p align="center">
-  Differentiable CT projectors: arbitrary trajectories, multi-GPU, multi-node, geometry gradients.<br>
-  Native NVIDIA CUDA kernels, plus a portable PyTorch backend for CPU, ROCm and Apple Silicon (MPS).
+  <strong>Put real CT geometry inside a PyTorch training loop.</strong><br>
+  Differentiable CT projection and matched backprojection operators for arbitrary scanner trajectories — from CPU experiments to multi-node CUDA reconstruction.
 </p>
 
 <p align="center">
@@ -13,191 +13,79 @@
   <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=docs&style=flat-square" alt="Documentation"></a>
   <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/ci.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
-  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/gradient_walnut.png?v=497749b" width="100%" alt="Gradient-based reconstruction of a measured walnut scan improving over optimization steps">
 </p>
 
 <p align="center">
-  <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">Intro video (MP4)</a> ·
-  <a href="https://www.preprints.org/manuscript/202605.1446/v2">Technical report</a> ·
-  <a href="https://doi.org/10.20944/preprints202605.1446.v2">DOI</a>
+  Gradient-based reconstruction of a measured walnut scan, optimized through the projector · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">overview video</a>.<br>
+  Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see <a href="https://github.com/sypsyp97/diffct/blob/main/examples/data/NOTICE">examples/data/NOTICE</a>.
 </p>
 
 <p align="center">
+  <a href="#why-diffct">Why diffct</a> ·
   <a href="#install">Install</a> ·
   <a href="#quickstart">Quickstart</a> ·
-  <a href="#why-diffct">Features</a> ·
-  <a href="#performance">Performance</a> ·
-  <a href="#examples">Examples</a> ·
-  <a href="#citation">Citation</a>
+  <a href="#results">Results</a> ·
+  <a href="#where-to-go-next">Next steps</a> ·
+  <strong><a href="https://sypsyp97.github.io/diffct/">Full documentation</a></strong>
 </p>
 
-> **Version 2.0** replaces the circular-orbit API of 1.x with per-view trajectories. Code written for 1.x needs changes; see the [migration notes](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md).
-> Apple Silicon runs through the built-in MPS support (`backend="torch"`); a community [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX) also exists.
-
-This README describes the source checkout. Features listed under [Unreleased](CHANGELOG.md#unreleased) require installation from source.
+> **Version 2.x** uses per-view trajectories; code written for 1.x needs [migration](https://sypsyp97.github.io/diffct/migration.html). This README tracks the source checkout; features under [Unreleased](https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md#unreleased) require installation from source.
 
 ## Why diffct
 
-To our knowledge, diffct is the only open-source GPU CT library that combines arbitrary per-view trajectories, autograd through the volume, first-order gradients through the acquisition geometry, and built-in multi-GPU and multi-node execution. We compared it with LEAP, TIGRE, ASTRA/tomosipo, DiffDRR and others in October 2026.
+diffct is for researchers building learned reconstruction, geometry calibration and inverse-problem methods in PyTorch. It is designed around one combination: arbitrary per-view acquisition geometry, autograd through the volume and geometry, and execution that scales to measured clinical scans.
 
-- **Arbitrary trajectories.** Each view has its own ray direction or source, detector centre and detector axes. Circular, helical, saddle, sinusoidal, random and calibrated scans use the same code. Trajectory tensors with `requires_grad=True` receive geometry gradients for calibration.
-- **Curved detectors.** `ParameterizedSurface` defines native arc, cylindrical or arbitrary pixels from global coordinates and explicit parameters, sampled in bounded view/pixel batches. Legacy `detector_surface(u, v)` callbacks remain available. Projection and matched backprojection support first-order surface gradients. See [the surface API](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#parameterized-detector-surfaces).
-- **Matched operators.** `project()` and `backproject()` form an exact adjoint pair for the cell-constant Siddon model. Both support PyTorch autograd, with volume/sinogram gradients and Hessian-vector products.
-- **Large volumes.** Automatic spatial, view and pixel blocks with bounded transfer buffers control working memory. `project_into`/`backproject_into` accept caller-owned tensor or disk stores; tensor autograd keeps complete data on its input device. See [chunked execution](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#chunked-execution).
-- **Multi-GPU and multi-node.** Use `devices=[0, 1, 2, 3]` in one process, or torchrun and NCCL across ranks. Views, space and hybrid partitions control replication of volumes and projections. Speedup depends on workload and communication costs.
-- **Precision and training.** Explicit native/PyTorch backends, FP32/FP64 modes, per-axis voxel spacing, leading batch/channel dimensions and data `torch.func` transforms. The portable path supports CPU, PyTorch CUDA/ROCm devices and Apple Silicon GPUs (MPS, `backend="torch"`); see [execution contracts](docs/EXECUTION.md).
-- **Solver API.** `cgls`, `sirt` and `tv_reconstruction` report residual history, tolerances and callbacks, with scan/data fingerprints and complete checkpoint state. `cgls_into` keeps state in bounded mapped blocks.
-- **Differentiable FBP and FDK.** `fbp`, `fdk` and approximate `helical_fdk` compose the public filters, weights and analytical backprojectors. Their backward kernels transpose the actual interpolation stencil; custom filters and weights can be learned. See the [analytical guide](docs/source/analytical_learning.rst).
+- **PyTorch-native operators.** `project()` and `backproject()` form a matched adjoint pair for the cell-constant Siddon model. Both support autograd, Hessian-vector products and ordinary PyTorch training loops.
+- **Real scanner geometry.** Circular, helical, saddle, calibrated and measured clinical trajectories use the same per-view tensors; curved detectors and flying focal spot offsets can be represented without rebinning to a circular orbit.
+- **Reconstruction and learning.** `cgls`, `sirt`, `tv_reconstruction`, differentiable FBP/FDK and gradient-based optimization share the same operators.
+- **Large scans.** Automatic chunking, disk-backed state, multi-GPU and multi-node execution scale beyond one GPU's memory.
 
-Capabilities, limits and isocenter rules: [docs/REFERENCE.md](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#capabilities-and-limits).
+Technical report: [diffct: Differentiable CT Operators from Circular Orbits to Arbitrary Trajectories](https://doi.org/10.20944/preprints202605.1446.v2).
 
 ## Install
 
-For the native path, install NVIDIA CUDA PyTorch first, then diffct with the matching CUDA major extra:
+diffct needs Python 3.10 or newer and a PyTorch build for your device. For the native NVIDIA CUDA path, install PyTorch first, check its CUDA version, then install the matching extra:
 
 ```bash
-python -c "import torch; print(torch.version.cuda)"    # 12.x or 13.x
-pip install "diffct[cu12]"    # PyTorch built for CUDA 12
-pip install "diffct[cu13]"    # PyTorch built for CUDA 13
+python -c "import torch; print(torch.version.cuda)"   # 12.x or 13.x
+
+# Pick the extra matching torch.version.cuda:
+pip install "diffct[cu12]"    # CUDA 12.x
+pip install "diffct[cu13]"    # CUDA 13.x
 ```
 
-The extra installs the CUDA compiler libraries Numba needs. For CPU, PyTorch ROCm or Apple Silicon (MPS) execution, install the appropriate PyTorch build and plain `pip install diffct`, then select `backend="torch"`. Importing diffct and using this backend require no CUDA runtime; Numba CUDA initializes when native execution is used. Plain installation also works for native execution when a compatible CUDA Toolkit is already present.
-
-From source, with the examples:
-
-```bash
-git clone https://github.com/sypsyp97/diffct.git
-cd diffct && pip install -e ".[cu12]"
-python examples/quickstart.py               # prints adjoint mismatch and gradients for each beam
-```
-
-<details>
-<summary>Notes on CUDA versions</summary>
-
-- Numba CUDA imports `numpy.row_stack`, which NumPy 2.5 removes. Keep
-  `numpy<2.5`.
-- Keep NVVM and NVJitLink compatible with the CUDA libraries that PyTorch
-  loads. A newer NVVM with an older NVJitLink fails when the kernels compile.
-- A tested CUDA 13 set:
-  `pip install "numpy<2.5" "numba-cuda[cu13]" "cuda-toolkit[cccl,cudart,nvrtc,nvvm]==13.0.2" "nvidia-nvjitlink<13.1"`.
-- A tested CUDA 12 set: PyTorch 2.10 (cu126) with `numba-cuda[cu12]` 0.30.4 on
-  NVIDIA driver 535.
-
-</details>
+For CPU, PyTorch ROCm or Apple Silicon (MPS), use plain `pip install diffct` and `backend="torch"`. Apple Silicon runs through the built-in MPS support; a community [MLX port by Linda-Sophie Schneider](https://github.com/Linda-SophieSchneider/DiffCT-MLX) also exists. CUDA compatibility notes and source installation: [installation guide](https://sypsyp97.github.io/diffct/installation.html).
 
 ## Quickstart
 
-Create the acquisition once. Then call `project()` and `backproject()`.
+Project an image, apply the matched adjoint and compute a gradient:
 
 ```python
 import torch
-from diffct import Projector, spiral_trajectory_3d
+from diffct import Projector, circular_trajectory_2d_parallel
 
-trajectory = spiral_trajectory_3d(360, sid=320.0, sdd=512.0, z_range=40.0, n_turns=1.0, device="cpu")
-A = Projector(trajectory, volume_shape=(128, 128, 128), detector_shape=(384, 256), detector_spacing=0.8)
+trajectory = circular_trajectory_2d_parallel(180, device="cpu")
+A = Projector(trajectory, (64, 64), 96, beam="parallel",
+              detector_spacing=1.0, voxel_spacing=1.0)
 
-volume = torch.rand(A.volume_shape, device="cuda")
-sinogram = A.project(volume)        # (360, 384, 256) line integrals
-adjoint = A.backproject(sinogram)   # matched adjoint A^T
+image = torch.zeros(A.volume_shape, device="cuda", dtype=torch.float32)
+image[20:44, 20:44] = 1.0
+measurements = A.project(image)        # (180, 96)
+adjoint = A.backproject(measurements)  # (64, 64), not an inverse
 
-x = torch.zeros_like(volume, requires_grad=True)
-loss = 0.5 * (A.project(x) - sinogram).square().sum()
-loss.backward()                     # x.grad = A^T (A x - y)
+estimate = torch.zeros_like(image, requires_grad=True)
+loss = 0.5 * (A.project(estimate) - measurements).square().sum()
+loss.backward()
+print(measurements.shape, estimate.grad.shape)
 ```
 
-**Custom or calibrated trajectories.** Pass calibrated tensors directly instead of a generator; no circular fit is needed. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#custom-or-calibrated-trajectories).
+Expected output: `torch.Size([180, 96]) torch.Size([64, 64])`. CPU and Apple Silicon variants are in the [quickstart guide](https://sypsyp97.github.io/diffct/quickstart.html).
 
-**Geometry gradients.** Reuse one projector with `A.project(volume, trajectory=current)` or `A.backproject(sinogram, trajectory=current)`. Circular helpers accept learnable angle tensors, and `transform_trajectory` applies differentiable rigid transforms. Omitting the override keeps the constructor trajectory. See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#geometry-gradients).
-
-**Per-axis voxel spacing.** Set `voxel_spacing=(dy, dx)` or `(dz, dy, dx)` in tensor axis order. Both backends support these pitches for projection, projection geometry gradients and FBP/FDK with fixed geometry.
-
-**3D parallel beams.** Use `circular_trajectory_3d_parallel(...)` and `beam="parallel3d"`. The native and PyTorch backends provide matched projection and backprojection on NVIDIA CUDA, CPU and other PyTorch devices.
-
-**Native volume layout.** For unbatched, flat-detector cone operations, set `native_volume_layout=True` to avoid volume layout copies. This applies to the native full-CUDA path on one compute device. Shapes stay `(D, H, W)`; the returned strides follow the kernel layout. The default is `False`. See [chunked execution](docs/REFERENCE.md#chunked-execution) for limits.
-
-**Several GPUs and nodes.** See [REFERENCE](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md#several-gpus-and-nodes) and [DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md).
-
-```python
-A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8, devices=[0, 1, 2, 3])
-```
-
-**Volumes larger than GPU memory.** Keep the arrays on CPU. The same calls use
-CUDA tiles automatically; CUDA inputs retain the full-volume path when its
-estimated working set fits. Explicit limits are optional:
-
-```python
-A = Projector(trajectory, (128, 128, 128), (384, 256), detector_spacing=0.8)
-volume = torch.ones(A.volume_shape, device="cpu", requires_grad=True)
-sinogram = A.project(volume)                 # CPU output, CUDA computation
-sinogram.square().mean().backward()          # CPU volume.grad
-# Optional: volume_chunk_shape=(32, 64, 64), view_chunk_size=16
-```
-
-Run `python examples/chunked_reconstruction.py` for CPU-backed CGLS and measured
-CUDA allocation. Chunking preserves the Siddon model, with float32 summation
-differences; smaller blocks can increase transfer and launch overhead. Full
-tensor arrays and iterative state still need enough host RAM. For disk-backed
-state and sharded checkpoints, run
-`python examples/disk_reconstruction.py --output disk-run`; for fixed rank-local
-volume slabs use `--partition space` under torchrun. Run
-`python examples/benchmark_execution.py` to compare schedules and copy payloads.
-
-## Performance
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_dark.png">
-    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/scaling_light.png" width="100%" alt="Time per forward, adjoint and CGLS iteration on 1, 4 and 8 GPUs, 512^3 volume">
-  </picture>
-</p>
-
-| 512³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
-|---|---:|---:|---:|
-| Forward projection | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
-| Adjoint (backprojection) | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
-| CGLS iteration | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
-
-FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25. Default memory settings, without an imposed allocator cap.
-
-Projection times are medians of seven samples after three warmups. CGLS uses three ten-iteration solves after a two-iteration warmup; the median includes initialization and is divided by ten. Timings use synchronized wall time and the slowest rank. Raw samples and configuration: [scaling.json](https://github.com/sypsyp97/diffct/blob/main/docs/assets/scaling.json).
-
-Run the same workload:
-
-```bash
-python examples/benchmark_scaling.py --output one.json
-torchrun --standalone --nproc-per-node=4 examples/benchmark_scaling.py --expected-nodes 1 --output four.json
-```
-
-## Gallery
-
-TV denotes TV-regularized iterative reconstruction; Adam is the optimizer. Figure labels distinguish the method from its optimizer.
-
-**Measured walnut.** 240 measured views, circular cone beam, 256³: FDK (Hann window), SIRT (200 iterations), CGLS (20), TV (300, weight 0.3); axial and coronal centre slices.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_measured.png?v=e0092c4" width="100%" alt="Measured walnut: FDK, SIRT, CGLS and TV reconstructions">
-</p>
-
-```bash
-python examples/walnut_reconstruction.py --figure out.png
-```
-
-**Simulated helical scan of the walnut.** The FDK walnut volume as ground truth, 720 views, 1% noise, 256³. PSNR: FDK 26.67 dB, CGLS (30 iterations) 34.13 dB, SIRT (200) 34.52 dB, TV (200, weight 1.0) 37.77 dB.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/walnut_helical.png?v=e0092c4" width="100%" alt="Simulated helical scan of the walnut: FDK, CGLS, SIRT and TV reconstructions">
-</p>
-
-```bash
-python examples/walnut_reconstruction.py --algorithms --save-volume walnut256.npy
-python examples/iterative_reconstruction.py --size 256 --views 720 --trajectory helical --noise 0.01 --phantom walnut256.npy --figure out.png
-```
-
-Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](https://github.com/sypsyp97/diffct/blob/main/examples/data/NOTICE).
+## Results
 
 **Measured clinical helical CT.** Liver case L213 of the Mayo Clinic 2020 low-dose CT dataset (LDCT-and-Projection-data), acquired on a GE scanner: full-dose projections, 7140 views, 888 × 64 cylindrical detector, reconstructed with 1 mm voxels using unregularized CGLS. The axial, coronal and sagittal slices show iteration 30; the residual curve runs to iteration 60. See the [clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) and [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) examples.
 
@@ -207,29 +95,46 @@ Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](
 
 Patient data: McCollough et al., *Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*, Version 7, The Cancer Imaging Archive, 2020, [10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637); dataset paper: Moen et al., Medical Physics, 2020, [10.1002/mp.14594](https://doi.org/10.1002/mp.14594). Chest and Liver subsets: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see [docs/assets/gallery/NOTICE](https://github.com/sypsyp97/diffct/blob/main/docs/assets/gallery/NOTICE).
 
-## Examples
+**Multi-GPU scaling.** diffct 2.4.3, 512³ volume, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25:
 
-`quickstart.py`, `curved_detector.py`, `chunked_reconstruction.py`, `disk_reconstruction.py`, `benchmark_execution.py`, `benchmark_trajectory_admission.py`, `benchmark_surface_geometry.py`, `benchmark_gpu_overheads.py`, `analytical_reconstruction.py`, `learnable_reconstruction.py`, `helical_fdk.py`, `iterative_reconstruction.py`, `walnut_reconstruction.py`, `geometry_calibration.py`, `benchmark_projector.py`, `benchmark_scaling.py`, `plot_trajectory.py`, and the Slurm template `slurm/multi_node.sbatch`. Launch modes and distributed-loss rules are in [examples/README.md](https://github.com/sypsyp97/diffct/blob/main/examples/README.md).
+| 512³ volume | 1 GPU | 4 GPUs, 1 node | 8 GPUs, 2 nodes |
+|---|---:|---:|---:|
+| Forward projection | 566.79 ms | 150.76 ms (3.8×) | 81.58 ms (6.9×) |
+| Adjoint (backprojection) | 1060.77 ms | 279.37 ms (3.8×) | 224.04 ms (4.7×) |
+| CGLS iteration | 1753.73 ms | 468.09 ms (3.7×) | 337.39 ms (5.2×) |
 
-## Documentation
+Methodology, chart and raw samples: [performance guide](https://sypsyp97.github.io/diffct/performance.html). More reconstruction examples: [examples](https://sypsyp97.github.io/diffct/examples.html).
 
-| Document | Contents |
+## Where to go next
+
+| I want to… | Start here |
 |---|---|
-| [Precision, training and reconstruction](docs/EXECUTION.md) | Backend modes, batch/spacing contracts, analytical storage, hybrid loss scaling and solver checkpoints |
-| [Trajectory guide](https://github.com/sypsyp97/diffct/blob/main/docs/source/trajectories.rst) | Trajectory tuples and `Projector` usage |
-| [docs/REFERENCE.md](https://github.com/sypsyp97/diffct/blob/main/docs/REFERENCE.md) | Capabilities and limits, custom trajectories, geometry gradients, multi-GPU details, geometry and units |
-| [docs/DISTRIBUTED.md](https://github.com/sypsyp97/diffct/blob/main/docs/DISTRIBUTED.md) | Execution/memory choices, distributed loss rules, Slurm and cross-node checks |
-| [docs/MIGRATION.md](https://github.com/sypsyp97/diffct/blob/main/docs/MIGRATION.md) | Moving from the circular-only API |
-| [docs/video/README.md](https://github.com/sypsyp97/diffct/blob/main/docs/video/README.md) | How the intro video is rendered |
-| [CHANGELOG.md](https://github.com/sypsyp97/diffct/blob/main/CHANGELOG.md) | Release history |
-
-Run the test suite on a CUDA host with `python -m pytest tests/ -q`.
+| Run the first projection and gradient | [Quickstart](https://sypsyp97.github.io/diffct/quickstart.html) |
+| Use a custom, calibrated or helical trajectory | [Trajectories and geometry](https://sypsyp97.github.io/diffct/trajectories.html) |
+| Load Mayo clinical projections and images | [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) |
+| Reconstruct measured clinical helical CT | [Clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) |
+| Scale across GPUs, nodes or limited memory | [Multi-GPU](https://sypsyp97.github.io/diffct/multi_gpu.html) · [Chunking](https://sypsyp97.github.io/diffct/chunking.html) |
+| Train filters, weights or a volume with autograd | [Differentiable FBP/FDK](https://sypsyp97.github.io/diffct/analytical_learning.html) · [Gradient reconstruction](https://sypsyp97.github.io/diffct/gradient_reconstruction.html) |
+| Look up execution contracts or API details | [Execution](https://sypsyp97.github.io/diffct/execution.html) · [API reference](https://sypsyp97.github.io/diffct/api.html) |
+| Browse every reconstruction example | [Examples](https://sypsyp97.github.io/diffct/examples.html) |
 
 ## Citation
 
-If you use this library in your research, please cite the software and the technical report:
+If you use diffct in your research, please cite both the software and the technical report. Machine-readable metadata is in [CITATION.cff](https://github.com/sypsyp97/diffct/blob/main/CITATION.cff).
+
+<details>
+<summary>BibTeX</summary>
 
 ```bibtex
+@software{diffct2025,
+  author    = {Yipeng Sun},
+  title     = {diffct: Differentiable Computed Tomography Reconstruction with CUDA},
+  year      = 2025,
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.14999333},
+  url       = {https://doi.org/10.5281/zenodo.14999333}
+}
+
 @article{202605.1446,
   doi       = {10.20944/preprints202605.1446.v2},
   url       = {https://doi.org/10.20944/preprints202605.1446.v2},
@@ -242,9 +147,8 @@ If you use this library in your research, please cite the software and the techn
 }
 ```
 
+</details>
+
 ## License and acknowledgements
 
-Apache 2.0, see [LICENSE](https://github.com/sypsyp97/diffct/blob/main/LICENSE). The project draws on
-[PYRO-NN](https://github.com/csyben/PYRO-NN) and
-[geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT).
-Issues and pull requests are welcome. The walnut data are CC BY 4.0 (Meaney 2022); see [NOTICE](https://github.com/sypsyp97/diffct/blob/main/NOTICE).
+Apache 2.0, see [LICENSE](https://github.com/sypsyp97/diffct/blob/main/LICENSE). The project draws on [PYRO-NN](https://github.com/csyben/PYRO-NN) and [geometry_gradients_CT](https://github.com/mareikethies/geometry_gradients_CT). Issues and pull requests are welcome.
