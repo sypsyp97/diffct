@@ -223,6 +223,34 @@ def walnut():
     save(fig, "iterative_cone.png", ["Axial", "Coronal"], axes)
 
 
+def readme_proof(data, iteration=15):
+    """Combined measured-data figure for the README landing page."""
+    measured = np.load(VIDEO / "walnut_measured.npz")
+    box = body_box(measured["fdk_axial"], .15)
+    d = np.load(data / "helical_L213.npz")
+    axial = d[f"axial_{iteration}"][:, ::-1, ::-1]
+    coronal = d[f"coronal_{iteration}"][:, ::-1]
+    sagittal = d[f"sagittal_{iteration}"][:, ::-1]
+    coronal, sagittal = coronal[::-1], sagittal[::-1]
+    clinical_box = body_box(axial[1], 1.0, pad=20)
+    rows = np.where((coronal > .7).mean(1) > .05)[0]
+    zrange = slice(rows[0] + 30, rows[-1] - 30)
+
+    fig, axes = figure(2, 4, height=4.0)
+    names = [("fdk", "FDK"), ("sirt", "SIRT, 200 it"), ("cgls", "CGLS, 20 it"), ("tv", "TV, 300 it")]
+    for column, (key, name) in enumerate(names):
+        image(axes[0, column], measured[f"{key}_axial"][box], UNIT, name)
+    image(axes[1, 0], axial[1][clinical_box], SOFT_TISSUE, f"Axial, CGLS {iteration} it")
+    image(axes[1, 1], coronal[zrange][:, clinical_box[1]], SOFT_TISSUE, "Coronal")
+    image(axes[1, 2], sagittal[zrange][:, clinical_box[0]], SOFT_TISSUE, "Sagittal")
+    ax = axes[1, 3]
+    curve_axes(ax, "CGLS residual", "iteration")
+    ax.semilogy(np.arange(len(d["residual"])), d["residual"], color=ACCENT, linewidth=1.3)
+    ax.axvline(iteration, color=MUTED, linewidth=.8, linestyle="--")
+    ax.set_box_aspect(1)
+    save(fig, "readme_proof.png", ["Walnut axial", "Clinical L213"], axes)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", type=Path, required=True)
@@ -238,6 +266,7 @@ def main():
     curved(args.data)
     learning(args.data)
     walnut()
+    readme_proof(args.data)
 
 
 if __name__ == "__main__":

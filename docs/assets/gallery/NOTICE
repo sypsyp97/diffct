@@ -25,5 +25,6 @@ with diffct. The Head subset is not used.
 
 Walnut data
 -----------
-walnut.png, iterative_cone.png and gradient_walnut.png use the measured walnut
-scan described in examples/data/NOTICE (Meaney 2022, Zenodo 6986012, CC BY 4.0).
+walnut.png, iterative_cone.png, gradient_walnut.png and readme_proof.png use
+the measured walnut scan described in examples/data/NOTICE (Meaney 2022,
+Zenodo 6986012, CC BY 4.0).

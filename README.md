@@ -13,14 +13,15 @@
   <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=docs&style=flat-square" alt="Documentation"></a>
   <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/ci.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
+  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/gradient_walnut.png?v=497749b" width="100%" alt="Gradient-based reconstruction of a measured walnut scan improving over optimization steps">
+  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/diffct_intro.gif" width="100%" alt="diffct intro: projection, sinogram, trajectories, multi-GPU split, reconstruction and geometry calibration">
 </p>
 
 <p align="center">
-  Gradient-based reconstruction of a measured walnut scan, optimized through the projector · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">overview video</a>.<br>
+  Video overview of trajectories, autograd, geometry gradients, multi-GPU execution and measured walnut reconstruction · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">MP4</a>.<br>
   Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see <a href="https://github.com/sypsyp97/diffct/blob/main/examples/data/NOTICE">examples/data/NOTICE</a>.
 </p>
 
@@ -87,13 +88,16 @@ Expected output: `torch.Size([180, 96]) torch.Size([64, 64])`. CPU and Apple Sil
 
 ## Results
 
-**Measured clinical helical CT.** Liver case L213 of the Mayo Clinic 2020 low-dose CT dataset (LDCT-and-Projection-data), acquired on a GE scanner: full-dose projections, 7140 views, 888 × 64 cylindrical detector, reconstructed with 1 mm voxels using unregularized CGLS. The axial, coronal and sagittal slices show iteration 30; the residual curve runs to iteration 60. See the [clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) and [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) examples.
+**Measured reconstruction, from bench phantom to clinical scan.** The walnut row compares FDK, SIRT, CGLS and TV on 240 measured circular cone-beam views. The clinical row shows liver case L213 of the Mayo Clinic 2020 low-dose CT dataset (LDCT-and-Projection-data), acquired on a GE scanner: full-dose projections, 7140 views, 888 × 64 cylindrical detector, reconstructed with 1 mm voxels using unregularized CGLS. The clinical slices show iteration 15; the residual curve runs to iteration 60. See the [measured walnut](https://sypsyp97.github.io/diffct/walnut_example.html), [clinical helical CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) and [Mayo public datasets](https://sypsyp97.github.io/diffct/mayo_datasets_example.html) examples.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/helical_L213.png?v=497749b" width="100%" alt="Measured clinical helical CT reconstruction of liver case L213: axial, coronal and sagittal slices with CGLS residual curve">
+  <picture>
+    <source srcset="docs/source/_static/gallery/readme_proof.png">
+    <img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/source/_static/gallery/readme_proof.png" width="100%" alt="Measured walnut FDK, SIRT, CGLS and TV reconstructions above clinical helical CT slices and CGLS residual for liver case L213">
+  </picture>
 </p>
 
-Patient data: McCollough et al., *Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*, Version 7, The Cancer Imaging Archive, 2020, [10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637); dataset paper: Moen et al., Medical Physics, 2020, [10.1002/mp.14594](https://doi.org/10.1002/mp.14594). Chest and Liver subsets: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see [docs/assets/gallery/NOTICE](https://github.com/sypsyp97/diffct/blob/main/docs/assets/gallery/NOTICE).
+Walnut data: Meaney 2022, Zenodo 6986012, CC BY 4.0; see [examples/data/NOTICE](https://github.com/sypsyp97/diffct/blob/main/examples/data/NOTICE). Patient data: McCollough et al., *Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*, Version 7, The Cancer Imaging Archive, 2020, [10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637); dataset paper: Moen et al., Medical Physics, 2020, [10.1002/mp.14594](https://doi.org/10.1002/mp.14594). Chest and Liver subsets: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see [docs/assets/gallery/NOTICE](https://github.com/sypsyp97/diffct/blob/main/docs/assets/gallery/NOTICE).
 
 **Multi-GPU scaling.** diffct 2.4.3, 512³ volume, FP32, A100 64 GB GPUs; circular cone beam, 360 views, 1024×768 detector, pitch 1.25:
 

@@ -13,14 +13,15 @@
   <a href="https://pypi.org/project/diffct/"><img src="https://img.shields.io/pypi/v/diffct.svg?style=flat-square&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://sypsyp97.github.io/diffct/"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/docs.yml?branch=main&label=docs&style=flat-square" alt="Documentation"></a>
   <a href="https://github.com/sypsyp97/diffct/actions"><img src="https://img.shields.io/github/actions/workflow/status/sypsyp97/diffct/ci.yml?branch=main&label=CI&style=flat-square" alt="CI/CD"></a>
+  <a href="https://deepwiki.com/sypsyp97/diffct"><img src="https://raw.githubusercontent.com/sypsyp97/diffct/main/docs/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
 <p align="center">
-  <img src="docs/source/_static/gallery/gradient_walnut.png?v=497749b" width="100%" alt="实测核桃的梯度重建结果随优化步数逐渐清晰">
+  <img src="docs/assets/diffct_intro.gif" width="100%" alt="diffct 概览：投影、正弦图、轨迹、多卡拆分、重建和几何标定">
 </p>
 
 <p align="center">
-  通过投影算子优化得到的实测核桃梯度重建结果 · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">概览视频</a>。<br>
+  视频概览轨迹、自动求导、几何梯度、多卡执行和实测核桃重建 · <a href="https://github.com/sypsyp97/diffct/blob/main/docs/assets/diffct_intro.mp4">MP4</a>。<br>
   核桃数据：Meaney 2022，Zenodo 6986012，CC BY 4.0，见 <a href="examples/data/NOTICE">examples/data/NOTICE</a>。
 </p>
 
@@ -87,13 +88,13 @@ print(measurements.shape, estimate.grad.shape)
 
 ## 结果
 
-**实测临床螺旋 CT。** Mayo Clinic 2020 低剂量 CT 数据集（LDCT-and-Projection-data）的肝脏病例 L213（GE 扫描仪）：全剂量投影，7140 个视角，888 × 64 柱面探测器；diffct 以 1 mm 体素、无正则化 CGLS 重建。轴向、冠状面和矢状面切片显示第 30 次迭代，残差曲线持续到第 60 次。示例文档见 [临床螺旋 CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) 与 [Mayo 公开数据集](https://sypsyp97.github.io/diffct/mayo_datasets_example.html)（英文）。
+**从体模到临床扫描的实测重建。** 核桃一行比较了 240 个实测圆形锥束视角上的 FDK、SIRT、CGLS 和 TV。临床一行展示 Mayo Clinic 2020 低剂量 CT 数据集（LDCT-and-Projection-data）的肝脏病例 L213（GE 扫描仪）：全剂量投影，7140 个视角，888 × 64 柱面探测器；diffct 以 1 mm 体素、无正则化 CGLS 重建。临床切片显示第 15 次迭代，残差曲线持续到第 60 次。示例文档见 [实测核桃](https://sypsyp97.github.io/diffct/walnut_example.html)、[临床螺旋 CT](https://sypsyp97.github.io/diffct/clinical_helical_example.html) 与 [Mayo 公开数据集](https://sypsyp97.github.io/diffct/mayo_datasets_example.html)（英文）。
 
 <p align="center">
-  <img src="docs/source/_static/gallery/helical_L213.png?v=497749b" width="100%" alt="实测临床螺旋 CT：肝脏病例 L213 的 CGLS 轴向、冠状面、矢状面切片和残差曲线">
+  <img src="docs/source/_static/gallery/readme_proof.png" width="100%" alt="实测核桃的 FDK、SIRT、CGLS、TV 重建，以及肝脏病例 L213 的临床螺旋 CT 切片和 CGLS 残差曲线">
 </p>
 
-患者数据：McCollough et al.，*Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*，Version 7，The Cancer Imaging Archive，2020，[10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637)；数据集论文：Moen et al.，Medical Physics，2020，[10.1002/mp.14594](https://doi.org/10.1002/mp.14594)。Chest 和 Liver 子集采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可，见 [docs/assets/gallery/NOTICE](docs/assets/gallery/NOTICE)。
+核桃数据：Meaney 2022，Zenodo 6986012，CC BY 4.0，见 [examples/data/NOTICE](examples/data/NOTICE)。患者数据：McCollough et al.，*Low Dose CT Image and Projection Data (LDCT-and-Projection-data)*，Version 7，The Cancer Imaging Archive，2020，[10.7937/9npb-2637](https://doi.org/10.7937/9npb-2637)；数据集论文：Moen et al.，Medical Physics，2020，[10.1002/mp.14594](https://doi.org/10.1002/mp.14594)。Chest 和 Liver 子集采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可，见 [docs/assets/gallery/NOTICE](docs/assets/gallery/NOTICE)。
 
 **多卡扩展。** diffct 2.4.3，512³ 体数据，FP32，A100 64 GB GPU；圆形锥束，360 个视角，1024×768 探测器，pitch 1.25：
 
