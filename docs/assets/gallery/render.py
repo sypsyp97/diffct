@@ -14,6 +14,7 @@ import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from PIL import Image  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "docs" / "source" / "_static" / "gallery"
@@ -64,13 +65,21 @@ def figure(rows, columns, height=None):
     return fig, axes
 
 
-def save(fig, name, row_labels=None, axes=None):
+def save(fig, name, row_labels=None, axes=None, trim_bottom=False):
     if row_labels is not None:
         for ax, label in zip(axes[:, 0], row_labels):
             ax.set_ylabel(label, color=MUTED)
     fig.tight_layout(pad=.4, w_pad=.4, h_pad=.6)
-    fig.savefig(OUT / name, dpi=DPI, facecolor=fig.get_facecolor())
+    path = OUT / name
+    fig.savefig(path, dpi=DPI, facecolor=fig.get_facecolor())
     plt.close(fig)
+    if trim_bottom:
+        im = Image.open(path).convert("RGB")
+        array = np.asarray(im)
+        used = np.any(array != np.array((15, 18, 22), dtype=np.uint8), axis=(1, 2))
+        end = min(np.max(np.flatnonzero(used)) + 5, array.shape[0])
+        if end < array.shape[0]:
+            im.crop((0, 0, array.shape[1], end)).save(path)
     print("saved", name)
 
 
@@ -244,7 +253,7 @@ def readme_methods(data, case="fan120"):
     fig, axes = figure(1, len(names))
     for column, (array, title) in enumerate(names):
         image(axes[0, column], array[box], SOFT_TISSUE, title)
-    save(fig, "readme_methods.png")
+    save(fig, "readme_methods.png", trim_bottom=True)
 
 
 def readme_clinical(data, iteration=15):
@@ -273,7 +282,7 @@ def readme_clinical(data, iteration=15):
                              gridspec_kw={"width_ratios": ratios})
     for column, (panel, title) in enumerate(panels):
         image(axes[0, column], panel, SOFT_TISSUE, title)
-    save(fig, "readme_clinical.png")
+    save(fig, "readme_clinical.png", trim_bottom=True)
 
 
 def main():
