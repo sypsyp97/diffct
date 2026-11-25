@@ -24,6 +24,7 @@ Clinical data and detectors
 ---------------------------
 
 - :doc:`Clinical helical CT <clinical_helical_example>`: measured patient projections, flying focal spot, curved detector, 8 GPUs.
+- :doc:`Mayo public datasets <mayo_datasets_example>`: discovery, loading and Hounsfield calibration for the Mayo 2020 and 2016 patient data.
 - :doc:`Curved detector <curved_detector_example>`: projection, matched adjoint and gradients on a native cylindrical detector.
 
 All scripts
@@ -108,4 +109,5 @@ The figures are made by ``docs/assets/gallery/compute.py`` and
    :caption: Clinical data and detectors
 
    clinical_helical_example
+   mayo_datasets_example
    curved_detector_example

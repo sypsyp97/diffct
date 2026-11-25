@@ -37,6 +37,19 @@ Flat/spherical detectors raise `NotImplementedError`. This does not add curved
 detector support to analytical FBP/FDK or relax helical FDK's geometry restrictions.
 See [the clinical example](source/clinical_helical_example.rst).
 
+## Mayo public datasets
+
+`discover_mayo_2020_cases(root)` and `discover_mayo_challenge_2016_cases(root,
+split='train')` classify patient folders by name in an extracted download of the
+Mayo 2020 LDCT-and-Projection data or the 2016 Low Dose CT Grand Challenge.
+`load_mayo_case(case, dose='full', reference_images=True)` returns the projections
+as a `ClinicalScan` and the vendor reconstruction as a `CTImageSeries` in
+Hounsfield units, sorted by slice position with uniform spacing.
+`read_dicom_ct_images(directory)` reads any single CT image series;
+`attenuation_to_hu(values, water_attenuation)` applies `1000 * (mu - mu_w) / mu_w`
+with the scan's own calibration and preserves the input type.
+See [the Mayo datasets example](source/mayo_datasets_example.rst).
+
 ## Custom or calibrated trajectories
 
 Use a generator for a standard scan, or pass your calibrated tensors directly.
