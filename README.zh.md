@@ -152,7 +152,7 @@ print(measurements.shape, estimate.grad.shape)
 
 如需引用 diffct，请同时引用软件和技术报告。机器可读元数据见 [CITATION.cff](https://github.com/sypsyp97/diffct/blob/main/CITATION.cff)。
 
-<details>
+<details open>
 <summary>BibTeX</summary>
 
 ```bibtex

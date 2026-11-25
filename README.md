@@ -152,7 +152,7 @@ Expected output: `torch.Size([180, 96]) torch.Size([64, 64])`. CPU and Apple Sil
 
 If you use diffct in your research, cite both the software and the technical report. Machine-readable metadata is in [CITATION.cff](https://github.com/sypsyp97/diffct/blob/main/CITATION.cff).
 
-<details>
+<details open>
 <summary>BibTeX</summary>
 
 ```bibtex
