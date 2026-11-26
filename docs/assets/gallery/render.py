@@ -259,39 +259,29 @@ def readme_methods(data, case="fan120"):
 def readme_clinical(data):
     """Measured helical reconstruction methods in axial, coronal and sagittal rows."""
     d = np.load(data / "helical_methods.npz")
-    methods = [("Reference", "reference"), ("SIRT, 100 it", "sirt"), ("CGLS, 15 it", "cgls"),
-               ("TV, 1", "tvlow"), ("TV, 10", "tv")]
-
-    def orient_axial(array):
-        return np.asarray(array, dtype=np.float32)[::-1, ::-1]
-
-    def orient_plane(array):
-        return np.asarray(array, dtype=np.float32)[:, ::-1][::-1]
-
-    axial0 = orient_axial(d["cgls_axial"])
-    mask = axial0 > 1.0
-    rows = np.where(mask.mean(1) > .1)[0]
-    cols = np.where(mask.mean(0) > .1)[0]
-    pad = 10
-    axial_box = (slice(max(rows[0] - pad, 0), rows[-1] + pad),
-                 slice(max(cols[0] - pad, 0), cols[-1] + pad))
-    zrange = slice(100, 245)
-    coronal_box = (zrange, slice(95, 415))
-    sagittal_box = (zrange, slice(145, 390))
-    boxes = (axial_box, coronal_box, sagittal_box)
+    methods = [("Reference", "reference"), ("Adam LS, 150 it", "adam"), ("SIRT, 100 it", "sirt"),
+               ("CGLS, 15 it", "cgls"), ("TV, 150 it", "tv")]
+    z_pitch, xy_pitch = 3.0, 0.652344
+    crops = {
+        "axial": (slice(70, 460), slice(55, 465)),
+        "coronal": (slice(None), slice(55, 465)),
+        "sagittal": (slice(None), slice(20, 430)),
+    }
     row_names = ("Axial", "Coronal", "Sagittal")
     panels = []
     for title, key in methods:
-        values = (orient_axial(d[f"{key}_axial"])[axial_box],
-                  orient_plane(d[f"{key}_coronal"])[coronal_box],
-                  orient_plane(d[f"{key}_sagittal"])[sagittal_box])
+        values = tuple(np.asarray(d[f"{key}_{plane}"], dtype=np.float32)[crops[plane]]
+                       for plane in ("axial", "coronal", "sagittal"))
         panels.append((title, values))
 
     left, right, column_gap, row_gap = .34, .04, .07, .07
     top, bottom = .30, .05
     column_width = (WIDTH - left - right - column_gap * (len(methods) - 1)) / len(methods)
-    row_heights = [column_width * panels[0][1][row].shape[0] / panels[0][1][row].shape[1]
-                   for row in range(3)]
+    row_heights = []
+    for row, plane in enumerate(("axial", "coronal", "sagittal")):
+        rows, cols = panels[0][1][row].shape
+        pitch_z, pitch_x = (xy_pitch, xy_pitch) if plane == "axial" else (z_pitch, xy_pitch)
+        row_heights.append(column_width * rows * pitch_z / (cols * pitch_x))
     height = top + bottom + sum(row_heights) + row_gap * 2
     fig = plt.figure(figsize=(WIDTH, height), facecolor=BACKGROUND)
     y = height - top
@@ -302,7 +292,7 @@ def readme_clinical(data):
         for column, (title, values) in enumerate(panels):
             x = left + column * (column_width + column_gap)
             ax = fig.add_axes((x / WIDTH, y / height, column_width / WIDTH, row_height / height))
-            image(ax, values[row], SOFT_TISSUE)
+            image(ax, values[row], SOFT_TISSUE, aspect="auto")
             if row == 0:
                 fig.text((x + column_width / 2) / WIDTH, 1 - .16 / height, title,
                          ha="center", va="center", color=INK, fontsize=8)

@@ -16,7 +16,9 @@ data are from LDCT-and-Projection-data (McCollough et al., The Cancer Imaging
 Archive, https://doi.org/10.7937/9npb-2637, CC BY 4.0); see
 docs/assets/gallery/NOTICE. ``helical`` reconstructs measured helical
 projections; the other commands use the vendor images or Shepp-Logan as
-ground truth for simulated scans.
+ground truth for simulated scans. Use ``clinical_methods.py`` for the
+multi-method measured helical README figure; it uses 0.652 mm voxels in plane
+and 3 mm voxels along the scan axis and writes ``helical_methods.npz``.
 """
 import argparse
 import math
