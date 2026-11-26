@@ -14,6 +14,7 @@ import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from PIL import Image  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "docs" / "source" / "_static" / "gallery"
@@ -64,13 +65,21 @@ def figure(rows, columns, height=None):
     return fig, axes
 
 
-def save(fig, name, row_labels=None, axes=None):
+def save(fig, name, row_labels=None, axes=None, trim_bottom=False):
     if row_labels is not None:
         for ax, label in zip(axes[:, 0], row_labels):
             ax.set_ylabel(label, color=MUTED)
     fig.tight_layout(pad=.4, w_pad=.4, h_pad=.6)
-    fig.savefig(OUT / name, dpi=DPI, facecolor=fig.get_facecolor())
+    path = OUT / name
+    fig.savefig(path, dpi=DPI, facecolor=fig.get_facecolor())
     plt.close(fig)
+    if trim_bottom:
+        im = Image.open(path).convert("RGB")
+        array = np.asarray(im)
+        used = np.any(array != np.array((15, 18, 22), dtype=np.uint8), axis=(1, 2))
+        end = min(np.max(np.flatnonzero(used)) + 5, array.shape[0])
+        if end < array.shape[0]:
+            im.crop((0, 0, array.shape[1], end)).save(path)
     print("saved", name)
 
 
@@ -223,6 +232,77 @@ def walnut():
     save(fig, "iterative_cone.png", ["Axial", "Coronal"], axes)
 
 
+def readme_methods(data, case="fan120"):
+    """One-row reconstruction-method comparison for the README landing page."""
+    d = np.load(data / "patient_methods.npz")
+    truth = d["truth"]
+    active = truth > .9
+
+    def longest(indices):
+        groups = np.split(indices, np.flatnonzero(np.diff(indices) > 5) + 1)
+        selected = max(groups, key=len)
+        return selected[0], selected[-1]
+
+    row0, row1 = longest(np.flatnonzero(active.mean(1) > .1))
+    col0, col1 = longest(np.flatnonzero(active[row0:row1 + 1].mean(0) > .1))
+    pad = 10
+    box = (slice(max(row0 - pad, 0), row1 + pad), slice(max(col0 - pad, 0), col1 + pad))
+    names = [(truth, "Reference")]
+    names += [(d[f"{case}_{key}"], title) for key, title in (
+        ("fbp", "FBP"), ("sirt", "SIRT, 200 it"), ("cgls", "CGLS, 30 it"), ("tv", "TV, 300 it"))]
+    fig, axes = figure(1, len(names))
+    for column, (array, title) in enumerate(names):
+        image(axes[0, column], array[box], SOFT_TISSUE, title)
+    save(fig, "readme_methods.png", trim_bottom=True)
+
+
+def readme_clinical(data):
+    """Measured helical reconstruction methods in axial, coronal and sagittal rows."""
+    d = np.load(data / "helical_methods.npz")
+    methods = [("Reference", "reference"), ("Adam LS, 150 it", "adam"), ("SIRT, 100 it", "sirt"),
+               ("CGLS, 15 it", "cgls"), ("TV, 150 it", "tv")]
+    z_pitch, xy_pitch = 3.0, 0.652344
+    crops = {
+        "axial": (slice(70, 460), slice(55, 465)),
+        "coronal": (slice(None), slice(55, 465)),
+        "sagittal": (slice(None), slice(20, 430)),
+    }
+    row_names = ("Axial", "Coronal", "Sagittal")
+    panels = []
+    for title, key in methods:
+        values = tuple(np.asarray(d[f"{key}_{plane}"], dtype=np.float32)[crops[plane]]
+                       for plane in ("axial", "coronal", "sagittal"))
+        panels.append((title, values))
+
+    left, right, column_gap, row_gap = .34, .04, .07, .07
+    top, bottom = .30, .05
+    column_width = (WIDTH - left - right - column_gap * (len(methods) - 1)) / len(methods)
+    row_heights = []
+    for row, plane in enumerate(("axial", "coronal", "sagittal")):
+        rows, cols = panels[0][1][row].shape
+        pitch_z, pitch_x = (xy_pitch, xy_pitch) if plane == "axial" else (z_pitch, xy_pitch)
+        row_heights.append(column_width * rows * pitch_z / (cols * pitch_x))
+    height = top + bottom + sum(row_heights) + row_gap * 2
+    fig = plt.figure(figsize=(WIDTH, height), facecolor=BACKGROUND)
+    y = height - top
+    for row, (row_name, row_height) in enumerate(zip(row_names, row_heights)):
+        y -= row_height
+        fig.text(.012, (y + row_height / 2) / height, row_name, rotation=90,
+                 va="center", ha="center", color=MUTED, fontsize=8)
+        for column, (title, values) in enumerate(panels):
+            x = left + column * (column_width + column_gap)
+            ax = fig.add_axes((x / WIDTH, y / height, column_width / WIDTH, row_height / height))
+            image(ax, values[row], SOFT_TISSUE, aspect="auto")
+            if row == 0:
+                fig.text((x + column_width / 2) / WIDTH, 1 - .16 / height, title,
+                         ha="center", va="center", color=INK, fontsize=8)
+        y -= row_gap
+    path = OUT / "readme_clinical.png"
+    fig.savefig(path, dpi=DPI, facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print("saved", "readme_clinical.png")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", type=Path, required=True)
@@ -238,6 +318,8 @@ def main():
     curved(args.data)
     learning(args.data)
     walnut()
+    readme_methods(args.data)
+    readme_clinical(args.data)
 
 
 if __name__ == "__main__":

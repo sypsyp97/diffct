@@ -6,6 +6,7 @@ files of display slices (float16) to ``--out``:
     python docs/assets/gallery/compute.py phantoms2d --ldct DIR --out OUT
     python docs/assets/gallery/compute.py adam --ldct DIR --lr 0.1 --out OUT
     python docs/assets/gallery/compute.py volumes --ldct DIR --out OUT
+    python docs/assets/gallery/compute.py patientmethods --ldct DIR --out OUT
     python docs/assets/gallery/compute.py gradient --walnut examples/data/walnut_cone.npz --out OUT
     torchrun --nproc-per-node=8 docs/assets/gallery/compute.py helical \\
         --case DIR/L213 --center 442.2 --out OUT
@@ -15,7 +16,9 @@ data are from LDCT-and-Projection-data (McCollough et al., The Cancer Imaging
 Archive, https://doi.org/10.7937/9npb-2637, CC BY 4.0); see
 docs/assets/gallery/NOTICE. ``helical`` reconstructs measured helical
 projections; the other commands use the vendor images or Shepp-Logan as
-ground truth for simulated scans.
+ground truth for simulated scans. Use ``clinical_methods.py`` for the
+multi-method measured helical README figure; it uses 0.652 mm voxels in plane
+and 3 mm voxels along the scan axis and writes ``helical_methods.npz``.
 """
 import argparse
 import math
@@ -39,6 +42,8 @@ from diffct import (  # noqa: E402
     circular_trajectory_3d,
     fbp,
     fdk,
+    sirt,
+    tv_reconstruction,
 )
 from _common import Scan, psnr, shepp_logan_3d  # noqa: E402
 
@@ -270,6 +275,28 @@ def gradient(args):
          lr=args.lr, views=len(angles), size=n)
 
 
+def patient_methods(args):
+    """Analytical and iterative reconstructions of a simulated 120-view fan-beam patient scan."""
+    device = torch.device("cuda")
+    truth = torch.from_numpy(ref_slice(Path(args.ldct) / "L213", -364.0)[0]).to(device)
+    n, views = truth.shape[-1], 120
+    trajectory = circular_trajectory_2d_fan(views, 2.5 * n, 4.0 * n, device="cpu")
+    operator = Projector(trajectory, (n, n), 3 * n, beam="fan", detector_spacing=0.8)
+    angles = torch.linspace(0.0, 2 * math.pi, views + 1, device=device)[:-1]
+    measured = operator.project(truth).detach()
+    arrays = {"truth": half(truth), "views": views, "beam": "fan", "tv_weight": 0.3}
+    arrays["fan120_fbp"] = half(fbp(measured, trajectory, (n, n), angles, detector_spacing=0.8,
+                                    window=WINDOW, beam="fan", isocenter=(0, 0)).clamp_min(0))
+    for name, solver, iterations, options in (
+        ("sirt", sirt, 200, {}),
+        ("cgls", cgls, 30, {}),
+        ("tv", tv_reconstruction, 300, {"weight": 0.3, "lr": 0.1}),
+    ):
+        result = solver(operator, measured, iterations, **options)
+        arrays[f"fan120_{name}"] = half(result.volume)
+    save(Path(args.out), "patient_methods", **arrays)
+
+
 def helical(args):
     """CGLS of measured full-dose helical projections with diffct's distributed Projector."""
     from torch import distributed as dist
@@ -329,7 +356,7 @@ def helical(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("phantoms2d", "volumes"):
+    for name in ("phantoms2d", "volumes", "patientmethods"):
         p = sub.add_parser(name)
         p.add_argument("--ldct", required=True)
         p.add_argument("--out", required=True)
@@ -354,7 +381,8 @@ def main():
     p.add_argument("--out", required=True)
     args = parser.parse_args()
     Path(args.out).mkdir(parents=True, exist_ok=True)
-    {"phantoms2d": phantoms2d, "adam": adam, "volumes": volumes, "gradient": gradient, "helical": helical}[args.command](args)
+    {"phantoms2d": phantoms2d, "adam": adam, "volumes": volumes, "gradient": gradient,
+     "patientmethods": patient_methods, "helical": helical}[args.command](args)
 
 
 if __name__ == "__main__":
