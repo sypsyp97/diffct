@@ -83,6 +83,10 @@ file's rescale slope/intercept without taking another logarithm.
    result = cgls(operator, measurements, iterations=6)
 
 Size the volume and view/detector subset for available memory and CPU time.
+The explicit division above normalizes the reconstruction to water units, in
+which water is 1 and HU is ``1000 * (reconstruction - 1)``. Without that
+division the reconstruction is absolute attenuation and needs
+``attenuation_to_hu(reconstruction, scan.water_attenuation)`` instead.
 ``ClinicalScan`` is a frozen dataclass (its NumPy arrays remain mutable).
 Geometry vectors are float64 in mm/radians; projections are float32 with shape
 ``(views, channels, rows)``. ``ClinicalGeometry`` contains the four named

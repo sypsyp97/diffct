@@ -27,8 +27,10 @@ Clinical CT-PD data
    :toctree: generated
 
    ClinicalScan
+   ClinicalScanProbe
    ClinicalGeometry
    read_dicom_ct_pd
+   probe_dicom_ct_pd
    clinical_geometry
 
 See :doc:`clinical_helical_example` for measured flying-focal-spot data.
@@ -49,6 +51,7 @@ Mayo public datasets
    load_mayo_case
    read_dicom_ct_images
    attenuation_to_hu
+   hu_to_attenuation
 
 High-level Projector
 --------------------

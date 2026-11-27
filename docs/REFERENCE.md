@@ -25,9 +25,14 @@ for custom stages, circular short scans and the slice-windowed helical approxima
 ## Clinical CT-PD data
 
 Install `diffct[dicom]`, then use `read_dicom_ct_pd(directory_or_files)` to obtain
-a frozen `ClinicalScan` with rescaled float32 projections, float64 per-view
-geometry and header water calibration. Sparse instance gaps are supported;
-duplicates and nonconstant detector geometry are rejected.
+a frozen `ClinicalScan` with rescaled float32 absolute-attenuation projections,
+float64 per-view geometry with unwrapped angles, and header water calibration.
+Directories accept `.dcm` and `.ima`. Sparse instance gaps are supported;
+duplicates and nonconstant detector or series metadata are rejected.
+`probe_dicom_ct_pd(directory_or_files)` reads every header with
+`stop_before_pixels=True` and returns a `ClinicalScanProbe` with the file count,
+instance range, detector dimensions, manufacturer and manufacturer model for
+cohort selection, without decoding pixels.
 `clinical_geometry(scan, flying_focal_spot=True, z_center=None,
 central_column=None, device="cpu", dtype=torch.float32)` returns
 `ClinicalGeometry(trajectory, detector_shape, detector_spacing, detector_surface)`.
@@ -45,9 +50,14 @@ Mayo 2020 LDCT-and-Projection data or the 2016 Low Dose CT Grand Challenge.
 `load_mayo_case(case, dose='full', reference_images=True)` returns the projections
 as a `ClinicalScan` and the vendor reconstruction as a `CTImageSeries` in
 Hounsfield units, sorted by slice position with uniform spacing.
-`read_dicom_ct_images(directory)` reads any single CT image series;
-`attenuation_to_hu(values, water_attenuation)` applies `1000 * (mu - mu_w) / mu_w`
-with the scan's own calibration and preserves the input type.
+`read_dicom_ct_images(directory)` reads any single CT image series.
+Projection data and unnormalized reconstructions are absolute attenuation:
+`attenuation_to_hu(values, water_attenuation)` applies
+`1000 * (mu - mu_w) / mu_w` with the scan's own calibration, while
+`hu_to_attenuation(values, water_attenuation)` is its inverse. Both preserve
+the input type. If measurements were explicitly divided by the water
+coefficient, the reconstruction is in water units instead and
+`1000 * (reconstruction - 1)` is the corresponding HU idiom.
 See [the Mayo datasets example](source/mayo_datasets_example.rst).
 
 ## Custom or calibrated trajectories

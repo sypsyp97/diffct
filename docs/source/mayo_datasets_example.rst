@@ -62,21 +62,34 @@ slope/intercept is applied, and a missing or empty directory raises
 Calibration
 -----------
 
-Scanner projections in these datasets are corrected line integrals in units of
-the water attenuation coefficient. Reconstructions in water units convert to
-Hounsfield units with the scan's own calibration:
+Unless the caller explicitly normalizes them, projections and reconstructions
+are absolute attenuation quantities. CT-PD projections are corrected
+absolute-attenuation line integrals after their per-view rescale; they are not
+divided by water. Reconstructing them with millimetre geometry gives absolute
+linear attenuation coefficients in inverse millimetres. Convert those values
+with the scan's own water calibration:
 
 .. code-block:: python
 
-   from diffct import attenuation_to_hu, clinical_geometry
+   from diffct import attenuation_to_hu, hu_to_attenuation
 
    hu = attenuation_to_hu(reconstruction, scan.water_attenuation)
+   mu = hu_to_attenuation(images.volume, scan.water_attenuation)
 
-``attenuation_to_hu`` applies ``1000 * (mu - mu_w) / mu_w`` and preserves the
-input type, NumPy array, PyTorch tensor or scalar. The water attenuation
-differs per scanner and protocol — 0.0192/mm for the Siemens case C002 versus
-0.0186/mm for the GE case L213 — so calibration must use the scan's own value
-rather than a constant.
+``attenuation_to_hu`` applies ``1000 * (mu - mu_w) / mu_w``;
+``hu_to_attenuation`` is its inverse. Both preserve the input type: NumPy
+array, PyTorch tensor or scalar. The water attenuation differs per scanner and
+protocol — 0.0192/mm for the Siemens case C002 versus 0.0186/mm for the GE
+case L213 — so calibration must use the scan's own value rather than a
+constant.
+
+Some reconstruction code explicitly divides ``scan.projections`` by
+``scan.water_attenuation`` to form its measurements. That normalization makes the
+reconstruction dimensionless water units in which water is 1. In that idiom
+the conversion is simply ``1000 * (reconstruction - 1)``; do not pass the
+already normalized reconstruction to ``attenuation_to_hu``. Without that
+explicit normalization, pass the absolute reconstruction and the scan
+calibration to ``attenuation_to_hu`` as shown above.
 
 Reconstruction
 --------------
